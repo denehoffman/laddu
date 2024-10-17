@@ -1,7 +1,7 @@
 <p align="center">
   <img
     width="800"
-    src="media/logo.png"
+    src="media/wordmark.png"
   />
 </p>
 <p align="center">
