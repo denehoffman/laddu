@@ -1,0 +1,92 @@
+use num::Complex;
+
+use crate::{
+    amplitudes::AmplitudeID,
+    data::Event,
+    resources::{Cache, ComplexScalarID, Parameters, Resources},
+    utils::{
+        enums::Sign,
+        functions::spherical_harmonic,
+        variables::{Angles, Polarization, Variable},
+    },
+    Float,
+};
+
+use super::Amplitude;
+
+/// An [`Amplitude`] representing an extension of the [`Ylm`](crate::amplitudes::ylm::Ylm)
+/// [`Amplitude`] assuming a linearly polarized beam as described in Equation (D13)
+/// [here](https://arxiv.org/abs/1906.04841)[^1]
+///
+/// [^1]: Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in $`\eta\pi^0`$ photoproduction at GlueX. _Physical Review D_, **100**(5). [doi:10.1103/physrevd.100.054017](https://doi.org/10.1103/PhysRevD.100.054017)
+#[derive(Clone)]
+pub struct Zlm {
+    name: String,
+    l: usize,
+    m: isize,
+    r: Sign,
+    angles: Angles,
+    polarization: Polarization,
+    csid: ComplexScalarID,
+}
+
+impl Zlm {
+    /// Construct a new [`Zlm`] with the given name, angular momentum (`l`), moment (`m`), and
+    /// reflectivity (`r`) over the given set of [`Angles`] and [`Polarization`] [`Variable`]s.
+    pub fn new(
+        name: &str,
+        l: usize,
+        m: isize,
+        r: Sign,
+        angles: &Angles,
+        polarization: &Polarization,
+    ) -> Box<Self> {
+        Self {
+            name: name.to_string(),
+            l,
+            m,
+            r,
+            angles: angles.clone(),
+            polarization: polarization.clone(),
+            csid: ComplexScalarID::default(),
+        }
+        .into()
+    }
+}
+
+impl Amplitude for Zlm {
+    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+        self.csid = resources.register_complex_scalar(None);
+        resources.register_amplitude(&self.name)
+    }
+
+    fn precompute(&self, event: &Event, cache: &mut Cache) {
+        let ylm = spherical_harmonic(
+            self.l,
+            self.m,
+            self.angles.costheta.value(event),
+            self.angles.phi.value(event),
+        );
+        let pol_angle = self.polarization.pol_angle.value(event);
+        let pgamma = self.polarization.pol_magnitude.value(event);
+        let phase = Complex::new(Float::cos(pol_angle), Float::sin(pol_angle));
+        let zlm = ylm * phase;
+        cache.store_complex_scalar(
+            self.csid,
+            match self.r {
+                Sign::Positive => Complex::new(
+                    Float::sqrt(1.0 + pgamma) * zlm.re,
+                    Float::sqrt(1.0 - pgamma) * zlm.im,
+                ),
+                Sign::Negative => Complex::new(
+                    Float::sqrt(1.0 - pgamma) * zlm.re,
+                    Float::sqrt(1.0 + pgamma) * zlm.im,
+                ),
+            },
+        );
+    }
+
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+        cache.get_complex_scalar(self.csid)
+    }
+}
