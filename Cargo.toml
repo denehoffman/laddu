@@ -27,7 +27,7 @@ dyn-clone = "1.0.17"
 auto_ops = "0.3.0"
 rand = "0.8.5"
 rayon = { version = "1.10.0", optional = true }
-pyo3 = { version = "0.22.0", optional = true, features = ["num-complex"] }
+pyo3 = { version = "0.22.5", optional = true, features = ["num-complex"] }
 numpy = { version = "0.22.0", optional = true, features = ["nalgebra"] }
 
 [dev-dependencies]
