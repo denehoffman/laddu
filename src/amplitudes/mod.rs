@@ -1,10 +1,12 @@
 use std::{
+    convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use auto_ops::*;
 use dyn_clone::DynClone;
+use ganesh::{algorithms::LBFGSB, observers::DebugObserver, prelude::*};
 use num::Complex;
 
 #[cfg(feature = "rayon")]
@@ -551,5 +553,31 @@ impl NLL {
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
             .collect()
+    }
+}
+
+impl Function<Float, Expression, Infallible> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        expression: &mut Expression,
+    ) -> Result<Float, Infallible> {
+        Ok(self.evaluate(expression, parameters))
+    }
+}
+
+impl NLL {
+    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
+    /// quasi-Newton minimizer which supports bounded optimization.
+    pub fn minimize(
+        &self,
+        expression: &Expression,
+        p0: &[Float],
+        bounds: Option<Vec<(Float, Float)>>,
+    ) -> Status<Float> {
+        let mut m = Minimizer::new(LBFGSB::default(), self.parameters().len()).with_bounds(bounds);
+        let mut expression = expression.clone();
+        m.minimize(self, p0, &mut expression).unwrap();
+        m.status
     }
 }

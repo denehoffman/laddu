@@ -651,9 +651,28 @@ mod laddu {
         ) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
         }
+        #[pyo3(signature = (expression, p0, bounds = None))]
+        fn minimize<'py>(
+            &self,
+            py: Python<'py>,
             expression: &Expression,
+            p0: Vec<Float>,
+            bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.project(&parameters, &expression.0))
+            let bounds = bounds.map(|bounds_vec| {
+                bounds_vec
+                    .iter()
+                    .map(|(opt_lb, opt_ub)| {
+                        (
+                            opt_lb.unwrap_or(Float::NEG_INFINITY),
+                            opt_ub.unwrap_or(Float::INFINITY),
+                        )
+                    })
+                    .collect()
+            });
+            let status = self.0.minimize(&expression.0, &p0, bounds);
+            println!("{}", status);
+            PyArray1::from_slice_bound(py, status.x.as_slice())
         }
     }
 
