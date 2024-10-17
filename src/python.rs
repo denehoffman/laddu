@@ -578,7 +578,7 @@ mod laddu {
             parameters: Vec<Float>,
             expression: &Expression,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
-            PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters, &expression.0))
+            PyArray1::from_slice_bound(py, &self.0.evaluate(&expression.0, &parameters))
         }
     }
 
@@ -640,13 +640,17 @@ mod laddu {
             }
             Ok(())
         }
-        fn evaluate(&self, parameters: Vec<Float>, expression: &Expression) -> Float {
-            self.0.evaluate(&parameters, &expression.0)
+        fn evaluate(&self, expression: &Expression, parameters: Vec<Float>) -> Float {
+            self.0.evaluate(&expression.0, &parameters)
         }
         fn project<'py>(
             &self,
             py: Python<'py>,
+            expression: &Expression,
             parameters: Vec<Float>,
+        ) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
+        }
             expression: &Expression,
         ) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.project(&parameters, &expression.0))

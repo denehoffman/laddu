@@ -325,7 +325,7 @@ impl Evaluator {
     /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -356,7 +356,7 @@ impl Evaluator {
     /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -463,10 +463,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters, expression);
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(expression, parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .par_iter()
@@ -491,10 +491,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters, expression);
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(expression, parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .iter()
@@ -520,9 +520,9 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn project(&self, parameters: &[Float], expression: &Expression) -> Vec<Float> {
+    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .par_iter()
@@ -542,9 +542,9 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, parameters: &[Float], expression: &Expression) -> Vec<Float> {
+    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .iter()
