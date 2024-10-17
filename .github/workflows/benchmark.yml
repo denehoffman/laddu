@@ -9,4 +9,5 @@ jobs:
       - uses: boa-dev/criterion-compare-action@v3
         with:
           branchName: ${{ github.base_ref }}
+          benchName: "kmatrix_benchmark"
           token: ${{ secrets.GITHUB_TOKEN }}
