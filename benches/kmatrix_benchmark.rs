@@ -129,7 +129,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                     .collect();
                 p
             },
-            |p| black_box(nll.evaluate(&p, &model)),
+            |p| black_box(nll.evaluate(&model, &p)),
             BatchSize::SmallInput,
         )
     });
