@@ -150,9 +150,9 @@ We could then write some code to use this amplitude. For demonstration purposes,
 let ds_data = open("test_data/data.parquet").unwrap();
 let ds_mc = open("test_data/mc.parquet").unwrap();
 
-let resonance_mass = Mass::new(&[2, 3]);
-let p1_mass = Mass::new(&[2]);
-let p2_mass = Mass::new(&[3]);
+let resonance_mass = Mass::new([2, 3]);
+let p1_mass = Mass::new([2]);
+let p2_mass = Mass::new([3]);
 let mut manager = Manager::default();
 let bw = manager.register(MyBreitWigner::new(
     "bw",
