@@ -6,6 +6,7 @@ use num::traits::ConstOne;
 use num::traits::FloatConst;
 use num::Complex;
 
+use crate::LadduError;
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
     data::Event,
@@ -214,7 +215,7 @@ impl KopfKMatrixF0 {
 }
 
 impl Amplitude for KopfKMatrixF0 {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -330,7 +331,7 @@ impl KopfKMatrixF2 {
 }
 
 impl Amplitude for KopfKMatrixF2 {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -438,7 +439,7 @@ impl KopfKMatrixA0 {
 }
 
 impl Amplitude for KopfKMatrixA0 {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -550,7 +551,7 @@ impl KopfKMatrixA2 {
 }
 
 impl Amplitude for KopfKMatrixA2 {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -661,7 +662,7 @@ impl KopfKMatrixRho {
 }
 
 impl Amplitude for KopfKMatrixRho {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -768,7 +769,7 @@ impl KopfKMatrixPi1 {
 }
 
 impl Amplitude for KopfKMatrixPi1 {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);

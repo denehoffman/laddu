@@ -91,7 +91,7 @@
 //! }
 //!
 //! impl Amplitude for MyBreitWigner {
-//!     fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+//!     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //!         self.pid_mass = resources.register_parameter(&self.mass);
 //!         self.pid_width = resources.register_parameter(&self.width);
 //!         resources.register_amplitude(&self.name)
@@ -164,7 +164,7 @@
 //! # }
 //! #
 //! # impl Amplitude for MyBreitWigner {
-//! #     fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+//! #     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass);
 //! #         self.pid_width = resources.register_parameter(&self.width);
 //! #         resources.register_amplitude(&self.name)
@@ -201,8 +201,8 @@
 //!     &p1_mass,
 //!     &p2_mass,
 //!     &resonance_mass,
-//! ));
-//! let mag = manager.register(Scalar::new("mag", parameter("magnitude")));
+//! )).unwrap();
+//! let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
 //! let model = (mag * bw).norm_sqr();
 //!
 //! let nll = NLL::new(&manager, &ds_data, &ds_mc);
@@ -263,6 +263,9 @@
 
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
+use pyo3::PyErr;
+use thiserror::Error;
+
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes;
 /// Methods for loading and manipulating [`Event`](crate::data::Event)-based data.
@@ -292,7 +295,7 @@ pub mod prelude {
         Angles, CosTheta, Mass, Phi, PolAngle, PolMagnitude, Polarization, Variable,
     };
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
-    pub use crate::{Float, PI};
+    pub use crate::{Float, LadduError, PI};
     pub use nalgebra::{Vector3, Vector4};
     pub use num::Complex;
 }
@@ -316,3 +319,47 @@ pub const PI: Float = std::f64::consts::PI;
 /// The mathematical constant $`\pi`$.
 #[cfg(feature = "f32")]
 pub const PI: Float = std::f32::consts::PI;
+
+/// The error type used by all `laddu` internal methods
+#[derive(Error, Debug)]
+pub enum LadduError {
+    /// An alias for [`std::io::Error`].
+    #[error("IO Error: {0}")]
+    IOError(#[from] std::io::Error),
+    /// An alias for [`parquet::errors::ParquetError`].
+    #[error("Parquet Error: {0}")]
+    ParquetError(#[from] parquet::errors::ParquetError),
+    /// An alias for [`arrow::error::ArrowError`].
+    #[error("Arrow Error: {0}")]
+    ArrowError(#[from] arrow::error::ArrowError),
+    /// An alias for [`shellexpand::LookupError`].
+    #[error("Failed to expand path: {0}")]
+    LookupError(#[from] shellexpand::LookupError<std::env::VarError>),
+    /// An error which occurs when the user tries to register two amplitudes by the same name to
+    /// the same [`Manager`](crate::amplitudes::Manager).
+    #[error("An amplitude by the name \"{name}\" is already registered by this manager!")]
+    RegistrationError {
+        /// Name of amplitude which is already registered
+        name: String,
+    },
+    /// A custom fallback error for errors too complex or too infrequent to warrant their own error
+    /// category.
+    #[error("{0}")]
+    Custom(String),
+}
+
+#[cfg(feature = "python")]
+impl From<LadduError> for PyErr {
+    fn from(err: LadduError) -> Self {
+        use pyo3::exceptions::*;
+        let err_string = err.to_string();
+        match err {
+            LadduError::ParquetError(_) => PyIOError::new_err(err_string),
+            LadduError::ArrowError(_) => PyIOError::new_err(err_string),
+            LadduError::IOError(_) => PyIOError::new_err(err_string),
+            LadduError::LookupError(_) => PyValueError::new_err(err_string),
+            LadduError::RegistrationError { .. } => PyValueError::new_err(err_string),
+            LadduError::Custom(_) => PyException::new_err(err_string),
+        }
+    }
+}

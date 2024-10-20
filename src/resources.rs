@@ -6,7 +6,7 @@ use num::Complex;
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
-    Float,
+    Float, LadduError,
 };
 
 /// This struct holds references to the constants and free parameters used in the fit so that they
@@ -257,19 +257,22 @@ impl Resources {
     /// This method should be called at the end of the
     /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method. The
     /// [`Amplitude`](crate::amplitudes::Amplitude) should probably obtain a name [`String`] in its
-    /// constructor. If the [`Amplitude`](crate::amplitudes::Amplitude) is given the same name as
-    /// another, it typically implies that they share the same [`Cache`] values.
-    pub fn register_amplitude(&mut self, name: &str) -> AmplitudeID {
-        let next_id = AmplitudeID(name.to_string(), self.amplitudes.len());
-        let id = self
-            .amplitudes
-            .entry(name.to_string())
-            .or_insert(next_id)
-            .clone();
-        if id.1 == self.active.len() {
-            self.active.push(true);
+    /// constructor.
+    ///
+    /// # Errors
+    ///
+    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
+    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
+    pub fn register_amplitude(&mut self, name: &str) -> Result<AmplitudeID, LadduError> {
+        if self.amplitudes.contains_key(name) {
+            return Err(LadduError::RegistrationError {
+                name: name.to_string(),
+            });
         }
-        id
+        let next_id = AmplitudeID(name.to_string(), self.amplitudes.len());
+        self.amplitudes.insert(name.to_string(), next_id.clone());
+        self.active.push(true);
+        Ok(next_id)
     }
     /// Register a free parameter (or constant) [`ParameterLike`]. This method should be called
     /// within the [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the

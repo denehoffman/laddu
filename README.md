@@ -121,7 +121,7 @@ impl MyBreitWigner {
 }
 
 impl Amplitude for MyBreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
         self.pid_width = resources.register_parameter(&self.width);
         resources.register_amplitude(&self.name)
@@ -162,8 +162,8 @@ let bw = manager.register(MyBreitWigner::new(
     &p1_mass,
     &p2_mass,
     &resonance_mass,
-));
-let mag = manager.register(Scalar::new("mag", parameter("magnitude")));
+)).unwrap();
+let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
 let model = (mag * bw).norm_sqr();
 
 let nll = NLL::new(&manager, &ds_data, &ds_mc);

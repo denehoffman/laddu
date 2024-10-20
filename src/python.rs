@@ -510,8 +510,8 @@ mod laddu {
         fn new() -> Self {
             Self(rust::amplitudes::Manager::default())
         }
-        fn register(&mut self, amplitude: &Amplitude) -> AmplitudeID {
-            AmplitudeID(self.0.register(amplitude.0.clone()))
+        fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
+            Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
         fn load(&mut self, dataset: &Dataset) -> Evaluator {
             Evaluator(self.0.load(&dataset.0))

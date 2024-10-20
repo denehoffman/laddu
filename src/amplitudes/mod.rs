@@ -15,7 +15,7 @@ use rayon::prelude::*;
 use crate::{
     data::{Dataset, Event},
     resources::{Cache, Parameters, Resources},
-    Float,
+    Float, LadduError,
 };
 
 /// The Breit-Wigner amplitude.
@@ -66,7 +66,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// the free parameters and cached values used by this [`Amplitude`]. It should end by
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID;
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError>;
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on the data in an [`Event`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
@@ -254,11 +254,16 @@ pub struct Manager {
 impl Manager {
     /// Register the given [`Amplitude`] and return an [`AmplitudeID`] that can be used to build
     /// [`Expression`]s.
-    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> AmplitudeID {
+    ///
+    /// # Errors
+    ///
+    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
+    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
+    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> Result<AmplitudeID, LadduError> {
         let mut amp = amplitude.clone();
-        let aid = amp.register(&mut self.resources);
+        let aid = amp.register(&mut self.resources)?;
         self.amplitudes.push(amp);
-        aid
+        Ok(aid)
     }
     /// Create an [`Evaluator`] which can compute the result of any [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
