@@ -155,7 +155,7 @@ impl Cache {
 }
 
 /// An object which acts as a tag to refer to either a free parameter or a constant value.
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub enum ParameterID {
     /// A free parameter.
     Parameter(usize),
