@@ -12,7 +12,7 @@ mod laddu {
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
     use num::Complex;
-    use numpy::PyArray1;
+    use numpy::{PyArray1, PyArray2};
     use pyo3::exceptions::{PyIndexError, PyTypeError};
     use pyo3::types::PyList;
 
@@ -652,13 +652,12 @@ mod laddu {
             PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
         }
         #[pyo3(signature = (expression, p0, bounds = None))]
-        fn minimize<'py>(
+        fn minimize(
             &self,
-            py: Python<'py>,
             expression: &Expression,
             p0: Vec<Float>,
             bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        ) -> Bound<'py, PyArray1<Float>> {
+        ) -> Status {
             let bounds = bounds.map(|bounds_vec| {
                 bounds_vec
                     .iter()
@@ -671,8 +670,103 @@ mod laddu {
                     .collect()
             });
             let status = self.0.minimize(&expression.0, &p0, bounds);
-            println!("{}", status);
-            PyArray1::from_slice_bound(py, status.x.as_slice())
+            Status(status)
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    struct Status(ganesh::Status<Float>);
+    #[pymethods]
+    impl Status {
+        #[getter]
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, self.0.x.as_slice())
+        }
+        #[getter]
+        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
+            self.0
+                .err
+                .clone()
+                .map(|err| PyArray1::from_slice_bound(py, err.as_slice()))
+        }
+        #[getter]
+        fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, self.0.x0.as_slice())
+        }
+        #[getter]
+        fn fx(&self) -> Float {
+            self.0.fx
+        }
+        #[getter]
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.cov.clone().map(|cov| {
+                PyArray2::from_vec2_bound(
+                    py,
+                    &cov.row_iter()
+                        .map(|row| row.iter().cloned().collect())
+                        .collect::<Vec<Vec<Float>>>(),
+                )
+                .unwrap()
+            })
+        }
+        #[getter]
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.hess.clone().map(|hess| {
+                PyArray2::from_vec2_bound(
+                    py,
+                    &hess
+                        .row_iter()
+                        .map(|row| row.iter().cloned().collect())
+                        .collect::<Vec<Vec<Float>>>(),
+                )
+                .unwrap()
+            })
+        }
+        #[getter]
+        fn message(&self) -> String {
+            self.0.message.clone()
+        }
+        #[getter]
+        fn converged(&self) -> bool {
+            self.0.converged
+        }
+        #[getter]
+        fn bounds(&self) -> Option<Vec<ParameterBound>> {
+            self.0
+                .bounds
+                .clone()
+                .map(|bounds| bounds.iter().map(|bound| ParameterBound(*bound)).collect())
+        }
+        #[getter]
+        fn n_f_evals(&self) -> usize {
+            self.0.n_f_evals
+        }
+        #[getter]
+        fn n_g_evals(&self) -> usize {
+            self.0.n_g_evals
+        }
+        fn __str__(&self) -> String {
+            self.0.to_string()
+        }
+        fn __repr__(&self) -> String {
+            format!("{:?}", self.0)
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    #[pyo3(name = "Bound")]
+    struct ParameterBound(ganesh::Bound<Float>);
+    #[pymethods]
+    impl ParameterBound {
+        #[getter]
+        fn lower(&self) -> Float {
+            self.0.lower()
+        }
+        #[getter]
+        fn upper(&self) -> Float {
+            self.0.upper()
         }
     }
 

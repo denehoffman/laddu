@@ -580,9 +580,12 @@ impl NLL {
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
     ) -> Status<Float> {
-        let mut m = Minimizer::new(LBFGSB::default(), self.parameters().len()).with_bounds(bounds);
+        let mut m = Minimizer::new(LBFGSB::default(), self.parameters().len())
+            .with_bounds(bounds)
+            .with_observer(DebugObserver);
         let mut expression = expression.clone();
-        m.minimize(self, p0, &mut expression).unwrap();
+        m.minimize(self, p0, &mut expression)
+            .unwrap_or_else(|never| match never {});
         m.status
     }
 }
