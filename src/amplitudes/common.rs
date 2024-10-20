@@ -4,7 +4,7 @@ use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
     data::Event,
     resources::{Cache, ParameterID, Parameters, Resources},
-    Float,
+    Float, LadduError,
 };
 
 use super::Amplitude;
@@ -30,7 +30,7 @@ impl Scalar {
 }
 
 impl Amplitude for Scalar {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid = resources.register_parameter(&self.value);
         resources.register_amplitude(&self.name)
     }
@@ -66,7 +66,7 @@ impl ComplexScalar {
 }
 
 impl Amplitude for ComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_re = resources.register_parameter(&self.re);
         self.pid_im = resources.register_parameter(&self.im);
         resources.register_amplitude(&self.name)
@@ -103,7 +103,7 @@ impl PolarComplexScalar {
 }
 
 impl Amplitude for PolarComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_r = resources.register_parameter(&self.r);
         self.pid_theta = resources.register_parameter(&self.theta);
         resources.register_amplitude(&self.name)

@@ -8,7 +8,7 @@ use crate::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Float,
+    Float, LadduError,
 };
 
 use super::Amplitude;
@@ -39,7 +39,7 @@ impl Ylm {
 }
 
 impl Amplitude for Ylm {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }

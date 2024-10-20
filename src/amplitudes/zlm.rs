@@ -9,7 +9,7 @@ use crate::{
         functions::spherical_harmonic,
         variables::{Angles, Polarization, Variable},
     },
-    Float,
+    Float, LadduError,
 };
 
 use super::Amplitude;
@@ -55,7 +55,7 @@ impl Zlm {
 }
 
 impl Amplitude for Zlm {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }

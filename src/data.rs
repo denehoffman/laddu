@@ -3,13 +3,14 @@ use arrow::record_batch::RecordBatch;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::path::Path;
 use std::sync::Arc;
 use std::{fmt::Display, fs::File};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-use crate::{utils::vectors::FourMomentum, Float};
+use crate::{utils::vectors::FourMomentum, Float, LadduError};
 
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
@@ -154,13 +155,13 @@ impl Dataset {
 
 /// Open a Parquet file and read the data into a [`Dataset`].
 #[cfg(feature = "rayon")]
-pub fn open(file_path: &str) -> Result<Arc<Dataset>, Box<dyn std::error::Error>> {
+pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
+    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
     let file = File::open(file_path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    // First pass: Collect events without setting the index
     let events: Vec<Event> = batches
         .into_par_iter()
         .flat_map(|batch| {
@@ -262,13 +263,13 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, Box<dyn std::error::Error>>
 
 /// Open a Parquet file and read the data into a [`Dataset`].
 #[cfg(not(feature = "rayon"))]
-pub fn open(file_path: &str) -> Result<Arc<Dataset>, Box<dyn std::error::Error>> {
+pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
+    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
     let file = File::open(file_path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    // First pass: Collect events without setting the index
     let events: Vec<Event> = batches
         .into_iter()
         .flat_map(|batch| {
