@@ -285,7 +285,7 @@ pub mod prelude {
         zlm::Zlm,
         Amplitude, AmplitudeID, Evaluator, Expression, Manager, ParameterLike, NLL,
     };
-    pub use crate::data::{open, Dataset, Event};
+    pub use crate::data::{open, open_binned, open_filtered, BinnedDataset, Dataset, Event};
     pub use crate::resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
         Parameters, Resources, ScalarID, VectorID,
