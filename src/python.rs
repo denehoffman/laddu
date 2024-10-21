@@ -247,9 +247,60 @@ mod laddu {
         }
     }
 
+    #[pyclass]
+    struct BinnedDataset(rust::data::BinnedDataset);
+
+    #[pymethods]
+    impl BinnedDataset {
+        fn __len__(&self) -> usize {
+            self.0.len()
+        }
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+        #[getter]
+        fn bins(&self) -> usize {
+            self.0.bins()
+        }
+        #[getter]
+        fn range(&self) -> (Float, Float) {
+            self.0.range()
+        }
+        #[getter]
+        fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, &self.0.edges())
+        }
+        fn __getitem__(&self, index: usize) -> PyResult<Dataset> {
+            self.0
+                .get(index)
+                .ok_or(PyIndexError::new_err("index out of range"))
+                .map(|rust_dataset| Dataset(rust_dataset.clone()))
+        }
+    }
+
     #[pyfunction]
     fn open(path: &str) -> PyResult<Dataset> {
-        Ok(Dataset(rust::data::open(path).unwrap()))
+        Ok(Dataset(rust::data::open(path)?))
+    }
+    #[pyfunction]
+    #[pyo3(signature = (path, *, variable, bins, range))]
+    fn open_binned(
+        path: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+    ) -> PyResult<BinnedDataset> {
+        let rust_variable = if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
+            py_mass.0.clone()
+        } else {
+            return Err(PyTypeError::new_err("Unsupported variable!"));
+        };
+        Ok(BinnedDataset(rust::data::open_binned(
+            path,
+            rust_variable,
+            bins,
+            range,
+        )?))
     }
 
     #[pyclass]

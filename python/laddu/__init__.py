@@ -2,7 +2,7 @@ from laddu.amplitudes import NLL, Manager, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
-from laddu.data import Dataset, open
+from laddu.data import BinnedDataset, Dataset, open, open_binned
 from laddu.utils.variables import Angles, CosTheta, Mass, Phi, PolAngle, Polarization, PolMagnitude
 from laddu.utils.vectors import Vector3, Vector4
 
@@ -15,6 +15,8 @@ __all__ = [
     "__version__",
     "Dataset",
     "open",
+    "BinnedDataset",
+    "open_binned",
     "utils",
     "data",
     "amplitudes",
