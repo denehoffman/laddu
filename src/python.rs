@@ -1,5 +1,4 @@
 use ganesh::Observer;
-use laddu::PyObserver;
 use pyo3::{
     prelude::*,
     types::{PyTuple, PyTupleMethods},
@@ -1176,7 +1175,7 @@ pub(crate) mod laddu {
     }
 }
 
-impl Observer<Float, Expression> for PyObserver {
+impl Observer<Float, Expression> for crate::python::laddu::PyObserver {
     fn callback(
         &mut self,
         step: usize,
@@ -1218,8 +1217,8 @@ impl Observer<Float, Expression> for PyObserver {
         result
     }
 }
-impl FromPyObject<'_> for PyObserver {
+impl FromPyObject<'_> for crate::python::laddu::PyObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(PyObserver(ob.clone().into()))
+        Ok(crate::python::laddu::PyObserver(ob.clone().into()))
     }
 }
