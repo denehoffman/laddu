@@ -1,3 +1,5 @@
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
 
@@ -54,7 +56,15 @@ class NLL:
         self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
-        self, expression: Expression, p0: list[float], bounds: list[tuple[float | None, float | None]] | None = None
+        self,
+        expression: Expression,
+        p0: list[float],
+        bounds: list[tuple[float | None, float | None]] | None = None,
+        method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
+        max_steps: int = 4000,
+        debug: bool = False,  # noqa: FBT001, FBT002
+        verbose: bool = False,  # noqa: FBT001, FBT002
+        **kwargs,
     ) -> Status: ...
 
 class Status:

@@ -1,20 +1,33 @@
-use pyo3::prelude::*;
+use ganesh::Observer;
+use laddu::PyObserver;
+use pyo3::{
+    prelude::*,
+    types::{PyTuple, PyTupleMethods},
+};
+
+use crate::{prelude::Expression, Float};
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
-mod laddu {
+pub(crate) mod laddu {
     use std::array;
     use std::sync::Arc;
 
     use super::*;
     use crate as rust;
+    use crate::prelude::MinimizerOptions;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
+    use ganesh::algorithms::lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator};
+    use ganesh::algorithms::nelder_mead::{
+        NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod,
+    };
+    use ganesh::algorithms::{NelderMead, LBFGSB};
     use num::Complex;
     use numpy::{PyArray1, PyArray2};
-    use pyo3::exceptions::{PyIndexError, PyTypeError};
-    use pyo3::types::PyList;
+    use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+    use pyo3::types::{PyDict, PyList};
 
     #[pyfunction]
     fn version() -> String {
@@ -283,7 +296,7 @@ mod laddu {
         Ok(Dataset(rust::data::open(path)?))
     }
     #[pyfunction]
-    #[pyo3(signature = (path, *, variable, bins, range))]
+    #[pyo3(signature = (path, variable, bins, range))]
     fn open_binned(
         path: &str,
         variable: Bound<'_, PyAny>,
@@ -328,6 +341,7 @@ mod laddu {
     #[pymethods]
     impl CosTheta {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -358,6 +372,7 @@ mod laddu {
     #[pymethods]
     impl Phi {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -387,6 +402,7 @@ mod laddu {
     #[pymethods]
     impl Angles {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -473,7 +489,7 @@ mod laddu {
 
     #[pyclass]
     #[derive(Clone)]
-    struct Expression(rust::amplitudes::Expression);
+    pub(crate) struct Expression(pub(crate) rust::amplitudes::Expression);
 
     #[pymethods]
     impl AmplitudeID {
@@ -636,6 +652,23 @@ mod laddu {
     #[pyclass]
     struct NLL(rust::amplitudes::NLL);
 
+    trait GetStrExtractObj {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>;
+    }
+
+    impl GetStrExtractObj for Bound<'_, PyDict> {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>,
+        {
+            self.get_item(key)?
+                .map(|value| value.extract::<T>())
+                .transpose()
+        }
+    }
+
     #[pymethods]
     impl NLL {
         #[new]
@@ -702,13 +735,19 @@ mod laddu {
         ) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
         }
-        #[pyo3(signature = (expression, p0, bounds = None))]
+        #[pyo3(signature = (expression, p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[allow(clippy::too_many_arguments)]
         fn minimize(
             &self,
             expression: &Expression,
             p0: Vec<Float>,
             bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        ) -> Status {
+            method: &str,
+            max_steps: usize,
+            debug: bool,
+            verbose: bool,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Status> {
             let bounds = bounds.map(|bounds_vec| {
                 bounds_vec
                     .iter()
@@ -720,14 +759,161 @@ mod laddu {
                     })
                     .collect()
             });
-            let status = self.0.minimize(&expression.0, &p0, bounds);
-            Status(status)
+            let n_parameters = p0.len();
+            let mut options = MinimizerOptions::default();
+            if let Some(kwargs) = kwargs {
+                let show_step = kwargs.get_extract::<bool>("show_step")?.unwrap_or(true);
+                let show_x = kwargs.get_extract::<bool>("show_x")?.unwrap_or(true);
+                let show_fx = kwargs.get_extract::<bool>("show_fx")?.unwrap_or(true);
+                let tol_x_rel = kwargs
+                    .get_extract::<Float>("tol_x_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_x_abs = kwargs
+                    .get_extract::<Float>("tol_x_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_rel = kwargs
+                    .get_extract::<Float>("tol_f_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_abs = kwargs
+                    .get_extract::<Float>("tol_f_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_g_abs = kwargs
+                    .get_extract::<Float>("tol_g_abs")?
+                    .unwrap_or(Float::cbrt(Float::EPSILON));
+                let g_tolerance = kwargs.get_extract::<Float>("g_tolerance")?.unwrap_or(1e-5);
+                let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
+                let alpha = kwargs.get_extract::<Float>("alpha")?;
+                let beta = kwargs.get_extract::<Float>("beta")?;
+                let gamma = kwargs.get_extract::<Float>("gamma")?;
+                let delta = kwargs.get_extract::<Float>("delta")?;
+                let simplex_expansion_method = kwargs
+                    .get_extract::<String>("simplex_expansion_method")?
+                    .unwrap_or("greedy minimization".into());
+                let nelder_mead_f_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_f_terminator")?
+                    .unwrap_or("stddev".into());
+                let nelder_mead_x_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_x_terminator")?
+                    .unwrap_or("singer".into());
+                let mut observers: Vec<PyObserver> = Vec::default();
+                // } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+                //     let vec: Vec<String> = list_arg.extract()?;
+                if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
+                    if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
+                        for item in observer_list.iter() {
+                            let observer = item.extract::<PyObserver>()?;
+                            observers.push(observer);
+                        }
+                    } else if let Ok(single_observer) = observer_arg.extract::<PyObserver>() {
+                        observers.push(single_observer);
+                    } else {
+                        return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
+                    }
+                }
+                for observer in observers {
+                    options = options.with_observer(observer);
+                }
+                match method {
+                    "lbfgsb" => {
+                        options = options.with_algorithm(
+                            LBFGSB::default()
+                                .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
+                                .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
+                                .with_g_tolerance(g_tolerance),
+                        )
+                    }
+                    "nelder_mead" => {
+                        let terminator_f = match nelder_mead_f_terminator.as_str() {
+                            "amoeba" => NelderMeadFTerminator::Amoeba { tol_f_rel },
+                            "absolute" => NelderMeadFTerminator::Absolute { tol_f_abs },
+                            "stddev" => NelderMeadFTerminator::StdDev { tol_f_abs },
+                            "none" => NelderMeadFTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_f_terminator\": \"{}\"",
+                                    nelder_mead_f_terminator
+                                )))
+                            }
+                        };
+                        let terminator_x = match nelder_mead_x_terminator.as_str() {
+                            "diameter" => NelderMeadXTerminator::Diameter { tol_x_abs },
+                            "higham" => NelderMeadXTerminator::Higham { tol_x_rel },
+                            "rowan" => NelderMeadXTerminator::Rowan { tol_x_rel },
+                            "singer" => NelderMeadXTerminator::Singer { tol_x_rel },
+                            "none" => NelderMeadXTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_x_terminator\": \"{}\"",
+                                    nelder_mead_x_terminator
+                                )))
+                            }
+                        };
+                        let simplex_expansion_method = match simplex_expansion_method.as_str() {
+                            "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
+                            "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"simplex_expansion_method\": \"{}\"",
+                                    simplex_expansion_method
+                                )))
+                            }
+                        };
+                        let mut nelder_mead = NelderMead::default()
+                            .with_terminator_f(terminator_f)
+                            .with_terminator_x(terminator_x)
+                            .with_expansion_method(simplex_expansion_method);
+                        if adaptive {
+                            nelder_mead = nelder_mead.with_adaptive(n_parameters);
+                        }
+                        if let Some(alpha) = alpha {
+                            nelder_mead = nelder_mead.with_alpha(alpha);
+                        }
+                        if let Some(beta) = beta {
+                            nelder_mead = nelder_mead.with_beta(beta);
+                        }
+                        if let Some(gamma) = gamma {
+                            nelder_mead = nelder_mead.with_gamma(gamma);
+                        }
+                        if let Some(delta) = delta {
+                            nelder_mead = nelder_mead.with_delta(delta);
+                        }
+                        options = options.with_algorithm(nelder_mead)
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid \"method\": \"{}\"",
+                            method
+                        )))
+                    }
+                }
+                if debug {
+                    options = options.debug();
+                }
+                if verbose {
+                    options = options.verbose(show_step, show_x, show_fx);
+                }
+                options = options.with_max_steps(max_steps);
+            }
+            let status = self.0.minimize(&expression.0, &p0, bounds, Some(options));
+            Ok(Status(status))
+        }
+    }
+
+    #[pyclass]
+    #[pyo3(name = "Observer")]
+    pub(crate) struct PyObserver(pub(crate) Py<PyAny>);
+
+    #[pymethods]
+    impl PyObserver {
+        #[new]
+        pub fn new(observer: Py<PyAny>) -> Self {
+            Self(observer)
         }
     }
 
     #[pyclass]
     #[derive(Clone)]
-    struct Status(ganesh::Status<Float>);
+    pub(crate) struct Status(pub(crate) ganesh::Status<Float>);
     #[pymethods]
     impl Status {
         #[getter]
@@ -987,5 +1173,53 @@ mod laddu {
             channel,
             &mass.0,
         ))
+    }
+}
+
+impl Observer<Float, Expression> for PyObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        status: &mut ganesh::Status<Float>,
+        expression: &mut Expression,
+    ) -> bool {
+        let (new_status, new_expression, result) = Python::with_gil(|py| {
+            let res = self
+                .0
+                .bind(py)
+                .call_method(
+                    "callback",
+                    (
+                        step,
+                        laddu::Status(status.clone()),
+                        laddu::Expression(expression.clone()),
+                    ),
+                    None,
+                )
+                .unwrap();
+            let res_tuple = res.downcast::<PyTuple>().unwrap();
+            let new_status = res_tuple
+                .get_item(0)
+                .unwrap()
+                .extract::<laddu::Status>()
+                .unwrap()
+                .0;
+            let new_expression = res_tuple
+                .get_item(1)
+                .unwrap()
+                .extract::<laddu::Expression>()
+                .unwrap()
+                .0;
+            let result = res_tuple.get_item(2).unwrap().extract::<bool>().unwrap();
+            (new_status, new_expression, result)
+        });
+        *status = new_status;
+        *expression = new_expression;
+        result
+    }
+}
+impl FromPyObject<'_> for PyObserver {
+    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(PyObserver(ob.clone().into()))
     }
 }

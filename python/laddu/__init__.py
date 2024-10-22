@@ -1,4 +1,6 @@
-from laddu.amplitudes import NLL, Manager, constant, parameter
+from abc import ABCMeta, abstractmethod
+
+from laddu.amplitudes import NLL, Expression, Manager, Status, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
@@ -11,6 +13,13 @@ from . import amplitudes, data, utils
 from .laddu import version
 
 __version__ = version()
+
+
+class Observer(metaclass=ABCMeta):
+    @abstractmethod
+    def callback(self, step: int, status: Status, expression: Expression) -> tuple[Status, Expression, bool]:
+        pass
+
 
 __all__ = [
     "__version__",
@@ -32,6 +41,9 @@ __all__ = [
     "Mass",
     "Manager",
     "NLL",
+    "Expression",
+    "Status",
+    "Observer",
     "parameter",
     "constant",
     "Scalar",

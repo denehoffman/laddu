@@ -571,6 +571,106 @@ impl Function<Float, Expression, Infallible> for NLL {
     }
 }
 
+/// A set of options that are used when minimizations are performed.
+pub struct MinimizerOptions {
+    algorithm: Box<dyn ganesh::Algorithm<Float, Expression, Infallible>>,
+    observers: Vec<Box<dyn Observer<Float, Expression>>>,
+    max_steps: usize,
+}
+
+impl Default for MinimizerOptions {
+    fn default() -> Self {
+        Self {
+            algorithm: Box::new(LBFGSB::default()),
+            observers: Default::default(),
+            max_steps: 4000,
+        }
+    }
+}
+
+struct VerboseObserver {
+    show_step: bool,
+    show_x: bool,
+    show_fx: bool,
+}
+impl Observer<Float, Expression> for VerboseObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        status: &mut Status<Float>,
+        _user_data: &mut Expression,
+    ) -> bool {
+        if self.show_step {
+            println!("Step: {}", step);
+        }
+        if self.show_x {
+            println!("Current Best Position: {}", status.x.transpose());
+        }
+        if self.show_fx {
+            println!("Current Best Value: {}", status.fx);
+        }
+        true
+    }
+}
+
+impl MinimizerOptions {
+    /// Adds the [`DebugObserver`] to the minimization.
+    pub fn debug(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(DebugObserver));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Adds a customizable [`VerboseObserver`] to the minimization.
+    pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(VerboseObserver {
+            show_step,
+            show_x,
+            show_fx,
+        }));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
+    /// settings).
+    pub fn with_algorithm<A: Algorithm<Float, Expression, Infallible> + 'static>(
+        self,
+        algorithm: A,
+    ) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: self.observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
+    pub fn with_observer<O: Observer<Float, Expression> + 'static>(self, observer: O) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(observer));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+
+    /// Set the maximum number of [`Algorithm`] steps for the minimization (default: 4000).
+    pub fn with_max_steps(self, max_steps: usize) -> Self {
+        Self {
+            algorithm: self.algorithm,
+            observers: self.observers,
+            max_steps,
+        }
+    }
+}
+
 impl NLL {
     /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
     /// quasi-Newton minimizer which supports bounded optimization.
@@ -579,10 +679,13 @@ impl NLL {
         expression: &Expression,
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
+        options: Option<MinimizerOptions>,
     ) -> Status<Float> {
-        let mut m = Minimizer::new(LBFGSB::default(), self.parameters().len())
+        let options = options.unwrap_or_default();
+        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
-            .with_observer(DebugObserver);
+            .with_observers(options.observers)
+            .with_max_steps(options.max_steps);
         let mut expression = expression.clone();
         m.minimize(self, p0, &mut expression)
             .unwrap_or_else(|never| match never {});
