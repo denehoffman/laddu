@@ -1,10 +1,12 @@
 use std::{
+    convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use auto_ops::*;
 use dyn_clone::DynClone;
+use ganesh::{algorithms::LBFGSB, observers::DebugObserver, prelude::*};
 use num::Complex;
 
 #[cfg(feature = "rayon")]
@@ -13,7 +15,7 @@ use rayon::prelude::*;
 use crate::{
     data::{Dataset, Event},
     resources::{Cache, Parameters, Resources},
-    Float,
+    Float, LadduError,
 };
 
 /// The Breit-Wigner amplitude.
@@ -64,7 +66,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// the free parameters and cached values used by this [`Amplitude`]. It should end by
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID;
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError>;
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on the data in an [`Event`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
@@ -252,11 +254,16 @@ pub struct Manager {
 impl Manager {
     /// Register the given [`Amplitude`] and return an [`AmplitudeID`] that can be used to build
     /// [`Expression`]s.
-    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> AmplitudeID {
+    ///
+    /// # Errors
+    ///
+    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
+    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
+    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> Result<AmplitudeID, LadduError> {
         let mut amp = amplitude.clone();
-        let aid = amp.register(&mut self.resources);
+        let aid = amp.register(&mut self.resources)?;
         self.amplitudes.push(amp);
-        aid
+        Ok(aid)
     }
     /// Create an [`Evaluator`] which can compute the result of any [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
@@ -325,7 +332,7 @@ impl Evaluator {
     /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -356,7 +363,7 @@ impl Evaluator {
     /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -463,10 +470,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters, expression);
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(expression, parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .par_iter()
@@ -491,10 +498,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float], expression: &Expression) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters, expression);
+    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(expression, parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .iter()
@@ -520,9 +527,9 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn project(&self, parameters: &[Float], expression: &Expression) -> Vec<Float> {
+    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .par_iter()
@@ -542,14 +549,146 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, parameters: &[Float], expression: &Expression) -> Vec<Float> {
+    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters, expression);
+        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .iter()
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
             .collect()
+    }
+}
+
+impl Function<Float, Expression, Infallible> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        expression: &mut Expression,
+    ) -> Result<Float, Infallible> {
+        Ok(self.evaluate(expression, parameters))
+    }
+}
+
+/// A set of options that are used when minimizations are performed.
+pub struct MinimizerOptions {
+    algorithm: Box<dyn ganesh::Algorithm<Float, Expression, Infallible>>,
+    observers: Vec<Box<dyn Observer<Float, Expression>>>,
+    max_steps: usize,
+}
+
+impl Default for MinimizerOptions {
+    fn default() -> Self {
+        Self {
+            algorithm: Box::new(LBFGSB::default()),
+            observers: Default::default(),
+            max_steps: 4000,
+        }
+    }
+}
+
+struct VerboseObserver {
+    show_step: bool,
+    show_x: bool,
+    show_fx: bool,
+}
+impl Observer<Float, Expression> for VerboseObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        status: &mut Status<Float>,
+        _user_data: &mut Expression,
+    ) -> bool {
+        if self.show_step {
+            println!("Step: {}", step);
+        }
+        if self.show_x {
+            println!("Current Best Position: {}", status.x.transpose());
+        }
+        if self.show_fx {
+            println!("Current Best Value: {}", status.fx);
+        }
+        true
+    }
+}
+
+impl MinimizerOptions {
+    /// Adds the [`DebugObserver`] to the minimization.
+    pub fn debug(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(DebugObserver));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Adds a customizable [`VerboseObserver`] to the minimization.
+    pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(VerboseObserver {
+            show_step,
+            show_x,
+            show_fx,
+        }));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
+    /// settings).
+    pub fn with_algorithm<A: Algorithm<Float, Expression, Infallible> + 'static>(
+        self,
+        algorithm: A,
+    ) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: self.observers,
+            max_steps: self.max_steps,
+        }
+    }
+    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
+    pub fn with_observer<O: Observer<Float, Expression> + 'static>(self, observer: O) -> Self {
+        let mut observers = self.observers;
+        observers.push(Box::new(observer));
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+        }
+    }
+
+    /// Set the maximum number of [`Algorithm`] steps for the minimization (default: 4000).
+    pub fn with_max_steps(self, max_steps: usize) -> Self {
+        Self {
+            algorithm: self.algorithm,
+            observers: self.observers,
+            max_steps,
+        }
+    }
+}
+
+impl NLL {
+    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
+    /// quasi-Newton minimizer which supports bounded optimization.
+    pub fn minimize(
+        &self,
+        expression: &Expression,
+        p0: &[Float],
+        bounds: Option<Vec<(Float, Float)>>,
+        options: Option<MinimizerOptions>,
+    ) -> Status<Float> {
+        let options = options.unwrap_or_default();
+        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
+            .with_bounds(bounds)
+            .with_observers(options.observers)
+            .with_max_steps(options.max_steps);
+        let mut expression = expression.clone();
+        m.minimize(self, p0, &mut expression)
+            .unwrap_or_else(|never| match never {});
+        m.status
     }
 }

@@ -20,96 +20,114 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_data = open("benches/bench.parquet").unwrap();
     let ds_mc = open("benches/bench.parquet").unwrap();
 
-    let angles = Angles::new(0, &[1], &[2], &[2, 3], Frame::Helicity);
-    let polarization = Polarization::new(0, &[1]);
-    let resonance_mass = Mass::new(&[2, 3]);
+    let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+    let polarization = Polarization::new(0, [1]);
+    let resonance_mass = Mass::new([2, 3]);
     let mut manager = Manager::default();
-    let z00p = manager.register(Zlm::new(
-        "Z00+",
-        0,
-        0,
-        Sign::Positive,
-        &angles,
-        &polarization,
-    ));
-    let z00n = manager.register(Zlm::new(
-        "Z00-",
-        0,
-        0,
-        Sign::Negative,
-        &angles,
-        &polarization,
-    ));
-    let z22p = manager.register(Zlm::new(
-        "Z22+",
-        2,
-        2,
-        Sign::Positive,
-        &angles,
-        &polarization,
-    ));
-    let f0p = manager.register(KopfKMatrixF0::new(
-        "f0",
-        [
-            [constant(0.0), constant(0.0)],
-            [parameter("f0(980)+ re"), constant(0.0)],
-            [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
-            [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
-            [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
-        ],
-        0,
-        &resonance_mass,
-    ));
-    let a0p = manager.register(KopfKMatrixA0::new(
-        "a0",
-        [
-            [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
-            [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
-        ],
-        0,
-        &resonance_mass,
-    ));
-    let f0n = manager.register(KopfKMatrixF0::new(
-        "f0",
-        [
-            [constant(0.0), constant(0.0)],
-            [parameter("f0(980)- re"), constant(0.0)],
-            [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
-            [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
-            [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
-        ],
-        0,
-        &resonance_mass,
-    ));
-    let a0n = manager.register(KopfKMatrixA0::new(
-        "a0",
-        [
-            [parameter("a0(980)- re"), parameter("a0(980)- im")],
-            [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
-        ],
-        0,
-        &resonance_mass,
-    ));
-    let f2 = manager.register(KopfKMatrixF2::new(
-        "f2",
-        [
-            [parameter("f2(1270) re"), parameter("f2(1270) im")],
-            [parameter("f2(1525) re"), parameter("f2(1525) im")],
-            [parameter("f2(1850) re"), parameter("f2(1850) im")],
-            [parameter("f2(1910) re"), parameter("f2(1910) im")],
-        ],
-        2,
-        &resonance_mass,
-    ));
-    let a2 = manager.register(KopfKMatrixA2::new(
-        "a2",
-        [
-            [parameter("a2(1320) re"), parameter("a2(1320) im")],
-            [parameter("a2(1700) re"), parameter("a2(1700) im")],
-        ],
-        2,
-        &resonance_mass,
-    ));
+    let z00p = manager
+        .register(Zlm::new(
+            "Z00+",
+            0,
+            0,
+            Sign::Positive,
+            &angles,
+            &polarization,
+        ))
+        .unwrap();
+    let z00n = manager
+        .register(Zlm::new(
+            "Z00-",
+            0,
+            0,
+            Sign::Negative,
+            &angles,
+            &polarization,
+        ))
+        .unwrap();
+    let z22p = manager
+        .register(Zlm::new(
+            "Z22+",
+            2,
+            2,
+            Sign::Positive,
+            &angles,
+            &polarization,
+        ))
+        .unwrap();
+    let f0p = manager
+        .register(KopfKMatrixF0::new(
+            "f0+",
+            [
+                [constant(0.0), constant(0.0)],
+                [parameter("f0(980)+ re"), constant(0.0)],
+                [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
+                [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
+                [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
+            ],
+            0,
+            &resonance_mass,
+        ))
+        .unwrap();
+    let a0p = manager
+        .register(KopfKMatrixA0::new(
+            "a0+",
+            [
+                [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
+                [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
+            ],
+            0,
+            &resonance_mass,
+        ))
+        .unwrap();
+    let f0n = manager
+        .register(KopfKMatrixF0::new(
+            "f0-",
+            [
+                [constant(0.0), constant(0.0)],
+                [parameter("f0(980)- re"), constant(0.0)],
+                [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
+                [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
+                [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
+            ],
+            0,
+            &resonance_mass,
+        ))
+        .unwrap();
+    let a0n = manager
+        .register(KopfKMatrixA0::new(
+            "a0-",
+            [
+                [parameter("a0(980)- re"), parameter("a0(980)- im")],
+                [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
+            ],
+            0,
+            &resonance_mass,
+        ))
+        .unwrap();
+    let f2 = manager
+        .register(KopfKMatrixF2::new(
+            "f2",
+            [
+                [parameter("f2(1270) re"), parameter("f2(1270) im")],
+                [parameter("f2(1525) re"), parameter("f2(1525) im")],
+                [parameter("f2(1850) re"), parameter("f2(1850) im")],
+                [parameter("f2(1910) re"), parameter("f2(1910) im")],
+            ],
+            2,
+            &resonance_mass,
+        ))
+        .unwrap();
+    let a2 = manager
+        .register(KopfKMatrixA2::new(
+            "a2",
+            [
+                [parameter("a2(1320) re"), parameter("a2(1320) im")],
+                [parameter("a2(1700) re"), parameter("a2(1700) im")],
+            ],
+            2,
+            &resonance_mass,
+        ))
+        .unwrap();
     let s0p = f0p + a0p;
     let s0n = f0n + a0n;
     let d2p = f2 + a2;
@@ -129,7 +147,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                     .collect();
                 p
             },
-            |p| black_box(nll.evaluate(&p, &model)),
+            |p| black_box(nll.evaluate(&model, &p)),
             BatchSize::SmallInput,
         )
     });

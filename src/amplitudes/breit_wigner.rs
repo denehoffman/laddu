@@ -8,7 +8,7 @@ use crate::{
         functions::{blatt_weisskopf, breakup_momentum},
         variables::{Mass, Variable},
     },
-    Float, PI,
+    Float, LadduError, PI,
 };
 
 use super::{Amplitude, AmplitudeID};
@@ -63,7 +63,7 @@ impl BreitWigner {
 }
 
 impl Amplitude for BreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
         self.pid_width = resources.register_parameter(&self.width);
         resources.register_amplitude(&self.name)

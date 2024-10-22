@@ -1,3 +1,5 @@
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
 
@@ -37,7 +39,9 @@ class Evaluator:
     def deactivate(self, name: str | list[str]) -> None: ...
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(self, parameters: list[float], expression: Expression) -> npt.NDArray[np.complex128]: ...
+    def evaluate(
+        self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.complex128]: ...
 
 class NLL:
     parameters: list[str]
@@ -47,8 +51,38 @@ class NLL:
     def deactivate(self, name: str | list[str]) -> None: ...
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(self, parameters: list[float], expression: Expression) -> float: ...
-    def project(self, parameters: list[float], expression: Expression) -> npt.NDArray[np.float64]: ...
+    def evaluate(self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
+    def project(
+        self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]: ...
+    def minimize(
+        self,
+        expression: Expression,
+        p0: list[float],
+        bounds: list[tuple[float | None, float | None]] | None = None,
+        method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
+        max_steps: int = 4000,
+        debug: bool = False,  # noqa: FBT001, FBT002
+        verbose: bool = False,  # noqa: FBT001, FBT002
+        **kwargs,
+    ) -> Status: ...
+
+class Status:
+    x: npt.NDArray[np.float64]
+    err: npt.NDArray[np.float64] | None
+    x0: npt.NDArray[np.float64]
+    fx: float
+    cov: npt.NDArray[np.float64] | None
+    hess: npt.NDArray[np.float64] | None
+    message: str
+    converged: bool
+    bounds: list[Bound] | None
+    n_f_evals: int
+    n_g_evals: int
+
+class Bound:
+    lower: float
+    upper: float
 
 __all__ = [
     "AmplitudeID",
@@ -65,4 +99,6 @@ __all__ = [
     "zlm",
     "breit_wigner",
     "kmatrix",
+    "Status",
+    "Bound",
 ]

@@ -1,6 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
+from laddu.utils.variables import Mass
 from laddu.utils.vectors import Vector3, Vector4
 
 class Event:
@@ -18,4 +19,18 @@ class Dataset:
     def len(self) -> int: ...
     def weighted_len(self) -> float: ...
 
-def open(path: str): ...  # noqa: A001
+class BinnedDataset:
+    bins: int
+    range: tuple[float, float]
+    edges: npt.NDArray[np.float64]
+    def __len__(self) -> int: ...
+    def len(self) -> int: ...
+    def __getitem__(self, index: int) -> Dataset: ...
+
+def open(path: str) -> Dataset: ...  # noqa: A001
+def open_binned(
+    path: str,
+    variable: Mass,
+    bins: int,
+    range: tuple[float, float],  # noqa: A002
+) -> BinnedDataset: ...

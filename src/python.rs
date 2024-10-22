@@ -1,20 +1,32 @@
-use pyo3::prelude::*;
+use ganesh::Observer;
+use pyo3::{
+    prelude::*,
+    types::{PyTuple, PyTupleMethods},
+};
+
+use crate::{amplitudes::Expression, Float};
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
-mod laddu {
+pub(crate) mod laddu {
     use std::array;
     use std::sync::Arc;
 
     use super::*;
     use crate as rust;
+    use crate::amplitudes::MinimizerOptions;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
+    use ganesh::algorithms::lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator};
+    use ganesh::algorithms::nelder_mead::{
+        NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod,
+    };
+    use ganesh::algorithms::{NelderMead, LBFGSB};
     use num::Complex;
-    use numpy::PyArray1;
-    use pyo3::exceptions::{PyIndexError, PyTypeError};
-    use pyo3::types::PyList;
+    use numpy::{PyArray1, PyArray2};
+    use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+    use pyo3::types::{PyDict, PyList};
 
     #[pyfunction]
     fn version() -> String {
@@ -247,9 +259,60 @@ mod laddu {
         }
     }
 
+    #[pyclass]
+    struct BinnedDataset(rust::data::BinnedDataset);
+
+    #[pymethods]
+    impl BinnedDataset {
+        fn __len__(&self) -> usize {
+            self.0.len()
+        }
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+        #[getter]
+        fn bins(&self) -> usize {
+            self.0.bins()
+        }
+        #[getter]
+        fn range(&self) -> (Float, Float) {
+            self.0.range()
+        }
+        #[getter]
+        fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, &self.0.edges())
+        }
+        fn __getitem__(&self, index: usize) -> PyResult<Dataset> {
+            self.0
+                .get(index)
+                .ok_or(PyIndexError::new_err("index out of range"))
+                .map(|rust_dataset| Dataset(rust_dataset.clone()))
+        }
+    }
+
     #[pyfunction]
     fn open(path: &str) -> PyResult<Dataset> {
-        Ok(Dataset(rust::data::open(path).unwrap()))
+        Ok(Dataset(rust::data::open(path)?))
+    }
+    #[pyfunction]
+    #[pyo3(signature = (path, variable, bins, range))]
+    fn open_binned(
+        path: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+    ) -> PyResult<BinnedDataset> {
+        let rust_variable = if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
+            py_mass.0.clone()
+        } else {
+            return Err(PyTypeError::new_err("Unsupported variable!"));
+        };
+        Ok(BinnedDataset(rust::data::open_binned(
+            path,
+            rust_variable,
+            bins,
+            range,
+        )?))
     }
 
     #[pyclass]
@@ -277,6 +340,7 @@ mod laddu {
     #[pymethods]
     impl CosTheta {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -307,6 +371,7 @@ mod laddu {
     #[pymethods]
     impl Phi {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -336,6 +401,7 @@ mod laddu {
     #[pymethods]
     impl Angles {
         #[new]
+        #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
         fn new(
             beam: usize,
             recoil: Vec<usize>,
@@ -422,7 +488,7 @@ mod laddu {
 
     #[pyclass]
     #[derive(Clone)]
-    struct Expression(rust::amplitudes::Expression);
+    pub(crate) struct Expression(pub(crate) rust::amplitudes::Expression);
 
     #[pymethods]
     impl AmplitudeID {
@@ -510,8 +576,8 @@ mod laddu {
         fn new() -> Self {
             Self(rust::amplitudes::Manager::default())
         }
-        fn register(&mut self, amplitude: &Amplitude) -> AmplitudeID {
-            AmplitudeID(self.0.register(amplitude.0.clone()))
+        fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
+            Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
         fn load(&mut self, dataset: &Dataset) -> Evaluator {
             Evaluator(self.0.load(&dataset.0))
@@ -578,12 +644,29 @@ mod laddu {
             parameters: Vec<Float>,
             expression: &Expression,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
-            PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters, &expression.0))
+            PyArray1::from_slice_bound(py, &self.0.evaluate(&expression.0, &parameters))
         }
     }
 
     #[pyclass]
     struct NLL(rust::amplitudes::NLL);
+
+    trait GetStrExtractObj {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>;
+    }
+
+    impl GetStrExtractObj for Bound<'_, PyDict> {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>,
+        {
+            self.get_item(key)?
+                .map(|value| value.extract::<T>())
+                .transpose()
+        }
+    }
 
     #[pymethods]
     impl NLL {
@@ -640,16 +723,286 @@ mod laddu {
             }
             Ok(())
         }
-        fn evaluate(&self, parameters: Vec<Float>, expression: &Expression) -> Float {
-            self.0.evaluate(&parameters, &expression.0)
+        fn evaluate(&self, expression: &Expression, parameters: Vec<Float>) -> Float {
+            self.0.evaluate(&expression.0, &parameters)
         }
         fn project<'py>(
             &self,
             py: Python<'py>,
-            parameters: Vec<Float>,
             expression: &Expression,
+            parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.project(&parameters, &expression.0))
+            PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
+        }
+        #[pyo3(signature = (expression, p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[allow(clippy::too_many_arguments)]
+        fn minimize(
+            &self,
+            expression: &Expression,
+            p0: Vec<Float>,
+            bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+            method: &str,
+            max_steps: usize,
+            debug: bool,
+            verbose: bool,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Status> {
+            let bounds = bounds.map(|bounds_vec| {
+                bounds_vec
+                    .iter()
+                    .map(|(opt_lb, opt_ub)| {
+                        (
+                            opt_lb.unwrap_or(Float::NEG_INFINITY),
+                            opt_ub.unwrap_or(Float::INFINITY),
+                        )
+                    })
+                    .collect()
+            });
+            let n_parameters = p0.len();
+            let mut options = MinimizerOptions::default();
+            if let Some(kwargs) = kwargs {
+                let show_step = kwargs.get_extract::<bool>("show_step")?.unwrap_or(true);
+                let show_x = kwargs.get_extract::<bool>("show_x")?.unwrap_or(true);
+                let show_fx = kwargs.get_extract::<bool>("show_fx")?.unwrap_or(true);
+                let tol_x_rel = kwargs
+                    .get_extract::<Float>("tol_x_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_x_abs = kwargs
+                    .get_extract::<Float>("tol_x_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_rel = kwargs
+                    .get_extract::<Float>("tol_f_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_abs = kwargs
+                    .get_extract::<Float>("tol_f_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_g_abs = kwargs
+                    .get_extract::<Float>("tol_g_abs")?
+                    .unwrap_or(Float::cbrt(Float::EPSILON));
+                let g_tolerance = kwargs.get_extract::<Float>("g_tolerance")?.unwrap_or(1e-5);
+                let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
+                let alpha = kwargs.get_extract::<Float>("alpha")?;
+                let beta = kwargs.get_extract::<Float>("beta")?;
+                let gamma = kwargs.get_extract::<Float>("gamma")?;
+                let delta = kwargs.get_extract::<Float>("delta")?;
+                let simplex_expansion_method = kwargs
+                    .get_extract::<String>("simplex_expansion_method")?
+                    .unwrap_or("greedy minimization".into());
+                let nelder_mead_f_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_f_terminator")?
+                    .unwrap_or("stddev".into());
+                let nelder_mead_x_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_x_terminator")?
+                    .unwrap_or("singer".into());
+                let mut observers: Vec<PyObserver> = Vec::default();
+                // } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+                //     let vec: Vec<String> = list_arg.extract()?;
+                if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
+                    if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
+                        for item in observer_list.iter() {
+                            let observer = item.extract::<PyObserver>()?;
+                            observers.push(observer);
+                        }
+                    } else if let Ok(single_observer) = observer_arg.extract::<PyObserver>() {
+                        observers.push(single_observer);
+                    } else {
+                        return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
+                    }
+                }
+                for observer in observers {
+                    options = options.with_observer(observer);
+                }
+                match method {
+                    "lbfgsb" => {
+                        options = options.with_algorithm(
+                            LBFGSB::default()
+                                .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
+                                .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
+                                .with_g_tolerance(g_tolerance),
+                        )
+                    }
+                    "nelder_mead" => {
+                        let terminator_f = match nelder_mead_f_terminator.as_str() {
+                            "amoeba" => NelderMeadFTerminator::Amoeba { tol_f_rel },
+                            "absolute" => NelderMeadFTerminator::Absolute { tol_f_abs },
+                            "stddev" => NelderMeadFTerminator::StdDev { tol_f_abs },
+                            "none" => NelderMeadFTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_f_terminator\": \"{}\"",
+                                    nelder_mead_f_terminator
+                                )))
+                            }
+                        };
+                        let terminator_x = match nelder_mead_x_terminator.as_str() {
+                            "diameter" => NelderMeadXTerminator::Diameter { tol_x_abs },
+                            "higham" => NelderMeadXTerminator::Higham { tol_x_rel },
+                            "rowan" => NelderMeadXTerminator::Rowan { tol_x_rel },
+                            "singer" => NelderMeadXTerminator::Singer { tol_x_rel },
+                            "none" => NelderMeadXTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_x_terminator\": \"{}\"",
+                                    nelder_mead_x_terminator
+                                )))
+                            }
+                        };
+                        let simplex_expansion_method = match simplex_expansion_method.as_str() {
+                            "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
+                            "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"simplex_expansion_method\": \"{}\"",
+                                    simplex_expansion_method
+                                )))
+                            }
+                        };
+                        let mut nelder_mead = NelderMead::default()
+                            .with_terminator_f(terminator_f)
+                            .with_terminator_x(terminator_x)
+                            .with_expansion_method(simplex_expansion_method);
+                        if adaptive {
+                            nelder_mead = nelder_mead.with_adaptive(n_parameters);
+                        }
+                        if let Some(alpha) = alpha {
+                            nelder_mead = nelder_mead.with_alpha(alpha);
+                        }
+                        if let Some(beta) = beta {
+                            nelder_mead = nelder_mead.with_beta(beta);
+                        }
+                        if let Some(gamma) = gamma {
+                            nelder_mead = nelder_mead.with_gamma(gamma);
+                        }
+                        if let Some(delta) = delta {
+                            nelder_mead = nelder_mead.with_delta(delta);
+                        }
+                        options = options.with_algorithm(nelder_mead)
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid \"method\": \"{}\"",
+                            method
+                        )))
+                    }
+                }
+                if debug {
+                    options = options.debug();
+                }
+                if verbose {
+                    options = options.verbose(show_step, show_x, show_fx);
+                }
+                options = options.with_max_steps(max_steps);
+            }
+            let status = self.0.minimize(&expression.0, &p0, bounds, Some(options));
+            Ok(Status(status))
+        }
+    }
+
+    #[pyclass]
+    #[pyo3(name = "Observer")]
+    pub(crate) struct PyObserver(pub(crate) Py<PyAny>);
+
+    #[pymethods]
+    impl PyObserver {
+        #[new]
+        pub fn new(observer: Py<PyAny>) -> Self {
+            Self(observer)
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    pub(crate) struct Status(pub(crate) ganesh::Status<Float>);
+    #[pymethods]
+    impl Status {
+        #[getter]
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, self.0.x.as_slice())
+        }
+        #[getter]
+        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
+            self.0
+                .err
+                .clone()
+                .map(|err| PyArray1::from_slice_bound(py, err.as_slice()))
+        }
+        #[getter]
+        fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, self.0.x0.as_slice())
+        }
+        #[getter]
+        fn fx(&self) -> Float {
+            self.0.fx
+        }
+        #[getter]
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.cov.clone().map(|cov| {
+                PyArray2::from_vec2_bound(
+                    py,
+                    &cov.row_iter()
+                        .map(|row| row.iter().cloned().collect())
+                        .collect::<Vec<Vec<Float>>>(),
+                )
+                .unwrap()
+            })
+        }
+        #[getter]
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.hess.clone().map(|hess| {
+                PyArray2::from_vec2_bound(
+                    py,
+                    &hess
+                        .row_iter()
+                        .map(|row| row.iter().cloned().collect())
+                        .collect::<Vec<Vec<Float>>>(),
+                )
+                .unwrap()
+            })
+        }
+        #[getter]
+        fn message(&self) -> String {
+            self.0.message.clone()
+        }
+        #[getter]
+        fn converged(&self) -> bool {
+            self.0.converged
+        }
+        #[getter]
+        fn bounds(&self) -> Option<Vec<ParameterBound>> {
+            self.0
+                .bounds
+                .clone()
+                .map(|bounds| bounds.iter().map(|bound| ParameterBound(*bound)).collect())
+        }
+        #[getter]
+        fn n_f_evals(&self) -> usize {
+            self.0.n_f_evals
+        }
+        #[getter]
+        fn n_g_evals(&self) -> usize {
+            self.0.n_g_evals
+        }
+        fn __str__(&self) -> String {
+            self.0.to_string()
+        }
+        fn __repr__(&self) -> String {
+            format!("{:?}", self.0)
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    #[pyo3(name = "Bound")]
+    struct ParameterBound(ganesh::Bound<Float>);
+    #[pymethods]
+    impl ParameterBound {
+        #[getter]
+        fn lower(&self) -> Float {
+            self.0.lower()
+        }
+        #[getter]
+        fn upper(&self) -> Float {
+            self.0.upper()
         }
     }
 
@@ -819,5 +1172,53 @@ mod laddu {
             channel,
             &mass.0,
         ))
+    }
+}
+
+impl Observer<Float, Expression> for crate::python::laddu::PyObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        status: &mut ganesh::Status<Float>,
+        expression: &mut Expression,
+    ) -> bool {
+        let (new_status, new_expression, result) = Python::with_gil(|py| {
+            let res = self
+                .0
+                .bind(py)
+                .call_method(
+                    "callback",
+                    (
+                        step,
+                        crate::python::laddu::Status(status.clone()),
+                        crate::python::laddu::Expression(expression.clone()),
+                    ),
+                    None,
+                )
+                .unwrap();
+            let res_tuple = res.downcast::<PyTuple>().unwrap();
+            let new_status = res_tuple
+                .get_item(0)
+                .unwrap()
+                .extract::<crate::python::laddu::Status>()
+                .unwrap()
+                .0;
+            let new_expression = res_tuple
+                .get_item(1)
+                .unwrap()
+                .extract::<crate::python::laddu::Expression>()
+                .unwrap()
+                .0;
+            let result = res_tuple.get_item(2).unwrap().extract::<bool>().unwrap();
+            (new_status, new_expression, result)
+        });
+        *status = new_status;
+        *expression = new_expression;
+        result
+    }
+}
+impl FromPyObject<'_> for crate::python::laddu::PyObserver {
+    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(crate::python::laddu::PyObserver(ob.clone().into()))
     }
 }

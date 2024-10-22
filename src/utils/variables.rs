@@ -38,8 +38,8 @@ pub struct Mass(Vec<usize>);
 impl Mass {
     /// Create a new [`Mass`] from the sum of the four-momenta at the given indices in the
     /// [`Event`]'s `p4s` field.
-    pub fn new(constituents: &[usize]) -> Self {
-        Self(constituents.into())
+    pub fn new<T: AsRef<[usize]>>(constituents: T) -> Self {
+        Self(constituents.as_ref().into())
     }
 }
 impl Variable for Mass {
@@ -63,18 +63,18 @@ impl CosTheta {
     /// which can take lists of more than one index will add the relevant four-momenta to make a
     /// new particle from the constituents. See [`Frame`] for options regarding the reference
     /// frame.
-    pub fn new(
+    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
         beam: usize,
-        recoil: &[usize],
-        daughter: &[usize],
-        resonance: &[usize],
+        recoil: T,
+        daughter: U,
+        resonance: V,
         frame: Frame,
     ) -> Self {
         Self {
             beam,
-            recoil: recoil.into(),
-            daughter: daughter.into(),
-            resonance: resonance.into(),
+            recoil: recoil.as_ref().into(),
+            daughter: daughter.as_ref().into(),
+            resonance: resonance.as_ref().into(),
             frame,
         }
     }
@@ -141,18 +141,18 @@ impl Phi {
     /// which can take lists of more than one index will add the relevant four-momenta to make a
     /// new particle from the constituents. See [`Frame`] for options regarding the reference
     /// frame.
-    pub fn new(
+    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
         beam: usize,
-        recoil: &[usize],
-        daughter: &[usize],
-        resonance: &[usize],
+        recoil: T,
+        daughter: U,
+        resonance: V,
         frame: Frame,
     ) -> Self {
         Self {
             beam,
-            recoil: recoil.into(),
-            daughter: daughter.into(),
-            resonance: resonance.into(),
+            recoil: recoil.as_ref().into(),
+            daughter: daughter.as_ref().into(),
+            resonance: resonance.as_ref().into(),
             frame,
         }
     }
@@ -218,26 +218,26 @@ impl Angles {
     /// which can take lists of more than one index will add the relevant four-momenta to make a
     /// new particle from the constituents. See [`Frame`] for options regarding the reference
     /// frame.
-    pub fn new(
+    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
         beam: usize,
-        recoil: &[usize],
-        daughter: &[usize],
-        resonance: &[usize],
+        recoil: T,
+        daughter: U,
+        resonance: V,
         frame: Frame,
     ) -> Self {
         Self {
             costheta: CosTheta {
                 beam,
-                recoil: recoil.into(),
-                daughter: daughter.into(),
-                resonance: resonance.into(),
+                recoil: recoil.as_ref().into(),
+                daughter: daughter.as_ref().into(),
+                resonance: resonance.as_ref().into(),
                 frame,
             },
             phi: Phi {
                 beam,
-                recoil: recoil.into(),
-                daughter: daughter.into(),
-                resonance: resonance.into(),
+                recoil: recoil.as_ref().into(),
+                daughter: daughter.as_ref().into(),
+                resonance: resonance.as_ref().into(),
                 frame,
             },
         }
@@ -254,10 +254,10 @@ impl PolAngle {
     /// Constructs the polarization angle given the four-momentum indices for each specified
     /// particle. Fields which can take lists of more than one index will add the relevant
     /// four-momenta to make a new particle from the constituents.
-    pub fn new(beam: usize, recoil: &[usize]) -> Self {
+    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
         Self {
             beam,
-            recoil: recoil.into(),
+            recoil: recoil.as_ref().into(),
         }
     }
 }
@@ -304,12 +304,12 @@ impl Polarization {
     /// Constructs the polarization angle and magnitude given the four-momentum indices for
     /// the beam and target (recoil) particle. Fields which can take lists of more than one index will add
     /// the relevant four-momenta to make a new particle from the constituents.
-    pub fn new(beam: usize, recoil: &[usize]) -> Self {
+    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
         Self {
             pol_magnitude: PolMagnitude { beam },
             pol_angle: PolAngle {
                 beam,
-                recoil: recoil.into(),
+                recoil: recoil.as_ref().into(),
             },
         }
     }

@@ -121,7 +121,7 @@ impl MyBreitWigner {
 }
 
 impl Amplitude for MyBreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> AmplitudeID {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
         self.pid_width = resources.register_parameter(&self.width);
         resources.register_amplitude(&self.name)
@@ -150,9 +150,9 @@ We could then write some code to use this amplitude. For demonstration purposes,
 let ds_data = open("test_data/data.parquet").unwrap();
 let ds_mc = open("test_data/mc.parquet").unwrap();
 
-let resonance_mass = Mass::new(&[2, 3]);
-let p1_mass = Mass::new(&[2]);
-let p2_mass = Mass::new(&[3]);
+let resonance_mass = Mass::new([2, 3]);
+let p1_mass = Mass::new([2]);
+let p2_mass = Mass::new([3]);
 let mut manager = Manager::default();
 let bw = manager.register(MyBreitWigner::new(
     "bw",
@@ -162,8 +162,8 @@ let bw = manager.register(MyBreitWigner::new(
     &p1_mass,
     &p2_mass,
     &resonance_mass,
-));
-let mag = manager.register(Scalar::new("mag", parameter("magnitude")));
+)).unwrap();
+let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
 let model = (mag * bw).norm_sqr();
 
 let nll = NLL::new(&manager, &ds_data, &ds_mc);
@@ -179,7 +179,6 @@ While we cannot (yet) implement new amplitudes within the Python interface alone
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
-from iminuit import Minuit
 from laddu import constant, parameter
 
 def main():
@@ -203,14 +202,9 @@ def main():
     model = pos_re + pos_im + neg_re + neg_im
 
     nll = ld.NLL(manager, ds_data, ds_mc)
-
-    def cost(*args):
-        return nll.evaluate(list(args), model)
-
-    m = Minuit(cost, *[1.0 for _ in nll.parameters])
-    m.migrad()
-    print(m)
-    fit_weights = nll.project(list(m.values), model)
+    status = nll.minimize(model, [1.0] * len(nll.parameters))
+    print(status)
+    fit_weights = nll.project(status.x, model)
     masses_mc = res_mass.value_on(ds_mc)
     masses_data = res_mass.value_on(ds_data)
     weights_data = ds_data.weights

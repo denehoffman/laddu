@@ -1,7 +1,9 @@
 from typing import Literal
-from laddu.data import Dataset, Event
+
 import numpy as np
 import numpy.typing as npt
+
+from laddu.data import Dataset, Event
 
 class Mass:
     def __init__(self, constituents: list[int]): ...
