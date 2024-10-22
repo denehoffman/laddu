@@ -207,7 +207,7 @@
 //!
 //! let nll = NLL::new(&manager, &ds_data, &ds_mc);
 //! println!("Parameters names and order: {:?}", nll.parameters());
-//! let result = nll.evaluate(&[1.27, 0.120, 100.0], &model);
+//! let result = nll.evaluate(&model, &[1.27, 0.120, 100.0]);
 //! println!("The extended negative log-likelihood is {}", result);
 //! ```
 //! In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.
