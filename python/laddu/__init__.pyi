@@ -1,5 +1,6 @@
 from laddu.amplitudes import NLL, Manager, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
+from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.data import Dataset, open
@@ -30,6 +31,9 @@ __all__ = [
     "NLL",
     "parameter",
     "constant",
+    "Scalar",
+    "ComplexScalar",
+    "PolarComplexScalar",
     "Ylm",
     "Zlm",
     "BreitWigner",
