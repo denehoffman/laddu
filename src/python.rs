@@ -5,7 +5,7 @@ use pyo3::{
     types::{PyTuple, PyTupleMethods},
 };
 
-use crate::{prelude::Expression, Float};
+use crate::{amplitudes::Expression, Float};
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
@@ -15,7 +15,7 @@ pub(crate) mod laddu {
 
     use super::*;
     use crate as rust;
-    use crate::prelude::MinimizerOptions;
+    use crate::amplitudes::MinimizerOptions;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
@@ -1191,8 +1191,8 @@ impl Observer<Float, Expression> for PyObserver {
                     "callback",
                     (
                         step,
-                        laddu::Status(status.clone()),
-                        laddu::Expression(expression.clone()),
+                        crate::python::laddu::Status(status.clone()),
+                        crate::python::laddu::Expression(expression.clone()),
                     ),
                     None,
                 )
@@ -1201,13 +1201,13 @@ impl Observer<Float, Expression> for PyObserver {
             let new_status = res_tuple
                 .get_item(0)
                 .unwrap()
-                .extract::<laddu::Status>()
+                .extract::<crate::python::laddu::Status>()
                 .unwrap()
                 .0;
             let new_expression = res_tuple
                 .get_item(1)
                 .unwrap()
-                .extract::<laddu::Expression>()
+                .extract::<crate::python::laddu::Expression>()
                 .unwrap()
                 .0;
             let result = res_tuple.get_item(2).unwrap().extract::<bool>().unwrap();
