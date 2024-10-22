@@ -179,7 +179,6 @@ While we cannot (yet) implement new amplitudes within the Python interface alone
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
-from iminuit import Minuit
 from laddu import constant, parameter
 
 def main():
@@ -203,14 +202,9 @@ def main():
     model = pos_re + pos_im + neg_re + neg_im
 
     nll = ld.NLL(manager, ds_data, ds_mc)
-
-    def cost(*args):
-        return nll.evaluate(list(args), model)
-
-    m = Minuit(cost, *[1.0 for _ in nll.parameters])
-    m.migrad()
-    print(m)
-    fit_weights = nll.project(list(m.values), model)
+    status = nll.minimize(model, [1.0] * len(nll.parameters))
+    print(status)
+    fit_weights = nll.project(status.x, model)
     masses_mc = res_mass.value_on(ds_mc)
     masses_data = res_mass.value_on(ds_data)
     weights_data = ds_data.weights
