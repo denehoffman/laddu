@@ -7,9 +7,10 @@ use laddu::{
         kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
         parameter,
         zlm::Zlm,
-        LikelihoodTerm, Manager, NLL,
+        Manager,
     },
     data::open,
+    likelihoods::{LikelihoodTerm, NLL},
     utils::{
         enums::{Frame, Sign},
         variables::{Angles, Mass, Polarization},

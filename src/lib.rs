@@ -270,6 +270,8 @@ use thiserror::Error;
 pub mod amplitudes;
 /// Methods for loading and manipulating [`Event`](crate::data::Event)-based data.
 pub mod data;
+/// Module for likelihood-related structures and methods
+pub mod likelihoods;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
 /// Utility functions, enums, and traits
@@ -283,10 +285,13 @@ pub mod prelude {
         constant, parameter,
         ylm::Ylm,
         zlm::Zlm,
-        Amplitude, AmplitudeID, Evaluator, Expression, LikelihoodTerm, Manager, MinimizerOptions,
-        ParameterLike, NLL,
+        Amplitude, AmplitudeID, Evaluator, Expression, Manager, ParameterLike,
     };
     pub use crate::data::{open, open_binned, open_filtered, BinnedDataset, Dataset, Event};
+    pub use crate::likelihoods::{
+        LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodTerm,
+        MinimizerOptions, NLL,
+    };
     pub use crate::resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
         Parameters, Resources, ScalarID, VectorID,

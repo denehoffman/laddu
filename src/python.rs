@@ -14,7 +14,7 @@ pub(crate) mod laddu {
 
     use super::*;
     use crate as rust;
-    use crate::amplitudes::{LikelihoodTerm, MinimizerOptions};
+    use crate::likelihoods::{LikelihoodTerm, MinimizerOptions};
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
@@ -650,7 +650,7 @@ pub(crate) mod laddu {
 
     #[pyclass]
     #[derive(Clone)]
-    struct NLL(Box<rust::amplitudes::NLL>);
+    struct NLL(Box<rust::likelihoods::NLL>);
 
     trait GetStrExtractObj {
         fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
@@ -678,7 +678,7 @@ pub(crate) mod laddu {
             ds_mc: &Dataset,
             expression: &Expression,
         ) -> Self {
-            Self(rust::amplitudes::NLL::new(
+            Self(rust::likelihoods::NLL::new(
                 &manager.0,
                 &ds_data.0,
                 &ds_mc.0,
