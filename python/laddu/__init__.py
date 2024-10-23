@@ -17,7 +17,7 @@ __version__ = version()
 
 class Observer(metaclass=ABCMeta):
     @abstractmethod
-    def callback(self, step: int, status: Status, expression: Expression) -> tuple[Status, Expression, bool]:
+    def callback(self, step: int, status: Status) -> tuple[Status, Expression, bool]:
         pass
 
 

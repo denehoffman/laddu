@@ -136,7 +136,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = pos_re + pos_im + neg_re + neg_im;
-    let nll = NLL::new(&manager, &ds_data, &ds_mc);
+    let nll = NLL::new(&manager, &ds_data, &ds_mc, &model);
     let mut rng = rand::thread_rng();
     let range = Uniform::new(-100.0, 100.0);
     c.bench_function("kmatrix benchmark (nll)", |b| {
@@ -147,7 +147,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                     .collect();
                 p
             },
-            |p| black_box(nll.evaluate(&model, &p)),
+            |p| black_box(nll.evaluate(&p)),
             BatchSize::SmallInput,
         )
     });

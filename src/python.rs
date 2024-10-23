@@ -4,7 +4,7 @@ use pyo3::{
     types::{PyTuple, PyTupleMethods},
 };
 
-use crate::{amplitudes::Expression, Float};
+use crate::Float;
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
@@ -579,8 +579,8 @@ pub(crate) mod laddu {
         fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
             Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
-        fn load(&mut self, dataset: &Dataset) -> Evaluator {
-            Evaluator(self.0.load(&dataset.0))
+        fn load(&mut self, dataset: &Dataset, expression: &Expression) -> Evaluator {
+            Evaluator(self.0.load(&dataset.0, &expression.0))
         }
     }
 
@@ -642,9 +642,8 @@ pub(crate) mod laddu {
             &self,
             py: Python<'py>,
             parameters: Vec<Float>,
-            expression: &Expression,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
-            PyArray1::from_slice_bound(py, &self.0.evaluate(&expression.0, &parameters))
+            PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters))
         }
     }
 
@@ -671,8 +670,18 @@ pub(crate) mod laddu {
     #[pymethods]
     impl NLL {
         #[new]
-        fn new(manager: &Manager, ds_data: &Dataset, ds_mc: &Dataset) -> Self {
-            Self(rust::amplitudes::NLL::new(&manager.0, &ds_data.0, &ds_mc.0))
+        fn new(
+            manager: &Manager,
+            ds_data: &Dataset,
+            ds_mc: &Dataset,
+            expression: &Expression,
+        ) -> Self {
+            Self(rust::amplitudes::NLL::new(
+                &manager.0,
+                &ds_data.0,
+                &ds_mc.0,
+                &expression.0,
+            ))
         }
         #[getter]
         fn parameters(&self) -> Vec<String> {
@@ -723,22 +732,20 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
-        fn evaluate(&self, expression: &Expression, parameters: Vec<Float>) -> Float {
-            self.0.evaluate(&expression.0, &parameters)
+        fn evaluate(&self, parameters: Vec<Float>) -> Float {
+            self.0.evaluate(&parameters)
         }
         fn project<'py>(
             &self,
             py: Python<'py>,
-            expression: &Expression,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.project(&expression.0, &parameters))
+            PyArray1::from_slice_bound(py, &self.0.project(&parameters))
         }
-        #[pyo3(signature = (expression, p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
             &self,
-            expression: &Expression,
             p0: Vec<Float>,
             bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
             method: &str,
@@ -893,7 +900,7 @@ pub(crate) mod laddu {
                 }
                 options = options.with_max_steps(max_steps);
             }
-            let status = self.0.minimize(&expression.0, &p0, bounds, Some(options));
+            let status = self.0.minimize(&p0, bounds, Some(options));
             Ok(Status(status))
         }
     }
@@ -1175,24 +1182,20 @@ pub(crate) mod laddu {
     }
 }
 
-impl Observer<Float, Expression> for crate::python::laddu::PyObserver {
+impl Observer<Float, ()> for crate::python::laddu::PyObserver {
     fn callback(
         &mut self,
         step: usize,
         status: &mut ganesh::Status<Float>,
-        expression: &mut Expression,
+        _user_data: &mut (),
     ) -> bool {
-        let (new_status, new_expression, result) = Python::with_gil(|py| {
+        let (new_status, result) = Python::with_gil(|py| {
             let res = self
                 .0
                 .bind(py)
                 .call_method(
                     "callback",
-                    (
-                        step,
-                        crate::python::laddu::Status(status.clone()),
-                        crate::python::laddu::Expression(expression.clone()),
-                    ),
+                    (step, crate::python::laddu::Status(status.clone())),
                     None,
                 )
                 .unwrap();
@@ -1203,17 +1206,10 @@ impl Observer<Float, Expression> for crate::python::laddu::PyObserver {
                 .extract::<crate::python::laddu::Status>()
                 .unwrap()
                 .0;
-            let new_expression = res_tuple
-                .get_item(1)
-                .unwrap()
-                .extract::<crate::python::laddu::Expression>()
-                .unwrap()
-                .0;
             let result = res_tuple.get_item(2).unwrap().extract::<bool>().unwrap();
-            (new_status, new_expression, result)
+            (new_status, result)
         });
         *status = new_status;
-        *expression = new_expression;
         result
     }
 }

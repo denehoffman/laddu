@@ -265,10 +265,10 @@ impl Manager {
         self.amplitudes.push(amp);
         Ok(aid)
     }
-    /// Create an [`Evaluator`] which can compute the result of any [`Expression`] built on
+    /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&mut self, dataset: &Arc<Dataset>) -> Evaluator {
+    pub fn load(&mut self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
         let mut loaded_resources = self.resources.clone();
         loaded_resources.reserve_cache(dataset.len());
         for amplitude in &self.amplitudes {
@@ -278,17 +278,19 @@ impl Manager {
             amplitudes: self.amplitudes.clone(),
             resources: loaded_resources,
             dataset: dataset.clone(),
+            expression: expression.clone(),
         }
     }
 }
 
-/// A structure which can be used to evaluate any [`Expression`] built on registered
+/// A structure which can be used to evaluate the stored [`Expression`] built on registered
 /// [`Amplitude`]s. This contains a [`Resources`] struct which already contains cached values for
 /// precomputed [`Amplitude`]s and any relevant free parameters and constants.
 pub struct Evaluator {
     amplitudes: Vec<Box<dyn Amplitude>>,
     resources: Resources,
     dataset: Arc<Dataset>,
+    expression: Expression,
 }
 
 impl Evaluator {
@@ -329,10 +331,10 @@ impl Evaluator {
     pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         self.resources.isolate_many(names);
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -357,13 +359,13 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .par_iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
         let parameters = Parameters::new(parameters, &self.resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
@@ -388,7 +390,7 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
     }
 }
@@ -400,13 +402,18 @@ pub struct NLL {
 }
 
 impl NLL {
-    /// Construct an [`NLL`] from a [`Manager`] and two [`Dataset`]s (data and Monte Carlo). This
-    /// is the equivalent of the [`Manager::load`] method, but for two [`Dataset`]s and a different
-    /// method of evaluation.
-    pub fn new(manager: &Manager, ds_data: &Arc<Dataset>, ds_mc: &Arc<Dataset>) -> Self {
+    /// Construct an [`NLL`] from a [`Manager`] and two [`Dataset`]s (data and Monte Carlo), as
+    /// well as an [`Expression`]. This is the equivalent of the [`Manager::load`] method,
+    /// but for two [`Dataset`]s and a different method of evaluation.
+    pub fn new(
+        manager: &Manager,
+        ds_data: &Arc<Dataset>,
+        ds_mc: &Arc<Dataset>,
+        expression: &Expression,
+    ) -> Self {
         Self {
-            data_evaluator: manager.clone().load(ds_data),
-            mc_evaluator: manager.clone().load(ds_mc),
+            data_evaluator: manager.clone().load(ds_data, expression),
+            mc_evaluator: manager.clone().load(ds_mc, expression),
         }
     }
     /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
@@ -460,7 +467,7 @@ impl NLL {
         self.mc_evaluator.resources.isolate_many(names);
     }
 
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
@@ -470,10 +477,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
+    pub fn evaluate(&self, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .par_iter()
@@ -488,7 +495,7 @@ impl NLL {
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
 
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
@@ -498,10 +505,10 @@ impl NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
+    pub fn evaluate(&self, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(parameters);
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
             .iter()
@@ -516,7 +523,7 @@ impl NLL {
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
 
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
@@ -527,9 +534,9 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(feature = "rayon")]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
+    pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .par_iter()
@@ -538,7 +545,7 @@ impl NLL {
             .collect()
     }
 
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
@@ -549,9 +556,9 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
     /// ```
     #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
+    pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .iter()
@@ -561,20 +568,16 @@ impl NLL {
     }
 }
 
-impl Function<Float, Expression, Infallible> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        expression: &mut Expression,
-    ) -> Result<Float, Infallible> {
-        Ok(self.evaluate(expression, parameters))
+impl Function<Float, (), Infallible> for NLL {
+    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
+        Ok(self.evaluate(parameters))
     }
 }
 
 /// A set of options that are used when minimizations are performed.
 pub struct MinimizerOptions {
-    algorithm: Box<dyn ganesh::Algorithm<Float, Expression, Infallible>>,
-    observers: Vec<Box<dyn Observer<Float, Expression>>>,
+    algorithm: Box<dyn ganesh::Algorithm<Float, (), Infallible>>,
+    observers: Vec<Box<dyn Observer<Float, ()>>>,
     max_steps: usize,
 }
 
@@ -593,13 +596,8 @@ struct VerboseObserver {
     show_x: bool,
     show_fx: bool,
 }
-impl Observer<Float, Expression> for VerboseObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        status: &mut Status<Float>,
-        _user_data: &mut Expression,
-    ) -> bool {
+impl Observer<Float, ()> for VerboseObserver {
+    fn callback(&mut self, step: usize, status: &mut Status<Float>, _user_data: &mut ()) -> bool {
         if self.show_step {
             println!("Step: {}", step);
         }
@@ -640,7 +638,7 @@ impl MinimizerOptions {
     }
     /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
     /// settings).
-    pub fn with_algorithm<A: Algorithm<Float, Expression, Infallible> + 'static>(
+    pub fn with_algorithm<A: Algorithm<Float, (), Infallible> + 'static>(
         self,
         algorithm: A,
     ) -> Self {
@@ -651,7 +649,7 @@ impl MinimizerOptions {
         }
     }
     /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    pub fn with_observer<O: Observer<Float, Expression> + 'static>(self, observer: O) -> Self {
+    pub fn with_observer<O: Observer<Float, ()> + 'static>(self, observer: O) -> Self {
         let mut observers = self.observers;
         observers.push(Box::new(observer));
         Self {
@@ -676,7 +674,6 @@ impl NLL {
     /// quasi-Newton minimizer which supports bounded optimization.
     pub fn minimize(
         &self,
-        expression: &Expression,
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
         options: Option<MinimizerOptions>,
@@ -686,8 +683,7 @@ impl NLL {
             .with_bounds(bounds)
             .with_observers(options.observers)
             .with_max_steps(options.max_steps);
-        let mut expression = expression.clone();
-        m.minimize(self, p0, &mut expression)
+        m.minimize(self, p0, &mut ())
             .unwrap_or_else(|never| match never {});
         m.status
     }
