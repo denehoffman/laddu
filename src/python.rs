@@ -14,7 +14,7 @@ pub(crate) mod laddu {
 
     use super::*;
     use crate as rust;
-    use crate::amplitudes::MinimizerOptions;
+    use crate::amplitudes::{LikelihoodTerm, MinimizerOptions};
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;

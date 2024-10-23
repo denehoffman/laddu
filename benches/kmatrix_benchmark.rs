@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use laddu::{
     amplitudes::{
@@ -5,7 +7,7 @@ use laddu::{
         kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
         parameter,
         zlm::Zlm,
-        Manager, NLL,
+        LikelihoodTerm, Manager, NLL,
     },
     data::open,
     utils::{
@@ -153,5 +155,9 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, kmatrix_nll_benchmark);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().measurement_time(Duration::from_secs(30)).sample_size(7000);
+    targets = kmatrix_nll_benchmark
+}
 criterion_main!(benches);

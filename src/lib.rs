@@ -283,8 +283,8 @@ pub mod prelude {
         constant, parameter,
         ylm::Ylm,
         zlm::Zlm,
-        Amplitude, AmplitudeID, Evaluator, Expression, Manager, MinimizerOptions, ParameterLike,
-        NLL,
+        Amplitude, AmplitudeID, Evaluator, Expression, LikelihoodTerm, Manager, MinimizerOptions,
+        ParameterLike, NLL,
     };
     pub use crate::data::{open, open_binned, open_filtered, BinnedDataset, Dataset, Event};
     pub use crate::resources::{

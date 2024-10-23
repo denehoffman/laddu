@@ -395,6 +395,10 @@ impl Evaluator {
     }
 }
 
+pub trait LikelihoodTerm {
+    fn evaluate(&self, parameters: &[Float]) -> Float;
+}
+
 /// An extended, unbinned negative log-likelihood evaluator.
 pub struct NLL {
     data_evaluator: Evaluator,
@@ -467,62 +471,6 @@ impl NLL {
         self.mc_evaluator.resources.isolate_many(names);
     }
 
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
-            .par_iter()
-            .zip(self.data_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
-            .par_iter()
-            .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
-            .iter()
-            .zip(self.data_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
-            .iter()
-            .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
@@ -568,9 +516,67 @@ impl NLL {
     }
 }
 
+impl LikelihoodTerm for NLL {
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters. This method takes the
+    /// real part of the given expression (discarding the imaginary part entirely, which
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
+    /// result is given by the following formula:
+    ///
+    /// ```math
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// ```
+    #[cfg(feature = "rayon")]
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.weighted_len();
+        let mc_result = self.mc_evaluator.evaluate(parameters);
+        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let data_term: Float = data_result
+            .par_iter()
+            .zip(self.data_evaluator.dataset.par_iter())
+            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .sum();
+        let mc_term: Float = mc_result
+            .par_iter()
+            .zip(self.mc_evaluator.dataset.par_iter())
+            .map(|(l, e)| e.weight * l.re)
+            .sum();
+        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+    }
+
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters. This method takes the
+    /// real part of the given expression (discarding the imaginary part entirely, which
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
+    /// result is given by the following formula:
+    ///
+    /// ```math
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// ```
+    #[cfg(not(feature = "rayon"))]
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.weighted_len();
+        let mc_result = self.mc_evaluator.evaluate(parameters);
+        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let data_term: Float = data_result
+            .iter()
+            .zip(self.data_evaluator.dataset.iter())
+            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .sum();
+        let mc_term: Float = mc_result
+            .iter()
+            .zip(self.mc_evaluator.dataset.iter())
+            .map(|(l, e)| e.weight * l.re)
+            .sum();
+        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+    }
+}
+
 impl Function<Float, (), Infallible> for NLL {
     fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
-        Ok(self.evaluate(parameters))
+        Ok(LikelihoodTerm::evaluate(self, parameters))
     }
 }
 
