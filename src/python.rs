@@ -579,12 +579,13 @@ pub(crate) mod laddu {
         fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
             Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
-        fn load(&mut self, dataset: &Dataset, expression: &Expression) -> Evaluator {
+        fn load(&self, dataset: &Dataset, expression: &Expression) -> Evaluator {
             Evaluator(self.0.load(&dataset.0, &expression.0))
         }
     }
 
     #[pyclass]
+    #[derive(Clone)]
     struct Evaluator(rust::amplitudes::Evaluator);
 
     #[pymethods]
@@ -593,7 +594,7 @@ pub(crate) mod laddu {
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
-        fn activate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.activate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
@@ -606,10 +607,10 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
-        fn activate_all(&mut self) {
+        fn activate_all(&self) {
             self.0.activate_all();
         }
-        fn deactivate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.deactivate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
@@ -622,10 +623,10 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
-        fn deactivate_all(&mut self) {
+        fn deactivate_all(&self) {
             self.0.deactivate_all();
         }
-        fn isolate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.isolate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
@@ -648,6 +649,7 @@ pub(crate) mod laddu {
     }
 
     #[pyclass]
+    #[derive(Clone)]
     struct NLL(rust::amplitudes::NLL);
 
     trait GetStrExtractObj {
@@ -687,7 +689,7 @@ pub(crate) mod laddu {
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
-        fn activate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.activate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
@@ -700,10 +702,10 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
-        fn activate_all(&mut self) {
+        fn activate_all(&self) {
             self.0.activate_all();
         }
-        fn deactivate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.deactivate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
@@ -716,10 +718,10 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
-        fn deactivate_all(&mut self) {
+        fn deactivate_all(&self) {
             self.0.deactivate_all();
         }
-        fn isolate(&mut self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+        fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.isolate(&string_arg);
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {

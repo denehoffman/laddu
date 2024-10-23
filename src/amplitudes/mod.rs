@@ -9,6 +9,7 @@ use dyn_clone::DynClone;
 use ganesh::{algorithms::LBFGSB, observers::DebugObserver, prelude::*};
 use num::Complex;
 
+use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -268,15 +269,15 @@ impl Manager {
     /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&mut self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
-        let mut loaded_resources = self.resources.clone();
-        loaded_resources.reserve_cache(dataset.len());
+    pub fn load(&self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
+        let loaded_resources = Arc::new(RwLock::new(self.resources.clone()));
+        loaded_resources.write().reserve_cache(dataset.len());
         for amplitude in &self.amplitudes {
-            amplitude.precompute_all(dataset, &mut loaded_resources);
+            amplitude.precompute_all(dataset, &mut loaded_resources.write());
         }
         Evaluator {
             amplitudes: self.amplitudes.clone(),
-            resources: loaded_resources,
+            resources: loaded_resources.clone(),
             dataset: dataset.clone(),
             expression: expression.clone(),
         }
@@ -286,9 +287,10 @@ impl Manager {
 /// A structure which can be used to evaluate the stored [`Expression`] built on registered
 /// [`Amplitude`]s. This contains a [`Resources`] struct which already contains cached values for
 /// precomputed [`Amplitude`]s and any relevant free parameters and constants.
+#[derive(Clone)]
 pub struct Evaluator {
     amplitudes: Vec<Box<dyn Amplitude>>,
-    resources: Resources,
+    resources: Arc<RwLock<Resources>>,
     dataset: Arc<Dataset>,
     expression: Expression,
 }
@@ -297,55 +299,56 @@ impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.resources.parameters.iter().cloned().collect()
+        self.resources.read().parameters.iter().cloned().collect()
     }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate(&mut self, name: &str) {
-        self.resources.activate(name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().activate(name);
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().activate_many(names);
     }
     /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.resources.activate_all();
+    pub fn activate_all(&self) {
+        self.resources.write().activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.deactivate(name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().deactivate(name);
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().deactivate_many(names);
     }
     /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.resources.deactivate_all();
+    pub fn deactivate_all(&self) {
+        self.resources.write().deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.isolate(name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().isolate(name);
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().isolate_many(names);
     }
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
     pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .par_iter()
-            .zip(self.resources.caches.par_iter())
+            .zip(resources.caches.par_iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -366,17 +369,18 @@ impl Evaluator {
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
     pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .iter()
-            .zip(self.resources.caches.iter())
+            .zip(resources.caches.iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -395,11 +399,15 @@ impl Evaluator {
     }
 }
 
-pub trait LikelihoodTerm {
+pub trait LikelihoodTerm: DynClone {
     fn evaluate(&self, parameters: &[Float]) -> Float;
+    fn parameters(&self) -> Vec<String>;
 }
 
+dyn_clone::clone_trait_object!(LikelihoodTerm);
+
 /// An extended, unbinned negative log-likelihood evaluator.
+#[derive(Clone)]
 pub struct NLL {
     data_evaluator: Evaluator,
     mc_evaluator: Evaluator,
@@ -420,55 +428,45 @@ impl NLL {
             mc_evaluator: manager.clone().load(ds_mc, expression),
         }
     }
-    /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
-    /// method.
-    pub fn parameters(&self) -> Vec<String> {
-        self.data_evaluator
-            .resources
-            .parameters
-            .iter()
-            .cloned()
-            .collect()
-    }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.activate(&name);
-        self.mc_evaluator.resources.activate(name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.activate(&name);
+        self.mc_evaluator.activate(name);
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.activate_many(names);
-        self.mc_evaluator.resources.activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.activate_many(names);
+        self.mc_evaluator.activate_many(names);
     }
     /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.data_evaluator.resources.activate_all();
-        self.mc_evaluator.resources.activate_all();
+    pub fn activate_all(&self) {
+        self.data_evaluator.activate_all();
+        self.mc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.deactivate(&name);
-        self.mc_evaluator.resources.deactivate(name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.deactivate(&name);
+        self.mc_evaluator.deactivate(name);
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.deactivate_many(names);
-        self.mc_evaluator.resources.deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.deactivate_many(names);
+        self.mc_evaluator.deactivate_many(names);
     }
     /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.data_evaluator.resources.deactivate_all();
-        self.mc_evaluator.resources.deactivate_all();
+    pub fn deactivate_all(&self) {
+        self.data_evaluator.deactivate_all();
+        self.mc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.isolate(&name);
-        self.mc_evaluator.resources.isolate(name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.isolate(&name);
+        self.mc_evaluator.isolate(name);
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.isolate_many(names);
-        self.mc_evaluator.resources.isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.isolate_many(names);
+        self.mc_evaluator.isolate_many(names);
     }
 
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -517,6 +515,17 @@ impl NLL {
 }
 
 impl LikelihoodTerm for NLL {
+    /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
+    /// method.
+    fn parameters(&self) -> Vec<String> {
+        self.data_evaluator
+            .resources
+            .read()
+            .parameters
+            .iter()
+            .cloned()
+            .collect()
+    }
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
