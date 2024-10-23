@@ -650,7 +650,7 @@ pub(crate) mod laddu {
 
     #[pyclass]
     #[derive(Clone)]
-    struct NLL(rust::amplitudes::NLL);
+    struct NLL(Box<rust::amplitudes::NLL>);
 
     trait GetStrExtractObj {
         fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>

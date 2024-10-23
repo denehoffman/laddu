@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
@@ -422,11 +423,12 @@ impl NLL {
         ds_data: &Arc<Dataset>,
         ds_mc: &Arc<Dataset>,
         expression: &Expression,
-    ) -> Self {
+    ) -> Box<Self> {
         Self {
             data_evaluator: manager.clone().load(ds_data, expression),
             mc_evaluator: manager.clone().load(ds_mc, expression),
         }
+        .into()
     }
     /// Activate an [`Amplitude`] by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
@@ -687,6 +689,157 @@ impl MinimizerOptions {
 impl NLL {
     /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
     /// quasi-Newton minimizer which supports bounded optimization.
+    pub fn minimize(
+        &self,
+        p0: &[Float],
+        bounds: Option<Vec<(Float, Float)>>,
+        options: Option<MinimizerOptions>,
+    ) -> Status<Float> {
+        let options = options.unwrap_or_default();
+        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
+            .with_bounds(bounds)
+            .with_observers(options.observers)
+            .with_max_steps(options.max_steps);
+        m.minimize(self, p0, &mut ())
+            .unwrap_or_else(|never| match never {});
+        m.status
+    }
+}
+
+#[derive(Clone)]
+pub struct LikelihoodID(usize);
+
+#[derive(Default, Clone)]
+pub struct LikelihoodManager {
+    terms: Vec<Box<dyn LikelihoodTerm>>,
+    param_name_to_index: HashMap<String, usize>,
+    param_names: Vec<String>,
+    param_layouts: Vec<Vec<usize>>,
+    param_counts: Vec<usize>,
+}
+
+impl LikelihoodManager {
+    pub fn register(&mut self, term: Box<dyn LikelihoodTerm>) -> LikelihoodID {
+        let term_idx = self.terms.len();
+        for param_name in term.parameters() {
+            if !self.param_name_to_index.contains_key(&param_name) {
+                self.param_name_to_index
+                    .insert(param_name.clone(), self.param_name_to_index.len());
+                self.param_names.push(param_name.clone());
+            }
+        }
+        let param_layout: Vec<usize> = term
+            .parameters()
+            .iter()
+            .map(|name| self.param_name_to_index[name])
+            .collect();
+        let param_count = term.parameters().len();
+        self.param_layouts.push(param_layout);
+        self.param_counts.push(param_count);
+        self.terms.push(term.clone());
+
+        LikelihoodID(term_idx)
+    }
+
+    pub fn parameters(&self) -> Vec<String> {
+        self.param_names.clone()
+    }
+
+    pub fn evaluate(&self, parameters: &[Float]) -> LikelihoodValues {
+        let mut param_buffers: Vec<Vec<Float>> = self
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self.param_layouts.iter().zip(param_buffers.iter_mut()) {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
+        }
+        LikelihoodValues(
+            self.terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect(),
+        )
+    }
+    pub fn load(&self, likelihood_expression: LikelihoodExpression) -> LikelihoodEvaluator {
+        LikelihoodEvaluator {
+            likelihood_manager: self.clone(),
+            likelihood_expression,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct LikelihoodValues(Vec<Float>);
+
+#[derive(Clone)]
+pub enum LikelihoodExpression {
+    /// A registered [`LikelihoodTerm`] referenced by an [`LikelihoodID`].
+    Term(LikelihoodID),
+    /// The sum of two [`LikelihoodExpression`]s.
+    Add(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
+    /// The product of two [`LikelihoodExpression`]s.
+    Mul(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
+}
+
+impl LikelihoodExpression {
+    fn evaluate(&self, likelihood_values: &LikelihoodValues) -> Float {
+        match self {
+            LikelihoodExpression::Term(lid) => likelihood_values.0[lid.0],
+            LikelihoodExpression::Add(a, b) => {
+                a.evaluate(likelihood_values) + b.evaluate(likelihood_values)
+            }
+            LikelihoodExpression::Mul(a, b) => {
+                a.evaluate(likelihood_values) * b.evaluate(likelihood_values)
+            }
+        }
+    }
+}
+
+impl_op_ex!(+ |a: &LikelihoodExpression, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(a.clone()), Box::new(b.clone()))});
+impl_op_ex!(
+    *|a: &LikelihoodExpression, b: &LikelihoodExpression| -> LikelihoodExpression {
+        LikelihoodExpression::Mul(Box::new(a.clone()), Box::new(b.clone()))
+    }
+);
+impl_op_ex_commutative!(+ |a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(b.clone()))});
+impl_op_ex_commutative!(
+    *|a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression {
+        LikelihoodExpression::Mul(
+            Box::new(LikelihoodExpression::Term(a.clone())),
+            Box::new(b.clone()),
+        )
+    }
+);
+impl_op_ex!(+ |a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(LikelihoodExpression::Term(b.clone())))});
+impl_op_ex!(
+    *|a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression {
+        LikelihoodExpression::Mul(
+            Box::new(LikelihoodExpression::Term(a.clone())),
+            Box::new(LikelihoodExpression::Term(b.clone())),
+        )
+    }
+);
+
+pub struct LikelihoodEvaluator {
+    likelihood_manager: LikelihoodManager,
+    likelihood_expression: LikelihoodExpression,
+}
+
+impl Function<Float, (), Infallible> for LikelihoodEvaluator {
+    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
+        let likelihood_values = self.likelihood_manager.evaluate(parameters);
+        Ok(self.likelihood_expression.evaluate(&likelihood_values))
+    }
+}
+
+impl LikelihoodEvaluator {
+    pub fn parameters(&self) -> Vec<String> {
+        self.likelihood_manager.parameters()
+    }
     pub fn minimize(
         &self,
         p0: &[Float],
