@@ -1473,7 +1473,7 @@ impl Observer<Float, ()> for crate::python::laddu::PyObserver {
                 .extract::<crate::python::laddu::Status>()
                 .unwrap()
                 .0;
-            let result = res_tuple.get_item(2).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
             (new_status, result)
         });
         *status = new_status;

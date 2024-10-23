@@ -3,7 +3,7 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Manager
+from laddu.amplitudes import Expression, Manager
 from laddu.data import Dataset
 
 class LikelihoodID:
@@ -37,7 +37,7 @@ class LikelihoodEvaluator:
 
 class NLL:
     parameters: list[str]
-    def __init__(self, manager: Manager, ds_data: Dataset, ds_mc: Dataset) -> None: ...
+    def __init__(self, manager: Manager, ds_data: Dataset, ds_mc: Dataset, expression: Expression) -> None: ...
     def activate(self, name: str | list[str]) -> None: ...
     def activate_all(self) -> None: ...
     def deactivate(self, name: str | list[str]) -> None: ...
