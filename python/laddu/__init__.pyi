@@ -1,11 +1,12 @@
 from abc import ABCMeta, abstractmethod
 
-from laddu.amplitudes import NLL, Expression, Manager, Status, constant, parameter
+from laddu.amplitudes import Expression, Manager, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.data import BinnedDataset, Dataset, open, open_binned
+from laddu.likelihoods import NLL, LikelihoodManager, Status
 from laddu.utils.variables import Angles, CosTheta, Mass, Phi, PolAngle, Polarization, PolMagnitude
 from laddu.utils.vectors import Vector3, Vector4
 
@@ -36,6 +37,7 @@ __all__ = [
     "Polarization",
     "Mass",
     "Manager",
+    "LikelihoodManager",
     "NLL",
     "Expression",
     "Status",

@@ -14,7 +14,8 @@ pub(crate) mod laddu {
 
     use super::*;
     use crate as rust;
-    use crate::likelihoods::{LikelihoodTerm, MinimizerOptions};
+    use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
+    use crate::likelihoods::MinimizerOptions;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
@@ -743,6 +744,270 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.project(&parameters))
+        }
+        #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[allow(clippy::too_many_arguments)]
+        fn minimize(
+            &self,
+            p0: Vec<Float>,
+            bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+            method: &str,
+            max_steps: usize,
+            debug: bool,
+            verbose: bool,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Status> {
+            let bounds = bounds.map(|bounds_vec| {
+                bounds_vec
+                    .iter()
+                    .map(|(opt_lb, opt_ub)| {
+                        (
+                            opt_lb.unwrap_or(Float::NEG_INFINITY),
+                            opt_ub.unwrap_or(Float::INFINITY),
+                        )
+                    })
+                    .collect()
+            });
+            let n_parameters = p0.len();
+            let mut options = MinimizerOptions::default();
+            if let Some(kwargs) = kwargs {
+                let show_step = kwargs.get_extract::<bool>("show_step")?.unwrap_or(true);
+                let show_x = kwargs.get_extract::<bool>("show_x")?.unwrap_or(true);
+                let show_fx = kwargs.get_extract::<bool>("show_fx")?.unwrap_or(true);
+                let tol_x_rel = kwargs
+                    .get_extract::<Float>("tol_x_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_x_abs = kwargs
+                    .get_extract::<Float>("tol_x_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_rel = kwargs
+                    .get_extract::<Float>("tol_f_rel")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_f_abs = kwargs
+                    .get_extract::<Float>("tol_f_abs")?
+                    .unwrap_or(Float::EPSILON);
+                let tol_g_abs = kwargs
+                    .get_extract::<Float>("tol_g_abs")?
+                    .unwrap_or(Float::cbrt(Float::EPSILON));
+                let g_tolerance = kwargs.get_extract::<Float>("g_tolerance")?.unwrap_or(1e-5);
+                let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
+                let alpha = kwargs.get_extract::<Float>("alpha")?;
+                let beta = kwargs.get_extract::<Float>("beta")?;
+                let gamma = kwargs.get_extract::<Float>("gamma")?;
+                let delta = kwargs.get_extract::<Float>("delta")?;
+                let simplex_expansion_method = kwargs
+                    .get_extract::<String>("simplex_expansion_method")?
+                    .unwrap_or("greedy minimization".into());
+                let nelder_mead_f_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_f_terminator")?
+                    .unwrap_or("stddev".into());
+                let nelder_mead_x_terminator = kwargs
+                    .get_extract::<String>("nelder_mead_x_terminator")?
+                    .unwrap_or("singer".into());
+                let mut observers: Vec<PyObserver> = Vec::default();
+                // } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+                //     let vec: Vec<String> = list_arg.extract()?;
+                if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
+                    if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
+                        for item in observer_list.iter() {
+                            let observer = item.extract::<PyObserver>()?;
+                            observers.push(observer);
+                        }
+                    } else if let Ok(single_observer) = observer_arg.extract::<PyObserver>() {
+                        observers.push(single_observer);
+                    } else {
+                        return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
+                    }
+                }
+                for observer in observers {
+                    options = options.with_observer(observer);
+                }
+                match method {
+                    "lbfgsb" => {
+                        options = options.with_algorithm(
+                            LBFGSB::default()
+                                .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
+                                .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
+                                .with_g_tolerance(g_tolerance),
+                        )
+                    }
+                    "nelder_mead" => {
+                        let terminator_f = match nelder_mead_f_terminator.as_str() {
+                            "amoeba" => NelderMeadFTerminator::Amoeba { tol_f_rel },
+                            "absolute" => NelderMeadFTerminator::Absolute { tol_f_abs },
+                            "stddev" => NelderMeadFTerminator::StdDev { tol_f_abs },
+                            "none" => NelderMeadFTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_f_terminator\": \"{}\"",
+                                    nelder_mead_f_terminator
+                                )))
+                            }
+                        };
+                        let terminator_x = match nelder_mead_x_terminator.as_str() {
+                            "diameter" => NelderMeadXTerminator::Diameter { tol_x_abs },
+                            "higham" => NelderMeadXTerminator::Higham { tol_x_rel },
+                            "rowan" => NelderMeadXTerminator::Rowan { tol_x_rel },
+                            "singer" => NelderMeadXTerminator::Singer { tol_x_rel },
+                            "none" => NelderMeadXTerminator::None,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"nelder_mead_x_terminator\": \"{}\"",
+                                    nelder_mead_x_terminator
+                                )))
+                            }
+                        };
+                        let simplex_expansion_method = match simplex_expansion_method.as_str() {
+                            "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
+                            "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"simplex_expansion_method\": \"{}\"",
+                                    simplex_expansion_method
+                                )))
+                            }
+                        };
+                        let mut nelder_mead = NelderMead::default()
+                            .with_terminator_f(terminator_f)
+                            .with_terminator_x(terminator_x)
+                            .with_expansion_method(simplex_expansion_method);
+                        if adaptive {
+                            nelder_mead = nelder_mead.with_adaptive(n_parameters);
+                        }
+                        if let Some(alpha) = alpha {
+                            nelder_mead = nelder_mead.with_alpha(alpha);
+                        }
+                        if let Some(beta) = beta {
+                            nelder_mead = nelder_mead.with_beta(beta);
+                        }
+                        if let Some(gamma) = gamma {
+                            nelder_mead = nelder_mead.with_gamma(gamma);
+                        }
+                        if let Some(delta) = delta {
+                            nelder_mead = nelder_mead.with_delta(delta);
+                        }
+                        options = options.with_algorithm(nelder_mead)
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid \"method\": \"{}\"",
+                            method
+                        )))
+                    }
+                }
+                if debug {
+                    options = options.debug();
+                }
+                if verbose {
+                    options = options.verbose(show_step, show_x, show_fx);
+                }
+                options = options.with_max_steps(max_steps);
+            }
+            let status = self.0.minimize(&p0, bounds, Some(options));
+            Ok(Status(status))
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    struct LikelihoodTerm(Box<dyn rust::likelihoods::LikelihoodTerm>);
+
+    #[pyclass]
+    #[derive(Clone)]
+    struct LikelihoodID(rust::likelihoods::LikelihoodID);
+
+    #[pyclass]
+    #[derive(Clone)]
+    struct LikelihoodExpression(rust::likelihoods::LikelihoodExpression);
+
+    #[pymethods]
+    impl LikelihoodID {
+        fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(self.0.clone() + other_aid.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(self.0.clone() + other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
+        fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __str__(&self) -> String {
+            format!("{}", self.0)
+        }
+        fn __repr__(&self) -> String {
+            format!("{:?}", self.0)
+        }
+    }
+
+    #[pymethods]
+    impl LikelihoodExpression {
+        fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(self.0.clone() + other_aid.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(self.0.clone() + other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
+        fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __str__(&self) -> String {
+            format!("{}", self.0)
+        }
+        fn __repr__(&self) -> String {
+            format!("{:?}", self.0)
+        }
+    }
+
+    #[pyclass]
+    #[derive(Clone)]
+    struct LikelihoodManager(rust::likelihoods::LikelihoodManager);
+
+    #[pymethods]
+    impl LikelihoodManager {
+        #[new]
+        fn new() -> Self {
+            Self(rust::likelihoods::LikelihoodManager::default())
+        }
+        fn register(&mut self, likelihood_term: &LikelihoodTerm) -> LikelihoodID {
+            LikelihoodID(self.0.register(likelihood_term.0.clone()))
+        }
+        fn parameters(&self) -> Vec<String> {
+            self.0.parameters()
+        }
+        fn load(&self, likelihood_expression: &LikelihoodExpression) -> LikelihoodEvaluator {
+            LikelihoodEvaluator(self.0.load(&likelihood_expression.0))
+        }
+    }
+
+    #[pyclass]
+    struct LikelihoodEvaluator(rust::likelihoods::LikelihoodEvaluator);
+
+    #[pymethods]
+    impl LikelihoodEvaluator {
+        #[getter]
+        fn parameters(&self) -> Vec<String> {
+            self.0.parameters()
+        }
+        fn evaluate(&self, parameters: Vec<Float>) -> Float {
+            self.0.evaluate(&parameters)
         }
         #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]

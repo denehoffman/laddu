@@ -1,4 +1,9 @@
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 use crate::{
     amplitudes::{Evaluator, Expression, Manager},
@@ -14,8 +19,12 @@ use ganesh::{
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
-pub trait LikelihoodTerm: DynClone {
+/// A trait which describes a term that can be used like a likelihood (more correctly, a negative
+/// log-likelihood) in a minimization.
+pub trait LikelihoodTerm: DynClone + Send + Sync {
+    /// Evaluate the term given some input parameters.
     fn evaluate(&self, parameters: &[Float]) -> Float;
+    /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
 }
 
@@ -320,9 +329,18 @@ impl NLL {
     }
 }
 
-#[derive(Clone)]
+/// An identifier that can be used like an [`AmplitudeID`] to combine registered
+/// [`LikelihoodTerm`]s.
+#[derive(Clone, Debug)]
 pub struct LikelihoodID(usize);
 
+impl Display for LikelihoodID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A [`Manager`] but for [`LikelihoodTerm`]s.
 #[derive(Default, Clone)]
 pub struct LikelihoodManager {
     terms: Vec<Box<dyn LikelihoodTerm>>,
@@ -333,6 +351,8 @@ pub struct LikelihoodManager {
 }
 
 impl LikelihoodManager {
+    /// Register a [`LikelihoodTerm`] to get a [`LikelihoodID`] which can be combined with others
+    /// to form [`LikelihoodExpression`]s which can be minimized.
     pub fn register(&mut self, term: Box<dyn LikelihoodTerm>) -> LikelihoodID {
         let term_idx = self.terms.len();
         for param_name in term.parameters() {
@@ -355,14 +375,19 @@ impl LikelihoodManager {
         LikelihoodID(term_idx)
     }
 
+    /// Return all of the parameter names of registered [`LikelihoodTerm`]s in order. This only
+    /// returns the unique names in the order they should be input when evaluated with a
+    /// [`LikelihoodEvaluator`].
     pub fn parameters(&self) -> Vec<String> {
         self.param_names.clone()
     }
 
-    pub fn load(&self, likelihood_expression: LikelihoodExpression) -> LikelihoodEvaluator {
+    /// Load a [`LikelihoodExpression`] to generate a [`LikelihoodEvaluator`] that can be
+    /// minimized.
+    pub fn load(&self, likelihood_expression: &LikelihoodExpression) -> LikelihoodEvaluator {
         LikelihoodEvaluator {
             likelihood_manager: self.clone(),
-            likelihood_expression,
+            likelihood_expression: likelihood_expression.clone(),
         }
     }
 }
@@ -370,6 +395,7 @@ impl LikelihoodManager {
 #[derive(Debug)]
 struct LikelihoodValues(Vec<Float>);
 
+/// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
 #[derive(Clone)]
 pub enum LikelihoodExpression {
     /// A registered [`LikelihoodTerm`] referenced by an [`LikelihoodID`].
@@ -378,6 +404,18 @@ pub enum LikelihoodExpression {
     Add(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
     /// The product of two [`LikelihoodExpression`]s.
     Mul(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
+}
+
+impl Debug for LikelihoodExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_tree(f, "", "", "")
+    }
+}
+
+impl Display for LikelihoodExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl LikelihoodExpression {
@@ -391,6 +429,37 @@ impl LikelihoodExpression {
                 a.evaluate(likelihood_values) * b.evaluate(likelihood_values)
             }
         }
+    }
+    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
+    fn write_tree(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        parent_prefix: &str,
+        immediate_prefix: &str,
+        parent_suffix: &str,
+    ) -> std::fmt::Result {
+        let display_string = match self {
+            // TODO: maybe come up with a way to name likelihood terms?
+            Self::Term(lid) => format!("{}", lid.0),
+            Self::Add(_, _) => "+".to_string(),
+            Self::Mul(_, _) => "*".to_string(),
+        };
+        writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
+        match self {
+            Self::Term(_) => {}
+            Self::Add(a, b) | Self::Mul(a, b) => {
+                let terms = [a, b];
+                let mut it = terms.iter().peekable();
+                let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
+                while let Some(child) = it.next() {
+                    match it.peek() {
+                        Some(_) => child.write_tree(f, &child_prefix, "├─ ", "│  "),
+                        None => child.write_tree(f, &child_prefix, "└─ ", "   "),
+                    }?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -419,6 +488,7 @@ impl_op_ex!(
     }
 );
 
+/// A structure to evaluate and minimize combinations of [`LikelihoodTerm`]s.
 pub struct LikelihoodEvaluator {
     likelihood_manager: LikelihoodManager,
     likelihood_expression: LikelihoodExpression,
@@ -455,9 +525,20 @@ impl Function<Float, (), Infallible> for LikelihoodEvaluator {
 }
 
 impl LikelihoodEvaluator {
+    /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
     pub fn parameters(&self) -> Vec<String> {
         self.likelihood_manager.parameters()
     }
+    /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
+    /// contained by this [`LikelihoodEvaluator`].
+    pub fn evaluate(&self, parameters: &[Float]) -> Float {
+        Function::evaluate(self, parameters, &mut ()).unwrap_or_else(|never| match never {})
+    }
+
+    /// A function that can be called to minimize the sum/product of the [`LikelihoodTerm`]s
+    /// contained by this [`LikelihoodEvaluator`].
+    ///
+    /// See [`NLL::minimize`] for more details.
     pub fn minimize(
         &self,
         p0: &[Float],
