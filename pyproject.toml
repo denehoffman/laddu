@@ -11,9 +11,21 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
-dependencies = ["numpy"]
+dependencies = [
+  "numpy",
+  "docopt-ng",
+  "loguru",
+  "pandas",
+  "uproot",
+  "fastparquet",
+]
+
+[project.scripts]
+amptools-to-laddu = "laddu:convert.run"
+
 [project.optional-dependencies]
 tests = ["pytest"]
+
 [tool.maturin]
 python-source = "python"
 features = ["pyo3/extension-module"]

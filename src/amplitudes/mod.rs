@@ -1,14 +1,13 @@
 use std::{
-    convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use auto_ops::*;
 use dyn_clone::DynClone;
-use ganesh::{algorithms::LBFGSB, observers::DebugObserver, prelude::*};
 use num::Complex;
 
+use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -265,85 +264,89 @@ impl Manager {
         self.amplitudes.push(amp);
         Ok(aid)
     }
-    /// Create an [`Evaluator`] which can compute the result of any [`Expression`] built on
+    /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&mut self, dataset: &Arc<Dataset>) -> Evaluator {
-        let mut loaded_resources = self.resources.clone();
-        loaded_resources.reserve_cache(dataset.len());
+    pub fn load(&self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
+        let loaded_resources = Arc::new(RwLock::new(self.resources.clone()));
+        loaded_resources.write().reserve_cache(dataset.len());
         for amplitude in &self.amplitudes {
-            amplitude.precompute_all(dataset, &mut loaded_resources);
+            amplitude.precompute_all(dataset, &mut loaded_resources.write());
         }
         Evaluator {
             amplitudes: self.amplitudes.clone(),
-            resources: loaded_resources,
+            resources: loaded_resources.clone(),
             dataset: dataset.clone(),
+            expression: expression.clone(),
         }
     }
 }
 
-/// A structure which can be used to evaluate any [`Expression`] built on registered
+/// A structure which can be used to evaluate the stored [`Expression`] built on registered
 /// [`Amplitude`]s. This contains a [`Resources`] struct which already contains cached values for
 /// precomputed [`Amplitude`]s and any relevant free parameters and constants.
+#[derive(Clone)]
 pub struct Evaluator {
     amplitudes: Vec<Box<dyn Amplitude>>,
-    resources: Resources,
-    dataset: Arc<Dataset>,
+    pub(crate) resources: Arc<RwLock<Resources>>,
+    pub(crate) dataset: Arc<Dataset>,
+    expression: Expression,
 }
 
 impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.resources.parameters.iter().cloned().collect()
+        self.resources.read().parameters.iter().cloned().collect()
     }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate(&mut self, name: &str) {
-        self.resources.activate(name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().activate(name);
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().activate_many(names);
     }
     /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.resources.activate_all();
+    pub fn activate_all(&self) {
+        self.resources.write().activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.deactivate(name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().deactivate(name);
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().deactivate_many(names);
     }
     /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.resources.deactivate_all();
+    pub fn deactivate_all(&self) {
+        self.resources.write().deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.isolate(name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().isolate(name);
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().isolate_many(names);
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .par_iter()
-            .zip(self.resources.caches.par_iter())
+            .zip(resources.caches.par_iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -357,24 +360,25 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .par_iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .iter()
-            .zip(self.resources.caches.iter())
+            .zip(resources.caches.iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -388,307 +392,7 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
-    }
-}
-
-/// An extended, unbinned negative log-likelihood evaluator.
-pub struct NLL {
-    data_evaluator: Evaluator,
-    mc_evaluator: Evaluator,
-}
-
-impl NLL {
-    /// Construct an [`NLL`] from a [`Manager`] and two [`Dataset`]s (data and Monte Carlo). This
-    /// is the equivalent of the [`Manager::load`] method, but for two [`Dataset`]s and a different
-    /// method of evaluation.
-    pub fn new(manager: &Manager, ds_data: &Arc<Dataset>, ds_mc: &Arc<Dataset>) -> Self {
-        Self {
-            data_evaluator: manager.clone().load(ds_data),
-            mc_evaluator: manager.clone().load(ds_mc),
-        }
-    }
-    /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
-    /// method.
-    pub fn parameters(&self) -> Vec<String> {
-        self.data_evaluator
-            .resources
-            .parameters
-            .iter()
-            .cloned()
-            .collect()
-    }
-    /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.activate(&name);
-        self.mc_evaluator.resources.activate(name);
-    }
-    /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.activate_many(names);
-        self.mc_evaluator.resources.activate_many(names);
-    }
-    /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.data_evaluator.resources.activate_all();
-        self.mc_evaluator.resources.activate_all();
-    }
-    /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.deactivate(&name);
-        self.mc_evaluator.resources.deactivate(name);
-    }
-    /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.deactivate_many(names);
-        self.mc_evaluator.resources.deactivate_many(names);
-    }
-    /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.data_evaluator.resources.deactivate_all();
-        self.mc_evaluator.resources.deactivate_all();
-    }
-    /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.isolate(&name);
-        self.mc_evaluator.resources.isolate(name);
-    }
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.isolate_many(names);
-        self.mc_evaluator.resources.isolate_many(names);
-    }
-
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
-            .par_iter()
-            .zip(self.data_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
-            .par_iter()
-            .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
-            .iter()
-            .zip(self.data_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
-            .iter()
-            .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
-    /// ```
-    #[cfg(feature = "rayon")]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        mc_result
-            .par_iter()
-            .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
-            .collect()
-    }
-
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
-    /// ```
-    #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        mc_result
-            .iter()
-            .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
-            .collect()
-    }
-}
-
-impl Function<Float, Expression, Infallible> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        expression: &mut Expression,
-    ) -> Result<Float, Infallible> {
-        Ok(self.evaluate(expression, parameters))
-    }
-}
-
-/// A set of options that are used when minimizations are performed.
-pub struct MinimizerOptions {
-    algorithm: Box<dyn ganesh::Algorithm<Float, Expression, Infallible>>,
-    observers: Vec<Box<dyn Observer<Float, Expression>>>,
-    max_steps: usize,
-}
-
-impl Default for MinimizerOptions {
-    fn default() -> Self {
-        Self {
-            algorithm: Box::new(LBFGSB::default()),
-            observers: Default::default(),
-            max_steps: 4000,
-        }
-    }
-}
-
-struct VerboseObserver {
-    show_step: bool,
-    show_x: bool,
-    show_fx: bool,
-}
-impl Observer<Float, Expression> for VerboseObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        status: &mut Status<Float>,
-        _user_data: &mut Expression,
-    ) -> bool {
-        if self.show_step {
-            println!("Step: {}", step);
-        }
-        if self.show_x {
-            println!("Current Best Position: {}", status.x.transpose());
-        }
-        if self.show_fx {
-            println!("Current Best Value: {}", status.fx);
-        }
-        true
-    }
-}
-
-impl MinimizerOptions {
-    /// Adds the [`DebugObserver`] to the minimization.
-    pub fn debug(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(DebugObserver));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Adds a customizable [`VerboseObserver`] to the minimization.
-    pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(VerboseObserver {
-            show_step,
-            show_x,
-            show_fx,
-        }));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
-    /// settings).
-    pub fn with_algorithm<A: Algorithm<Float, Expression, Infallible> + 'static>(
-        self,
-        algorithm: A,
-    ) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: self.observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    pub fn with_observer<O: Observer<Float, Expression> + 'static>(self, observer: O) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(observer));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-
-    /// Set the maximum number of [`Algorithm`] steps for the minimization (default: 4000).
-    pub fn with_max_steps(self, max_steps: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            max_steps,
-        }
-    }
-}
-
-impl NLL {
-    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
-    /// quasi-Newton minimizer which supports bounded optimization.
-    pub fn minimize(
-        &self,
-        expression: &Expression,
-        p0: &[Float],
-        bounds: Option<Vec<(Float, Float)>>,
-        options: Option<MinimizerOptions>,
-    ) -> Status<Float> {
-        let options = options.unwrap_or_default();
-        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
-            .with_bounds(bounds)
-            .with_observers(options.observers)
-            .with_max_steps(options.max_steps);
-        let mut expression = expression.clone();
-        m.minimize(self, p0, &mut expression)
-            .unwrap_or_else(|never| match never {});
-        m.status
     }
 }
