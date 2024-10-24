@@ -43,11 +43,11 @@ def read_root_file(input_file, tree_name, pol_in_beam, num_entries=None):
     # Check if EPS branch exists and update eps if needed
     if "EPS" in tree:
         logger.info("EPS branch found. Using it for eps values.")
-        eps = tree["EPS"].array(library="np", entry_stop=num_entries)
+        eps = tree["EPS"].array(library="np", entry_stop=num_entries)  # pyright: ignore
         eps = eps[:, np.newaxis, :]
     if "eps" in tree:
         logger.info("eps branch found. Using it for eps values.")
-        eps = tree["eps"].array(library="np", entry_stop=num_entries)
+        eps = tree["eps"].array(library="np", entry_stop=num_entries)  # pyright: ignore
         eps = eps[:, np.newaxis, :]
     elif pol_in_beam:
         logger.info("Using beam's momentum for polarization (eps).")
