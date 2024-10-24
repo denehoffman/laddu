@@ -649,6 +649,23 @@ pub(crate) mod laddu {
         }
     }
 
+    trait GetStrExtractObj {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>;
+    }
+
+    impl GetStrExtractObj for Bound<'_, PyDict> {
+        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
+        where
+            T: for<'py> FromPyObject<'py>,
+        {
+            self.get_item(key)?
+                .map(|value| value.extract::<T>())
+                .transpose()
+        }
+    }
+
     fn _parse_minimizer_options(
         n_parameters: usize,
         method: &str,
@@ -800,23 +817,6 @@ pub(crate) mod laddu {
     #[pyclass]
     #[derive(Clone)]
     struct NLL(Box<rust::likelihoods::NLL>);
-
-    trait GetStrExtractObj {
-        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
-        where
-            T: for<'py> FromPyObject<'py>;
-    }
-
-    impl GetStrExtractObj for Bound<'_, PyDict> {
-        fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
-        where
-            T: for<'py> FromPyObject<'py>,
-        {
-            self.get_item(key)?
-                .map(|value| value.extract::<T>())
-                .transpose()
-        }
-    }
 
     #[pymethods]
     impl NLL {
