@@ -1,3 +1,4 @@
+use nalgebra::DVector;
 use num::Complex;
 
 use crate::{
@@ -58,5 +59,15 @@ impl Amplitude for Ylm {
 
     fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
         cache.get_complex_scalar(self.csid)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex<Float>>,
+    ) {
+        // This amplitude is independent of free parameters
     }
 }

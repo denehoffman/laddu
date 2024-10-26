@@ -5,6 +5,7 @@ use std::{
 
 use auto_ops::*;
 use dyn_clone::DynClone;
+use nalgebra::{ComplexField, DVector};
 use num::Complex;
 
 use parking_lot::RwLock;
@@ -101,12 +102,77 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs.
     fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<Float>;
+
+    /// This method yields the gradient of a particular [`Amplitude`] at a point specified
+    /// by a particular [`Event`] and set of [`Parameters`]. See those structs, as well as
+    /// [`Cache`], for documentation on their available methods. For the most part,
+    /// [`Event`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
+    /// while [`Parameters`] and the [`Cache`] are more like key-value storage accessed by
+    /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
+    /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
+    /// improve performance for some derivative-using methods of minimization. The default
+    /// implementation calculates a central finite difference across all parameters, regardless of
+    /// whether or not they are used in the [`Amplitude`].
+    ///
+    /// In the future, it may be possible to automatically implement this with the indices of
+    /// registered free parameters, but until then, the [`Amplitude::central_difference_with_indices`]
+    /// method can be used to conveniently only calculate central differences for the parameters
+    /// which are used by the [`Amplitude`].
+    fn compute_gradient(
+        &self,
+        parameters: &Parameters,
+        event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        self.central_difference_with_indices(
+            &Vec::from_iter(0..parameters.len()),
+            parameters,
+            event,
+            cache,
+            gradient,
+        )
+    }
+
+    /// A helper function to implement a central difference only on indices which correspond to
+    /// free parameters in the [`Amplitude`]. For example, if an [`Amplitude`] contains free
+    /// parameters registered to indices 1, 3, and 5 of the [`Parameters::parameters`] array, then
+    /// running this with those indices will compute a central finite difference derivative for
+    /// those coordinates only, since the rest can be safely assumed to be zero.
+    fn central_difference_with_indices(
+        &self,
+        indices: &[usize],
+        parameters: &Parameters,
+        event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let x = parameters.parameters.to_owned();
+        let constants = parameters.constants.to_owned();
+        let h: DVector<Float> = x
+            .iter()
+            .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+            .collect::<Vec<_>>()
+            .into();
+        for i in indices {
+            let mut x_plus = x.clone();
+            let mut x_minus = x.clone();
+            x_plus[*i] += h[*i];
+            x_minus[*i] -= h[*i];
+            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), event, cache);
+            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), event, cache);
+            gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
+        }
+    }
 }
 
 dyn_clone::clone_trait_object!(Amplitude);
 
 #[derive(Debug)]
-struct AmplitudeValues(Vec<Complex<Float>>);
+pub(crate) struct AmplitudeValues(pub(crate) Vec<Complex<Float>>);
+
+#[derive(Debug)]
+pub(crate) struct GradientValues(pub(crate) Vec<DVector<Complex<Float>>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
@@ -180,7 +246,7 @@ impl AmplitudeID {
 }
 
 impl Expression {
-    fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
+    pub(crate) fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
         match self {
             Expression::Amp(aid) => amplitude_values.0[aid.1],
             Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
@@ -188,6 +254,38 @@ impl Expression {
             Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
+        }
+    }
+    pub(crate) fn evaluate_gradient(
+        &self,
+        amplitude_values: &AmplitudeValues,
+        gradient_values: &GradientValues,
+    ) -> DVector<Complex<Float>> {
+        match self {
+            Expression::Amp(aid) => gradient_values.0[aid.1].clone(),
+            Expression::Add(a, b) => {
+                a.evaluate_gradient(amplitude_values, gradient_values)
+                    + b.evaluate_gradient(amplitude_values, gradient_values)
+            }
+            Expression::Mul(a, b) => {
+                let f_a = a.evaluate(amplitude_values);
+                let f_b = b.evaluate(amplitude_values);
+                b.evaluate_gradient(amplitude_values, gradient_values)
+                    .map(|g| g * f_a)
+                    + a.evaluate_gradient(amplitude_values, gradient_values)
+                        .map(|g| g * f_b)
+            }
+            Expression::Real(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| Complex::new(g.re, 0.0)),
+            Expression::Imag(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| Complex::new(g.im, 0.0)),
+            Expression::NormSqr(a) => {
+                let conj_f_a = a.evaluate(amplitude_values).conjugate();
+                a.evaluate_gradient(amplitude_values, gradient_values)
+                    .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
+            }
         }
     }
     /// Takes the real part of the given [`Expression`].
@@ -287,10 +385,10 @@ impl Manager {
 /// precomputed [`Amplitude`]s and any relevant free parameters and constants.
 #[derive(Clone)]
 pub struct Evaluator {
-    amplitudes: Vec<Box<dyn Amplitude>>,
+    pub(crate) amplitudes: Vec<Box<dyn Amplitude>>,
     pub(crate) resources: Arc<RwLock<Resources>>,
     pub(crate) dataset: Arc<Dataset>,
-    expression: Expression,
+    pub(crate) expression: Expression,
 }
 
 impl Evaluator {
@@ -393,6 +491,106 @@ impl Evaluator {
         amplitude_values_vec
             .iter()
             .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+            .collect()
+    }
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters.
+    #[cfg(feature = "rayon")]
+    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+            .dataset
+            .events
+            .par_iter()
+            .zip(resources.caches.par_iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                self.amplitudes
+                    .iter()
+                    .zip(resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .collect();
+        amplitude_values_and_gradient_vec
+            .par_iter()
+            .map(|(amplitude_values, gradient_values)| {
+                self.expression
+                    .evaluate_gradient(amplitude_values, gradient_values)
+            })
+            .collect()
+    }
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters.
+    #[cfg(not(feature = "rayon"))]
+    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let n_parameters = parameters.len();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+            .dataset
+            .events
+            .iter()
+            .zip(resources.caches.par_iter())
+            .map(|(event, cache)| {
+                (
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute_gradient(&parameters, event, cache)
+                                } else {
+                                    DVector::zeros(n_parameters)
+                                }
+                            })
+                            .collect(),
+                    ),
+                )
+            })
+            .collect();
+        amplitude_values_and_gradient_vec
+            .iter()
+            .map(|(amplitude_values, gradient_values)| {
+                self.expression
+                    .evaluate_gradient(amplitude_values, gradient_values)
+            })
             .collect()
     }
 }

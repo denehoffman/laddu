@@ -302,7 +302,7 @@ pub mod prelude {
     };
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use crate::{Float, LadduError, PI};
-    pub use nalgebra::{Vector3, Vector4};
+    pub use nalgebra::{DVector, Vector3, Vector4};
     pub use num::Complex;
 }
 

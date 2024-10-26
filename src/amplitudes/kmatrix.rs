@@ -1,6 +1,6 @@
 use std::array;
 
-use nalgebra::{matrix, vector};
+use nalgebra::{matrix, vector, DVector};
 use nalgebra::{SMatrix, SVector};
 use num::traits::ConstOne;
 use num::traits::FloatConst;
@@ -122,6 +122,17 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
                 .sum()
         });
         ikc_inv_vec.dot(&p_vec)
+    }
+
+    fn compute_gradient(
+        ikc_inv_vec: &SVector<Complex<Float>, CHANNELS>,
+        p_vec_constants: &SMatrix<Float, CHANNELS, RESONANCES>,
+    ) -> DVector<Complex<Float>> {
+        DVector::from_fn(RESONANCES, |a, _| {
+            (0..RESONANCES)
+                .map(|j| ikc_inv_vec[j] * p_vec_constants[(j, a)])
+                .sum()
+        })
     }
 }
 
@@ -247,6 +258,26 @@ impl Amplitude for KopfKMatrixF0 {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..5 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+            }
+        }
+    }
 }
 
 /// A K-matrix parameterization for $`f_2`$ particles described by Kopf et al.[^1] with fixed couplings and mass poles
@@ -363,6 +394,26 @@ impl Amplitude for KopfKMatrixF2 {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..4 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+            }
+        }
+    }
 }
 
 /// A K-matrix parameterization for $`a_0`$ particles described by Kopf et al.[^1] with fixed couplings and mass poles
@@ -470,6 +521,26 @@ impl Amplitude for KopfKMatrixA0 {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..2 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+            }
+        }
     }
 }
 
@@ -583,6 +654,26 @@ impl Amplitude for KopfKMatrixA2 {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..2 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+            }
+        }
+    }
 }
 
 /// A K-matrix parameterization for $`\rho`$ particles described by Kopf et al.[^1] with fixed couplings and mass poles
@@ -694,6 +785,26 @@ impl Amplitude for KopfKMatrixRho {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..2 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+            }
+        }
+    }
 }
 
 /// A K-matrix parameterization for the $`\pi_1`$ hybrid candidate described by Kopf et al.[^1] with fixed couplings and mass poles
@@ -800,5 +911,23 @@ impl Amplitude for KopfKMatrixPi1 {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        if let ParameterID::Parameter(index) = self.couplings_indices_real[0] {
+            gradient[index] = internal_gradient[0];
+        }
+        if let ParameterID::Parameter(index) = self.couplings_indices_imag[0] {
+            gradient[index] = Complex::<Float>::I * internal_gradient[0];
+        }
     }
 }

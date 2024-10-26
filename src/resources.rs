@@ -12,8 +12,8 @@ use crate::{
 /// This struct holds references to the constants and free parameters used in the fit so that they
 /// may be obtained from their corresponding [`ParameterID`].
 pub struct Parameters<'a> {
-    parameters: &'a [Float],
-    constants: &'a [Float],
+    pub(crate) parameters: &'a [Float],
+    pub(crate) constants: &'a [Float],
 }
 
 impl<'a> Parameters<'a> {
@@ -31,6 +31,11 @@ impl<'a> Parameters<'a> {
             ParameterID::Constant(index) => self.constants[index],
             ParameterID::Uninit => panic!("Parameter has not been registered!"),
         }
+    }
+
+    /// The number of free parameters.
+    pub fn len(&self) -> usize {
+        self.parameters.len()
     }
 }
 

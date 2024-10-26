@@ -6,8 +6,9 @@ use std::{
 };
 
 use crate::{
-    amplitudes::{Evaluator, Expression, Manager},
+    amplitudes::{AmplitudeValues, Evaluator, Expression, GradientValues, Manager},
     data::Dataset,
+    resources::Parameters,
     Float,
 };
 use auto_ops::*;
@@ -15,6 +16,8 @@ use dyn_clone::DynClone;
 use ganesh::{
     algorithms::LBFGSB, observers::DebugObserver, Algorithm, Function, Minimizer, Observer, Status,
 };
+use nalgebra::DVector;
+use num::Complex;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -24,6 +27,8 @@ use rayon::prelude::*;
 pub trait LikelihoodTerm: DynClone + Send + Sync {
     /// Evaluate the term given some input parameters.
     fn evaluate(&self, parameters: &[Float]) -> Float;
+    /// Evaluate the gradient of the term given some input parameters.
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float>;
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
 }
@@ -206,11 +211,248 @@ impl LikelihoodTerm for NLL {
             .sum();
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
+
+    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
+    /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
+    /// real part of the given expression (discarding the imaginary part entirely, which
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
+    /// ```
+    #[cfg(feature = "rayon")]
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        let data_resources = self.data_evaluator.resources.read();
+        let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        let n_data = self.data_evaluator.dataset.weighted_len();
+        let mc_resources = self.mc_evaluator.resources.read();
+        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
+        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let zero: DVector<Float> = DVector::zeros(parameters.len());
+        let data_term: DVector<Float> = self
+            .data_evaluator
+            .dataset
+            .par_iter()
+            .zip(data_resources.caches.par_iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+                self.data_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(data_resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    event.weight,
+                    AmplitudeValues(
+                        self.data_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(data_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&data_parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .map(|(weight, amp_vals, grad_vals)| {
+                (
+                    weight,
+                    self.data_evaluator.expression.evaluate(&amp_vals),
+                    self.data_evaluator
+                        .expression
+                        .evaluate_gradient(&amp_vals, &grad_vals),
+                )
+            })
+            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
+            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
+            .reduce(|| zero.clone(), |a, b| a + b);
+
+        let mc_term: DVector<Float> = self
+            .mc_evaluator
+            .dataset
+            .par_iter()
+            .zip(mc_resources.caches.par_iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.mc_evaluator.amplitudes.len()];
+                self.mc_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(mc_resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    event.weight,
+                    AmplitudeValues(
+                        self.mc_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(mc_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&mc_parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .map(|(weight, amp_vals, grad_vals)| {
+                (
+                    weight,
+                    self.mc_evaluator
+                        .expression
+                        .evaluate_gradient(&amp_vals, &grad_vals),
+                )
+            })
+            .map(|(w, g)| w * g.map(|gi| gi.re))
+            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
+            .reduce(|| zero.clone(), |a, b| a + b);
+        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+    }
+
+    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
+    /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
+    /// real part of the given expression (discarding the imaginary part entirely, which
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
+    /// ```
+    #[cfg(not(feature = "rayon"))]
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        let data_resources = self.data_evaluator.resources.read();
+        let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        let n_data = self.data_evaluator.dataset.weighted_len();
+        let mc_resources = self.mc_evaluator.resources.read();
+        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
+        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let zero: DVector<Float> = DVector::zeros(parameters.len());
+        let data_term: DVector<Float> = self
+            .data_evaluator
+            .dataset
+            .iter()
+            .zip(data_resources.caches.iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+                self.data_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(data_resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    event.weight,
+                    AmplitudeValues(
+                        self.data_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(data_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&data_parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .map(|(weight, amp_vals, grad_vals)| {
+                (
+                    weight,
+                    self.data_evaluator.expression.evaluate(&amp_vals),
+                    self.data_evaluator
+                        .expression
+                        .evaluate_gradient(&amp_vals, &grad_vals),
+                )
+            })
+            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
+            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
+            .reduce(|| zero.clone(), |a, b| a + b);
+
+        let mc_term: DVector<Float> = self
+            .mc_evaluator
+            .dataset
+            .iter()
+            .zip(mc_resources.caches.iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.mc_evaluator.amplitudes.len()];
+                self.mc_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(mc_resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    event.weight,
+                    AmplitudeValues(
+                        self.mc_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(mc_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&mc_parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .map(|(weight, amp_vals, grad_vals)| {
+                (
+                    weight,
+                    self.mc_evaluator
+                        .expression
+                        .evaluate_gradient(&amp_vals, &grad_vals),
+                )
+            })
+            .map(|(w, g)| w * g.map(|gi| gi.re))
+            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
+            .reduce(|| zero.clone(), |a, b| a + b);
+        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+    }
 }
 
 impl Function<Float, (), Infallible> for NLL {
     fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
         Ok(LikelihoodTerm::evaluate(self, parameters))
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        _user_data: &mut (),
+    ) -> Result<DVector<Float>, Infallible> {
+        Ok(LikelihoodTerm::evaluate_gradient(self, parameters))
     }
 }
 
@@ -395,6 +637,9 @@ impl LikelihoodManager {
 #[derive(Debug)]
 struct LikelihoodValues(Vec<Float>);
 
+#[derive(Debug)]
+struct LikelihoodGradients(Vec<DVector<Float>>);
+
 /// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
 #[derive(Clone)]
 pub enum LikelihoodExpression {
@@ -427,6 +672,25 @@ impl LikelihoodExpression {
             }
             LikelihoodExpression::Mul(a, b) => {
                 a.evaluate(likelihood_values) * b.evaluate(likelihood_values)
+            }
+        }
+    }
+    fn evaluate_gradient(
+        &self,
+        likelihood_values: &LikelihoodValues,
+        likelihood_gradients: &LikelihoodGradients,
+    ) -> DVector<Float> {
+        match self {
+            LikelihoodExpression::Term(lid) => likelihood_gradients.0[lid.0].clone(),
+            LikelihoodExpression::Add(a, b) => {
+                a.evaluate_gradient(likelihood_values, likelihood_gradients)
+                    + b.evaluate_gradient(likelihood_values, likelihood_gradients)
+            }
+            LikelihoodExpression::Mul(a, b) => {
+                a.evaluate_gradient(likelihood_values, likelihood_gradients)
+                    * b.evaluate(likelihood_values)
+                    + b.evaluate_gradient(likelihood_values, likelihood_gradients)
+                        * a.evaluate(likelihood_values)
             }
         }
     }
@@ -521,6 +785,47 @@ impl Function<Float, (), Infallible> for LikelihoodEvaluator {
                 .collect(),
         );
         Ok(self.likelihood_expression.evaluate(&likelihood_values))
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        _user_data: &mut (),
+    ) -> Result<DVector<Float>, Infallible> {
+        let mut param_buffers: Vec<Vec<Float>> = self
+            .likelihood_manager
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self
+            .likelihood_manager
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
+        }
+        let likelihood_values = LikelihoodValues(
+            self.likelihood_manager
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect(),
+        );
+        let likelihood_gradients = LikelihoodGradients(
+            self.likelihood_manager
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate_gradient(buffer))
+                .collect(),
+        );
+        Ok(self
+            .likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients))
     }
 }
 

@@ -1,3 +1,4 @@
+use nalgebra::DVector;
 use num::Complex;
 
 use crate::{
@@ -83,5 +84,22 @@ impl Amplitude for BreitWigner {
         let n = Float::sqrt(mass0 * width0 / PI);
         let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
         Complex::from(f * n) / d
+    }
+
+    fn compute_gradient(
+        &self,
+        parameters: &Parameters,
+        event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let mut indices = Vec::with_capacity(2);
+        if let ParameterID::Parameter(index) = self.pid_mass {
+            indices.push(index)
+        }
+        if let ParameterID::Parameter(index) = self.pid_width {
+            indices.push(index)
+        }
+        self.central_difference_with_indices(&indices, parameters, event, cache, gradient)
     }
 }
