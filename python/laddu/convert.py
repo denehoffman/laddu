@@ -8,6 +8,10 @@ Options:
     -n <num-entries>         Truncate the file to the first n entries for testing.
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import uproot
@@ -29,10 +33,10 @@ def read_root_file(input_file, tree_name, pol_in_beam, num_entries=None):
     weight = tree["Weight"].array(library="np", entry_stop=num_entries)  # pyright:ignore
 
     # Final state particles
-    E_final = np.array(event for event in tree["E_FinalState"].array(library="np", entry_stop=num_entries))  # pyright: ignore
-    Px_final = np.array(event for event in tree["Px_FinalState"].array(library="np", entry_stop=num_entries))  # pyright: ignore
-    Py_final = np.array(event for event in tree["Py_FinalState"].array(library="np", entry_stop=num_entries))  # pyright: ignore
-    Pz_final = np.array(event for event in tree["Pz_FinalState"].array(library="np", entry_stop=num_entries))  # pyright: ignore
+    E_final = np.array(list(tree["E_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
+    Px_final = np.array(list(tree["Px_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
+    Py_final = np.array(list(tree["Py_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
+    Pz_final = np.array(list(tree["Pz_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
 
     # Handle beam four-vector: (nevents, 4)
     p4_beam = np.stack([E_beam, Px_beam, Py_beam, Pz_beam], axis=-1)
@@ -94,6 +98,17 @@ def save_as_parquet(p4s, weight, eps, output_file):
     logger.info(f"File saved: {output_file}")
 
 
+def convert_from_amptools(
+    input_path: Path,
+    output_path: Path,
+    tree_name: str = "kin",
+    pol_in_beam: bool = False,  # noqa: FBT001, FBT002
+    num_entries: int | None = None,
+):
+    p4s, weight, eps = read_root_file(input_path, tree_name, pol_in_beam, num_entries)
+    save_as_parquet(p4s, weight, eps, output_path)
+
+
 def run():
     """Main entry point for the script."""
     args = docopt(__doc__ if __doc__ else "")
@@ -103,14 +118,7 @@ def run():
     pol_in_beam = args["--pol-in-beam"]
     num_entries = int(args["-n"]) if args["-n"] else None
 
-    logger.info("Starting conversion: ROOT -> Parquet")
-    logger.info(f"Input file: {input_file}")
-    logger.info(f"Output file: {output_file}")
-    logger.info(f"Tree name: {tree_name}")
-    logger.info(f"Polarization in beam: {pol_in_beam}")
-
-    p4s, weight, eps = read_root_file(input_file, tree_name, pol_in_beam, num_entries)
-    save_as_parquet(p4s, weight, eps, output_file)
+    convert_from_amptools(Path(input_file), Path(output_file), tree_name, pol_in_beam, num_entries)
 
     df_read = pd.read_parquet(output_file)
     print("Output Parquet File (head):")  # noqa: T201
