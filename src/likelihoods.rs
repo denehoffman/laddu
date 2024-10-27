@@ -869,3 +869,28 @@ impl LikelihoodEvaluator {
         m.status
     }
 }
+
+/// A [`LikelihoodTerm`] which represents a single scaling parameter.
+#[derive(Clone)]
+pub struct LikelihoodScalar(String);
+
+impl LikelihoodScalar {
+    /// Create a new [`LikelihoodScalar`] with a parameter with the given name.
+    pub fn new<T: AsRef<str>>(name: T) -> Box<Self> {
+        Self(name.as_ref().into()).into()
+    }
+}
+
+impl LikelihoodTerm for LikelihoodScalar {
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        parameters[0]
+    }
+
+    fn evaluate_gradient(&self, _parameters: &[Float]) -> DVector<Float> {
+        DVector::from_vec(vec![1.0])
+    }
+
+    fn parameters(&self) -> Vec<String> {
+        vec![self.0.clone()]
+    }
+}

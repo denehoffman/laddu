@@ -59,6 +59,8 @@ class NLL:
         **kwargs,
     ) -> Status: ...
 
+def LikelihoodScalar(name: str) -> LikelihoodTerm: ...  # noqa: N802
+
 class Status:
     x: npt.NDArray[np.float64]
     err: npt.NDArray[np.float64] | None
@@ -85,4 +87,5 @@ __all__ = [
     "LikelihoodTerm",
     "LikelihoodManager",
     "LikelihoodEvaluator",
+    "LikelihoodScalar",
 ]

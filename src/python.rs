@@ -1067,6 +1067,11 @@ pub(crate) mod laddu {
         }
     }
 
+    #[pyfunction]
+    fn LikelihoodScalar(name: String) -> LikelihoodTerm {
+        LikelihoodTerm(rust::likelihoods::LikelihoodScalar::new(name))
+    }
+
     #[pyclass]
     #[pyo3(name = "Observer")]
     pub(crate) struct PyObserver(pub(crate) Py<PyAny>);

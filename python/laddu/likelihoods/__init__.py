@@ -5,6 +5,7 @@ from laddu.laddu import (
     LikelihoodExpression,
     LikelihoodID,
     LikelihoodManager,
+    LikelihoodScalar,
     LikelihoodTerm,
     Status,
 )
@@ -18,4 +19,5 @@ __all__ = [
     "LikelihoodTerm",
     "LikelihoodManager",
     "LikelihoodEvaluator",
+    "LikelihoodScalar",
 ]
