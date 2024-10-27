@@ -835,6 +835,17 @@ pub(crate) mod laddu {
             ))
         }
         #[getter]
+        fn data(&self) -> Dataset {
+            Dataset(self.0.data_evaluator.dataset.clone())
+        }
+        #[getter]
+        fn mc(&self) -> Dataset {
+            Dataset(self.0.mc_evaluator.dataset.clone())
+        }
+        fn as_term(&self) -> LikelihoodTerm {
+            LikelihoodTerm(self.0.clone())
+        }
+        #[getter]
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }

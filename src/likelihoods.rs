@@ -38,8 +38,8 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 /// An extended, unbinned negative log-likelihood evaluator.
 #[derive(Clone)]
 pub struct NLL {
-    data_evaluator: Evaluator,
-    mc_evaluator: Evaluator,
+    pub(crate) data_evaluator: Evaluator,
+    pub(crate) mc_evaluator: Evaluator,
 }
 
 impl NLL {
