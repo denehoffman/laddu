@@ -815,14 +815,23 @@ impl Function<Float, (), Infallible> for LikelihoodEvaluator {
                 .map(|(term, buffer)| term.evaluate(buffer))
                 .collect(),
         );
-        let likelihood_gradients = LikelihoodGradients(
-            self.likelihood_manager
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate_gradient(buffer))
-                .collect(),
-        );
+        let mut gradient_buffers: Vec<DVector<Float>> = (0..self.likelihood_manager.terms.len())
+            .map(|_| DVector::zeros(self.likelihood_manager.param_names.len()))
+            .collect();
+        for (((term, param_buffer), gradient_buffer), layout) in self
+            .likelihood_manager
+            .terms
+            .iter()
+            .zip(param_buffers.iter())
+            .zip(gradient_buffers.iter_mut())
+            .zip(self.likelihood_manager.param_layouts.iter())
+        {
+            let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                gradient_buffer[buffer_idx] = term_gradient[param_idx] // This has a global layout
+            }
+        }
+        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
         Ok(self
             .likelihood_expression
             .evaluate_gradient(&likelihood_values, &likelihood_gradients))
