@@ -1,11 +1,12 @@
 """
 Usage:
-    amptools-to-laddu <input_file> <output_file> [--tree <treename>] [--pol-in-beam] [-n <num-entries>]
-
+    amptools-to-laddu <input_file> <output_file> [--tree <treename>] [--pol-in-beam | --pol-angle <angle> --pol-magnitude <magnitude>] [-n <num-entries>]
 Options:
-    --tree <treename>        The tree name in the ROOT file [default: kin].
-    --pol-in-beam            Use the beam's momentum for polarization (eps).
-    -n <num-entries>         Truncate the file to the first n entries for testing.
+    --tree <treename>            The tree name in the ROOT file [default: kin].
+    --pol-in-beam                Use the beam's momentum for polarization (eps).
+    --pol-angle <angle>          The polarization angle in degrees (only used if --pol-in-beam is not used)
+    --pol-magnitude <magnitude>  The polarization magnitude (only used if --pol-in-beam is not used)
+    -n <num-entries>             Truncate the file to the first n entries for testing.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from docopt import docopt
 from loguru import logger
 
 
-def read_root_file(input_file, tree_name, pol_in_beam, num_entries=None):
+def read_root_file(input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries=None):
     """Read ROOT file and extract data with optional polarization from the beam."""
     logger.info(f"Reading ROOT file: {input_file}")
     tfile = uproot.open(input_file)
@@ -27,10 +28,10 @@ def read_root_file(input_file, tree_name, pol_in_beam, num_entries=None):
     logger.info(f"Using tree: {tree_name}")
     # Read necessary branches
     E_beam = tree["E_Beam"].array(library="np", entry_stop=num_entries)  # pyright: ignore
-    Px_beam = tree["Px_Beam"].array(library="np", entry_stop=num_entries)  # pyright:ignore
-    Py_beam = tree["Py_Beam"].array(library="np", entry_stop=num_entries)  # pyright:ignore
-    Pz_beam = tree["Pz_Beam"].array(library="np", entry_stop=num_entries)  # pyright:ignore
-    weight = tree["Weight"].array(library="np", entry_stop=num_entries)  # pyright:ignore
+    Px_beam = tree["Px_Beam"].array(library="np", entry_stop=num_entries)  # pyright: ignore
+    Py_beam = tree["Py_Beam"].array(library="np", entry_stop=num_entries)  # pyright: ignore
+    Pz_beam = tree["Pz_Beam"].array(library="np", entry_stop=num_entries)  # pyright: ignore
+    weight = tree["Weight"].array(library="np", entry_stop=num_entries) if "Weight" in tree else np.ones_like(E_beam)  # pyright: ignore
 
     # Final state particles
     E_final = np.array(list(tree["E_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
@@ -59,6 +60,12 @@ def read_root_file(input_file, tree_name, pol_in_beam, num_entries=None):
         # Reset beam momentum
         p4_beam[:, 1:] = 0  # Set Px, Py to 0
         p4_beam[:, 3] = E_beam  # Set Pz = E for beam
+    elif pol_angle is not None and pol_magnitude is not None:
+        logger.info(f"Using input polarization angle ({pol_angle}) and magnitude ({pol_magnitude}).")
+        eps_x = pol_magnitude * np.cos(pol_angle) * np.ones_like(E_beam)
+        eps_y = pol_magnitude * np.sin(pol_angle) * np.ones_like(E_beam)
+        eps_z = np.zeros_like(E_beam)
+        eps = np.stack([eps_x, eps_y, eps_z], axis=-1)[:, np.newaxis]
     else:
         logger.info("Using default or provided eps values.")
         eps = np.zeros((len(E_beam), 1, 3), dtype=np.float32)  # Default to 0
@@ -103,9 +110,11 @@ def convert_from_amptools(
     output_path: Path,
     tree_name: str = "kin",
     pol_in_beam: bool = False,  # noqa: FBT001, FBT002
+    pol_angle_deg: float | None = None,
+    pol_magnitude: float | None = None,
     num_entries: int | None = None,
 ):
-    p4s, weight, eps = read_root_file(input_path, tree_name, pol_in_beam, num_entries)
+    p4s, weight, eps = read_root_file(input_path, tree_name, pol_in_beam, pol_angle_deg, pol_magnitude, num_entries)
     save_as_parquet(p4s, weight, eps, output_path)
 
 
@@ -116,9 +125,13 @@ def run():
     output_file = args["<output_file>"]
     tree_name = args["--tree"]
     pol_in_beam = args["--pol-in-beam"]
+    pol_angle = float(args["--pol-angle"]) * np.pi / 180
+    pol_magnitude = float(args["--pol-magnitude"])
     num_entries = int(args["-n"]) if args["-n"] else None
 
-    convert_from_amptools(Path(input_file), Path(output_file), tree_name, pol_in_beam, num_entries)
+    convert_from_amptools(
+        Path(input_file), Path(output_file), tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries
+    )
 
     df_read = pd.read_parquet(output_file)
     print("Output Parquet File (head):")  # noqa: T201
