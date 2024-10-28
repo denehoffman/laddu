@@ -46,7 +46,7 @@ default = ["rayon", "python"]
 extension-module = ["pyo3/extension-module"]
 rayon = ["dep:rayon"]
 f32 = []
-python = ["dep:pyo3", "dep:numpy"]
+python = ["dep:pyo3", "dep:numpy", "extension-module"]
 
 [profile.release]
 lto = true
