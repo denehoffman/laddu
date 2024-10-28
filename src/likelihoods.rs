@@ -827,8 +827,8 @@ impl Function<Float, (), Infallible> for LikelihoodEvaluator {
             .zip(self.likelihood_manager.param_layouts.iter())
         {
             let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                gradient_buffer[buffer_idx] = term_gradient[param_idx] // This has a global layout
+            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
+                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
             }
         }
         let likelihood_gradients = LikelihoodGradients(gradient_buffers);
