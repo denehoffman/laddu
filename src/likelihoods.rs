@@ -340,7 +340,6 @@ impl LikelihoodTerm for NLL {
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let zero: DVector<Float> = DVector::zeros(parameters.len());
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -388,8 +387,7 @@ impl LikelihoodTerm for NLL {
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
-            .reduce(|| zero.clone(), |a, b| a + b);
+            .sum();
 
         let mc_term: DVector<Float> = self
             .mc_evaluator
@@ -437,8 +435,7 @@ impl LikelihoodTerm for NLL {
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
-            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
-            .reduce(|| zero.clone(), |a, b| a + b);
+            .sum();
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
 }

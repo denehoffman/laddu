@@ -547,14 +547,24 @@ impl Evaluator {
     #[cfg(not(feature = "rayon"))]
     pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
         let resources = self.resources.read();
-        let n_parameters = parameters.len();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
             .dataset
             .events
             .iter()
-            .zip(resources.caches.par_iter())
+            .zip(resources.caches.iter())
             .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                self.amplitudes
+                    .iter()
+                    .zip(resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&parameters, event, cache, grad)
+                        }
+                    });
                 (
                     AmplitudeValues(
                         self.amplitudes
@@ -569,19 +579,7 @@ impl Evaluator {
                             })
                             .collect(),
                     ),
-                    GradientValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute_gradient(&parameters, event, cache)
-                                } else {
-                                    DVector::zeros(n_parameters)
-                                }
-                            })
-                            .collect(),
-                    ),
+                    GradientValues(gradient_values),
                 )
             })
             .collect();
