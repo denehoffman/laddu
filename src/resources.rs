@@ -11,6 +11,7 @@ use crate::{
 
 /// This struct holds references to the constants and free parameters used in the fit so that they
 /// may be obtained from their corresponding [`ParameterID`].
+#[derive(Debug)]
 pub struct Parameters<'a> {
     pub(crate) parameters: &'a [Float],
     pub(crate) constants: &'a [Float],
