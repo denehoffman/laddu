@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -26,8 +26,8 @@ class LikelihoodEvaluator:
     def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
     def minimize(
         self,
-        p0: list[float],
-        bounds: list[tuple[float | None, float | None]] | None = None,
+        p0: list[float] | npt.NDArray[np.float64],
+        bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
         max_steps: int = 4000,
         debug: bool = False,  # noqa: FBT001, FBT002
@@ -50,8 +50,8 @@ class NLL:
     def project(self, parameters: list[float] | npt.NDArray[np.float64]) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
-        p0: list[float],
-        bounds: list[tuple[float | None, float | None]] | None = None,
+        p0: list[float] | npt.NDArray[np.float64],
+        bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
         max_steps: int = 4000,
         debug: bool = False,  # noqa: FBT001, FBT002
