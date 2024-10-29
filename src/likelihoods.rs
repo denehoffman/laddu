@@ -108,17 +108,16 @@ impl NLL {
     /// formula:
     ///
     /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
     /// ```
     #[cfg(feature = "rayon")]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .par_iter()
             .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
+            .map(|(l, e)| e.weight * l.re / n_mc)
             .collect()
     }
 
@@ -130,17 +129,16 @@ impl NLL {
     /// formula:
     ///
     /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{1}{N_{\text{MC}}}
     /// ```
     #[cfg(not(feature = "rayon"))]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         mc_result
             .iter()
             .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
+            .map(|(l, e)| e.weight * l.re / n_mc)
             .collect()
     }
 }
@@ -164,12 +162,11 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
@@ -182,7 +179,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.mc_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * l.re)
             .parallel_sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -197,7 +194,6 @@ impl LikelihoodTerm for NLL {
     #[cfg(not(feature = "rayon"))]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_result = self.mc_evaluator.evaluate(parameters);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
         let data_term: Float = data_result
@@ -210,7 +206,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re)
             .sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -222,11 +218,9 @@ impl LikelihoodTerm for NLL {
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let zero: DVector<Float> = DVector::zeros(parameters.len());
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -327,6 +321,7 @@ impl LikelihoodTerm for NLL {
             .collect::<Vec<DVector<Float>>>()
             .iter()
             .sum();
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -438,7 +433,7 @@ impl LikelihoodTerm for NLL {
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
             .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 }
 
