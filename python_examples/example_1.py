@@ -6,6 +6,8 @@ Options:
 -n <nbins>  Number of bins to use in binned fit and plot [default: 50]
 """
 
+import os
+from pathlib import Path
 from time import perf_counter
 
 import laddu as ld
@@ -19,9 +21,12 @@ from uncertainties import ufloat
 
 
 def main(bins: int):  # noqa: PLR0915
+    script_dir = Path(os.path.realpath(__file__)).parent.resolve()
+    data_file = str(script_dir / "data_1.parquet")
+    mc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
-    binned_tot_res, binned_s0p_res, binned_d2p_res = fit_binned(bins)
-    tot_weights, s0p_weights, d2p_weights, status, parameters = fit_unbinned()
+    binned_tot_res, binned_s0p_res, binned_d2p_res = fit_binned(bins, data_file, mc_file)
+    tot_weights, s0p_weights, d2p_weights, status, parameters = fit_unbinned(data_file, mc_file)
     end = perf_counter()
     pprint(f"Total time: {end - start:.3f}s")
     print(status)  # noqa: T201
@@ -147,12 +152,12 @@ def main(bins: int):  # noqa: PLR0915
     plt.savefig("example_1.svg")
 
 
-def fit_binned(bins: int):
+def fit_binned(bins: int, data_file: str, mc_file: str):
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
-    data_ds_binned = ld.open_binned("./data_1.parquet", res_mass, bins, (1.0, 2.0))
-    accmc_ds_binned = ld.open_binned("./mc_1.parquet", res_mass, bins, (1.0, 2.0))
+    data_ds_binned = ld.open_binned(data_file, res_mass, bins, (1.0, 2.0))
+    accmc_ds_binned = ld.open_binned(mc_file, res_mass, bins, (1.0, 2.0))
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
     z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
@@ -181,12 +186,12 @@ def fit_binned(bins: int):
     return (tot_res, s0p_res, d2p_res)
 
 
-def fit_unbinned():
+def fit_unbinned(data_file: str, mc_file: str):
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
-    data_ds = ld.open("./data_1.parquet")
-    accmc_ds = ld.open("./mc_1.parquet")
+    data_ds = ld.open(data_file)
+    accmc_ds = ld.open(mc_file)
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
     z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
