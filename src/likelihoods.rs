@@ -11,6 +11,7 @@ use crate::{
     resources::Parameters,
     Float,
 };
+use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use ganesh::{
@@ -175,12 +176,12 @@ impl LikelihoodTerm for NLL {
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
+            .parallel_sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .par_iter()
             .zip(self.mc_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * l.re)
-            .sum();
+            .parallel_sum_with_accumulator::<Klein<Float>>();
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
 
@@ -203,12 +204,12 @@ impl LikelihoodTerm for NLL {
             .iter()
             .zip(self.data_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
+            .sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .iter()
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re)
-            .sum();
+            .sum_with_accumulator::<Klein<Float>>();
         -2.0 * (data_term - (n_data / n_mc) * mc_term)
     }
 
@@ -273,8 +274,9 @@ impl LikelihoodTerm for NLL {
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
-            .reduce(|| zero.clone(), |a, b| a + b);
+            .collect::<Vec<DVector<Float>>>()
+            .iter()
+            .sum(); // TODO: replace with custom implementation of accurate crate's trait
 
         let mc_term: DVector<Float> = self
             .mc_evaluator
@@ -322,9 +324,9 @@ impl LikelihoodTerm for NLL {
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
-            .fold(|| zero.clone(), |acc, v| acc + v) // TODO: There has to be a better way
-            .reduce(|| zero.clone(), |a, b| a + b);
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
+            .collect::<Vec<DVector<Float>>>()
+            .iter()
+            .sum();
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]

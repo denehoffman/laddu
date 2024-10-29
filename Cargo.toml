@@ -32,6 +32,7 @@ numpy = { version = "0.22.0", optional = true, features = ["nalgebra"] }
 ganesh = "0.12.2"
 thiserror = "1.0.64"
 shellexpand = "3.1.0"
+accurate = "0.4.1"
 
 [dev-dependencies]
 approx = "0.5.1"
