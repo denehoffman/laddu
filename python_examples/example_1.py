@@ -25,7 +25,7 @@ def main(bins: int):  # noqa: PLR0915
     data_file = str(script_dir / "data_1.parquet")
     mc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
-    binned_tot_res, binned_s0p_res, binned_d2p_res = fit_binned(bins, data_file, mc_file)
+    binned_tot_res, binned_s0p_res, binned_d2p_res, bin_edges = fit_binned(bins, data_file, mc_file)
     tot_weights, s0p_weights, d2p_weights, status, parameters = fit_unbinned(data_file, mc_file)
     end = perf_counter()
     pprint(f"Total time: {end - start:.3f}s")
@@ -95,7 +95,7 @@ def main(bins: int):  # noqa: PLR0915
     black = "#000000"
 
     _, ax = plt.subplots(ncols=2, sharey=True, figsize=(22, 12))
-    _, edges, _ = ax[0].hist(m_data, bins=bins, range=(1, 2), color=black, histtype="step", label="Data")
+    ax[0].hist(m_data, bins=bins, range=(1, 2), color=black, histtype="step", label="Data")
     ax[1].hist(m_data, bins=bins, range=(1, 2), color=black, histtype="step", label="Data")
     ax[0].hist(
         m_accmc,
@@ -133,7 +133,7 @@ def main(bins: int):  # noqa: PLR0915
         alpha=0.1,
         label="$D_2^+$ (unbinned)",
     )
-    centers = (edges[1:] + edges[:-1]) / 2
+    centers = (bin_edges[1:] + bin_edges[:-1]) / 2
     ax[0].scatter(centers, binned_tot_res, color=black, label="Fit (binned)")
     ax[1].scatter(centers, binned_tot_res, color=black, label="Fit (binned)")
     ax[0].scatter(centers, binned_s0p_res, color=blue, label="$S_0^+$ (binned)")
@@ -183,7 +183,7 @@ def fit_binned(bins: int, data_file: str, mc_file: str):
         s0p_res.append(nll.project(status.x).sum())
         nll.isolate(["Z22+", "D2+"])
         d2p_res.append(nll.project(status.x).sum())
-    return (tot_res, s0p_res, d2p_res)
+    return (tot_res, s0p_res, d2p_res, data_ds_binned.edges)
 
 
 def fit_unbinned(data_file: str, mc_file: str):
