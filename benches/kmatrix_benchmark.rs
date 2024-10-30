@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use laddu::{
     amplitudes::{
@@ -5,9 +7,10 @@ use laddu::{
         kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
         parameter,
         zlm::Zlm,
-        Manager, NLL,
+        Manager,
     },
     data::open,
+    likelihoods::{LikelihoodTerm, NLL},
     utils::{
         enums::{Frame, Sign},
         variables::{Angles, Mass, Polarization},
@@ -136,7 +139,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = pos_re + pos_im + neg_re + neg_im;
-    let nll = NLL::new(&manager, &ds_data, &ds_mc);
+    let nll = NLL::new(&manager, &ds_data, &ds_mc, &model);
     let mut rng = rand::thread_rng();
     let range = Uniform::new(-100.0, 100.0);
     c.bench_function("kmatrix benchmark (nll)", |b| {
@@ -147,11 +150,15 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                     .collect();
                 p
             },
-            |p| black_box(nll.evaluate(&model, &p)),
+            |p| black_box(nll.evaluate(&p)),
             BatchSize::SmallInput,
         )
     });
 }
 
-criterion_group!(benches, kmatrix_nll_benchmark);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().measurement_time(Duration::from_secs(30)).sample_size(5000);
+    targets = kmatrix_nll_benchmark
+}
 criterion_main!(benches);

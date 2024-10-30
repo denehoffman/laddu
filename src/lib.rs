@@ -205,9 +205,9 @@
 //! let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
 //! let model = (mag * bw).norm_sqr();
 //!
-//! let nll = NLL::new(&manager, &ds_data, &ds_mc);
+//! let nll = NLL::new(&manager, &ds_data, &ds_mc, &model);
 //! println!("Parameters names and order: {:?}", nll.parameters());
-//! let result = nll.evaluate(&model, &[1.27, 0.120, 100.0]);
+//! let result = nll.evaluate(&[1.27, 0.120, 100.0]);
 //! println!("The extended negative log-likelihood is {}", result);
 //! ```
 //! In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.
@@ -270,6 +270,8 @@ use thiserror::Error;
 pub mod amplitudes;
 /// Methods for loading and manipulating [`Event`](crate::data::Event)-based data.
 pub mod data;
+/// Module for likelihood-related structures and methods
+pub mod likelihoods;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
 /// Utility functions, enums, and traits
@@ -283,10 +285,13 @@ pub mod prelude {
         constant, parameter,
         ylm::Ylm,
         zlm::Zlm,
-        Amplitude, AmplitudeID, Evaluator, Expression, Manager, MinimizerOptions, ParameterLike,
-        NLL,
+        Amplitude, AmplitudeID, Evaluator, Expression, Manager, ParameterLike,
     };
     pub use crate::data::{open, open_binned, open_filtered, BinnedDataset, Dataset, Event};
+    pub use crate::likelihoods::{
+        LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodTerm,
+        MinimizerOptions, NLL,
+    };
     pub use crate::resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
         Parameters, Resources, ScalarID, VectorID,
@@ -297,7 +302,7 @@ pub mod prelude {
     };
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use crate::{Float, LadduError, PI};
-    pub use nalgebra::{Vector3, Vector4};
+    pub use nalgebra::{DVector, Vector3, Vector4};
     pub use num::Complex;
 }
 

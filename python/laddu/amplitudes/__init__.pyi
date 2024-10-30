@@ -1,5 +1,3 @@
-from typing import Literal
-
 import numpy as np
 import numpy.typing as npt
 
@@ -30,7 +28,7 @@ class Amplitude: ...
 class Manager:
     def __init__(self) -> None: ...
     def register(self, amplitude: Amplitude) -> AmplitudeID: ...
-    def load(self, dataset: Dataset) -> Evaluator: ...
+    def load(self, dataset: Dataset, expression: Expression) -> Evaluator: ...
 
 class Evaluator:
     parameters: list[str]
@@ -39,50 +37,7 @@ class Evaluator:
     def deactivate(self, name: str | list[str]) -> None: ...
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(
-        self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]
-    ) -> npt.NDArray[np.complex128]: ...
-
-class NLL:
-    parameters: list[str]
-    def __init__(self, manager: Manager, ds_data: Dataset, ds_mc: Dataset) -> None: ...
-    def activate(self, name: str | list[str]) -> None: ...
-    def activate_all(self) -> None: ...
-    def deactivate(self, name: str | list[str]) -> None: ...
-    def deactivate_all(self) -> None: ...
-    def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
-    def project(
-        self, expression: Expression, parameters: list[float] | npt.NDArray[np.float64]
-    ) -> npt.NDArray[np.float64]: ...
-    def minimize(
-        self,
-        expression: Expression,
-        p0: list[float],
-        bounds: list[tuple[float | None, float | None]] | None = None,
-        method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
-        max_steps: int = 4000,
-        debug: bool = False,  # noqa: FBT001, FBT002
-        verbose: bool = False,  # noqa: FBT001, FBT002
-        **kwargs,
-    ) -> Status: ...
-
-class Status:
-    x: npt.NDArray[np.float64]
-    err: npt.NDArray[np.float64] | None
-    x0: npt.NDArray[np.float64]
-    fx: float
-    cov: npt.NDArray[np.float64] | None
-    hess: npt.NDArray[np.float64] | None
-    message: str
-    converged: bool
-    bounds: list[Bound] | None
-    n_f_evals: int
-    n_g_evals: int
-
-class Bound:
-    lower: float
-    upper: float
+    def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
 
 __all__ = [
     "AmplitudeID",
@@ -90,7 +45,6 @@ __all__ = [
     "Amplitude",
     "Manager",
     "Evaluator",
-    "NLL",
     "ParameterLike",
     "parameter",
     "constant",
@@ -99,6 +53,4 @@ __all__ = [
     "zlm",
     "breit_wigner",
     "kmatrix",
-    "Status",
-    "Bound",
 ]

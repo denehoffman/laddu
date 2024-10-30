@@ -1,14 +1,14 @@
 use std::{
-    convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
 use auto_ops::*;
 use dyn_clone::DynClone;
-use ganesh::{algorithms::LBFGSB, observers::DebugObserver, prelude::*};
+use nalgebra::{ComplexField, DVector};
 use num::Complex;
 
+use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -102,12 +102,77 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs.
     fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<Float>;
+
+    /// This method yields the gradient of a particular [`Amplitude`] at a point specified
+    /// by a particular [`Event`] and set of [`Parameters`]. See those structs, as well as
+    /// [`Cache`], for documentation on their available methods. For the most part,
+    /// [`Event`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
+    /// while [`Parameters`] and the [`Cache`] are more like key-value storage accessed by
+    /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
+    /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
+    /// improve performance for some derivative-using methods of minimization. The default
+    /// implementation calculates a central finite difference across all parameters, regardless of
+    /// whether or not they are used in the [`Amplitude`].
+    ///
+    /// In the future, it may be possible to automatically implement this with the indices of
+    /// registered free parameters, but until then, the [`Amplitude::central_difference_with_indices`]
+    /// method can be used to conveniently only calculate central differences for the parameters
+    /// which are used by the [`Amplitude`].
+    fn compute_gradient(
+        &self,
+        parameters: &Parameters,
+        event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        self.central_difference_with_indices(
+            &Vec::from_iter(0..parameters.len()),
+            parameters,
+            event,
+            cache,
+            gradient,
+        )
+    }
+
+    /// A helper function to implement a central difference only on indices which correspond to
+    /// free parameters in the [`Amplitude`]. For example, if an [`Amplitude`] contains free
+    /// parameters registered to indices 1, 3, and 5 of the [`Parameters::parameters`] array, then
+    /// running this with those indices will compute a central finite difference derivative for
+    /// those coordinates only, since the rest can be safely assumed to be zero.
+    fn central_difference_with_indices(
+        &self,
+        indices: &[usize],
+        parameters: &Parameters,
+        event: &Event,
+        cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        let x = parameters.parameters.to_owned();
+        let constants = parameters.constants.to_owned();
+        let h: DVector<Float> = x
+            .iter()
+            .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+            .collect::<Vec<_>>()
+            .into();
+        for i in indices {
+            let mut x_plus = x.clone();
+            let mut x_minus = x.clone();
+            x_plus[*i] += h[*i];
+            x_minus[*i] -= h[*i];
+            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), event, cache);
+            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), event, cache);
+            gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
+        }
+    }
 }
 
 dyn_clone::clone_trait_object!(Amplitude);
 
 #[derive(Debug)]
-struct AmplitudeValues(Vec<Complex<Float>>);
+pub(crate) struct AmplitudeValues(pub(crate) Vec<Complex<Float>>);
+
+#[derive(Debug)]
+pub(crate) struct GradientValues(pub(crate) Vec<DVector<Complex<Float>>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
@@ -181,7 +246,7 @@ impl AmplitudeID {
 }
 
 impl Expression {
-    fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
+    pub(crate) fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
         match self {
             Expression::Amp(aid) => amplitude_values.0[aid.1],
             Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
@@ -189,6 +254,38 @@ impl Expression {
             Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
+        }
+    }
+    pub(crate) fn evaluate_gradient(
+        &self,
+        amplitude_values: &AmplitudeValues,
+        gradient_values: &GradientValues,
+    ) -> DVector<Complex<Float>> {
+        match self {
+            Expression::Amp(aid) => gradient_values.0[aid.1].clone(),
+            Expression::Add(a, b) => {
+                a.evaluate_gradient(amplitude_values, gradient_values)
+                    + b.evaluate_gradient(amplitude_values, gradient_values)
+            }
+            Expression::Mul(a, b) => {
+                let f_a = a.evaluate(amplitude_values);
+                let f_b = b.evaluate(amplitude_values);
+                b.evaluate_gradient(amplitude_values, gradient_values)
+                    .map(|g| g * f_a)
+                    + a.evaluate_gradient(amplitude_values, gradient_values)
+                        .map(|g| g * f_b)
+            }
+            Expression::Real(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| Complex::new(g.re, 0.0)),
+            Expression::Imag(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| Complex::new(g.im, 0.0)),
+            Expression::NormSqr(a) => {
+                let conj_f_a = a.evaluate(amplitude_values).conjugate();
+                a.evaluate_gradient(amplitude_values, gradient_values)
+                    .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
+            }
         }
     }
     /// Takes the real part of the given [`Expression`].
@@ -265,85 +362,89 @@ impl Manager {
         self.amplitudes.push(amp);
         Ok(aid)
     }
-    /// Create an [`Evaluator`] which can compute the result of any [`Expression`] built on
+    /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&mut self, dataset: &Arc<Dataset>) -> Evaluator {
-        let mut loaded_resources = self.resources.clone();
-        loaded_resources.reserve_cache(dataset.len());
+    pub fn load(&self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
+        let loaded_resources = Arc::new(RwLock::new(self.resources.clone()));
+        loaded_resources.write().reserve_cache(dataset.len());
         for amplitude in &self.amplitudes {
-            amplitude.precompute_all(dataset, &mut loaded_resources);
+            amplitude.precompute_all(dataset, &mut loaded_resources.write());
         }
         Evaluator {
             amplitudes: self.amplitudes.clone(),
-            resources: loaded_resources,
+            resources: loaded_resources.clone(),
             dataset: dataset.clone(),
+            expression: expression.clone(),
         }
     }
 }
 
-/// A structure which can be used to evaluate any [`Expression`] built on registered
+/// A structure which can be used to evaluate the stored [`Expression`] built on registered
 /// [`Amplitude`]s. This contains a [`Resources`] struct which already contains cached values for
 /// precomputed [`Amplitude`]s and any relevant free parameters and constants.
+#[derive(Clone)]
 pub struct Evaluator {
-    amplitudes: Vec<Box<dyn Amplitude>>,
-    resources: Resources,
-    dataset: Arc<Dataset>,
+    pub(crate) amplitudes: Vec<Box<dyn Amplitude>>,
+    pub(crate) resources: Arc<RwLock<Resources>>,
+    pub(crate) dataset: Arc<Dataset>,
+    pub(crate) expression: Expression,
 }
 
 impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.resources.parameters.iter().cloned().collect()
+        self.resources.read().parameters.iter().cloned().collect()
     }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate(&mut self, name: &str) {
-        self.resources.activate(name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().activate(name);
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().activate_many(names);
     }
     /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.resources.activate_all();
+    pub fn activate_all(&self) {
+        self.resources.write().activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.deactivate(name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().deactivate(name);
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().deactivate_many(names);
     }
     /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.resources.deactivate_all();
+    pub fn deactivate_all(&self) {
+        self.resources.write().deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.resources.isolate(name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().isolate(name);
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.resources.isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().isolate_many(names);
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .par_iter()
-            .zip(self.resources.caches.par_iter())
+            .zip(resources.caches.par_iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -357,24 +458,25 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .par_iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
     }
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let parameters = Parameters::new(parameters, &self.resources.constants);
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_values_vec: Vec<AmplitudeValues> = self
             .dataset
             .events
             .iter()
-            .zip(self.resources.caches.iter())
+            .zip(resources.caches.iter())
             .map(|(event, cache)| {
                 AmplitudeValues(
                     self.amplitudes
                         .iter()
-                        .zip(self.resources.active.iter())
+                        .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
@@ -388,307 +490,105 @@ impl Evaluator {
             .collect();
         amplitude_values_vec
             .iter()
-            .map(|amplitude_values| expression.evaluate(amplitude_values))
+            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
             .collect()
     }
-}
-
-/// An extended, unbinned negative log-likelihood evaluator.
-pub struct NLL {
-    data_evaluator: Evaluator,
-    mc_evaluator: Evaluator,
-}
-
-impl NLL {
-    /// Construct an [`NLL`] from a [`Manager`] and two [`Dataset`]s (data and Monte Carlo). This
-    /// is the equivalent of the [`Manager::load`] method, but for two [`Dataset`]s and a different
-    /// method of evaluation.
-    pub fn new(manager: &Manager, ds_data: &Arc<Dataset>, ds_mc: &Arc<Dataset>) -> Self {
-        Self {
-            data_evaluator: manager.clone().load(ds_data),
-            mc_evaluator: manager.clone().load(ds_mc),
-        }
-    }
-    /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
-    /// method.
-    pub fn parameters(&self) -> Vec<String> {
-        self.data_evaluator
-            .resources
-            .parameters
-            .iter()
-            .cloned()
-            .collect()
-    }
-    /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.activate(&name);
-        self.mc_evaluator.resources.activate(name);
-    }
-    /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.activate_many(names);
-        self.mc_evaluator.resources.activate_many(names);
-    }
-    /// Activate all registered [`Amplitude`]s.
-    pub fn activate_all(&mut self) {
-        self.data_evaluator.resources.activate_all();
-        self.mc_evaluator.resources.activate_all();
-    }
-    /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.deactivate(&name);
-        self.mc_evaluator.resources.deactivate(name);
-    }
-    /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.deactivate_many(names);
-        self.mc_evaluator.resources.deactivate_many(names);
-    }
-    /// Deactivate all registered [`Amplitude`]s.
-    pub fn deactivate_all(&mut self) {
-        self.data_evaluator.resources.deactivate_all();
-        self.mc_evaluator.resources.deactivate_all();
-    }
-    /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
-        self.data_evaluator.resources.isolate(&name);
-        self.mc_evaluator.resources.isolate(name);
-    }
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
-        self.data_evaluator.resources.isolate_many(names);
-        self.mc_evaluator.resources.isolate_many(names);
-    }
-
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters.
     #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
+    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+            .dataset
+            .events
             .par_iter()
-            .zip(self.data_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
+            .zip(resources.caches.par_iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                self.amplitudes
+                    .iter()
+                    .zip(resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .collect();
+        amplitude_values_and_gradient_vec
             .par_iter()
-            .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
-    /// Evaluate the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, expression: &Expression, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(expression, parameters);
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        let data_term: Float = data_result
-            .iter()
-            .zip(self.data_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum();
-        let mc_term: Float = mc_result
-            .iter()
-            .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum();
-        -2.0 * (data_term - (n_data / n_mc) * mc_term)
-    }
-
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
-    /// ```
-    #[cfg(feature = "rayon")]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        mc_result
-            .par_iter()
-            .zip(self.mc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
+            .map(|(amplitude_values, gradient_values)| {
+                self.expression
+                    .evaluate_gradient(amplitude_values, gradient_values)
+            })
             .collect()
     }
-
-    /// Project the given [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{N_{\text{Data}}}{N_{\text{MC}}}
-    /// ```
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters.
     #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, expression: &Expression, parameters: &[Float]) -> Vec<Float> {
-        let n_data = self.data_evaluator.dataset.weighted_len();
-        let mc_result = self.mc_evaluator.evaluate(expression, parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
-        mc_result
+    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+            .dataset
+            .events
             .iter()
-            .zip(self.mc_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * l.re * (n_data / n_mc))
+            .zip(resources.caches.iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                self.amplitudes
+                    .iter()
+                    .zip(resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .collect();
+        amplitude_values_and_gradient_vec
+            .iter()
+            .map(|(amplitude_values, gradient_values)| {
+                self.expression
+                    .evaluate_gradient(amplitude_values, gradient_values)
+            })
             .collect()
-    }
-}
-
-impl Function<Float, Expression, Infallible> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        expression: &mut Expression,
-    ) -> Result<Float, Infallible> {
-        Ok(self.evaluate(expression, parameters))
-    }
-}
-
-/// A set of options that are used when minimizations are performed.
-pub struct MinimizerOptions {
-    algorithm: Box<dyn ganesh::Algorithm<Float, Expression, Infallible>>,
-    observers: Vec<Box<dyn Observer<Float, Expression>>>,
-    max_steps: usize,
-}
-
-impl Default for MinimizerOptions {
-    fn default() -> Self {
-        Self {
-            algorithm: Box::new(LBFGSB::default()),
-            observers: Default::default(),
-            max_steps: 4000,
-        }
-    }
-}
-
-struct VerboseObserver {
-    show_step: bool,
-    show_x: bool,
-    show_fx: bool,
-}
-impl Observer<Float, Expression> for VerboseObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        status: &mut Status<Float>,
-        _user_data: &mut Expression,
-    ) -> bool {
-        if self.show_step {
-            println!("Step: {}", step);
-        }
-        if self.show_x {
-            println!("Current Best Position: {}", status.x.transpose());
-        }
-        if self.show_fx {
-            println!("Current Best Value: {}", status.fx);
-        }
-        true
-    }
-}
-
-impl MinimizerOptions {
-    /// Adds the [`DebugObserver`] to the minimization.
-    pub fn debug(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(DebugObserver));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Adds a customizable [`VerboseObserver`] to the minimization.
-    pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(VerboseObserver {
-            show_step,
-            show_x,
-            show_fx,
-        }));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
-    /// settings).
-    pub fn with_algorithm<A: Algorithm<Float, Expression, Infallible> + 'static>(
-        self,
-        algorithm: A,
-    ) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: self.observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    pub fn with_observer<O: Observer<Float, Expression> + 'static>(self, observer: O) -> Self {
-        let mut observers = self.observers;
-        observers.push(Box::new(observer));
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-
-    /// Set the maximum number of [`Algorithm`] steps for the minimization (default: 4000).
-    pub fn with_max_steps(self, max_steps: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            max_steps,
-        }
-    }
-}
-
-impl NLL {
-    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
-    /// quasi-Newton minimizer which supports bounded optimization.
-    pub fn minimize(
-        &self,
-        expression: &Expression,
-        p0: &[Float],
-        bounds: Option<Vec<(Float, Float)>>,
-        options: Option<MinimizerOptions>,
-    ) -> Status<Float> {
-        let options = options.unwrap_or_default();
-        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
-            .with_bounds(bounds)
-            .with_observers(options.observers)
-            .with_max_steps(options.max_steps);
-        let mut expression = expression.clone();
-        m.minimize(self, p0, &mut expression)
-            .unwrap_or_else(|never| match never {});
-        m.status
     }
 }

@@ -29,9 +29,10 @@ rand = "0.8.5"
 rayon = { version = "1.10.0", optional = true }
 pyo3 = { version = "0.22.5", optional = true, features = ["num-complex"] }
 numpy = { version = "0.22.0", optional = true, features = ["nalgebra"] }
-ganesh = "0.12.1"
+ganesh = "0.12.2"
 thiserror = "1.0.64"
 shellexpand = "3.1.0"
+accurate = "0.4.1"
 
 [dev-dependencies]
 approx = "0.5.1"
@@ -46,7 +47,7 @@ default = ["rayon", "python"]
 extension-module = ["pyo3/extension-module"]
 rayon = ["dep:rayon"]
 f32 = []
-python = ["dep:pyo3", "dep:numpy"]
+python = ["dep:pyo3", "dep:numpy", "extension-module"]
 
 [profile.release]
 lto = true
