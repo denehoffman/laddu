@@ -10,6 +10,7 @@ repository = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
 categories = ["science", "mathematics"]
+exclude = ["/python_examples"]
 
 [lib]
 name = "laddu"
