@@ -7,6 +7,7 @@ Options:
 """
 
 import os
+import sys
 from pathlib import Path
 from time import perf_counter
 
@@ -25,7 +26,9 @@ def main(bins: int):  # noqa: PLR0915
     data_file = str(script_dir / "data_1.parquet")
     mc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
-    binned_tot_res, binned_s0p_res, binned_d2p_res, bin_edges = fit_binned(bins, data_file, mc_file)
+    binned_tot_res, binned_tot_err, binned_s0p_res, binned_s0p_err, binned_d2p_res, binned_d2p_err, bin_edges = (
+        fit_binned(bins, data_file, mc_file)
+    )
     tot_weights, s0p_weights, d2p_weights, status, parameters = fit_unbinned(data_file, mc_file)
     end = perf_counter()
     pprint(f"Total time: {end - start:.3f}s")
@@ -134,10 +137,10 @@ def main(bins: int):  # noqa: PLR0915
         label="$D_2^+$ (unbinned)",
     )
     centers = (bin_edges[1:] + bin_edges[:-1]) / 2
-    ax[0].scatter(centers, binned_tot_res, color=black, label="Fit (binned)")
-    ax[1].scatter(centers, binned_tot_res, color=black, label="Fit (binned)")
-    ax[0].scatter(centers, binned_s0p_res, color=blue, label="$S_0^+$ (binned)")
-    ax[1].scatter(centers, binned_d2p_res, color=red, label="$D_2^+$ (binned)")
+    ax[0].errorbar(centers, binned_tot_res, yerr=binned_tot_err, fmt=".", color=black, label="Fit (binned)")
+    ax[1].errorbar(centers, binned_tot_res, yerr=binned_tot_err, fmt=".", color=black, label="Fit (binned)")
+    ax[0].errorbar(centers, binned_s0p_res, yerr=binned_s0p_err, fmt=".", color=blue, label="$S_0^+$ (binned)")
+    ax[1].errorbar(centers, binned_d2p_res, yerr=binned_d2p_err, fmt=".", color=red, label="$D_2^+$ (binned)")
 
     ax[0].legend()
     ax[1].legend()
@@ -168,22 +171,56 @@ def fit_binned(bins: int, data_file: str, mc_file: str):
     model = pos_re + pos_im
 
     tot_res = []
+    tot_res_err = []
     s0p_res = []
+    s0p_res_err = []
     d2p_res = []
+    d2p_res_err = []
 
     rng = np.random.default_rng()
 
     for ibin in range(bins):
+        best_nll = np.inf
+        best_status = None
         nll = ld.NLL(manager, data_ds_binned[ibin], accmc_ds_binned[ibin], model)
-        p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
-        status = nll.minimize(p0)
+        for _ in range(20):
+            p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
+            status = nll.minimize(p0)
+            if status.fx < best_nll:
+                best_nll = status.fx
+                best_status = status
 
-        tot_res.append(nll.project(status.x).sum())
+        if best_status is None:
+            print(f"All fits for bin {ibin} failed!")
+            sys.exit(1)
+
+        tot_res.append(nll.project(best_status.x).sum())
         nll.isolate(["Z00+", "S0+"])
-        s0p_res.append(nll.project(status.x).sum())
+        s0p_res.append(nll.project(best_status.x).sum())
         nll.isolate(["Z22+", "D2+"])
-        d2p_res.append(nll.project(status.x).sum())
-    return (tot_res, s0p_res, d2p_res, data_ds_binned.edges)
+        d2p_res.append(nll.project(best_status.x).sum())
+        nll.activate_all()
+
+        tot_boot = []
+        s0p_boot = []
+        d2p_boot = []
+        for iboot in range(20):
+            boot_nll = ld.NLL(
+                manager, data_ds_binned[ibin].bootstrap(iboot), accmc_ds_binned[ibin].bootstrap(iboot), model
+            )
+            boot_status = boot_nll.minimize(best_status.x)
+
+            tot_boot.append(boot_nll.project(boot_status.x).sum())
+            boot_nll.isolate(["Z00+", "S0+"])
+            s0p_boot.append(boot_nll.project(boot_status.x).sum())
+            boot_nll.isolate(["Z22+", "D2+"])
+            d2p_boot.append(boot_nll.project(boot_status.x).sum())
+            boot_nll.activate_all()
+        tot_res_err.append(np.std(tot_boot))
+        s0p_res_err.append(np.std(s0p_boot))
+        d2p_res_err.append(np.std(d2p_boot))
+
+    return (tot_res, tot_res_err, s0p_res, s0p_res_err, d2p_res, d2p_res_err, data_ds_binned.edges)
 
 
 def fit_unbinned(data_file: str, mc_file: str):
@@ -211,8 +248,10 @@ def fit_unbinned(data_file: str, mc_file: str):
     pos_im = (s0p * bw_f01500 * z00p.imag() + d2p * bw_f21525 * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
 
-    nll = ld.NLL(manager, data_ds, accmc_ds, model)
-    p0 = [0.8, 0.5, 100, 50, 50]
+    rng = np.random.default_rng()
+
+    best_nll = np.inf
+    best_status = None
     bounds = [
         (0.001, 1.0),
         (0.001, 1.0),
@@ -220,15 +259,26 @@ def fit_unbinned(data_file: str, mc_file: str):
         (-1000.0, 1000.0),
         (-1000.0, 1000.0),
     ]
-    status = nll.minimize(p0, bounds=bounds)
+    nll = ld.NLL(manager, data_ds, accmc_ds, model)
+    for _ in range(20):
+        p0 = rng.uniform(-1000.0, 1000.0, 3)
+        p0 = np.append([0.8, 0.5], p0)
+        status = nll.minimize(p0, bounds=bounds)
+        if status.fx < best_nll:
+            best_nll = status.fx
+            best_status = status
 
-    tot_weights = nll.project(status.x)
+    if best_status is None:
+        print("All unbinned fits failed!")
+        sys.exit(1)
+
+    tot_weights = nll.project(best_status.x)
     nll.isolate(["S0+", "Z00+", "f0(1500)"])
-    s0p_weights = nll.project(status.x)
+    s0p_weights = nll.project(best_status.x)
     nll.isolate(["D2+", "Z22+", "f2(1525)"])
-    d2p_weights = nll.project(status.x)
+    d2p_weights = nll.project(best_status.x)
 
-    return (tot_weights, s0p_weights, d2p_weights, status, nll.parameters)
+    return (tot_weights, s0p_weights, d2p_weights, best_status, nll.parameters)
 
 
 if __name__ == "__main__":
