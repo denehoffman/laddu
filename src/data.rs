@@ -2,6 +2,8 @@ use arrow::array::Float32Array;
 use arrow::record_batch::RecordBatch;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::sync::Arc;
@@ -76,7 +78,7 @@ impl Event {
 }
 
 /// A collection of [`Event`]s.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Dataset {
     pub(crate) events: Vec<Event>,
 }
@@ -153,6 +155,23 @@ impl Dataset {
     #[cfg(feature = "rayon")]
     pub fn weighted_len(&self) -> Float {
         self.par_iter().map(|e| e.weight).sum()
+    }
+
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method.
+    pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
+        if self.is_empty() {
+            return Arc::new(Dataset::default());
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut bootstrapped_events = Vec::with_capacity(self.len());
+        for _ in 0..self.len() {
+            let idx = rng.gen_range(0..self.len());
+            bootstrapped_events.push(self[idx].clone());
+        }
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
     }
 }
 

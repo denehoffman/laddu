@@ -258,6 +258,9 @@ pub(crate) mod laddu {
                 .ok_or(PyIndexError::new_err("index out of range"))
                 .map(|rust_event| Event(rust_event.clone()))
         }
+        fn bootstrap(&self, seed: usize) -> Dataset {
+            Dataset(self.0.bootstrap(seed))
+        }
     }
 
     #[pyclass]
