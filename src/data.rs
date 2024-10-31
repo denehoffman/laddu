@@ -80,7 +80,7 @@ impl Event {
 /// A collection of [`Event`]s.
 #[derive(Debug, Clone, Default)]
 pub struct Dataset {
-    pub(crate) events: Vec<Event>,
+    pub(crate) events: Vec<Arc<Event>>,
 }
 
 impl Index<usize> for Dataset {
@@ -91,14 +91,8 @@ impl Index<usize> for Dataset {
     }
 }
 
-impl IndexMut<usize> for Dataset {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.events[index]
-    }
-}
-
 impl Deref for Dataset {
-    type Target = Vec<Event>;
+    type Target = Vec<Arc<Event>>;
 
     fn deref(&self) -> &Self::Target {
         &self.events
@@ -123,14 +117,14 @@ impl Dataset {
     }
 
     /// Produces an iterator over the [`Event`]s in the [`Dataset`].
-    pub fn iter(&self) -> std::slice::Iter<'_, Event> {
-        self.events.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &Event> {
+        self.events.iter().map(|a| a.as_ref())
     }
 
     /// Produces an parallelized iterator over the [`Event`]s in the [`Dataset`].
     #[cfg(feature = "rayon")]
-    pub fn par_iter(&self) -> rayon::slice::Iter<'_, Event> {
-        self.events.par_iter()
+    pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &Event> {
+        self.events.par_iter().map(|a| a.as_ref())
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
@@ -167,7 +161,7 @@ impl Dataset {
         let mut bootstrapped_events = Vec::with_capacity(self.len());
         for _ in 0..self.len() {
             let idx = rng.gen_range(0..self.len());
-            bootstrapped_events.push(self[idx].clone());
+            bootstrapped_events.push(self.events[idx].clone());
         }
         Arc::new(Dataset {
             events: bootstrapped_events,
@@ -271,7 +265,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_par_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -280,7 +274,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
             // Process each row in the batch
             for row in 0..num_rows {
                 let event = batch_to_event(&batch, row);
-                local_events.push(event);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
@@ -297,7 +291,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -306,7 +300,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
             // Process each row in the batch
             for row in 0..num_rows {
                 let event = batch_to_event(&batch, row);
-                local_events.push(event);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
@@ -327,7 +321,7 @@ where
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_par_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -337,7 +331,7 @@ where
             for row in 0..num_rows {
                 let event = batch_to_event(&batch, row);
                 if predicate(&event) {
-                    local_events.push(event);
+                    local_events.push(Arc::new(event));
                 }
             }
             local_events
@@ -359,7 +353,7 @@ where
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -369,7 +363,7 @@ where
             for row in 0..num_rows {
                 let event = batch_to_event(&batch, row);
                 if predicate(&event) {
-                    local_events.push(event);
+                    local_events.push(Arc::new(event));
                 }
             }
             local_events
@@ -460,7 +454,7 @@ pub fn open_binned<V: Variable>(
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let mut binned_events: Vec<Vec<Event>> = vec![Vec::default(); bins];
+    let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
     let bin_width = (range.1 - range.0) / bins as Float;
     let bin_edges = get_bin_edges(bins, range);
 
@@ -473,7 +467,7 @@ pub fn open_binned<V: Variable>(
             let value = variable.value(&event);
             if value >= range.0 && value < range.1 {
                 let bin_index = ((value - range.0) / bin_width) as usize;
-                binned_events[bin_index].push(event);
+                binned_events[bin_index].push(Arc::new(event));
             }
         }
     });

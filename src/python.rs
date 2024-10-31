@@ -178,17 +178,17 @@ pub(crate) mod laddu {
 
     #[pyclass]
     #[derive(Clone)]
-    struct Event(rust::data::Event);
+    struct Event(Arc<rust::data::Event>);
 
     #[pymethods]
     impl Event {
         #[new]
         pub(crate) fn new(p4s: Vec<Vector4>, eps: Vec<Vector3>, weight: Float) -> Self {
-            Self(rust::data::Event {
+            Self(Arc::new(rust::data::Event {
                 p4s: p4s.into_iter().map(|arr| arr.0).collect(),
                 eps: eps.into_iter().map(|arr| arr.0).collect(),
                 weight,
-            })
+            }))
         }
         pub(crate) fn __str__(&self) -> String {
             self.0.to_string()
@@ -197,25 +197,13 @@ pub(crate) mod laddu {
         pub(crate) fn get_p4s(&self) -> Vec<Vector4> {
             self.0.p4s.iter().map(|p4| Vector4(*p4)).collect()
         }
-        #[setter]
-        pub(crate) fn set_p4s(&mut self, value: Vec<Vector4>) {
-            self.0.p4s = value.iter().map(|p4| p4.0).collect();
-        }
         #[getter]
         pub(crate) fn get_eps(&self) -> Vec<Vector3> {
             self.0.eps.iter().map(|eps_vec| Vector3(*eps_vec)).collect()
         }
-        #[setter]
-        pub(crate) fn set_eps(&mut self, value: Vec<Vector3>) {
-            self.0.eps = value.iter().map(|eps_vec| eps_vec.0).collect();
-        }
         #[getter]
         pub(crate) fn get_weight(&self) -> Float {
             self.0.weight
-        }
-        #[setter]
-        pub(crate) fn set_weight(&mut self, value: Float) {
-            self.0.weight = value;
         }
     }
 
