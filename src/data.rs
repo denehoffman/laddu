@@ -2,6 +2,8 @@ use arrow::array::Float32Array;
 use arrow::record_batch::RecordBatch;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::sync::Arc;
@@ -76,9 +78,9 @@ impl Event {
 }
 
 /// A collection of [`Event`]s.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Dataset {
-    pub(crate) events: Vec<Event>,
+    pub(crate) events: Vec<Arc<Event>>,
 }
 
 impl Index<usize> for Dataset {
@@ -89,14 +91,8 @@ impl Index<usize> for Dataset {
     }
 }
 
-impl IndexMut<usize> for Dataset {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.events[index]
-    }
-}
-
 impl Deref for Dataset {
-    type Target = Vec<Event>;
+    type Target = Vec<Arc<Event>>;
 
     fn deref(&self) -> &Self::Target {
         &self.events
@@ -121,41 +117,273 @@ impl Dataset {
     }
 
     /// Produces an iterator over the [`Event`]s in the [`Dataset`].
-    pub fn iter(&self) -> std::slice::Iter<'_, Event> {
-        self.events.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &Event> {
+        self.events.iter().map(|a| a.as_ref())
     }
+}
 
+#[cfg(feature = "rayon")]
+impl Dataset {
     /// Produces an parallelized iterator over the [`Event`]s in the [`Dataset`].
-    #[cfg(feature = "rayon")]
-    pub fn par_iter(&self) -> rayon::slice::Iter<'_, Event> {
-        self.events.par_iter()
+    pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &Event> {
+        self.events.par_iter().map(|a| a.as_ref())
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    pub fn weights(&self) -> Vec<Float> {
-        self.iter().map(|e| e.weight).collect()
-    }
-
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    #[cfg(feature = "rayon")]
     pub fn weights(&self) -> Vec<Float> {
         self.par_iter().map(|e| e.weight).collect()
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
+    pub fn weighted_len(&self) -> Float {
+        self.par_iter().map(|e| e.weight).sum()
+    }
+
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method.
+    pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
+        if self.is_empty() {
+            return Arc::new(Dataset::default());
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut indices: Vec<usize> = (0..self.len())
+            .map(|_| rng.gen_range(0..self.len()))
+            .collect::<Vec<usize>>();
+        indices.sort();
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_par_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
+    }
+
+    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
+    /// returns `true`.
+    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
+    where
+        P: Fn(&Event) -> bool + Send + Sync,
+    {
+        let filtered_events = self
+            .events
+            .par_iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect();
+        Arc::new(Dataset {
+            events: filtered_events,
+        })
+    }
+
+    /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
+    /// given `range`.
+    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    where
+        V: Variable,
+    {
+        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_edges = get_bin_edges(bins, range);
+        let evaluated: Vec<(usize, &Arc<Event>)> = self
+            .events
+            .par_iter()
+            .filter_map(|event| {
+                let value = variable.value(event.as_ref());
+                if value >= range.0 && value < range.1 {
+                    let bin_index = ((value - range.0) / bin_width) as usize;
+                    let bin_index = bin_index.min(bins - 1);
+                    Some((bin_index, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
+        for (bin_index, event) in evaluated {
+            binned_events[bin_index].push(event.clone());
+        }
+        BinnedDataset {
+            datasets: binned_events
+                .into_par_iter()
+                .map(|events| Arc::new(Dataset { events }))
+                .collect(),
+            edges: bin_edges,
+        }
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl Dataset {
+    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
+    pub fn weights(&self) -> Vec<Float> {
+        self.iter().map(|e| e.weight).collect()
+    }
+
+    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
     pub fn weighted_len(&self) -> Float {
         self.iter().map(|e| e.weight).sum()
     }
 
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    #[cfg(feature = "rayon")]
-    pub fn weighted_len(&self) -> Float {
-        self.par_iter().map(|e| e.weight).sum()
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method.
+    pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
+        if self.is_empty() {
+            return Arc::new(Dataset::default());
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut indices: Vec<usize> = (0..self.len())
+            .map(|_| rng.gen_range(0..self.len()))
+            .collect::<Vec<usize>>();
+        indices.sort();
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
+    }
+
+    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
+    /// returns `true`.
+    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
+    where
+        P: Fn(&Event) -> bool + Send + Sync,
+    {
+        let filtered_events = self
+            .events
+            .iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect();
+        Arc::new(Dataset {
+            events: filtered_events,
+        })
+    }
+
+    /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
+    /// given `range`.
+    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    where
+        V: Variable,
+    {
+        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_edges = get_bin_edges(bins, range);
+        let evaluated: Vec<(usize, &Arc<Event>)> = self
+            .events
+            .iter()
+            .filter_map(|event| {
+                let value = variable.value(event.as_ref());
+                if value >= range.0 && value < range.1 {
+                    let bin_index = ((value - range.0) / bin_width) as usize;
+                    let bin_index = bin_index.min(bins - 1);
+                    Some((bin_index, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
+        for (bin_index, event) in evaluated {
+            binned_events[bin_index].push(event.clone());
+        }
+        BinnedDataset {
+            datasets: binned_events
+                .into_iter()
+                .map(|events| Arc::new(Dataset { events }))
+                .collect(),
+            edges: bin_edges,
+        }
     }
 }
 
+fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
+    let mut p4s = Vec::new();
+    let mut eps = Vec::new();
+
+    let p4_count = batch
+        .schema()
+        .fields()
+        .iter()
+        .filter(|field| field.name().starts_with("p4_"))
+        .count()
+        / 4;
+    let eps_count = batch
+        .schema()
+        .fields()
+        .iter()
+        .filter(|field| field.name().starts_with("eps_"))
+        .count()
+        / 3;
+
+    for i in 0..p4_count {
+        let e = batch
+            .column_by_name(&format!("p4_{}_E", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        let px = batch
+            .column_by_name(&format!("p4_{}_Px", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        let py = batch
+            .column_by_name(&format!("p4_{}_Py", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        let pz = batch
+            .column_by_name(&format!("p4_{}_Pz", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        p4s.push(Vector4::new(e, px, py, pz));
+    }
+
+    // TODO: insert empty vectors if not provided
+    for i in 0..eps_count {
+        let x = batch
+            .column_by_name(&format!("eps_{}_x", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        let y = batch
+            .column_by_name(&format!("eps_{}_y", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        let z = batch
+            .column_by_name(&format!("eps_{}_z", i))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap()
+            .value(row) as Float;
+        eps.push(Vector3::new(x, y, z));
+    }
+
+    let weight = batch
+        .column(19)
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .unwrap()
+        .value(row) as Float;
+
+    Event { p4s, eps, weight }
+}
+
 /// Open a Parquet file and read the data into a [`Dataset`].
 #[cfg(feature = "rayon")]
 pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
@@ -165,7 +393,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_par_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -173,90 +401,8 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
 
             // Process each row in the batch
             for row in 0..num_rows {
-                let mut p4s = Vec::new();
-                let mut eps = Vec::new();
-
-                let p4_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("p4_"))
-                    .count()
-                    / 4;
-                let eps_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("eps_"))
-                    .count()
-                    / 3;
-
-                for i in 0..p4_count {
-                    let e = batch
-                        .column_by_name(&format!("p4_{}_E", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let px = batch
-                        .column_by_name(&format!("p4_{}_Px", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let py = batch
-                        .column_by_name(&format!("p4_{}_Py", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let pz = batch
-                        .column_by_name(&format!("p4_{}_Pz", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    p4s.push(Vector4::new(e, px, py, pz));
-                }
-
-                // TODO: insert empty vectors if not provided
-                for i in 0..eps_count {
-                    let x = batch
-                        .column_by_name(&format!("eps_{}_x", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let y = batch
-                        .column_by_name(&format!("eps_{}_y", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let z = batch
-                        .column_by_name(&format!("eps_{}_z", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    eps.push(Vector3::new(x, y, z));
-                }
-
-                let weight = batch
-                    .column(19)
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-
-                local_events.push(Event { p4s, eps, weight });
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
@@ -273,7 +419,7 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Event> = batches
+    let events: Vec<Arc<Event>> = batches
         .into_iter()
         .flat_map(|batch| {
             let num_rows = batch.num_rows();
@@ -281,318 +427,8 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
 
             // Process each row in the batch
             for row in 0..num_rows {
-                let mut p4s = Vec::new();
-                let mut eps = Vec::new();
-
-                let p4_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("p4_"))
-                    .count()
-                    / 4;
-                let eps_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("eps_"))
-                    .count()
-                    / 3;
-
-                for i in 0..p4_count {
-                    let e = batch
-                        .column_by_name(&format!("p4_{}_E", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let px = batch
-                        .column_by_name(&format!("p4_{}_Px", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let py = batch
-                        .column_by_name(&format!("p4_{}_Py", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let pz = batch
-                        .column_by_name(&format!("p4_{}_Pz", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    p4s.push(Vector4::new(e, px, py, pz));
-                }
-
-                for i in 0..eps_count {
-                    let x = batch
-                        .column_by_name(&format!("eps_{}_x", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let y = batch
-                        .column_by_name(&format!("eps_{}_y", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let z = batch
-                        .column_by_name(&format!("eps_{}_z", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    eps.push(Vector3::new(x, y, z));
-                }
-
-                let weight = batch
-                    .column(19)
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-
-                local_events.push(Event { p4s, eps, weight });
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
-}
-
-/// Open a Parquet file and read the data into a [`Dataset`]. Only returns events for which the
-/// given predicate returns `true`.
-#[cfg(feature = "rayon")]
-pub fn open_filtered<P>(file_path: &str, predicate: P) -> Result<Arc<Dataset>, LadduError>
-where
-    P: Fn(&Event) -> bool + Send + Sync,
-{
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let events: Vec<Event> = batches
-        .into_par_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let mut p4s = Vec::new();
-                let mut eps = Vec::new();
-
-                let p4_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("p4_"))
-                    .count()
-                    / 4;
-                let eps_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("eps_"))
-                    .count()
-                    / 3;
-
-                for i in 0..p4_count {
-                    let e = batch
-                        .column_by_name(&format!("p4_{}_E", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let px = batch
-                        .column_by_name(&format!("p4_{}_Px", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let py = batch
-                        .column_by_name(&format!("p4_{}_Py", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let pz = batch
-                        .column_by_name(&format!("p4_{}_Pz", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    p4s.push(Vector4::new(e, px, py, pz));
-                }
-
-                // TODO: insert empty vectors if not provided
-                for i in 0..eps_count {
-                    let x = batch
-                        .column_by_name(&format!("eps_{}_x", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let y = batch
-                        .column_by_name(&format!("eps_{}_y", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let z = batch
-                        .column_by_name(&format!("eps_{}_z", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    eps.push(Vector3::new(x, y, z));
-                }
-
-                let weight = batch
-                    .column(19)
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-
-                let event = Event { p4s, eps, weight };
-                if predicate(&event) {
-                    local_events.push(event);
-                }
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
-}
-
-/// Open a Parquet file and read the data into a [`Dataset`]. Only returns events for which the
-/// given predicate returns `true`.
-#[cfg(not(feature = "rayon"))]
-pub fn open_filtered<P>(file_path: &str, predicate: P) -> Result<Arc<Dataset>, LadduError>
-where
-    P: Fn(&Event) -> bool,
-{
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let events: Vec<Event> = batches
-        .into_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let mut p4s = Vec::new();
-                let mut eps = Vec::new();
-
-                let p4_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("p4_"))
-                    .count()
-                    / 4;
-                let eps_count = batch
-                    .schema()
-                    .fields()
-                    .iter()
-                    .filter(|field| field.name().starts_with("eps_"))
-                    .count()
-                    / 3;
-
-                for i in 0..p4_count {
-                    let e = batch
-                        .column_by_name(&format!("p4_{}_E", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let px = batch
-                        .column_by_name(&format!("p4_{}_Px", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let py = batch
-                        .column_by_name(&format!("p4_{}_Py", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let pz = batch
-                        .column_by_name(&format!("p4_{}_Pz", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    p4s.push(Vector4::new(e, px, py, pz));
-                }
-
-                for i in 0..eps_count {
-                    let x = batch
-                        .column_by_name(&format!("eps_{}_x", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let y = batch
-                        .column_by_name(&format!("eps_{}_y", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    let z = batch
-                        .column_by_name(&format!("eps_{}_z", i))
-                        .unwrap()
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .unwrap()
-                        .value(row) as Float;
-                    eps.push(Vector3::new(x, y, z));
-                }
-
-                let weight = batch
-                    .column(19)
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-
-                let event = Event { p4s, eps, weight };
-                if predicate(&event) {
-                    local_events.push(event);
-                }
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
@@ -666,127 +502,4 @@ impl BinnedDataset {
     pub fn range(&self) -> (Float, Float) {
         (self.edges[0], self.edges[self.len()])
     }
-}
-
-/// Open a Parquet file and read the data into a [`BinnedDataset`] using the given [`Variable`],
-/// number of `bins` and `range`.
-pub fn open_binned<V: Variable>(
-    file_path: &str,
-    variable: V,
-    bins: usize,
-    range: (Float, Float),
-) -> Result<BinnedDataset, LadduError> {
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let mut binned_events: Vec<Vec<Event>> = vec![Vec::default(); bins];
-    let bin_width = (range.1 - range.0) / bins as Float;
-    let bin_edges = get_bin_edges(bins, range);
-
-    batches.into_iter().for_each(|batch| {
-        let num_rows = batch.num_rows();
-
-        // Process each row in the batch
-        for row in 0..num_rows {
-            let mut p4s = Vec::new();
-            let mut eps = Vec::new();
-
-            let p4_count = batch
-                .schema()
-                .fields()
-                .iter()
-                .filter(|field| field.name().starts_with("p4_"))
-                .count()
-                / 4;
-            let eps_count = batch
-                .schema()
-                .fields()
-                .iter()
-                .filter(|field| field.name().starts_with("eps_"))
-                .count()
-                / 3;
-
-            for i in 0..p4_count {
-                let e = batch
-                    .column_by_name(&format!("p4_{}_E", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                let px = batch
-                    .column_by_name(&format!("p4_{}_Px", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                let py = batch
-                    .column_by_name(&format!("p4_{}_Py", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                let pz = batch
-                    .column_by_name(&format!("p4_{}_Pz", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                p4s.push(Vector4::new(e, px, py, pz));
-            }
-
-            // TODO: insert empty vectors if not provided
-            for i in 0..eps_count {
-                let x = batch
-                    .column_by_name(&format!("eps_{}_x", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                let y = batch
-                    .column_by_name(&format!("eps_{}_y", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                let z = batch
-                    .column_by_name(&format!("eps_{}_z", i))
-                    .unwrap()
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .unwrap()
-                    .value(row) as Float;
-                eps.push(Vector3::new(x, y, z));
-            }
-
-            let weight = batch
-                .column(19)
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .unwrap()
-                .value(row) as Float;
-
-            let event = Event { p4s, eps, weight };
-            let value = variable.value(&event);
-            if value >= range.0 && value < range.1 {
-                let bin_index = ((value - range.0) / bin_width) as usize;
-                binned_events[bin_index].push(event);
-            }
-        }
-    });
-    Ok(BinnedDataset {
-        datasets: binned_events
-            .into_iter()
-            .map(|events| Arc::new(Dataset { events }))
-            .collect(),
-        edges: bin_edges,
-    })
 }

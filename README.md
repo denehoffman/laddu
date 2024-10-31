@@ -230,7 +230,7 @@ The first example script uses data generated with [gen_amp](https://github.com/J
 <p align="center">
   <img
     width="800"
-    src="python_examples/example_1.svg"
+    src="python_examples/example_1/example_1.svg"
   />
 </p>
 

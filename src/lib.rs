@@ -287,7 +287,7 @@ pub mod prelude {
         zlm::Zlm,
         Amplitude, AmplitudeID, Evaluator, Expression, Manager, ParameterLike,
     };
-    pub use crate::data::{open, open_binned, open_filtered, BinnedDataset, Dataset, Event};
+    pub use crate::data::{open, BinnedDataset, Dataset, Event};
     pub use crate::likelihoods::{
         LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodTerm,
         MinimizerOptions, NLL,
