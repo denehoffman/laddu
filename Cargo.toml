@@ -38,7 +38,9 @@ accurate = "0.4.1"
 
 [dev-dependencies]
 approx = "0.5.1"
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features = [
+  "html_reports",
+] }
 
 [[bench]]
 name = "kmatrix_benchmark"
