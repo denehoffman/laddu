@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Usage: example_1.py [-n <nbins>]
+Usage: example_1.py [-n <nbins>] [-i <niters>] [-b <nboot>]
 
 Options:
--n <nbins>  Number of bins to use in binned fit and plot [default: 50]
+-n <nbins>   Number of bins to use in binned fit and plot [default: 50]
+-i <niters>  Number of iterations with randomized starting parameters for each fit [default: 20]
+-b <nboot>   Number of bootstrapped fits to perform for each fit [default: 20]
 """
 
 import os
@@ -21,15 +23,19 @@ from rich.table import Table
 from uncertainties import ufloat
 
 
-def main(bins: int):  # noqa: PLR0915
+def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_file = str(script_dir / "data_1.parquet")
     mc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
+    data_ds = ld.open(data_file)
+    accmc_ds = ld.open(mc_file)
     binned_tot_res, binned_tot_err, binned_s0p_res, binned_s0p_err, binned_d2p_res, binned_d2p_err, bin_edges = (
-        fit_binned(bins, data_file, mc_file)
+        fit_binned(bins, niters, nboot, data_ds, accmc_ds)
     )
-    tot_weights, s0p_weights, d2p_weights, status, parameters = fit_unbinned(data_file, mc_file)
+    tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = fit_unbinned(
+        niters, nboot, data_ds, accmc_ds
+    )
     end = perf_counter()
     pprint(f"Total time: {end - start:.3f}s")
     print(status)  # noqa: T201
@@ -39,18 +45,12 @@ def main(bins: int):  # noqa: PLR0915
     f0_re = status.x[parameters.index("S0+ re")]
     f2_re = status.x[parameters.index("D2+ re")]
     f2_im = status.x[parameters.index("D2+ im")]
-    if status.err is not None:
-        f0_width_err = status.err[parameters.index("f0_width")]
-        f2_width_err = status.err[parameters.index("f2_width")]
-        f0_re_err = status.err[parameters.index("S0+ re")]
-        f2_re_err = status.err[parameters.index("D2+ re")]
-        f2_im_err = status.err[parameters.index("D2+ im")]
-    else:
-        f0_width_err = np.inf
-        f2_width_err = np.inf
-        f0_re_err = np.inf
-        f2_re_err = np.inf
-        f2_im_err = np.inf
+
+    f0_width_err = np.array([boot_status.x[parameters.index("f0_width")] for boot_status in boot_statuses]).std()
+    f2_width_err = np.array([boot_status.x[parameters.index("f2_width")] for boot_status in boot_statuses]).std()
+    f0_re_err = np.array([boot_status.x[parameters.index("S0+ re")] for boot_status in boot_statuses]).std()
+    f2_re_err = np.array([boot_status.x[parameters.index("D2+ re")] for boot_status in boot_statuses]).std()
+    f2_im_err = np.array([boot_status.x[parameters.index("D2+ im")] for boot_status in boot_statuses]).std()
 
     u_f0_re = ufloat(f0_re, f0_re_err)
     u_f2_re = ufloat(f2_re, f2_re_err)
@@ -70,9 +70,6 @@ def main(bins: int):  # noqa: PLR0915
     pprint(table)
 
     res_mass = ld.Mass([2, 3])
-    data_ds = ld.open("./data_1.parquet")
-    accmc_ds = ld.open("./mc_1.parquet")
-
     m_data = res_mass.value_on(data_ds)
     m_accmc = res_mass.value_on(accmc_ds)
 
@@ -155,12 +152,12 @@ def main(bins: int):  # noqa: PLR0915
     plt.savefig("example_1.svg")
 
 
-def fit_binned(bins: int, data_file: str, mc_file: str):
+def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset):
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
-    data_ds_binned = ld.open_binned(data_file, res_mass, bins, (1.0, 2.0))
-    accmc_ds_binned = ld.open_binned(mc_file, res_mass, bins, (1.0, 2.0))
+    data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
+    accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
     z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
@@ -183,7 +180,7 @@ def fit_binned(bins: int, data_file: str, mc_file: str):
         best_nll = np.inf
         best_status = None
         nll = ld.NLL(manager, data_ds_binned[ibin], accmc_ds_binned[ibin], model)
-        for _ in range(20):
+        for _ in range(niters):
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
             status = nll.minimize(p0)
             if status.fx < best_nll:
@@ -204,7 +201,7 @@ def fit_binned(bins: int, data_file: str, mc_file: str):
         tot_boot = []
         s0p_boot = []
         d2p_boot = []
-        for iboot in range(20):
+        for iboot in range(nboot):
             boot_nll = ld.NLL(
                 manager, data_ds_binned[ibin].bootstrap(iboot), accmc_ds_binned[ibin].bootstrap(iboot), model
             )
@@ -223,12 +220,12 @@ def fit_binned(bins: int, data_file: str, mc_file: str):
     return (tot_res, tot_res_err, s0p_res, s0p_res_err, d2p_res, d2p_res_err, data_ds_binned.edges)
 
 
-def fit_unbinned(data_file: str, mc_file: str):
+def fit_unbinned(
+    niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, ld.Status, list[ld.Status], list[str]]:
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
-    data_ds = ld.open(data_file)
-    accmc_ds = ld.open(mc_file)
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
     z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
@@ -260,7 +257,7 @@ def fit_unbinned(data_file: str, mc_file: str):
         (-1000.0, 1000.0),
     ]
     nll = ld.NLL(manager, data_ds, accmc_ds, model)
-    for _ in range(20):
+    for _ in range(niters):
         p0 = rng.uniform(-1000.0, 1000.0, 3)
         p0 = np.append([0.8, 0.5], p0)
         status = nll.minimize(p0, bounds=bounds)
@@ -277,10 +274,16 @@ def fit_unbinned(data_file: str, mc_file: str):
     s0p_weights = nll.project(best_status.x)
     nll.isolate(["D2+", "Z22+", "f2(1525)"])
     d2p_weights = nll.project(best_status.x)
+    nll.activate_all()
 
-    return (tot_weights, s0p_weights, d2p_weights, best_status, nll.parameters)
+    boot_statuses = []
+    for iboot in range(nboot):
+        boot_nll = ld.NLL(manager, data_ds.bootstrap(iboot), accmc_ds.bootstrap(iboot), model)
+        boot_statuses.append(boot_nll.minimize(best_status.x))
+
+    return (tot_weights, s0p_weights, d2p_weights, best_status, boot_statuses, nll.parameters)
 
 
 if __name__ == "__main__":
     args = docopt(__doc__)  # pyright: ignore
-    main(int(args["-n"]))
+    main(int(args["-n"]), int(args["-i"]), int(args["-b"]))
