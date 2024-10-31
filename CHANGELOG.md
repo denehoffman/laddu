@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/denehoffman/laddu/compare/v0.1.4...v0.1.5) - 2024-10-31
+
+### Added
+
+- remove methods to open data into bins or filtered and replace with method on `Dataset`
+- wrap `Event`s inside `Dataset`s in `Arc` to reduce bootstrap copying
+- add benchmark for opening datasets
+- add method to resample datasets (bootstrapping)
+
+### Other
+
+- switch to Codspeed for benchmarking
+- update plot and add output txt file for example_1 and reorganize directory structure
+- refactor data loading code into a shared function
+
 ## [0.1.4](https://github.com/denehoffman/laddu/compare/v0.1.3...v0.1.4) - 2024-10-30
 
 ### Added
