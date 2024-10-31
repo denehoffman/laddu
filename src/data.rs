@@ -120,33 +120,21 @@ impl Dataset {
     pub fn iter(&self) -> impl Iterator<Item = &Event> {
         self.events.iter().map(|a| a.as_ref())
     }
+}
 
+#[cfg(feature = "rayon")]
+impl Dataset {
     /// Produces an parallelized iterator over the [`Event`]s in the [`Dataset`].
-    #[cfg(feature = "rayon")]
     pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &Event> {
         self.events.par_iter().map(|a| a.as_ref())
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    pub fn weights(&self) -> Vec<Float> {
-        self.iter().map(|e| e.weight).collect()
-    }
-
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    #[cfg(feature = "rayon")]
     pub fn weights(&self) -> Vec<Float> {
         self.par_iter().map(|e| e.weight).collect()
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    pub fn weighted_len(&self) -> Float {
-        self.iter().map(|e| e.weight).sum()
-    }
-
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    #[cfg(feature = "rayon")]
     pub fn weighted_len(&self) -> Float {
         self.par_iter().map(|e| e.weight).sum()
     }
@@ -158,14 +146,154 @@ impl Dataset {
             return Arc::new(Dataset::default());
         }
         let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
-        let mut bootstrapped_events = Vec::with_capacity(self.len());
-        for _ in 0..self.len() {
-            let idx = rng.gen_range(0..self.len());
-            bootstrapped_events.push(self.events[idx].clone());
-        }
+        let mut indices: Vec<usize> = (0..self.len())
+            .map(|_| rng.gen_range(0..self.len()))
+            .collect::<Vec<usize>>();
+        indices.sort();
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_par_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
         Arc::new(Dataset {
             events: bootstrapped_events,
         })
+    }
+
+    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
+    /// returns `true`.
+    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
+    where
+        P: Fn(&Event) -> bool + Send + Sync,
+    {
+        let filtered_events = self
+            .events
+            .par_iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect();
+        Arc::new(Dataset {
+            events: filtered_events,
+        })
+    }
+
+    /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
+    /// given `range`.
+    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    where
+        V: Variable,
+    {
+        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_edges = get_bin_edges(bins, range);
+        let evaluated: Vec<(usize, &Arc<Event>)> = self
+            .events
+            .par_iter()
+            .filter_map(|event| {
+                let value = variable.value(event.as_ref());
+                if value >= range.0 && value < range.1 {
+                    let bin_index = ((value - range.0) / bin_width) as usize;
+                    let bin_index = bin_index.min(bins - 1);
+                    Some((bin_index, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
+        for (bin_index, event) in evaluated {
+            binned_events[bin_index].push(event.clone());
+        }
+        BinnedDataset {
+            datasets: binned_events
+                .into_par_iter()
+                .map(|events| Arc::new(Dataset { events }))
+                .collect(),
+            edges: bin_edges,
+        }
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl Dataset {
+    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
+    pub fn weights(&self) -> Vec<Float> {
+        self.iter().map(|e| e.weight).collect()
+    }
+
+    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
+    pub fn weighted_len(&self) -> Float {
+        self.iter().map(|e| e.weight).sum()
+    }
+
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method.
+    pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
+        if self.is_empty() {
+            return Arc::new(Dataset::default());
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut indices: Vec<usize> = (0..self.len())
+            .map(|_| rng.gen_range(0..self.len()))
+            .collect::<Vec<usize>>();
+        indices.sort();
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
+    }
+
+    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
+    /// returns `true`.
+    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
+    where
+        P: Fn(&Event) -> bool + Send + Sync,
+    {
+        let filtered_events = self
+            .events
+            .iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect();
+        Arc::new(Dataset {
+            events: filtered_events,
+        })
+    }
+
+    /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
+    /// given `range`.
+    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    where
+        V: Variable,
+    {
+        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_edges = get_bin_edges(bins, range);
+        let evaluated: Vec<(usize, &Arc<Event>)> = self
+            .events
+            .iter()
+            .filter_map(|event| {
+                let value = variable.value(event.as_ref());
+                if value >= range.0 && value < range.1 {
+                    let bin_index = ((value - range.0) / bin_width) as usize;
+                    let bin_index = bin_index.min(bins - 1);
+                    Some((bin_index, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
+        for (bin_index, event) in evaluated {
+            binned_events[bin_index].push(event.clone());
+        }
+        BinnedDataset {
+            datasets: binned_events
+                .into_iter()
+                .map(|events| Arc::new(Dataset { events }))
+                .collect(),
+            edges: bin_edges,
+        }
     }
 }
 
@@ -308,70 +436,6 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
     Ok(Arc::new(Dataset { events }))
 }
 
-/// Open a Parquet file and read the data into a [`Dataset`]. Only returns events for which the
-/// given predicate returns `true`.
-#[cfg(feature = "rayon")]
-pub fn open_filtered<P>(file_path: &str, predicate: P) -> Result<Arc<Dataset>, LadduError>
-where
-    P: Fn(&Event) -> bool + Send + Sync,
-{
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let events: Vec<Arc<Event>> = batches
-        .into_par_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                if predicate(&event) {
-                    local_events.push(Arc::new(event));
-                }
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
-}
-
-/// Open a Parquet file and read the data into a [`Dataset`]. Only returns events for which the
-/// given predicate returns `true`.
-#[cfg(not(feature = "rayon"))]
-pub fn open_filtered<P>(file_path: &str, predicate: P) -> Result<Arc<Dataset>, LadduError>
-where
-    P: Fn(&Event) -> bool,
-{
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let events: Vec<Arc<Event>> = batches
-        .into_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                if predicate(&event) {
-                    local_events.push(Arc::new(event));
-                }
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
-}
-
 fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
     let bin_width = (range.1 - range.0) / (bins as Float);
     (0..=bins)
@@ -438,44 +502,4 @@ impl BinnedDataset {
     pub fn range(&self) -> (Float, Float) {
         (self.edges[0], self.edges[self.len()])
     }
-}
-
-/// Open a Parquet file and read the data into a [`BinnedDataset`] using the given [`Variable`],
-/// number of `bins` and `range`.
-pub fn open_binned<V: Variable>(
-    file_path: &str,
-    variable: V,
-    bins: usize,
-    range: (Float, Float),
-) -> Result<BinnedDataset, LadduError> {
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
-    let bin_width = (range.1 - range.0) / bins as Float;
-    let bin_edges = get_bin_edges(bins, range);
-
-    batches.into_iter().for_each(|batch| {
-        let num_rows = batch.num_rows();
-
-        // Process each row in the batch
-        for row in 0..num_rows {
-            let event = batch_to_event(&batch, row);
-            let value = variable.value(&event);
-            if value >= range.0 && value < range.1 {
-                let bin_index = ((value - range.0) / bin_width) as usize;
-                binned_events[bin_index].push(Arc::new(event));
-            }
-        }
-    });
-    Ok(BinnedDataset {
-        datasets: binned_events
-            .into_iter()
-            .map(|events| Arc::new(Dataset { events }))
-            .collect(),
-        edges: bin_edges,
-    })
 }

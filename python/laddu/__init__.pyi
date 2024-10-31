@@ -6,7 +6,7 @@ from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
-from laddu.data import BinnedDataset, Dataset, open, open_binned
+from laddu.data import BinnedDataset, Dataset, open
 from laddu.likelihoods import NLL, LikelihoodManager, Status
 from laddu.utils.variables import Angles, CosTheta, Mass, Phi, PolAngle, Polarization, PolMagnitude
 from laddu.utils.vectors import Vector3, Vector4
@@ -26,7 +26,6 @@ __all__ = [
     "Dataset",
     "open",
     "BinnedDataset",
-    "open_binned",
     "utils",
     "data",
     "amplitudes",

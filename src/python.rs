@@ -246,6 +246,20 @@ pub(crate) mod laddu {
                 .ok_or(PyIndexError::new_err("index out of range"))
                 .map(|rust_event| Event(rust_event.clone()))
         }
+        #[pyo3(signature = (variable, bins, range))]
+        fn bin_by(
+            &self,
+            variable: Bound<'_, PyAny>,
+            bins: usize,
+            range: (Float, Float),
+        ) -> PyResult<BinnedDataset> {
+            let rust_variable = if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
+                py_mass.0.clone()
+            } else {
+                return Err(PyTypeError::new_err("Unsupported variable!"));
+            };
+            Ok(BinnedDataset(self.0.bin_by(rust_variable, bins, range)))
+        }
         fn bootstrap(&self, seed: usize) -> Dataset {
             Dataset(self.0.bootstrap(seed))
         }
@@ -285,26 +299,6 @@ pub(crate) mod laddu {
     #[pyfunction]
     fn open(path: &str) -> PyResult<Dataset> {
         Ok(Dataset(rust::data::open(path)?))
-    }
-    #[pyfunction]
-    #[pyo3(signature = (path, variable, bins, range))]
-    fn open_binned(
-        path: &str,
-        variable: Bound<'_, PyAny>,
-        bins: usize,
-        range: (Float, Float),
-    ) -> PyResult<BinnedDataset> {
-        let rust_variable = if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
-            py_mass.0.clone()
-        } else {
-            return Err(PyTypeError::new_err("Unsupported variable!"));
-        };
-        Ok(BinnedDataset(rust::data::open_binned(
-            path,
-            rust_variable,
-            bins,
-            range,
-        )?))
     }
 
     #[pyclass]
