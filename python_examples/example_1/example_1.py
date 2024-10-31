@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import uncertainties.umath as unp
 from docopt import docopt
+from loguru import logger
 from rich import print as pprint
 from rich.table import Table
 from uncertainties import ufloat
@@ -28,7 +29,9 @@ def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
     data_file = str(script_dir / "data_1.parquet")
     mc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
+    logger.info("Opening Data file...")
     data_ds = ld.open(data_file)
+    logger.info("Opening MC file...")
     accmc_ds = ld.open(mc_file)
     binned_tot_res, binned_tot_err, binned_s0p_res, binned_s0p_err, binned_d2p_res, binned_d2p_err, bin_edges = (
         fit_binned(bins, niters, nboot, data_ds, accmc_ds)
@@ -37,8 +40,8 @@ def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
         niters, nboot, data_ds, accmc_ds
     )
     end = perf_counter()
-    pprint(f"Total time: {end - start:.3f}s")
-    print(status)  # noqa: T201
+    logger.info(f"Total time: {end - start:.3f}s")
+    logger.info(f"\n\n{status}")
 
     f0_width = status.x[parameters.index("f0_width")]
     f2_width = status.x[parameters.index("f2_width")]
@@ -153,6 +156,7 @@ def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
 
 
 def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset):
+    logger.info("Starting Binned Fit")
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
@@ -177,10 +181,12 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
     rng = np.random.default_rng()
 
     for ibin in range(bins):
+        logger.info(f"Fitting Bin #{ibin}")
         best_nll = np.inf
         best_status = None
         nll = ld.NLL(manager, data_ds_binned[ibin], accmc_ds_binned[ibin], model)
-        for _ in range(niters):
+        for iiter in range(niters):
+            logger.info(f"Fitting Iteration #{iiter}")
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
             status = nll.minimize(p0)
             if status.fx < best_nll:
@@ -188,7 +194,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
                 best_status = status
 
         if best_status is None:
-            print(f"All fits for bin {ibin} failed!")
+            logger.error(f"All fits for bin #{ibin} failed!")
             sys.exit(1)
 
         tot_res.append(nll.project(best_status.x).sum())
@@ -202,6 +208,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
         s0p_boot = []
         d2p_boot = []
         for iboot in range(nboot):
+            logger.info(f"Running bootstrap fit #{iboot}")
             boot_nll = ld.NLL(
                 manager, data_ds_binned[ibin].bootstrap(iboot), accmc_ds_binned[ibin].bootstrap(iboot), model
             )
@@ -223,6 +230,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
 def fit_unbinned(
     niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, ld.Status, list[ld.Status], list[str]]:
+    logger.info("Starting Unbinned Fit")
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
@@ -257,7 +265,8 @@ def fit_unbinned(
         (-1000.0, 1000.0),
     ]
     nll = ld.NLL(manager, data_ds, accmc_ds, model)
-    for _ in range(niters):
+    for iiter in range(niters):
+        logger.info(f"Fitting Iteration #{iiter}")
         p0 = rng.uniform(-1000.0, 1000.0, 3)
         p0 = np.append([0.8, 0.5], p0)
         status = nll.minimize(p0, bounds=bounds)
@@ -266,7 +275,7 @@ def fit_unbinned(
             best_status = status
 
     if best_status is None:
-        print("All unbinned fits failed!")
+        logger.error("All unbinned fits failed!")
         sys.exit(1)
 
     tot_weights = nll.project(best_status.x)
@@ -278,6 +287,7 @@ def fit_unbinned(
 
     boot_statuses = []
     for iboot in range(nboot):
+        logger.info(f"Running bootstrap fit #{iboot}")
         boot_nll = ld.NLL(manager, data_ds.bootstrap(iboot), accmc_ds.bootstrap(iboot), model)
         boot_statuses.append(boot_nll.minimize(best_status.x))
 
