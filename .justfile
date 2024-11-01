@@ -2,4 +2,4 @@ default:
   just --list
 
 develop:
-  maturin develop -r --uv --strip
+  CARGO_INCREMENTAL=true maturin develop -r --uv --strip
