@@ -29,7 +29,10 @@ auto_ops = "0.3.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = { version = "1.10.0", optional = true }
-pyo3 = { version = "0.22.5", optional = true, features = ["num-complex"] }
+pyo3 = { version = "0.22.5", optional = true, features = [
+  "num-complex",
+  "abi3-py37",
+] }
 numpy = { version = "0.22.0", optional = true, features = ["nalgebra"] }
 ganesh = "0.12.2"
 thiserror = "1.0.64"
