@@ -46,7 +46,21 @@ pub(crate) mod laddu {
         fn __add__(&self, other: Self) -> Self {
             Self(self.0 + other.0)
         }
-        fn dot(&self, other: Self) -> Float {
+        /// The dot product
+        ///
+        /// This method is documented.
+        ///
+        /// Parameters
+        /// ----------
+        /// other : Vector3
+        ///     A vector input with which the dot product is taken
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The dot product of this vector and `other`
+        ///
+        pub fn dot(&self, other: Self) -> Float {
             self.0.dot(&other.0)
         }
         fn cross(&self, other: Self) -> Self {
