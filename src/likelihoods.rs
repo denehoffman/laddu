@@ -113,7 +113,7 @@ impl NLL {
     #[cfg(feature = "rayon")]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         mc_result
             .par_iter()
             .zip(self.mc_evaluator.dataset.par_iter())
@@ -134,7 +134,7 @@ impl NLL {
     #[cfg(not(feature = "rayon"))]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         mc_result
             .iter()
             .zip(self.mc_evaluator.dataset.iter())
@@ -162,17 +162,18 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e) / N_{\text{DATA}}) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .map(|(l, e)| e.weight * Float::ln(l.re / n_data))
             .parallel_sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .par_iter()
@@ -189,17 +190,18 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e) / N_{\text{DATA}}) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .iter()
             .zip(self.data_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .map(|(l, e)| e.weight * Float::ln(l.re / n_data))
             .sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .iter()
@@ -220,7 +222,7 @@ impl LikelihoodTerm for NLL {
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -336,7 +338,7 @@ impl LikelihoodTerm for NLL {
         let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
