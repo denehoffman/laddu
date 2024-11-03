@@ -70,7 +70,7 @@ impl Amplitude for Zlm {
         );
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
-        let phase = Complex::new(Float::cos(pol_angle), Float::sin(pol_angle));
+        let phase = Complex::new(Float::cos(-pol_angle), Float::sin(-pol_angle));
         let zlm = ylm * phase;
         cache.store_complex_scalar(
             self.csid,
