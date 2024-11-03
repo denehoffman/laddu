@@ -34,6 +34,18 @@ pub(crate) mod laddu {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+    /// A 3-momentum vector formed from Cartesian components
+    ///
+    /// Parameters
+    /// ----------
+    /// px, py, pz : float
+    ///     The Cartesian components of the 3-vector
+    ///
+    /// Returns
+    /// -------
+    /// Vector3
+    ///     A new 3-momentum vector made from the given components
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Vector3(nalgebra::Vector3<Float>);
@@ -48,7 +60,7 @@ pub(crate) mod laddu {
         }
         /// The dot product
         ///
-        /// This method is documented.
+        /// Calculates the dot product of two Vector3s.
         ///
         /// Parameters
         /// ----------
@@ -63,45 +75,166 @@ pub(crate) mod laddu {
         pub fn dot(&self, other: Self) -> Float {
             self.0.dot(&other.0)
         }
+        /// The cross product
+        ///
+        /// Calculates the cross product of two Vector3s.
+        ///
+        /// Parameters
+        /// ----------
+        /// other : Vector3
+        ///     A vector input with which the cross product is taken
+        ///
+        /// Returns
+        /// -------
+        /// Vector3
+        ///     The cross product of this vector and `other`
+        ///
         fn cross(&self, other: Self) -> Self {
             Self(self.0.cross(&other.0))
         }
+        /// The magnitude of the 3-vector
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: \sqrt{p_x^2 + p_y^2 + p_z^2}
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The magnitude of this vector
         #[getter]
         fn mag(&self) -> Float {
             self.0.mag()
         }
+        /// The magnitude-squared of the 3-vector
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: p_x^2 + p_y^2 + p_z^2
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The squared magnitude of this vector
+        ///
         #[getter]
         fn mag2(&self) -> Float {
             self.0.mag2()
         }
+        /// The cosine of the polar angle of this vector in spherical coordinates
+        ///
+        /// The polar angle is defined in the range
+        ///
+        /// .. math:: 0 \leq \theta \leq \pi
+        ///
+        /// so the cosine falls in the range
+        ///
+        /// .. math:: -1 \leq \cos\theta \leq +1
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: \cos\theta = \frac{p_z}{|\vec{p}|}
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The cosine of the polar angle of this vector
+        ///
         #[getter]
         fn costheta(&self) -> Float {
             self.0.costheta()
         }
+        /// The polar angle of this vector in spherical coordinates
+        ///
+        /// The polar angle is defined in the range
+        ///
+        /// .. math:: 0 \leq \theta \leq \pi
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: \theta = \arccos\left(\frac{p_z}{|\vec{p}|}\right)
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The polar angle of this vector
+        ///
         #[getter]
         fn theta(&self) -> Float {
             self.0.theta()
         }
+        /// The azimuthal angle of this vector in spherical coordinates
+        ///
+        /// The azimuthal angle is defined in the range
+        ///
+        /// .. math:: 0 \leq \varphi \leq 2\pi
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: \varphi = \text{sgn}(p_y)\arccos\left(\frac{p_x}{\sqrt{p_x^2 + p_y^2}}\right)
+        ///
+        /// although the actual calculation just uses the `atan2` function
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The azimuthal angle of this vector
+        ///
         #[getter]
         fn phi(&self) -> Float {
             self.0.phi()
         }
+        /// The normalized unit vector pointing in the direction of this vector
+        ///
+        /// Returns
+        /// -------
+        /// Vector3
+        ///     A unit vector pointing in the same direction as this vector
+        ///
         #[getter]
         fn unit(&self) -> Self {
             Self(self.0.unit())
         }
+        /// The x-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The x-component
+        ///
         #[getter]
         fn px(&self) -> Float {
             self.0.px()
         }
+        /// The y-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The y-component
+        ///
         #[getter]
         fn py(&self) -> Float {
             self.0.py()
         }
+        /// The z-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The z-component
+        ///
         #[getter]
         fn pz(&self) -> Float {
             self.0.pz()
         }
+        /// Convert the 3-vector to a `numpy` array
+        ///
+        /// Returns
+        /// -------
+        /// numpy_vec: array_like
+        ///     A `numpy` array built from the components of this `Vector3`
+        ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.as_slice())
         }
