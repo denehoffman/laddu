@@ -4,7 +4,9 @@ default:
 develop:
   CARGO_INCREMENTAL=true maturin develop -r --uv --strip
 
-pydoc:
+makedocs:
+  CARGO_INCREMENTAL=true maturin build -r --strip
+  uv pip install ./target/wheels/*
   make -C docs clean
   make -C docs html
 
