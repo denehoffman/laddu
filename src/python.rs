@@ -96,21 +96,22 @@ pub(crate) mod laddu {
         ///
         /// This is calculated as:
         ///
-        /// .. math:: \sqrt{p_x^2 + p_y^2 + p_z^2}
+        /// .. math:: |\vec{p}| = \sqrt{p_x^2 + p_y^2 + p_z^2}
         ///
         /// Returns
         /// -------
         /// float
         ///     The magnitude of this vector
+        ///
         #[getter]
         fn mag(&self) -> Float {
             self.0.mag()
         }
-        /// The magnitude-squared of the 3-vector
+        /// The squared magnitude of the 3-vector
         ///
         /// This is calculated as:
         ///
-        /// .. math:: p_x^2 + p_y^2 + p_z^2
+        /// .. math:: |\vec{p}|^2 = p_x^2 + p_y^2 + p_z^2
         ///
         /// Returns
         /// -------
@@ -173,7 +174,7 @@ pub(crate) mod laddu {
         ///
         /// .. math:: \varphi = \text{sgn}(p_y)\arccos\left(\frac{p_x}{\sqrt{p_x^2 + p_y^2}}\right)
         ///
-        /// although the actual calculation just uses the `atan2` function
+        /// although the actual calculation just uses the ``atan2`` function
         ///
         /// Returns
         /// -------
@@ -228,12 +229,12 @@ pub(crate) mod laddu {
         fn pz(&self) -> Float {
             self.0.pz()
         }
-        /// Convert the 3-vector to a `numpy` array
+        /// Convert the 3-vector to a ``numpy`` array
         ///
         /// Returns
         /// -------
         /// numpy_vec: array_like
-        ///     A `numpy` array built from the components of this `Vector3`
+        ///     A ``numpy`` array built from the components of this ``Vector3``
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.as_slice())
@@ -246,6 +247,23 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A 4-momentum vector formed from energy and Cartesian 3-momentum components
+    ///
+    /// This vector is ordered with energy as the zeroeth component (:math:`[E, p_x, p_y, p_z]`) and assumes a :math:`(+---)`
+    /// signature
+    ///
+    /// Parameters
+    /// ----------
+    /// e : float
+    ///     The energy component
+    /// px, py, pz : float
+    ///     The Cartesian components of the 3-vector
+    ///
+    /// Returns
+    /// -------
+    /// Vector4
+    ///     A new 4-momentum vector made from the given components
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Vector4(nalgebra::Vector4<Float>);
@@ -258,64 +276,277 @@ pub(crate) mod laddu {
         fn __add__(&self, other: Self) -> Self {
             Self(self.0 + other.0)
         }
+        /// The magnitude of the 4-vector
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: |p| = \sqrt{E^2 - (p_x^2 + p_y^2 + p_z^2)}
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The magnitude of this vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.m
+        ///
         #[getter]
         fn mag(&self) -> Float {
             self.0.mag()
         }
+        /// The squared magnitude of the 4-vector
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: |p|^2 = E^2 - (p_x^2 + p_y^2 + p_z^2)
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The squared magnitude of this vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.m2
+        ///
         #[getter]
         fn mag2(&self) -> Float {
             self.0.mag2()
         }
+        /// The 3-vector part of this 4-vector
+        ///
+        /// Returns
+        /// -------
+        /// Vector3
+        ///     The internal 3-vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.momentum
+        ///
         #[getter]
         fn vec3(&self) -> Vector3 {
             Vector3(self.0.vec3().into())
         }
+        /// Boost the given 4-momentum according to a boost velocity
+        ///
+        /// The resulting 4-momentum is equal to the original boosted to an inertial frame with
+        /// relative velocity :math:`\beta`:
+        ///
+        /// .. math:: \left[E'; \vec{p}'\right] = \left[ \gamma E - \vec{\beta}\cdot\vec{p}; \vec{p} + \left(\frac{(\gamma - 1) \vec{p}\cdot\vec{\beta}}{\beta^2} - \gamma E\right)\vec{\beta}\right]
+        ///
+        /// Parameters
+        /// ----------
+        /// beta : Vector3
+        ///     The relative velocity needed to get to the new frame from the current one
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     The boosted 4-momentum
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.beta
+        /// Vector4.gamma
+        /// Vector4.boost_along
+        ///
         fn boost(&self, beta: &Vector3) -> Self {
             Self(self.0.boost(&beta.0))
         }
+        /// The energy associated with this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The energy
+        ///
         #[getter]
         fn e(&self) -> Float {
             self.0[0]
         }
+        /// The x-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The x-component
+        ///
         #[getter]
         fn px(&self) -> Float {
             self.0.px()
         }
+        /// The y-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The y-component
+        ///
         #[getter]
         fn py(&self) -> Float {
             self.0.py()
         }
+        /// The z-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The z-component
+        ///
         #[getter]
         fn pz(&self) -> Float {
             self.0.pz()
         }
+        /// The 3-momentum part of this 4-momentum
+        ///
+        /// Returns
+        /// -------
+        /// Vector3
+        ///     The internal 3-momentum
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.vec3
+        ///
         #[getter]
         fn momentum(&self) -> Vector3 {
             Vector3(self.0.momentum().into())
         }
+        /// The relativistic gamma factor
+        ///
+        /// The :math:`\gamma` factor is equivalent to
+        ///
+        /// .. math:: \gamma = \frac{1}{\sqrt{1 - \beta^2}}
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The associated :math:`\gamma` factor
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.beta
+        /// Vector4.boost
+        /// Vector4.boost_along
+        ///
         #[getter]
         fn gamma(&self) -> Float {
             self.0.gamma()
         }
+        /// The velocity 3-vector
+        ///
+        /// The :math:`\beta` vector is equivalent to
+        ///
+        /// .. math:: \vec{\beta} = \frac{\vec{p}}{E}
+        ///
+        /// Returns
+        /// -------
+        /// Vector3
+        ///     The associated velocity vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.gamma
+        /// Vector4.boost
+        /// Vector4.boost_along
+        ///
         #[getter]
         fn beta(&self) -> Vector3 {
             Vector3(self.0.beta())
         }
+        /// The invariant mass associated with the four-momentum
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: m = \sqrt{E^2 - (p_x^2 + p_y^2 + p_z^2)}
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The magnitude of this vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.mag
+        ///
         #[getter]
         fn m(&self) -> Float {
             self.0.m()
         }
+        /// The square of the invariant mass associated with the four-momentum
+        ///
+        /// This is calculated as:
+        ///
+        /// .. math:: m^2 = E^2 - (p_x^2 + p_y^2 + p_z^2)
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The squared magnitude of this vector
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.mag2
+        ///
         #[getter]
         fn m2(&self) -> Float {
             self.0.m2()
         }
+        /// Boost the given 4-momentum into the rest frame of another
+        ///
+        /// The resulting 4-momentum is equal to the original boosted into the rest frame
+        /// of `other`
+        ///
+        /// Boosting a vector by itself should yield that vector in its own rest frame
+        ///
+        /// Parameters
+        /// ----------
+        /// other : Vector4
+        ///     The 4-momentum whose rest-frame is the boost target
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     The boosted 4-momentum
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.boost
+        ///
         fn boost_along(&self, other: &Self) -> Self {
             Self(self.0.boost_along(&other.0))
         }
+        /// Construct a 4-momentum from a 3-momentum and corresponding `mass`
+        ///
+        /// The mass-energy equivalence is used to compute the energy of the 4-momentum:
+        ///
+        /// .. math:: E = \sqrt{m^2 + p^2}
+        ///
+        /// Parameters
+        /// ----------
+        /// momentum : Vector3
+        ///     The spatial 3-momentum
+        /// mass : float
+        ///     The associated rest mass
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     A new 4-momentum with the given spatial `momentum` and `mass`
+        ///
         #[staticmethod]
         fn from_momentum(momentum: &Vector3, mass: Float) -> Self {
             Self(nalgebra::Vector4::from_momentum(&momentum.0, mass))
         }
+        /// Convert the 4-vector to a `numpy` array
+        ///
+        /// Returns
+        /// -------
+        /// numpy_vec: array_like
+        ///     A ``numpy`` array built from the components of this ``Vector4``
+        ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.as_slice())
         }
@@ -327,6 +558,27 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A single event
+    ///
+    /// Events are composed of a set of 4-momenta of particles in the overall
+    /// center-of-momentum frame, polarizations or helicities described by 3-vectors, and a
+    /// weight
+    ///
+    /// Parameters
+    /// ----------
+    /// p4s : list[Vector4]
+    ///     4-momenta of each particle in the event in the overall center-of-momentum frame
+    /// eps : list[Vector3]
+    ///     3-vectors describing the polarization or helicity of the particles
+    ///     given in `p4s`
+    /// weight : float
+    ///     The weight associated with this event
+    ///
+    /// Returns
+    /// -------
+    /// event : Event
+    ///     An event formed from the given components
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Event(Arc<rust::data::Event>);
@@ -344,20 +596,33 @@ pub(crate) mod laddu {
         pub(crate) fn __str__(&self) -> String {
             self.0.to_string()
         }
+        /// The list of 4-momenta for each particle in the event
+        ///
         #[getter]
         pub(crate) fn get_p4s(&self) -> Vec<Vector4> {
             self.0.p4s.iter().map(|p4| Vector4(*p4)).collect()
         }
+        /// The list of 3-vectors describing the polarization or helicity of particles in
+        /// the event
+        ///
         #[getter]
         pub(crate) fn get_eps(&self) -> Vec<Vector3> {
             self.0.eps.iter().map(|eps_vec| Vector3(*eps_vec)).collect()
         }
+        /// The weight of this event relative to othersvin a Dataset
+        ///
         #[getter]
         pub(crate) fn get_weight(&self) -> Float {
             self.0.weight
         }
     }
 
+    /// A set of Events
+    ///
+    /// Parameters
+    /// ----------
+    /// events : list[Event]
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Dataset(Arc<rust::data::Dataset>);
