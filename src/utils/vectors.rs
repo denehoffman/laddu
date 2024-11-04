@@ -26,6 +26,8 @@ pub trait FourMomentum: FourVector {
     fn pz(&self) -> Float;
     /// The three-momentum
     fn momentum(&self) -> VectorView<Float, U3, U1, U4>;
+    /// The $`\gamma`$ factor $`\frac{1}{\sqrt{1 - \beta^2}}`$.
+    fn gamma(&self) -> Float;
     /// The $`\vec{\beta}`$ vector $`\frac{\vec{p}}{E}`$.
     fn beta(&self) -> Vector3<Float>;
     /// The mass of the corresponding object.
@@ -116,6 +118,12 @@ impl FourMomentum for Vector4<Float> {
 
     fn momentum(&self) -> VectorView<Float, U3, U1, U4> {
         self.vec3()
+    }
+
+    fn gamma(&self) -> Float {
+        let beta = self.beta();
+        let b2 = beta.dot(&beta);
+        1.0 / Float::sqrt(1.0 - b2)
     }
 
     fn beta(&self) -> Vector3<Float> {

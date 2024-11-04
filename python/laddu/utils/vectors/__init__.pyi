@@ -26,6 +26,7 @@ class Vector4:
     py: float
     pz: float
     momentum: Vector3
+    gamma: float
     beta: Vector3
     m: float
     m2: float

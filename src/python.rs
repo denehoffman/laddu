@@ -294,6 +294,10 @@ pub(crate) mod laddu {
             Vector3(self.0.momentum().into())
         }
         #[getter]
+        fn gamma(&self) -> Float {
+            self.0.gamma()
+        }
+        #[getter]
         fn beta(&self) -> Vector3 {
             Vector3(self.0.beta())
         }
