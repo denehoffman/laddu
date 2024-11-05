@@ -125,8 +125,8 @@ def run():
     output_file = args["<output_file>"]
     tree_name = args["--tree"]
     pol_in_beam = args["--pol-in-beam"]
-    pol_angle = float(args["--pol-angle"]) * np.pi / 180
-    pol_magnitude = float(args["--pol-magnitude"])
+    pol_angle = float(args["--pol-angle"]) * np.pi / 180 if args["--pol-angle"] else None
+    pol_magnitude = float(args["--pol-magnitude"]) if args["--pol-magnitude"] else None
     num_entries = int(args["-n"]) if args["-n"] else None
 
     convert_from_amptools(
