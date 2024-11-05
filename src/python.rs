@@ -566,9 +566,9 @@ pub(crate) mod laddu {
     ///
     /// Parameters
     /// ----------
-    /// p4s : list[Vector4]
+    /// p4s : list of Vector4
     ///     4-momenta of each particle in the event in the overall center-of-momentum frame
-    /// eps : list[Vector3]
+    /// eps : list of Vector3
     ///     3-vectors describing the polarization or helicity of the particles
     ///     given in `p4s`
     /// weight : float
@@ -609,7 +609,7 @@ pub(crate) mod laddu {
         pub(crate) fn get_eps(&self) -> Vec<Vector3> {
             self.0.eps.iter().map(|eps_vec| Vector3(*eps_vec)).collect()
         }
-        /// The weight of this event relative to othersvin a Dataset
+        /// The weight of this event relative to others in a Dataset
         ///
         #[getter]
         pub(crate) fn get_weight(&self) -> Float {
@@ -619,9 +619,17 @@ pub(crate) mod laddu {
 
     /// A set of Events
     ///
+    /// Datasets can be created from lists of Events or by using the provided ``laddu.open`` function
+    ///
+    /// Datasets can also be indexed directly to access individual Events
+    ///
     /// Parameters
     /// ----------
-    /// events : list[Event]
+    /// events : list of Event
+    ///
+    /// See Also
+    /// --------
+    /// laddu.open
     ///
     #[pyclass]
     #[derive(Clone)]
@@ -638,16 +646,44 @@ pub(crate) mod laddu {
         fn __len__(&self) -> usize {
             self.0.len()
         }
+        /// Get the number of Events in the Dataset
+        ///
+        /// Returns
+        /// -------
+        /// n_events : int
+        ///     The number of Events
+        ///
         fn len(&self) -> usize {
             self.0.len()
         }
+        /// Get the weighted number of Events in the Dataset
+        ///
+        /// Returns
+        /// -------
+        /// n_events : float
+        ///     The sum of all Event weights
+        ///
         fn weighted_len(&self) -> Float {
             self.0.weighted_len()
         }
+        /// The weights associated with the Dataset
+        ///
+        /// Returns
+        /// -------
+        /// weights : array_like
+        ///     A ``numpy`` array of Event weights
+        ///
         #[getter]
         fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.weights())
         }
+        /// The internal list of Events stored in the Dataset
+        ///
+        /// Returns
+        /// -------
+        /// events : list of Event
+        ///     The Events in the Dataset
+        ///
         #[getter]
         fn events(&self) -> Vec<Event> {
             self.0
@@ -662,6 +698,28 @@ pub(crate) mod laddu {
                 .ok_or(PyIndexError::new_err("index out of range"))
                 .map(|rust_event| Event(rust_event.clone()))
         }
+        /// Separates a Dataset into histogram bins by a Variable value
+        ///
+        /// Currently supports ``laddu.Mass`` as the binning variable.
+        ///
+        /// Parameters
+        /// ----------
+        /// variable : Mass
+        ///     The Variable by which each Event is binned
+        /// bins : int
+        ///     The number of equally-spaced bins
+        /// range : tuple[float, float]
+        ///     The minimum and maximum bin edges
+        ///
+        /// Returns
+        /// -------
+        /// datasets : BinnedDataset
+        ///     A structure that holds a list of Datasets binned by the given `variable`
+        ///
+        /// See Also
+        /// --------
+        /// laddu.Mass
+        ///
         #[pyo3(signature = (variable, bins, range))]
         fn bin_by(
             &self,
@@ -676,11 +734,33 @@ pub(crate) mod laddu {
             };
             Ok(BinnedDataset(self.0.bin_by(rust_variable, bins, range)))
         }
+        /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
+        ///
+        /// The new Dataset is resampled with a random generator seeded by the provided `seed`
+        ///
+        /// Parameters
+        /// ----------
+        /// seed : int
+        ///     The random seed used in the resampling process
+        ///
+        /// Returns
+        /// -------
+        /// Dataset
+        ///     A bootstrapped Dataset
+        ///
         fn bootstrap(&self, seed: usize) -> Dataset {
             Dataset(self.0.bootstrap(seed))
         }
     }
 
+    /// A collection of Datasets binned by a Variable
+    ///
+    /// BinnedDatasets can be indexed directly to access the underlying Datasets by bin
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Dataset.bin_by
+    ///
     #[pyclass]
     struct BinnedDataset(rust::data::BinnedDataset);
 
@@ -689,17 +769,29 @@ pub(crate) mod laddu {
         fn __len__(&self) -> usize {
             self.0.len()
         }
+        /// Get the number of bins in the BinnedDataset
+        ///
+        /// Returns
+        /// -------
+        /// n : int
+        ///     The number of bins
         fn len(&self) -> usize {
             self.0.len()
         }
+        /// The number of bins in the BinnedDataset
+        ///
         #[getter]
         fn bins(&self) -> usize {
             self.0.bins()
         }
+        /// The minimum and maximum values of the binning Variable used to create this BinnedDataset
+        ///
         #[getter]
         fn range(&self) -> (Float, Float) {
             self.0.range()
         }
+        /// The edges of each bin in the BinnedDataset
+        ///
         #[getter]
         fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.edges())
@@ -712,11 +804,48 @@ pub(crate) mod laddu {
         }
     }
 
+    /// Open a Dataset from a file
+    ///
+    /// Data should be stored in Parquet format with each column being filled with 32-bit floats
+    ///
+    /// Valid/required column names have the following formats:
+    ///
+    /// ``p4_{particle index}_{E|Px|Py|Pz}`` (four-momentum components for each particle)
+    ///
+    /// ``eps_{particle index}_{x|y|z}`` (polarization/helicity vectors for each particle)
+    ///
+    /// ``weight`` (the weight of the Event)
+    ///
+    /// For example, the four-momentum of the 0th particle in the event would be stored in columns
+    /// with the names ``p4_0_E``, ``p4_0_Px``, ``p4_0_Py``, and ``p4_0_Pz``. That particle's
+    /// polarization could be stored in the columns ``eps_0_x``, ``eps_0_y``, and ``eps_0_z``. This
+    /// could continue for an arbitrary number of particles. The ``weight`` column is always
+    /// required.
+    ///
     #[pyfunction]
     fn open(path: &str) -> PyResult<Dataset> {
         Ok(Dataset(rust::data::open(path)?))
     }
 
+    /// The invariant mass of an arbitrary combination of constituent particles in an Event
+    ///
+    /// This variable is calculated by summing up the 4-momenta of each particle listed by index in
+    /// `constituents` and taking the invariant magnitude of the resulting 4-vector.
+    ///
+    /// Parameters
+    /// ----------
+    /// constituents : list of int
+    ///     The indices of particles to combine to create the final 4-momentum
+    ///
+    /// Returns
+    /// -------
+    /// mass_variable : Mass
+    ///     A Variable that corresponds to the mass of the constituent particles
+    ///
+    /// See Also
+    /// --------
+    /// laddu.utils.vectors.Vector4.m
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Mass(rust::utils::variables::Mass);
@@ -727,14 +856,82 @@ pub(crate) mod laddu {
         fn new(constituents: Vec<usize>) -> Self {
             Self(rust::utils::variables::Mass::new(&constituents))
         }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
         fn value(&self, event: &Event) -> Float {
             self.0.value(&event.0)
         }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
+    /// The cosine of the polar decay angle in the rest frame of the given `resonance`
+    ///
+    /// This Variable is calculated by forming the given frame (helicity or Gottfried-Jackson) and
+    /// calculating the spherical angles according to one of the decaying `daughter` particles.
+    ///
+    /// The helicity frame is defined in terms of the following Cartesian axes in the rest frame of
+    /// the `resonance`:
+    ///
+    /// .. math:: \hat{z} \propto -\vec{p}'_{\text{recoil}}
+    /// .. math:: \hat{y} \propto \vec{p}_{\text{beam}} \times (-\vec{p}_{\text{recoil}})
+    /// .. math:: \hat{x} = \hat{y} \times \hat{z}
+    ///
+    /// where primed vectors are in the rest frame of the `resonance` and unprimed vectors are in
+    /// the center-of-momentum frame.
+    ///
+    /// The Gottfried-Jackson frame differs only in the definition of :math:`\hat{z}`:
+    ///
+    /// .. math:: \hat{z} \propto \vec{p}'_{\text{beam}}
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    /// recoil : list of int
+    ///     Indices of particles which are combined to form the recoiling particle (particles which
+    ///     are not `beam` or part of the `resonance`)
+    /// daughter : list of int
+    ///     Indices of particles which are combined to form one of the decay products of the
+    ///     `resonance`
+    /// resonance : list of int
+    ///     Indices of particles which are combined to form the `resonance`
+    /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
+    ///     The frame to use in the  calculation
+    ///
+    ///
+    /// Returns
+    /// -------
+    /// costheta : CosTheta
+    ///     A Variable that corresponds to the cosine of the polar decay angle in the given frame
+    ///
+    /// See Also
+    /// --------
+    /// laddu.utils.vectors.Vector3.costheta
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct CosTheta(rust::utils::variables::CosTheta);
@@ -758,14 +955,82 @@ pub(crate) mod laddu {
                 frame.parse().unwrap(),
             ))
         }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
         fn value(&self, event: &Event) -> Float {
             self.0.value(&event.0)
         }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
+    /// The aziumuthal decay angle in the rest frame of the given `resonance`
+    ///
+    /// This Variable is calculated by forming the given frame (helicity or Gottfried-Jackson) and
+    /// calculating the spherical angles according to one of the decaying `daughter` particles.
+    ///
+    /// The helicity frame is defined in terms of the following Cartesian axes in the rest frame of
+    /// the `resonance`:
+    ///
+    /// .. math:: \hat{z} \propto -\vec{p}'_{\text{recoil}}
+    /// .. math:: \hat{y} \propto \vec{p}_{\text{beam}} \times (-\vec{p}_{\text{recoil}})
+    /// .. math:: \hat{x} = \hat{y} \times \hat{z}
+    ///
+    /// where primed vectors are in the rest frame of the `resonance` and unprimed vectors are in
+    /// the center-of-momentum frame.
+    ///
+    /// The Gottfried-Jackson frame differs only in the definition of :math:`\hat{z}`:
+    ///
+    /// .. math:: \hat{z} \propto \vec{p}'_{\text{beam}}
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    /// recoil : list of int
+    ///     Indices of particles which are combined to form the recoiling particle (particles which
+    ///     are not `beam` or part of the `resonance`)
+    /// daughter : list of int
+    ///     Indices of particles which are combined to form one of the decay products of the
+    ///     `resonance`
+    /// resonance : list of int
+    ///     Indices of particles which are combined to form the `resonance`
+    /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
+    ///     The frame to use in the  calculation
+    ///
+    ///
+    /// Returns
+    /// -------
+    /// phi : Phi
+    ///     A Variable that corresponds to the azimuthal decay angle in the given frame
+    ///
+    /// See Also
+    /// --------
+    /// laddu.utils.vectors.Vector3.phi
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Phi(rust::utils::variables::Phi);
@@ -789,14 +1054,69 @@ pub(crate) mod laddu {
                 frame.parse().unwrap(),
             ))
         }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
         fn value(&self, event: &Event) -> Float {
             self.0.value(&event.0)
         }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
+    /// A Variable used to define both spherical decay angles in the given frame
+    ///
+    /// This class combines ``laddu.CosTheta`` and ``laddu.Phi`` into a single
+    /// object
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    /// recoil : list of int
+    ///     Indices of particles which are combined to form the recoiling particle (particles which
+    ///     are not `beam` or part of the `resonance`)
+    /// daughter : list of int
+    ///     Indices of particles which are combined to form one of the decay products of the
+    ///     `resonance`
+    /// resonance : list of int
+    ///     Indices of particles which are combined to form the `resonance`
+    /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
+    ///     The frame to use in the  calculation
+    ///
+    /// Returns
+    /// -------
+    /// angles : Angles
+    ///     A set of Variables corresponding to the spherical decay angles of a particle in the
+    ///     given frame
+    ///
+    /// See Also
+    /// --------
+    /// laddu.CosTheta
+    /// laddu.Phi
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Angles(rust::utils::variables::Angles);
@@ -829,6 +1149,25 @@ pub(crate) mod laddu {
         }
     }
 
+    /// The polar angle of the given polarization vector with respect to the production plane
+    ///
+    /// The `beam` and `recoil` particles define the plane of production, and this Variable
+    /// describes the polar angle of the `beam` relative to this plane
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    /// recoil : list of int
+    ///     Indices of particles which are combined to form the recoiling particle (particles which
+    ///     are not `beam` or part of the `resonance`)
+    ///
+    /// Returns
+    /// -------
+    /// pol_angle : PolAngle
+    ///     A Variable describing the polar angle of the polarization vector with respect to the
+    ///     production plane
+    ///     
     #[pyclass]
     #[derive(Clone)]
     struct PolAngle(rust::utils::variables::PolAngle);
@@ -839,14 +1178,57 @@ pub(crate) mod laddu {
         fn new(beam: usize, recoil: Vec<usize>) -> Self {
             Self(rust::utils::variables::PolAngle::new(beam, &recoil))
         }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
         fn value(&self, event: &Event) -> Float {
             self.0.value(&event.0)
         }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
+    /// The magnitude of the given particle's polarization vector
+    ///
+    /// This Variable simply represents the magnitude of the polarization vector of the particle
+    /// with the index `beam`
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    ///
+    /// Returns
+    /// -------
+    /// pol_mag : PolMagnitude
+    ///     A Variable representing the magnitude of the given polarization vector
+    ///
+    /// See Also
+    /// --------
+    /// laddu.utils.vectors.Vector3.mag
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct PolMagnitude(rust::utils::variables::PolMagnitude);
@@ -857,14 +1239,61 @@ pub(crate) mod laddu {
         fn new(beam: usize) -> Self {
             Self(rust::utils::variables::PolMagnitude::new(beam))
         }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
         fn value(&self, event: &Event) -> Float {
             self.0.value(&event.0)
         }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
+    /// A Variable used to define both the polarization angle and magnitude of the given particle``
+    ///
+    /// This class combines ``laddu.PolAngle`` and ``laddu.PolMagnitude`` into a single
+    /// object
+    ///
+    /// Parameters
+    /// ----------
+    /// beam : int
+    ///     The index of the `beam` particle
+    /// recoil : list of int
+    ///     Indices of particles which are combined to form the recoiling particle (particles which
+    ///     are not `beam` or part of the `resonance`)
+    ///
+    /// Returns
+    /// -------
+    /// polarization : Polarization
+    ///     A set of Variables corresponding to the polarization angle and magnitude of the `beam`
+    ///
+    /// See Also
+    /// --------
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Polarization(rust::utils::variables::Polarization);
@@ -884,22 +1313,53 @@ pub(crate) mod laddu {
         }
     }
 
+    /// An object which holds a registered ``Amplitude``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager.register
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct AmplitudeID(rust::amplitudes::AmplitudeID);
 
+    /// A mathematical expression formed from AmplitudeIDs
+    ///
     #[pyclass]
     #[derive(Clone)]
     pub(crate) struct Expression(pub(crate) rust::amplitudes::Expression);
 
     #[pymethods]
     impl AmplitudeID {
+        /// The real part of a complex Amplitude
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The real part of the given Amplitude
+        ///
         fn real(&self) -> Expression {
             Expression(self.0.real())
         }
+        /// The imaginary part of a complex Amplitude
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The imaginary part of the given Amplitude
+        ///
         fn imag(&self) -> Expression {
             Expression(self.0.imag())
         }
+        /// The norm-squared of a complex Amplitude
+        ///
+        /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The norm-squared of the given Amplitude
+        ///
         fn norm_sqr(&self) -> Expression {
             Expression(self.0.norm_sqr())
         }
@@ -931,12 +1391,35 @@ pub(crate) mod laddu {
 
     #[pymethods]
     impl Expression {
+        /// The real part of a complex Expression
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The real part of the given Expression
+        ///
         fn real(&self) -> Expression {
             Expression(self.0.real())
         }
+        /// The imaginary part of a complex Expression
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The imaginary part of the given Expression
+        ///
         fn imag(&self) -> Expression {
             Expression(self.0.imag())
         }
+        /// The norm-squared of a complex Expression
+        ///
+        /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
+        ///
+        /// Returns
+        /// -------
+        /// Expression
+        ///     The norm-squared of the given Expression
+        ///
         fn norm_sqr(&self) -> Expression {
             Expression(self.0.norm_sqr())
         }
@@ -966,9 +1449,17 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A class which can be used to register Amplitudes and store precalculated data
+    ///
     #[pyclass]
     struct Manager(rust::amplitudes::Manager);
 
+    /// An Amplitude which can be registered by a Manager
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyclass]
     struct Amplitude(Box<dyn rust::amplitudes::Amplitude>);
 
@@ -978,24 +1469,89 @@ pub(crate) mod laddu {
         fn new() -> Self {
             Self(rust::amplitudes::Manager::default())
         }
+        /// Register an Amplitude with the Manager
+        ///
+        /// Parameters
+        /// ----------
+        /// amplitude : Amplitude
+        ///     The Amplitude to register
+        ///
+        /// Returns
+        /// -------
+        /// AmplitudeID
+        ///     A reference to the registered `amplitude` that can be used to form complex
+        ///     Expressions
+        ///
+        /// Raises
+        /// ------
+        /// ValueError
+        ///     If the name of the `amplitude` has already been registered
+        ///
         fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
             Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
+        /// Load an Expression by precalculating each term over the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset to use in precalculation
+        /// expression : Expression
+        ///     The expression to use in precalculation
+        ///
+        /// Returns
+        /// -------
+        /// Evaluator
+        ///     An object that can be used to evaluate the `expression` over each event in the
+        ///     `dataset`
+        ///
+        /// Notes
+        /// -----
+        /// While the given `expression` will be the one evaluated in the end, all registered
+        /// Amplitudes will be loaded, and all of their parameters will be included in the final
+        /// expression. These parameters will have no effect on evaluation, but they must be
+        /// included in function calls.
+        ///
         fn load(&self, dataset: &Dataset, expression: &Expression) -> Evaluator {
             Evaluator(self.0.load(&dataset.0, &expression.0))
         }
     }
 
+    /// A class which can be used to evaluate a stored Expression
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager.load
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct Evaluator(rust::amplitudes::Evaluator);
 
     #[pymethods]
     impl Evaluator {
+        /// The free parameters used by the Evaluator
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///     The list of parameter names
+        ///
         #[getter]
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
+        /// Activates Amplitudes in the Expression by name
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be activated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.activate(&string_arg);
@@ -1009,9 +1565,25 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Activates all Amplitudes in the Expression
+        ///
         fn activate_all(&self) {
             self.0.activate_all();
         }
+        /// Deactivates Amplitudes in the Expression by name
+        ///
+        /// Deactivated Amplitudes act as zeros in the Expression
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be deactivated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.deactivate(&string_arg);
@@ -1025,9 +1597,25 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Deactivates all Amplitudes in the Expression
+        ///
         fn deactivate_all(&self) {
             self.0.deactivate_all();
         }
+        /// Isolates Amplitudes in the Expression by name
+        ///
+        /// Activates the Amplitudes given in `arg` and deactivates the rest
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be isolated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.isolate(&string_arg);
@@ -1041,6 +1629,18 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Evaluate the stored Expression over the stored Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : array_like
+        ///     A ``numpy`` array of complex values for each Event in the Dataset
+        ///
         fn evaluate<'py>(
             &self,
             py: Python<'py>,
@@ -1215,6 +1815,23 @@ pub(crate) mod laddu {
         Ok(options)
     }
 
+    /// A (extended) negative log-likelihood evaluator
+    ///
+    /// Parameters
+    /// ----------
+    /// manager : Manager
+    ///     The Manager to use for precalculation
+    /// ds_data : Dataset
+    ///     A Dataset representing true signal data
+    /// ds_mc : Dataset
+    ///     A Dataset of physically flat Monte Carlo data used for normalization
+    /// expression : Expression
+    ///     The Expression to evaluate
+    ///
+    /// Returns
+    /// -------
+    /// NLL
+    ///     The negative log-likelihood evaluator
     #[pyclass]
     #[derive(Clone)]
     struct NLL(Box<rust::likelihoods::NLL>);
