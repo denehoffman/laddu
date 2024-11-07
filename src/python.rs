@@ -16,6 +16,7 @@ pub(crate) mod laddu {
     use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
     use crate::likelihoods::MinimizerOptions;
+    use crate::prelude::ReadWrite;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
@@ -2179,6 +2180,14 @@ pub(crate) mod laddu {
         }
         fn __repr__(&self) -> String {
             format!("{:?}", self.0)
+        }
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        #[staticmethod]
+        fn load(path: &str) -> PyResult<Self> {
+            Ok(Status(ganesh::Status::load(path)?))
         }
     }
 

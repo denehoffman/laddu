@@ -1,4 +1,5 @@
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -73,6 +74,10 @@ class Status:
     bounds: list[Bound] | None
     n_f_evals: int
     n_g_evals: int
+
+    def save_as(self, path: str): ...
+    @staticmethod
+    def load(path: str) -> Status: ...
 
 class Bound:
     lower: float
