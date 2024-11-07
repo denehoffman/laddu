@@ -7,6 +7,7 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.12"
+    rust: "1.82"
 
 sphinx:
   configuration: docs/source/conf.py
@@ -16,4 +17,7 @@ formats:
 
 python:
    install:
-   - requirements: docs/requirements.txt
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
