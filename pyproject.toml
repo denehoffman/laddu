@@ -25,6 +25,7 @@ amptools-to-laddu = "laddu:convert.run"
 
 [project.optional-dependencies]
 tests = ["pytest"]
+docs = ["sphinx", "sphinx-rtd-theme"]
 
 [tool.maturin]
 python-source = "python"

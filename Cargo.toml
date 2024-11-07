@@ -29,12 +29,17 @@ auto_ops = "0.3.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = { version = "1.10.0", optional = true }
-pyo3 = { version = "0.22.5", optional = true, features = ["num-complex"] }
+pyo3 = { version = "0.22.5", optional = true, features = [
+  "num-complex",
+  "abi3-py37",
+] }
 numpy = { version = "0.22.0", optional = true, features = ["nalgebra"] }
-ganesh = "0.12.2"
-thiserror = "1.0.64"
+ganesh = "0.13.0"
+thiserror = "2.0.0"
 shellexpand = "3.1.0"
 accurate = "0.4.1"
+serde = "1.0.214"
+serde-pickle = "1.1.1"
 
 [dev-dependencies]
 approx = "0.5.1"

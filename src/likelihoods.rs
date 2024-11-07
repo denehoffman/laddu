@@ -2,6 +2,9 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     fmt::{Debug, Display},
+    fs::File,
+    io::{BufReader, BufWriter},
+    path::Path,
     sync::Arc,
 };
 
@@ -9,7 +12,7 @@ use crate::{
     amplitudes::{AmplitudeValues, Evaluator, Expression, GradientValues, Manager},
     data::Dataset,
     resources::Parameters,
-    Float,
+    Float, LadduError,
 };
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
@@ -22,6 +25,55 @@ use num::Complex;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use serde::{de::DeserializeOwned, Serialize};
+
+/// A trait which allows structs with [`Serialize`] and [`Deserialize`](`serde::Deserialize`) to be
+/// written and read from files with a certain set of types/extensions.
+///
+/// Currently, Python's pickle format is supported supported, since it's an easy-to-parse standard
+/// that supports floating point values better that JSON or TOML
+pub trait ReadWrite: Serialize + DeserializeOwned {
+    /// Save a [`serde`]-object to a file path, using the extension to determine the file format
+    fn save_as<T: AsRef<str>>(&self, file_path: T) -> Result<(), LadduError> {
+        let expanded_path = shellexpand::full(file_path.as_ref())?;
+        let file_path = Path::new(expanded_path.as_ref());
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
+            .unwrap_or("".to_string());
+        let file = File::create(file_path)?;
+        let mut writer = BufWriter::new(file);
+        match extension.as_str() {
+            "pkl" | "pickle" => serde_pickle::to_writer(&mut writer, self, Default::default())?,
+            _ => {
+                return Err(LadduError::Custom(format!(
+                    "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
+                    extension
+                )))
+            }
+        };
+        Ok(())
+    }
+    /// Load a [`serde`]-object from a file path, using the extension to determine the file format
+    fn load<T: AsRef<str>>(file_path: T) -> Result<Self, LadduError> {
+        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
+            .unwrap_or("".to_string());
+        let file = File::open(file_path.clone())?;
+        let reader = BufReader::new(file);
+        match extension.as_str() {
+            "pkl" | "pickle" => Ok(serde_pickle::from_reader(reader, Default::default())?),
+            _ => Err(LadduError::Custom(format!(
+                "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
+                extension
+            ))),
+        }
+    }
+}
+
+impl ReadWrite for Status<Float> {}
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
@@ -113,7 +165,7 @@ impl NLL {
     #[cfg(feature = "rayon")]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         mc_result
             .par_iter()
             .zip(self.mc_evaluator.dataset.par_iter())
@@ -134,7 +186,7 @@ impl NLL {
     #[cfg(not(feature = "rayon"))]
     pub fn project(&self, parameters: &[Float]) -> Vec<Float> {
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         mc_result
             .iter()
             .zip(self.mc_evaluator.dataset.iter())
@@ -162,17 +214,18 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e) / N_{\text{DATA}}) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .map(|(l, e)| e.weight * Float::ln(l.re / n_data))
             .parallel_sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .par_iter()
@@ -189,17 +242,18 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{N_{\text{Data}}}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e) / N_{\text{DATA}}) - \frac{1}{N_{\text{MC}}} \sum_{e \in \text{MC}} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
+        let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.mc_evaluator.evaluate(parameters);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .iter()
             .zip(self.data_evaluator.dataset.iter())
-            .map(|(l, e)| e.weight * Float::ln(l.re))
+            .map(|(l, e)| e.weight * Float::ln(l.re / n_data))
             .sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .iter()
@@ -220,7 +274,7 @@ impl LikelihoodTerm for NLL {
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -336,7 +390,7 @@ impl LikelihoodTerm for NLL {
         let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.mc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.mc_evaluator.dataset.weighted_len();
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset

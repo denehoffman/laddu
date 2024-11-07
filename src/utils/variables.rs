@@ -268,7 +268,7 @@ impl Variable for PolAngle {
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
         Float::atan2(
             y.dot(&event.eps[self.beam]),
-            beam.vec3().dot(&event.eps[self.beam].cross(&y)),
+            beam.vec3().unit().dot(&event.eps[self.beam].cross(&y)),
         )
     }
 }

@@ -386,8 +386,8 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
 
 /// Open a Parquet file and read the data into a [`Dataset`].
 #[cfg(feature = "rayon")]
-pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
+pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
+    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
     let file = File::open(file_path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let reader = builder.build()?;

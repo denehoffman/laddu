@@ -21,10 +21,13 @@
     <img alt="Crates.io Version" src="https://img.shields.io/crates/v/laddu?style=for-the-badge&logo=rust&logoColor=red&color=red"></a>
   <a href="https://docs.rs/laddu" alt="Laddu documentation on docs.rs">
     <img alt="docs.rs" src="https://img.shields.io/docsrs/laddu?style=for-the-badge&logo=rust&logoColor=red"></a>
+  <a href="https://https://laddu.readthedocs.io/en/latest/" alt="Laddu documentation readthedocs.io">
+    <img alt="Read the Docs" src="https://img.shields.io/readthedocs/laddu?style=for-the-badge&logo=readthedocs&logoColor=%238CA1AF&label=Python%20Documentation"></a>
   <a href="https://app.codecov.io/github/denehoffman/laddu/tree/main/" alt="Codecov coverage report">
     <img alt="Codecov" src="https://img.shields.io/codecov/c/github/denehoffman/laddu?style=for-the-badge&logo=codecov"></a>
   <a href="https://pypi.org/project/laddu/" alt="View project on PyPI">
   <img alt="PyPI - Version" src="https://img.shields.io/pypi/v/laddu?style=for-the-badge&logo=python&logoColor=yellow&labelColor=blue"></a>
+  <a href="https://codspeed.io/denehoffman/laddu"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fcodspeed.io%2Fbadge.json&style=for-the-badge" alt="CodSpeed Badge"/></a>
 </p>
 
 `laddu` (/ˈlʌduː/) is a library for analysis of particle physics data. It is intended to be a simple and efficient alternative to some of the [other tools](#alternatives) out there. `laddu` is written in Rust with bindings to Python via [`PyO3`](https://github.com/PyO3/pyo3) and [`maturin`](https://github.com/PyO3/maturin) and is the spiritual successor to [`rustitude`](https://github.com/denehoffman/rustitude), one of my first Rust projects. The goal of this project is to allow users to perform complex amplitude analyses (like partial-wave analyses) without complex code or configuration files.
@@ -245,9 +248,9 @@ The data format for `laddu` is a bit different from some of the alternatives lik
 | `p4_0_Px`    | `Float32` | Beam Momentum (x-component) |
 | `p4_0_Py`    | `Float32` | Beam Momentum (y-component) |
 | `p4_0_Pz`    | `Float32` | Beam Momentum (z-component) |
-| `eps_0_Px`    | `Float32` | Beam Polarization (x-component) |
-| `eps_0_Py`    | `Float32` | Beam Polarization (y-component) |
-| `eps_0_Pz`    | `Float32` | Beam Polarization (z-component) |
+| `eps_0_x`    | `Float32` | Beam Polarization (x-component) |
+| `eps_0_y`    | `Float32` | Beam Polarization (y-component) |
+| `eps_0_z`    | `Float32` | Beam Polarization (z-component) |
 | `p4_1_E`    | `Float32` | Recoil Proton Energy    |
 | `p4_1_Px`    | `Float32` | Recoil Proton Momentum (x-component) |
 | `p4_1_Py`    | `Float32` | Recoil Proton Momentum (y-component) |

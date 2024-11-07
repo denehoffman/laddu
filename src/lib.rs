@@ -220,9 +220,9 @@
 //! | `p4_0_Px`    | `Float32` | Beam Momentum (x-component) |
 //! | `p4_0_Py`    | `Float32` | Beam Momentum (y-component) |
 //! | `p4_0_Pz`    | `Float32` | Beam Momentum (z-component) |
-//! | `eps_0_Px`    | `Float32` | Beam Polarization (x-component) |
-//! | `eps_0_Py`    | `Float32` | Beam Polarization (y-component) |
-//! | `eps_0_Pz`    | `Float32` | Beam Polarization (z-component) |
+//! | `eps_0_x`    | `Float32` | Beam Polarization (x-component) |
+//! | `eps_0_y`    | `Float32` | Beam Polarization (y-component) |
+//! | `eps_0_z`    | `Float32` | Beam Polarization (z-component) |
 //! | `p4_1_E`    | `Float32` | Recoil Proton Energy    |
 //! | `p4_1_Px`    | `Float32` | Recoil Proton Momentum (x-component) |
 //! | `p4_1_Py`    | `Float32` | Recoil Proton Momentum (y-component) |
@@ -290,7 +290,7 @@ pub mod prelude {
     pub use crate::data::{open, BinnedDataset, Dataset, Event};
     pub use crate::likelihoods::{
         LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodTerm,
-        MinimizerOptions, NLL,
+        MinimizerOptions, ReadWrite, NLL,
     };
     pub use crate::resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
@@ -302,6 +302,7 @@ pub mod prelude {
     };
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use crate::{Float, LadduError, PI};
+    pub use ganesh::Status;
     pub use nalgebra::{DVector, Vector3, Vector4};
     pub use num::Complex;
 }
@@ -348,6 +349,9 @@ pub enum LadduError {
         /// Name of amplitude which is already registered
         name: String,
     },
+    /// An error returned by the Python pickle (de)serializer
+    #[error("Pickle conversion error: {0}")]
+    PickleError(#[from] serde_pickle::Error),
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
@@ -360,11 +364,13 @@ impl From<LadduError> for PyErr {
         use pyo3::exceptions::*;
         let err_string = err.to_string();
         match err {
-            LadduError::ParquetError(_) => PyIOError::new_err(err_string),
-            LadduError::ArrowError(_) => PyIOError::new_err(err_string),
-            LadduError::IOError(_) => PyIOError::new_err(err_string),
-            LadduError::LookupError(_) => PyValueError::new_err(err_string),
-            LadduError::RegistrationError { .. } => PyValueError::new_err(err_string),
+            LadduError::LookupError(_) | LadduError::RegistrationError { .. } => {
+                PyValueError::new_err(err_string)
+            }
+            LadduError::ParquetError(_)
+            | LadduError::ArrowError(_)
+            | LadduError::IOError(_)
+            | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
         }
     }
