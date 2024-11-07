@@ -7,7 +7,7 @@ Right now, this page just documents the basic Python API of the library, but the
 
 .. toctree::
    :caption: API Reference
-   :maxdepth: 1
+   :maxdepth: 2
    :name: sec-api
 
    modules/index
