@@ -42,11 +42,6 @@ pub(crate) mod laddu {
     /// px, py, pz : float
     ///     The Cartesian components of the 3-vector
     ///
-    /// Returns
-    /// -------
-    /// Vector3
-    ///     A new 3-momentum vector made from the given components
-    ///
     #[pyclass]
     #[derive(Clone)]
     struct Vector3(nalgebra::Vector3<Float>);
@@ -260,10 +255,6 @@ pub(crate) mod laddu {
     /// px, py, pz : float
     ///     The Cartesian components of the 3-vector
     ///
-    /// Returns
-    /// -------
-    /// Vector4
-    ///     A new 4-momentum vector made from the given components
     ///
     #[pyclass]
     #[derive(Clone)]
@@ -575,11 +566,6 @@ pub(crate) mod laddu {
     /// weight : float
     ///     The weight associated with this event
     ///
-    /// Returns
-    /// -------
-    /// event : Event
-    ///     An event formed from the given components
-    ///
     #[pyclass]
     #[derive(Clone)]
     struct Event(Arc<rust::data::Event>);
@@ -838,11 +824,6 @@ pub(crate) mod laddu {
     /// constituents : list of int
     ///     The indices of particles to combine to create the final 4-momentum
     ///
-    /// Returns
-    /// -------
-    /// mass_variable : Mass
-    ///     A Variable that corresponds to the mass of the constituent particles
-    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector4.m
@@ -922,12 +903,6 @@ pub(crate) mod laddu {
     ///     Indices of particles which are combined to form the `resonance`
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
-    ///
-    ///
-    /// Returns
-    /// -------
-    /// costheta : CosTheta
-    ///     A Variable that corresponds to the cosine of the polar decay angle in the given frame
     ///
     /// See Also
     /// --------
@@ -1022,12 +997,6 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
-    ///
-    /// Returns
-    /// -------
-    /// phi : Phi
-    ///     A Variable that corresponds to the azimuthal decay angle in the given frame
-    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector3.phi
@@ -1107,12 +1076,6 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
-    /// Returns
-    /// -------
-    /// angles : Angles
-    ///     A set of Variables corresponding to the spherical decay angles of a particle in the
-    ///     given frame
-    ///
     /// See Also
     /// --------
     /// laddu.CosTheta
@@ -1140,10 +1103,22 @@ pub(crate) mod laddu {
                 frame.parse().unwrap(),
             ))
         }
+        /// The Variable representing the cosine of the polar spherical decay angle
+        ///
+        /// Returns
+        /// -------
+        /// CosTheta
+        ///
         #[getter]
         fn costheta(&self) -> CosTheta {
             CosTheta(self.0.costheta.clone())
         }
+        // The Variable representing the polar azimuthal decay angle
+        //
+        // Returns
+        // -------
+        // Phi
+        //
         #[getter]
         fn phi(&self) -> Phi {
             Phi(self.0.phi.clone())
@@ -1163,12 +1138,6 @@ pub(crate) mod laddu {
     ///     Indices of particles which are combined to form the recoiling particle (particles which
     ///     are not `beam` or part of the `resonance`)
     ///
-    /// Returns
-    /// -------
-    /// pol_angle : PolAngle
-    ///     A Variable describing the polar angle of the polarization vector with respect to the
-    ///     production plane
-    ///     
     #[pyclass]
     #[derive(Clone)]
     struct PolAngle(rust::utils::variables::PolAngle);
@@ -1220,11 +1189,6 @@ pub(crate) mod laddu {
     /// ----------
     /// beam : int
     ///     The index of the `beam` particle
-    ///
-    /// Returns
-    /// -------
-    /// pol_mag : PolMagnitude
-    ///     A Variable representing the magnitude of the given polarization vector
     ///
     /// See Also
     /// --------
@@ -1285,11 +1249,6 @@ pub(crate) mod laddu {
     ///     Indices of particles which are combined to form the recoiling particle (particles which
     ///     are not `beam` or part of the `resonance`)
     ///
-    /// Returns
-    /// -------
-    /// polarization : Polarization
-    ///     A set of Variables corresponding to the polarization angle and magnitude of the `beam`
-    ///
     /// See Also
     /// --------
     /// laddu.PolAngle
@@ -1304,10 +1263,22 @@ pub(crate) mod laddu {
         fn new(beam: usize, recoil: Vec<usize>) -> Self {
             Polarization(rust::utils::variables::Polarization::new(beam, &recoil))
         }
+        /// The Variable representing the magnitude of the polarization vector
+        ///
+        /// Returns
+        /// -------
+        /// PolMagnitude
+        ///
         #[getter]
         fn pol_magnitude(&self) -> PolMagnitude {
             PolMagnitude(self.0.pol_magnitude)
         }
+        /// The Variable representing the polar angle of the polarization vector
+        ///
+        /// Returns
+        /// -------
+        /// PolAngle
+        ///
         #[getter]
         fn pol_angle(&self) -> PolAngle {
             PolAngle(self.0.pol_angle.clone())
@@ -1486,7 +1457,7 @@ pub(crate) mod laddu {
         /// Raises
         /// ------
         /// ValueError
-        ///     If the name of the `amplitude` has already been registered
+        ///     If the name of the ``amplitude`` has already been registered
         ///
         fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
             Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
@@ -1829,10 +1800,6 @@ pub(crate) mod laddu {
     /// expression : Expression
     ///     The Expression to evaluate
     ///
-    /// Returns
-    /// -------
-    /// NLL
-    ///     The negative log-likelihood evaluator
     #[pyclass]
     #[derive(Clone)]
     struct NLL(Box<rust::likelihoods::NLL>);
@@ -1853,21 +1820,58 @@ pub(crate) mod laddu {
                 &expression.0,
             ))
         }
+        /// The underlying signal dataset used in calculating the NLL
+        ///
+        /// Returns
+        /// -------
+        /// Dataset
+        ///
         #[getter]
         fn data(&self) -> Dataset {
             Dataset(self.0.data_evaluator.dataset.clone())
         }
+        /// The underlying Monte Carlo dataset used in calculating the NLL
+        ///
+        /// Returns
+        /// -------
+        /// Dataset
+        ///
         #[getter]
         fn mc(&self) -> Dataset {
             Dataset(self.0.mc_evaluator.dataset.clone())
         }
+        /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
+        ///
+        /// Returns
+        /// -------
+        /// term : LikelihoodTerm
+        ///     The isolated NLL which can be used to build more complex models
+        ///
         fn as_term(&self) -> LikelihoodTerm {
             LikelihoodTerm(self.0.clone())
         }
+        /// The names of the free parameters used to evaluate the NLL
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///
         #[getter]
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
+        /// Activates Amplitudes in the NLL by name
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be activated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.activate(&string_arg);
@@ -1881,9 +1885,25 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Activates all Amplitudes in the JNLL
+        ///
         fn activate_all(&self) {
             self.0.activate_all();
         }
+        /// Deactivates Amplitudes in the NLL by name
+        ///
+        /// Deactivated Amplitudes act as zeros in the NLL
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be deactivated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.deactivate(&string_arg);
@@ -1897,9 +1917,25 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Deactivates all Amplitudes in the NLL
+        ///
         fn deactivate_all(&self) {
             self.0.deactivate_all();
         }
+        /// Isolates Amplitudes in the NLL by name
+        ///
+        /// Activates the Amplitudes given in `arg` and deactivates the rest
+        ///
+        /// Parameters
+        /// ----------
+        /// arg : str or list of str
+        ///     Names of Amplitudes to be isolated
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If `arg` is not a str or list of str
+        ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
                 self.0.isolate(&string_arg);
@@ -1913,9 +1949,41 @@ pub(crate) mod laddu {
             }
             Ok(())
         }
+        /// Evaluate the extended negative log-likelihood over the stored Datasets
+        ///
+        /// This is defined as
+        ///
+        /// .. math:: NLL(\vec{p}; D, MC) = -2 \left( \sum_{e \in D} (e_w \log(\mathcal{L}(e) / N_D)) - \frac{1}{N_{MC}} \sum_{e \in MC} (e_w \mathcal{L}(e)) \right)
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : float
+        ///     The total negative log-likelihood
+        ///
         fn evaluate(&self, parameters: Vec<Float>) -> Float {
             self.0.evaluate(&parameters)
         }
+        /// Project the model over the Monte Carlo dataset with the given parameter values
+        ///
+        /// This is defined as
+        ///
+        /// .. math:: e_w(\vec{p}) = \frac{e_w}{N_{MC}} \mathcal{L}(e)
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : array_like
+        ///     Weights for every Monte Carlo event which represent the fit to data
+        ///
         fn project<'py>(
             &self,
             py: Python<'py>,
@@ -1923,6 +1991,69 @@ pub(crate) mod laddu {
         ) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, &self.0.project(&parameters))
         }
+
+        /// Minimize the NLL with respect to the free parameters in the model
+        ///
+        /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this
+        /// method performs a minimization over the negative log-likelihood, optimizing the model
+        /// over the stored signal data and Monte Carlo.
+        ///
+        /// Parameters
+        /// ----------
+        /// p0 : array_like
+        ///     The initial parameters at the start of optimization
+        /// bounds : list of tuple of float, optional
+        ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
+        /// method : {'lbfgsb', 'nelder-mead', 'nelder_mead'}
+        ///     The minimization algorithm to use (see additional parameters for fine-tuning)
+        /// max_steps : int, default=4000
+        ///     The maximum number of algorithm steps to perform
+        /// debug : bool, default=False
+        ///     Set to ``True`` to print out debugging information at each step
+        /// verbose : bool, default=False
+        ///     Set to ``True`` to print verbose information at each step
+        /// show_step : bool, default=True
+        ///     Include step number in verbose output
+        /// show_x : bool, default=True
+        ///     Include current best position in verbose output
+        /// show_fx : bool, default=True
+        ///     Include current best NLL in verbose output
+        /// observers : Observer or list of Observers
+        ///     Callback functions which are applied after every algorithm step
+        /// tol_x_rel : float
+        ///     The relative position tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_x_abs : float
+        ///     The absolute position tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_f_rel : float
+        ///     The relative function tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_f_abs : float
+        ///     The absolute function tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_g_abs : float
+        ///     The absolute gradient tolerance used by termination methods (default is the cube
+        ///     root of machine epsilon)
+        /// g_tolerance : float, default=1e-5
+        ///     Another gradient tolerance used by termination methods (particularly L-BFGS-B)
+        /// adaptive : bool, default=False
+        ///     Use adaptive values for Nelder-Mead parameters
+        /// alpha : float, optional
+        ///     Overwrite the default :math:`\alpha` parameter in the Nelder-Mead algorithm
+        /// beta : float, optional
+        ///     Overwrite the default :math:`\beta` parameter in the Nelder-Mead algorithm
+        /// gamma : float, optional
+        ///     Overwrite the default :math:`\gamma` parameter in the Nelder-Mead algorithm
+        /// delta : float, optional
+        ///     Overwrite the default :math:`\delta` parameter in the Nelder-Mead algorithm
+        /// simplex_expansion_method : {'greedy_minimization', 'greedy_expansion'}
+        ///     The expansion method used by the Nelder-Mead algorithm
+        /// nelder_mead_f_terminator : {'stddev', 'absolute', 'stddev', 'none'}
+        ///     The function terminator used by the Nelder-Mead algorithm
+        /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
+        ///     The positional terminator used by the Nelder-Mead algorithm
+        ///
         #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -1954,14 +2085,28 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A term in an expression with multiple likelihood components
+    ///
+    /// See Also
+    /// --------
+    /// NLL.as_term
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct LikelihoodTerm(Box<dyn rust::likelihoods::LikelihoodTerm>);
 
+    /// An object which holds a registered ``LikelihoodTerm``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.LikelihoodManager.register
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct LikelihoodID(rust::likelihoods::LikelihoodID);
 
+    /// A mathematical expression formed from LikelihoodIDs
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct LikelihoodExpression(rust::likelihoods::LikelihoodExpression);
@@ -2022,6 +2167,8 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A class which can be used to register LikelihoodTerms and store precalculated data
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct LikelihoodManager(rust::likelihoods::LikelihoodManager);
@@ -2032,29 +2179,156 @@ pub(crate) mod laddu {
         fn new() -> Self {
             Self(rust::likelihoods::LikelihoodManager::default())
         }
+        /// Register a LikelihoodTerm with the LikelihoodManager
+        ///
+        /// Parameters
+        /// ----------
+        /// term : LikelihoodTerm
+        ///     The LikelihoodTerm to register
+        ///
+        /// Returns
+        /// -------
+        /// LikelihoodID
+        ///     A reference to the registered ``likelihood`` that can be used to form complex
+        ///     LikelihoodExpressions
+        ///
         fn register(&mut self, likelihood_term: &LikelihoodTerm) -> LikelihoodID {
             LikelihoodID(self.0.register(likelihood_term.0.clone()))
         }
+        /// The free parameters used by all terms in the LikelihoodManager
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///     The list of parameter names
+        ///
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
+        /// Load a LikelihoodExpression by precalculating each term over their internal Datasets
+        ///
+        /// Parameters
+        /// ----------
+        /// likelihood_expression : LikelihoodExpression
+        ///     The expression to use in precalculation
+        ///
+        /// Returns
+        /// -------
+        /// LikelihoodEvaluator
+        ///     An object that can be used to evaluate the `likelihood_expression` over all managed
+        ///     terms
+        ///
+        /// Notes
+        /// -----
+        /// While the given `likelihood_expression` will be the one evaluated in the end, all registered
+        /// Amplitudes will be loaded, and all of their parameters will be included in the final
+        /// expression. These parameters will have no effect on evaluation, but they must be
+        /// included in function calls.
+        ///
+        /// See Also
+        /// --------
+        /// LikelihoodManager.parameters
+        ///
         fn load(&self, likelihood_expression: &LikelihoodExpression) -> LikelihoodEvaluator {
             LikelihoodEvaluator(self.0.load(&likelihood_expression.0))
         }
     }
 
+    /// A class which can be used to evaluate a collection of LikelihoodTerms managed by a
+    /// LikelihoodManager
+    ///
     #[pyclass]
     struct LikelihoodEvaluator(rust::likelihoods::LikelihoodEvaluator);
 
     #[pymethods]
     impl LikelihoodEvaluator {
+        /// A list of the names of the free parameters across all terms in all models
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///
         #[getter]
         fn parameters(&self) -> Vec<String> {
             self.0.parameters()
         }
+        /// Evaluate the sum of all terms in the evaluator
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : float
+        ///     The total negative log-likelihood summed over all terms
+        ///
         fn evaluate(&self, parameters: Vec<Float>) -> Float {
             self.0.evaluate(&parameters)
         }
+        /// Minimize all LikelihoodTerms with respect to the free parameters in the model
+        ///
+        /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this
+        /// method performs a minimization over the tatal negative log-likelihood, optimizing the model
+        /// over the stored signal data and Monte Carlo.
+        ///
+        /// Parameters
+        /// ----------
+        /// p0 : array_like
+        ///     The initial parameters at the start of optimization
+        /// bounds : list of tuple of float, optional
+        ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
+        /// method : {'lbfgsb', 'nelder-mead', 'nelder_mead'}
+        ///     The minimization algorithm to use (see additional parameters for fine-tuning)
+        /// max_steps : int, default=4000
+        ///     The maximum number of algorithm steps to perform
+        /// debug : bool, default=False
+        ///     Set to ``True`` to print out debugging information at each step
+        /// verbose : bool, default=False
+        ///     Set to ``True`` to print verbose information at each step
+        /// show_step : bool, default=True
+        ///     Include step number in verbose output
+        /// show_x : bool, default=True
+        ///     Include current best position in verbose output
+        /// show_fx : bool, default=True
+        ///     Include current best NLL in verbose output
+        /// observers : Observer or list of Observers
+        ///     Callback functions which are applied after every algorithm step
+        /// tol_x_rel : float
+        ///     The relative position tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_x_abs : float
+        ///     The absolute position tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_f_rel : float
+        ///     The relative function tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_f_abs : float
+        ///     The absolute function tolerance used by termination methods (default is machine
+        ///     epsilon)
+        /// tol_g_abs : float
+        ///     The absolute gradient tolerance used by termination methods (default is the cube
+        ///     root of machine epsilon)
+        /// g_tolerance : float, default=1e-5
+        ///     Another gradient tolerance used by termination methods (particularly L-BFGS-B)
+        /// adaptive : bool, default=False
+        ///     Use adaptive values for Nelder-Mead parameters
+        /// alpha : float, optional
+        ///     Overwrite the default :math:`\alpha` parameter in the Nelder-Mead algorithm
+        /// beta : float, optional
+        ///     Overwrite the default :math:`\beta` parameter in the Nelder-Mead algorithm
+        /// gamma : float, optional
+        ///     Overwrite the default :math:`\gamma` parameter in the Nelder-Mead algorithm
+        /// delta : float, optional
+        ///     Overwrite the default :math:`\delta` parameter in the Nelder-Mead algorithm
+        /// simplex_expansion_method : {'greedy_minimization', 'greedy_expansion'}
+        ///     The expansion method used by the Nelder-Mead algorithm
+        /// nelder_mead_f_terminator : {'stddev', 'absolute', 'stddev', 'none'}
+        ///     The function terminator used by the Nelder-Mead algorithm
+        /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
+        ///     The positional terminator used by the Nelder-Mead algorithm
+        ///
         #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -2086,6 +2360,17 @@ pub(crate) mod laddu {
         }
     }
 
+    /// A parameterized scalar term which can be added to a LikelihoodManager
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The name of the new scalar parameter
+    ///
+    /// Returns
+    /// -------
+    /// LikelihoodTerm
+    ///
     #[pyfunction]
     fn LikelihoodScalar(name: String) -> LikelihoodTerm {
         LikelihoodTerm(rust::likelihoods::LikelihoodScalar::new(name))
@@ -2103,15 +2388,30 @@ pub(crate) mod laddu {
         }
     }
 
+    /// The status/result of a minimization
+    ///
+    ///
     #[pyclass]
     #[derive(Clone)]
     pub(crate) struct Status(pub(crate) ganesh::Status<Float>);
     #[pymethods]
     impl Status {
+        /// The current best position in parameter space
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.x.as_slice())
         }
+        /// The uncertainty on each parameter (``None`` if it wasn't calculated)
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
             self.0
@@ -2119,14 +2419,32 @@ pub(crate) mod laddu {
                 .clone()
                 .map(|err| PyArray1::from_slice_bound(py, err.as_slice()))
         }
+        /// The initial position at the start of the minimization
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.x0.as_slice())
         }
+        /// The optimized value of the objective function
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn fx(&self) -> Float {
             self.0.fx
         }
+        /// The covariance matrix (``None`` if it wasn't calculated)
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.cov.clone().map(|cov| {
@@ -2139,6 +2457,12 @@ pub(crate) mod laddu {
                 .unwrap()
             })
         }
+        /// The Hessian matrix (``None`` if it wasn't calculated)
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.hess.clone().map(|hess| {
@@ -2152,14 +2476,32 @@ pub(crate) mod laddu {
                 .unwrap()
             })
         }
+        /// A status message from the optimizer at the end of the algorithm
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
         #[getter]
         fn message(&self) -> String {
             self.0.message.clone()
         }
+        /// The state of the optimizer's convergence conditions
+        ///
+        /// Returns
+        /// -------
+        /// bool
+        ///
         #[getter]
         fn converged(&self) -> bool {
             self.0.converged
         }
+        /// Parameter bounds which were applied to the fitting algorithm
+        ///
+        /// Returns
+        /// -------
+        /// list of Bound or None
+        ///
         #[getter]
         fn bounds(&self) -> Option<Vec<ParameterBound>> {
             self.0
@@ -2167,10 +2509,22 @@ pub(crate) mod laddu {
                 .clone()
                 .map(|bounds| bounds.iter().map(|bound| ParameterBound(*bound)).collect())
         }
+        /// The number of times the objective function was evaluated
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_f_evals(&self) -> usize {
             self.0.n_f_evals
         }
+        /// The number of times the gradient of the objective function was evaluated
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_g_evals(&self) -> usize {
             self.0.n_g_evals
@@ -2181,51 +2535,176 @@ pub(crate) mod laddu {
         fn __repr__(&self) -> String {
             format!("{:?}", self.0)
         }
+        /// Save the fit result to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the new file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
             Ok(())
         }
+        /// Load a fit result from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the existing fit file
+        ///
+        /// Returns
+        /// -------
+        /// Status
+        ///     The fit result contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
         #[staticmethod]
         fn load(path: &str) -> PyResult<Self> {
             Ok(Status(ganesh::Status::load(path)?))
         }
     }
 
+    /// A class representing a lower and upper bound on a free parameter
+    ///
     #[pyclass]
     #[derive(Clone)]
     #[pyo3(name = "Bound")]
     struct ParameterBound(ganesh::Bound<Float>);
     #[pymethods]
     impl ParameterBound {
+        /// The lower bound
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn lower(&self) -> Float {
             self.0.lower()
         }
+        /// The upper bound
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn upper(&self) -> Float {
             self.0.upper()
         }
     }
 
+    /// A class, typically used to allow Amplitudes to take either free parameters or constants as
+    /// inputs
+    ///
+    /// See Also
+    /// --------
+    /// laddu.parameter
+    /// laddu.constant
+    ///
     #[pyclass]
     #[derive(Clone)]
     struct ParameterLike(rust::amplitudes::ParameterLike);
 
+    /// A free parameter which floats during an optimization
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The name of the free parameter
+    ///
+    /// Returns
+    /// -------
+    /// ParameterLike
+    ///     An object that can be used as the input for many Amplitude constructors
+    ///
+    /// Notes
+    /// -----
+    /// Two free parameters with the same name are shared in a fit
+    ///
     #[pyfunction]
     fn parameter(name: &str) -> ParameterLike {
         ParameterLike(rust::amplitudes::parameter(name))
     }
 
+    /// A term which stays constant during an optimization
+    ///
+    /// Parameters
+    /// ----------
+    /// value : float
+    ///     The numerical value of the constant
+    ///
+    /// Returns
+    /// -------
+    /// ParameterLike
+    ///     An object that can be used as the input for many Amplitude constructors
+    ///
     #[pyfunction]
     fn constant(value: Float) -> ParameterLike {
         ParameterLike(rust::amplitudes::constant(value))
     }
 
+    /// An Amplitude which represents a single scalar value
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// value : ParameterLike
+    ///     The scalar parameter contained in the Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyfunction]
     fn Scalar(name: &str, value: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::Scalar::new(name, value.0))
     }
 
+    /// An Amplitude which represents a complex scalar value
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// re: ParameterLike
+    ///     The real part of the complex value contained in the Amplitude
+    /// im: ParameterLike
+    ///     The imaginary part of the complex value contained in the Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyfunction]
     fn ComplexScalar(name: &str, re: ParameterLike, im: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::ComplexScalar::new(
@@ -2233,6 +2712,26 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// An Amplitude which represents a complex scalar value in polar form
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// r: ParameterLike
+    ///     The magnitude of the complex value contained in the Amplitude
+    /// theta: ParameterLike
+    ///     The argument of the complex value contained in the Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyfunction]
     fn PolarComplexScalar(name: &str, r: ParameterLike, theta: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::PolarComplexScalar::new(
@@ -2240,11 +2739,70 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// An spherical harmonic Amplitude
+    ///
+    /// Computes a spherical harmonic (:math:`Y_{\ell}^m(\theta, \varphi)`)
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// l : int
+    ///     The total orbital momentum (:math:`l \geq 0`)
+    /// m : int
+    ///     The orbital moment (:math:`-l \leq m \leq l`)
+    /// angles : Angles
+    ///     The spherical angles to use in the calculation
+    ///     
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyfunction]
     fn Ylm(name: &str, l: usize, m: isize, angles: &Angles) -> Amplitude {
         Amplitude(rust::amplitudes::ylm::Ylm::new(name, l, m, &angles.0))
     }
 
+    /// An spherical harmonic Amplitude for polarized beam experiments
+    ///
+    /// Computes a polarized spherical harmonic (:math:`Z_{\ell}^{(r)m}(\theta, \varphi; P_\gamma, \Phi)`) with additional
+    /// polarization-related factors (see notes)
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// l : int
+    ///     The total orbital momentum (:math:`l \geq 0`)
+    /// m : int
+    ///     The orbital moment (:math:`-l \leq m \leq l`)
+    /// r : {'+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'}
+    ///     The reflectivity (related to naturality of parity exchange)
+    /// angles : Angles
+    ///     The spherical angles to use in the calculation
+    /// polarization : Polarization
+    ///     The beam polarization to use in the calculation
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This amplitude is described in [Mathieu]_
+    ///
+    /// .. [Mathieu] Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in :math:`\eta\pi^0` photoproduction at GlueX. Physical Review D, 100(5). `doi:10.1103/physrevd.100.054017 <https://doi.org/10.1103/PhysRevD.100.054017>`_
+    ///
     #[pyfunction]
     fn Zlm(
         name: &str,
@@ -2264,6 +2822,36 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// An relativistic Breit-Wigner Amplitude
+    ///
+    /// This Amplitude represents a relativistic Breit-Wigner with known angular momentum
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// mass : ParameterLike
+    ///     The mass of the resonance
+    /// width : ParameterLike
+    ///     The (nonrelativistic) width of the resonance
+    /// l : int
+    ///     The total orbital momentum (:math:`l > 0`)
+    /// daughter_1_mass : Mass
+    ///     The mass of the first decay product
+    /// daughter_2_mass : Mass
+    ///     The mass of the second decay product
+    /// resonance_mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
     #[pyfunction]
     fn BreitWigner(
         name: &str,
@@ -2285,6 +2873,63 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// A fixed K-Matrix Amplitude for :math:`f_0` mesons
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\pi`    |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`2\pi 2\pi` |
+    /// +---------------+-------------------+
+    /// | 2             | :math:`K\bar{K}`  |
+    /// +---------------+-------------------+
+    /// | 3             | :math:`\eta\eta`  |
+    /// +---------------+-------------------+
+    /// | 4             | :math:`\eta\eta'` |
+    /// +---------------+-------------------+
+    ///
+    /// +-------------------+
+    /// | Pole names        |
+    /// +===================+
+    /// | :math:`f_0(500)`  |
+    /// +-------------------+
+    /// | :math:`f_0(980)`  |
+    /// +-------------------+
+    /// | :math:`f_0(1370)` |
+    /// +-------------------+
+    /// | :math:`f_0(1500)` |
+    /// +-------------------+
+    /// | :math:`f_0(1710)` |
+    /// +-------------------+
+    ///
+    /// .. [Kopf] Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of :math:`\bar{p}p`-, :math:`\pi^- p`- and :math:`\pi \pi`-Data. The European Physical Journal C, 81(12). `doi:10.1140/epjc/s10052-021-09821-2 <https://doi.org/10.1140/epjc/s10052-021-09821-2>`__
+    ///
     #[pyfunction]
     fn KopfKMatrixF0(
         name: &str,
@@ -2300,6 +2945,57 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// A fixed K-Matrix Amplitude for :math:`f_2` mesons
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\pi`    |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`2\pi 2\pi` |
+    /// +---------------+-------------------+
+    /// | 2             | :math:`K\bar{K}`  |
+    /// +---------------+-------------------+
+    /// | 3             | :math:`\eta\eta`  |
+    /// +---------------+-------------------+
+    ///
+    /// +---------------------+
+    /// | Pole names          |
+    /// +=====================+
+    /// | :math:`f_2(1270)`   |
+    /// +---------------------+
+    /// | :math:`f_2'(1525)`  |
+    /// +---------------------+
+    /// | :math:`f_2(1810)`   |
+    /// +---------------------+
+    /// | :math:`f_2(1950)`   |
+    /// +---------------------+
+    ///
     #[pyfunction]
     fn KopfKMatrixF2(
         name: &str,
@@ -2315,6 +3011,49 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// A fixed K-Matrix Amplitude for :math:`a_0` mesons
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\eta`   |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`K\bar{K}`  |
+    /// +---------------+-------------------+
+    ///
+    /// +-------------------+
+    /// | Pole names        |
+    /// +===================+
+    /// | :math:`a_0(980)`  |
+    /// +-------------------+
+    /// | :math:`a_0(1450)` |
+    /// +-------------------+
+    ///
     #[pyfunction]
     fn KopfKMatrixA0(
         name: &str,
@@ -2330,6 +3069,51 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// A fixed K-Matrix Amplitude for :math:`a_2` mesons
+    ///
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\eta`   |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`K\bar{K}`  |
+    /// +---------------+-------------------+
+    /// | 2             | :math:`\pi\eta'`  |
+    /// +---------------+-------------------+
+    ///
+    /// +-------------------+
+    /// | Pole names        |
+    /// +===================+
+    /// | :math:`a_2(1320)` |
+    /// +-------------------+
+    /// | :math:`a_2(1700)` |
+    /// +-------------------+
+    ///
     #[pyfunction]
     fn KopfKMatrixA2(
         name: &str,
@@ -2345,6 +3129,51 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// A fixed K-Matrix Amplitude for :math:`\rho` mesons
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\pi`    |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`2\pi 2\pi` |
+    /// +---------------+-------------------+
+    /// | 2             | :math:`K\bar{K}`  |
+    /// +---------------+-------------------+
+    ///
+    /// +--------------------+
+    /// | Pole names         |
+    /// +====================+
+    /// | :math:`\rho(770)`  |
+    /// +--------------------+
+    /// | :math:`\rho(1700)` |
+    /// +--------------------+
+    ///
     #[pyfunction]
     fn KopfKMatrixRho(
         name: &str,
@@ -2359,7 +3188,47 @@ pub(crate) mod laddu {
             &mass.0,
         ))
     }
-
+    /// A fixed K-Matrix Amplitude for the :math:`\pi_1(1600)` hybrid meson
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// couplings : list of list of ParameterLike
+    ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
+    /// channel : int
+    ///     The channel onto which the K-Matrix is projected
+    /// mass: Mass
+    ///     The total mass of the resonance
+    ///
+    /// Returns
+    /// -------
+    /// Amplitude
+    ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    /// Notes
+    /// -----
+    /// This Amplitude follows the prescription of [Kopf]_ and fixes the K-Matrix to data
+    /// from that paper, leaving the couplings to the initial state free
+    ///
+    /// +---------------+-------------------+
+    /// | Channel index | Channel           |
+    /// +===============+===================+
+    /// | 0             | :math:`\pi\eta`   |
+    /// +---------------+-------------------+
+    /// | 1             | :math:`\pi\eta'`  |
+    /// +---------------+-------------------+
+    ///
+    /// +---------------------+
+    /// | Pole names          |
+    /// +=====================+
+    /// | :math:`\pi_1(1600)` |
+    /// +---------------------+
+    ///
     #[pyfunction]
     fn KopfKMatrixPi1(
         name: &str,
