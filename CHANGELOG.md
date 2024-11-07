@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/denehoffman/laddu/compare/v0.1.5...v0.1.6) - 2024-11-07
+
+### Added
+
+- add methods to serialize/deserialize fit results
+- add gamma factor calculation to 4-momentum
+- test documentation
+- add stable ABI with minimum python version of 3.7
+- add python stub file for vectors
+
+### Fixed
+
+- make sure code works if no pol angle/magnitude are provided
+- use the unweighted total number of events and divide data likelihood terms by `n_data`
+- correct phase in Zlm
+- correct `PolAngle` by normalizing the beam vector
+- add amplitude module-level documentation
+- correct path to sphinx config
+- use incremental builds for maturin development
+
+### Other
+
+- add RTDs documentation badge to README and link to repo in docs
+- separate command for rebuilding docs and making docfiles
+- finish first pass documenting Python API
+- fix typo in K-Matrix Rust docs
+- resolve lint warning of `len` without `is_empty`
+- more documentation for Python API
+- fix data format which said that `eps` vectors have a "p" in their column names
+- document`vectors` Python API
+- add documentation for `Vector3` in Python API
+- docstrings are not exported with `maturin develop`
+- add documentation commands to justfile
+- add automatic documentation and readthedocs support
+- update README with codspeed badge
+
 ## [0.1.5](https://github.com/denehoffman/laddu/compare/v0.1.4...v0.1.5) - 2024-10-31
 
 ### Added
