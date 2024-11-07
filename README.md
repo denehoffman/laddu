@@ -21,7 +21,7 @@
     <img alt="Crates.io Version" src="https://img.shields.io/crates/v/laddu?style=for-the-badge&logo=rust&logoColor=red&color=red"></a>
   <a href="https://docs.rs/laddu" alt="Laddu documentation on docs.rs">
     <img alt="docs.rs" src="https://img.shields.io/docsrs/laddu?style=for-the-badge&logo=rust&logoColor=red"></a>
-  <a href="https://https://laddu.readthedocs.io/en/latest/" alt="Laddu documentation readthedocs.io">
+  <a href="https://laddu.readthedocs.io/en/latest/" alt="Laddu documentation readthedocs.io">
     <img alt="Read the Docs" src="https://img.shields.io/readthedocs/laddu?style=for-the-badge&logo=readthedocs&logoColor=%238CA1AF&label=Python%20Documentation"></a>
   <a href="https://app.codecov.io/github/denehoffman/laddu/tree/main/" alt="Codecov coverage report">
     <img alt="Codecov" src="https://img.shields.io/codecov/c/github/denehoffman/laddu?style=for-the-badge&logo=codecov"></a>
