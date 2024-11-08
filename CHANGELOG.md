@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7](https://github.com/denehoffman/laddu/compare/v0.1.6...v0.1.7) - 2024-11-08
+
+### Added
+
+- add `NLL::project_with` to do projecting and isolation in one step
+- add `__radd__` implementations wherever `__add__` is implemented
+
+### Other
+
+- bump dependency versions
+- manipulate features to allow for MSRV of 1.70.0
+- use latest rust version
+- update readthedocs config in the hopes that it will properly build laddu
+- increase TOC depth
+- fix broken link
+
 ## [0.1.6](https://github.com/denehoffman/laddu/compare/v0.1.5...v0.1.6) - 2024-11-07
 
 ### Added
