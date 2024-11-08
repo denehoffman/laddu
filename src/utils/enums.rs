@@ -1,7 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
 /// Standard reference frames for angular analyses.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
     /// The helicity frame, obtained by setting the $`z`$-axis equal to the boost direction from
     /// the center-of-momentum to the rest frame of the resonance in question and the $`y`$-axis
@@ -24,9 +24,9 @@ impl FromStr for Frame {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Helicity" | "HX" | "HEL" => Ok(Self::Helicity),
-            "GottfriedJackson" | "Gottfried Jackson" | "GJ" | "Gottfried-Jackson" => {
+        match s.to_lowercase().as_str() {
+            "helicity" | "hx" | "hel" => Ok(Self::Helicity),
+            "gottfriedjackson" | "gottfried jackson" | "gj" | "gottfried-jackson" => {
                 Ok(Self::Helicity)
             }
             _ => Err("Invalid frame".to_string()),
@@ -35,7 +35,7 @@ impl FromStr for Frame {
 }
 
 /// A simple enum describing a binary sign.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Sign {
     /// A positive indicator.
     Positive,
@@ -55,7 +55,7 @@ impl FromStr for Sign {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        match s.to_lowercase().as_ref() {
             "+" | "plus" | "pos" | "positive" => Ok(Self::Positive),
             "-" | "minus" | "neg" | "negative" => Ok(Self::Negative),
             _ => Err("Invalid sign".to_string()),
