@@ -27,7 +27,7 @@ impl FromStr for Frame {
         match s.to_lowercase().as_str() {
             "helicity" | "hx" | "hel" => Ok(Self::Helicity),
             "gottfriedjackson" | "gottfried jackson" | "gj" | "gottfried-jackson" => {
-                Ok(Self::Helicity)
+                Ok(Self::GottfriedJackson)
             }
             _ => Err("Invalid frame".to_string()),
         }
