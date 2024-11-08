@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
 categories = ["science", "mathematics"]
 exclude = ["/python_examples"]
+rust-version = "1.70.0"
 
 [lib]
 name = "laddu"
@@ -60,7 +61,9 @@ default = ["rayon", "python"]
 extension-module = ["pyo3/extension-module"]
 rayon = ["dep:rayon"]
 f32 = []
-python = ["dep:pyo3", "dep:numpy", "extension-module"]
+python = ["pyo3", "numpy", "extension-module"]
+pyo3 = ["dep:pyo3"]
+numpy = ["dep:numpy"]
 
 [profile.release]
 lto = true
