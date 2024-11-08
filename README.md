@@ -237,9 +237,6 @@ The first example script uses data generated with [gen_amp](https://github.com/J
   />
 </p>
 
-> [!NOTE]
-> There appears to be an overall scale factor difference between `gen_amp` and `laddu`, so the raw values for the real and imaginary parts of each wave do not match even though the overall fit, the ratio of S- to D-wave, and relative phase between the waves are consistent.
-
 # Data Format
 The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
 | Column name | Data Type | Interpretation |
