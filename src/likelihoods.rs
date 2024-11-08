@@ -193,6 +193,68 @@ impl NLL {
             .map(|(l, e)| e.weight * l.re / n_mc)
             .collect()
     }
+
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
+    /// the [`NLL`] to its prior state after calculation.
+    ///
+    /// This method takes the real part of the given expression (discarding
+    /// the imaginary part entirely, which does not matter if expressions are coherent sums
+    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
+    /// formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    #[cfg(feature = "rayon")]
+    pub fn project_with<T: AsRef<str>>(&self, parameters: &[Float], names: &[T]) -> Vec<Float> {
+        let current_active_data = self.data_evaluator.resources.read().active.clone();
+        let current_active_mc = self.mc_evaluator.resources.read().active.clone();
+        self.isolate_many(names);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
+        let res = mc_result
+            .par_iter()
+            .zip(self.mc_evaluator.dataset.par_iter())
+            .map(|(l, e)| e.weight * l.re / n_mc)
+            .collect();
+        self.data_evaluator.resources.write().active = current_active_data;
+        self.mc_evaluator.resources.write().active = current_active_mc;
+        res
+    }
+
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
+    /// the [`NLL`] to its prior state after calculation.
+    ///
+    /// This method takes the real part of the given expression (discarding
+    /// the imaginary part entirely, which does not matter if expressions are coherent sums
+    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
+    /// formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    #[cfg(not(feature = "rayon"))]
+    pub fn project_with<T: AsRef<str>>(&self, parameters: &[Float], names: &[T]) -> Vec<Float> {
+        let current_active_data = self.data_evaluator.resources.read().active.clone();
+        let current_active_mc = self.mc_evaluator.resources.read().active.clone();
+        self.isolate_many(names);
+        let mc_result = self.mc_evaluator.evaluate(parameters);
+        let n_mc = self.mc_evaluator.dataset.len() as Float;
+        let res = mc_result
+            .iter()
+            .zip(self.mc_evaluator.dataset.iter())
+            .map(|(l, e)| e.weight * l.re / n_mc)
+            .collect();
+        self.data_evaluator.resources.write().active = current_active_data;
+        self.mc_evaluator.resources.write().active = current_active_mc;
+        res
+    }
 }
 
 impl LikelihoodTerm for NLL {
