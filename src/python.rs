@@ -54,6 +54,9 @@ pub(crate) mod laddu {
         fn __add__(&self, other: Self) -> Self {
             Self(self.0 + other.0)
         }
+        fn __radd__(&self, other: Self) -> Self {
+            other.__add__(self.clone())
+        }
         /// The dot product
         ///
         /// Calculates the dot product of two Vector3s.
@@ -267,6 +270,9 @@ pub(crate) mod laddu {
         }
         fn __add__(&self, other: Self) -> Self {
             Self(self.0 + other.0)
+        }
+        fn __radd__(&self, other: Self) -> Self {
+            other.__add__(self.clone())
         }
         /// The magnitude of the 4-vector
         ///
@@ -1344,6 +1350,15 @@ pub(crate) mod laddu {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
         }
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Expression> {
+            if let Ok(other_aid) = other.extract::<PyRef<AmplitudeID>>() {
+                Ok(Expression(other_aid.0.clone() + self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<Expression>() {
+                Ok(Expression(other_expr.0.clone() + self.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
         fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Expression> {
             if let Ok(other_aid) = other.extract::<PyRef<AmplitudeID>>() {
                 Ok(Expression(self.0.clone() * other_aid.0.clone()))
@@ -1400,6 +1415,15 @@ pub(crate) mod laddu {
                 Ok(Expression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(self.0.clone() + other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Expression> {
+            if let Ok(other_aid) = other.extract::<PyRef<AmplitudeID>>() {
+                Ok(Expression(other_aid.0.clone() + self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<Expression>() {
+                Ok(Expression(other_expr.0.clone() + self.0.clone()))
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -2122,6 +2146,15 @@ pub(crate) mod laddu {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
         }
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(other_aid.0.clone() + self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(other_expr.0.clone() + self.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
         fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
             if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
                 Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
@@ -2146,6 +2179,15 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(self.0.clone() + other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
+        }
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(other_aid.0.clone() + self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(other_expr.0.clone() + self.0.clone()))
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
