@@ -66,6 +66,7 @@ impl FromStr for Sign {
 #[cfg(test)]
 mod tests {
     use crate::utils::enums::{Frame, Sign};
+    use std::str::FromStr;
 
     #[test]
     fn enum_displays() {
@@ -73,5 +74,33 @@ mod tests {
         assert_eq!(format!("{}", Frame::GottfriedJackson), "Gottfried-Jackson");
         assert_eq!(format!("{}", Sign::Positive), "+");
         assert_eq!(format!("{}", Sign::Negative), "-");
+    }
+
+    #[test]
+    fn enum_from_str() {
+        assert_eq!(Frame::from_str("Helicity").unwrap(), Frame::Helicity);
+        assert_eq!(Frame::from_str("HX").unwrap(), Frame::Helicity);
+        assert_eq!(Frame::from_str("HEL").unwrap(), Frame::Helicity);
+        assert_eq!(
+            Frame::from_str("GottfriedJackson").unwrap(),
+            Frame::GottfriedJackson
+        );
+        assert_eq!(Frame::from_str("GJ").unwrap(), Frame::GottfriedJackson);
+        assert_eq!(
+            Frame::from_str("Gottfried-Jackson").unwrap(),
+            Frame::GottfriedJackson
+        );
+        assert_eq!(
+            Frame::from_str("Gottfried Jackson").unwrap(),
+            Frame::GottfriedJackson
+        );
+        assert_eq!(Sign::from_str("+").unwrap(), Sign::Positive);
+        assert_eq!(Sign::from_str("pos").unwrap(), Sign::Positive);
+        assert_eq!(Sign::from_str("plus").unwrap(), Sign::Positive);
+        assert_eq!(Sign::from_str("Positive").unwrap(), Sign::Positive);
+        assert_eq!(Sign::from_str("-").unwrap(), Sign::Negative);
+        assert_eq!(Sign::from_str("minus").unwrap(), Sign::Negative);
+        assert_eq!(Sign::from_str("neg").unwrap(), Sign::Negative);
+        assert_eq!(Sign::from_str("Negative").unwrap(), Sign::Negative);
     }
 }
