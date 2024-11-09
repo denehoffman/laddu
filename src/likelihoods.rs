@@ -111,42 +111,42 @@ impl NLL {
         }
         .into()
     }
-    /// Activate an [`Amplitude`] by name.
+    /// Activate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.activate(&name);
         self.mc_evaluator.activate(name);
     }
-    /// Activate several [`Amplitude`]s by name.
+    /// Activate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.activate_many(names);
         self.mc_evaluator.activate_many(names);
     }
-    /// Activate all registered [`Amplitude`]s.
+    /// Activate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
         self.data_evaluator.activate_all();
         self.mc_evaluator.activate_all();
     }
-    /// Dectivate an [`Amplitude`] by name.
+    /// Dectivate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.deactivate(&name);
         self.mc_evaluator.deactivate(name);
     }
-    /// Deactivate several [`Amplitude`]s by name.
+    /// Deactivate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.deactivate_many(names);
         self.mc_evaluator.deactivate_many(names);
     }
-    /// Deactivate all registered [`Amplitude`]s.
+    /// Deactivate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
         self.data_evaluator.deactivate_all();
         self.mc_evaluator.deactivate_all();
     }
-    /// Isolate an [`Amplitude`] by name (deactivate the rest).
+    /// Isolate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.isolate(&name);
         self.mc_evaluator.isolate(name);
     }
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest).
+    /// Isolate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name (deactivate the rest).
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.isolate_many(names);
         self.mc_evaluator.isolate_many(names);
@@ -329,7 +329,6 @@ impl LikelihoodTerm for NLL {
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
-    /// ```
     #[cfg(feature = "rayon")]
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
@@ -614,7 +613,7 @@ impl MinimizerOptions {
             max_steps: self.max_steps,
         }
     }
-    /// Adds a customizable [`VerboseObserver`] to the minimization.
+    /// Adds a customizable `VerboseObserver` to the minimization.
     pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
         let mut observers = self.observers;
         observers.push(Box::new(VerboseObserver {
@@ -681,7 +680,7 @@ impl NLL {
     }
 }
 
-/// An identifier that can be used like an [`AmplitudeID`] to combine registered
+/// An identifier that can be used like an [`AmplitudeID`](`crate::amplitudes::AmplitudeID`) to combine registered
 /// [`LikelihoodTerm`]s.
 #[derive(Clone, Debug)]
 pub struct LikelihoodID(usize);

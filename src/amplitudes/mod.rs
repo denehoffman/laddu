@@ -136,7 +136,7 @@ pub trait Amplitude: DynClone + Send + Sync {
 
     /// A helper function to implement a central difference only on indices which correspond to
     /// free parameters in the [`Amplitude`]. For example, if an [`Amplitude`] contains free
-    /// parameters registered to indices 1, 3, and 5 of the [`Parameters::parameters`] array, then
+    /// parameters registered to indices 1, 3, and 5 of the its internal parameters array, then
     /// running this with those indices will compute a central finite difference derivative for
     /// those coordinates only, since the rest can be safely assumed to be zero.
     fn central_difference_with_indices(
@@ -360,7 +360,7 @@ impl Manager {
     ///
     /// # Errors
     ///
-    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
+    /// The [`Amplitude`]'s name must be unique and not already
     /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
     pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> Result<AmplitudeID, LadduError> {
         let mut amp = amplitude.clone();
