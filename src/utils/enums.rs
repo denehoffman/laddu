@@ -1,7 +1,9 @@
 use std::{fmt::Display, str::FromStr};
 
+use serde::{Deserialize, Serialize};
+
 /// Standard reference frames for angular analyses.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Frame {
     /// The helicity frame, obtained by setting the $`z`$-axis equal to the boost direction from
     /// the center-of-momentum to the rest frame of the resonance in question and the $`y`$-axis
@@ -35,7 +37,7 @@ impl FromStr for Frame {
 }
 
 /// A simple enum describing a binary sign.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sign {
     /// A positive indicator.
     Positive,
