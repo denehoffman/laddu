@@ -226,13 +226,7 @@ impl Angles {
         frame: Frame,
     ) -> Self {
         Self {
-            costheta: CosTheta {
-                beam,
-                recoil: recoil.as_ref().into(),
-                daughter: daughter.as_ref().into(),
-                resonance: resonance.as_ref().into(),
-                frame,
-            },
+            costheta: CosTheta::new(beam, &recoil, &daughter, &resonance, frame),
             phi: Phi {
                 beam,
                 recoil: recoil.as_ref().into(),
@@ -306,11 +300,8 @@ impl Polarization {
     /// the relevant four-momenta to make a new particle from the constituents.
     pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
         Self {
-            pol_magnitude: PolMagnitude { beam },
-            pol_angle: PolAngle {
-                beam,
-                recoil: recoil.as_ref().into(),
-            },
+            pol_magnitude: PolMagnitude::new(beam),
+            pol_angle: PolAngle::new(beam, recoil),
         }
     }
 }
