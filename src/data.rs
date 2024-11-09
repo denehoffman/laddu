@@ -34,8 +34,17 @@ pub fn test_event() -> Event {
     }
 }
 
+/// An dataset that can be used to test the implementation of an
+/// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a singular
+/// [`Event`] generated from [`test_event`].
+pub fn test_dataset() -> Dataset {
+    Dataset {
+        events: vec![Arc::new(test_event())],
+    }
+}
+
 /// A single event in a [`Dataset`] containing all the relevant particle information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Event {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vector4<Float>>,
@@ -72,8 +81,12 @@ impl Display for Event {
 
 impl Event {
     /// Return a four-momentum from the sum of four-momenta at the given indices in the [`Event`].
-    pub fn get_p4_sum(&self, indices: &[usize]) -> Vector4<Float> {
-        indices.iter().map(|i| self.p4s[*i]).sum::<Vector4<Float>>()
+    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vector4<Float> {
+        indices
+            .as_ref()
+            .iter()
+            .map(|i| self.p4s[*i])
+            .sum::<Vector4<Float>>()
     }
 }
 
@@ -501,5 +514,136 @@ impl BinnedDataset {
     /// Returns the range that was used to form the [`BinnedDataset`].
     pub fn range(&self) -> (Float, Float) {
         (self.edges[0], self.edges[self.len()])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::{assert_relative_eq, assert_relative_ne};
+    #[test]
+    fn test_event_creation() {
+        let event = test_event();
+        assert_eq!(event.p4s.len(), 4);
+        assert_eq!(event.eps.len(), 1);
+        assert_relative_eq!(event.weight, 0.48)
+    }
+
+    #[test]
+    fn test_event_p4_sum() {
+        let event = test_event();
+        let sum = event.get_p4_sum(&[2, 3]);
+        assert_relative_eq!(sum[0], event.p4s[2].e() + event.p4s[3].e());
+        assert_relative_eq!(sum[1], event.p4s[2].px() + event.p4s[3].px());
+        assert_relative_eq!(sum[2], event.p4s[2].py() + event.p4s[3].py());
+        assert_relative_eq!(sum[3], event.p4s[2].pz() + event.p4s[3].pz());
+    }
+
+    #[test]
+    fn test_dataset_size_check() {
+        let mut dataset = Dataset::default();
+        assert!(dataset.is_empty());
+        assert_eq!(dataset.len(), 0);
+        dataset.events.push(Arc::new(test_event()));
+        assert!(!dataset.is_empty());
+        assert_eq!(dataset.len(), 1);
+    }
+
+    #[test]
+    fn test_dataset_weights() {
+        let mut dataset = Dataset::default();
+        dataset.events.push(Arc::new(test_event()));
+        dataset.events.push(Arc::new(Event {
+            p4s: test_event().p4s,
+            eps: test_event().eps,
+            weight: 0.52,
+        }));
+        let weights = dataset.weights();
+        assert_eq!(weights.len(), 2);
+        assert_relative_eq!(weights[0], 0.48);
+        assert_relative_eq!(weights[1], 0.52);
+        assert_relative_eq!(dataset.weighted_len(), 1.0);
+    }
+
+    #[test]
+    fn test_dataset_filtering() {
+        let mut dataset = test_dataset();
+        dataset.events.push(Arc::new(Event {
+            p4s: vec![
+                Vector4::from_momentum(&vector![0.0, 0.0, 5.0], 0.0),
+                Vector4::from_momentum(&vector![0.0, 0.0, 1.0], 1.0),
+            ],
+            eps: vec![],
+            weight: 1.0,
+        }));
+
+        let filtered = dataset.filter(|event| event.p4s.len() == 2);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].p4s.len(), 2);
+    }
+
+    #[test]
+    fn test_binned_dataset() {
+        let mut dataset = Dataset::default();
+        dataset.events.push(Arc::new(Event {
+            p4s: vec![Vector4::from_momentum(&vector![0.0, 0.0, 1.0], 1.0)],
+            eps: vec![],
+            weight: 1.0,
+        }));
+        dataset.events.push(Arc::new(Event {
+            p4s: vec![Vector4::from_momentum(&vector![0.0, 0.0, 2.0], 2.0)],
+            eps: vec![],
+            weight: 2.0,
+        }));
+
+        #[derive(Clone)]
+        struct BeamEnergy;
+        impl Variable for BeamEnergy {
+            fn value(&self, event: &Event) -> Float {
+                event.p4s[0][0]
+            }
+        }
+
+        // Test binning by first particle energy
+        let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0));
+
+        assert_eq!(binned.bins(), 2);
+        assert_eq!(binned.edges().len(), 3);
+        assert_relative_eq!(binned.edges()[0], 0.0);
+        assert_relative_eq!(binned.edges()[2], 3.0);
+        assert_eq!(binned[0].len(), 1);
+        assert_relative_eq!(binned[0].weighted_len(), 1.0);
+        assert_eq!(binned[1].len(), 1);
+        assert_relative_eq!(binned[1].weighted_len(), 2.0);
+    }
+
+    #[test]
+    fn test_dataset_bootstrap() {
+        let mut dataset = test_dataset();
+        dataset.events.push(Arc::new(Event {
+            p4s: test_event().p4s.clone(),
+            eps: test_event().eps.clone(),
+            weight: 1.0,
+        }));
+        assert_relative_ne!(dataset[0].weight, dataset[1].weight);
+
+        let bootstrapped = dataset.bootstrap(42);
+        assert_eq!(bootstrapped.len(), dataset.len());
+        assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
+
+        // Test empty dataset bootstrap
+        let empty_dataset = Dataset::default();
+        let empty_bootstrap = empty_dataset.bootstrap(42);
+        assert!(empty_bootstrap.is_empty());
+    }
+
+    #[test]
+    fn test_event_display() {
+        let event = test_event();
+        let display_string = format!("{}", event);
+        assert_eq!(
+            display_string,
+            "Event:\n  p4s:\n    [e = 8.74700; p = (0.00000, 0.00000, 8.74700); m = 0.00000]\n    [e = 1.10334; p = (0.11900, 0.37400, 0.22200); m = 1.00700]\n    [e = 3.13671; p = (-0.11200, 0.29300, 3.08100); m = 0.49800]\n    [e = 5.50925; p = (-0.00700, -0.66700, 5.44600); m = 0.49800]\n  eps:\n    [0.385, 0.022, 0]\n  weight:\n    0.48\n"
+        );
     }
 }

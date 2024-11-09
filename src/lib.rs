@@ -296,9 +296,9 @@ pub mod prelude {
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
         Parameters, Resources, ScalarID, VectorID,
     };
-    pub use crate::utils::enums::{Frame, Sign};
+    pub use crate::utils::enums::{Channel, Frame, Sign};
     pub use crate::utils::variables::{
-        Angles, CosTheta, Mass, Phi, PolAngle, PolMagnitude, Polarization, Variable,
+        Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization, Variable,
     };
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use crate::{Float, LadduError, PI};

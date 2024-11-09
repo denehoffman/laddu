@@ -7,10 +7,10 @@ use rayon::prelude::*;
 use crate::{
     data::{Dataset, Event},
     utils::{
-        enums::Frame,
+        enums::{Channel, Frame},
         vectors::{FourMomentum, FourVector, ThreeVector},
     },
-    Float,
+    Float, LadduError,
 };
 
 /// Standard methods for extracting some value out of an [`Event`].
@@ -226,13 +226,7 @@ impl Angles {
         frame: Frame,
     ) -> Self {
         Self {
-            costheta: CosTheta {
-                beam,
-                recoil: recoil.as_ref().into(),
-                daughter: daughter.as_ref().into(),
-                resonance: resonance.as_ref().into(),
-                frame,
-            },
+            costheta: CosTheta::new(beam, &recoil, &daughter, &resonance, frame),
             phi: Phi {
                 beam,
                 recoil: recoil.as_ref().into(),
@@ -306,11 +300,245 @@ impl Polarization {
     /// the relevant four-momenta to make a new particle from the constituents.
     pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
         Self {
-            pol_magnitude: PolMagnitude { beam },
-            pol_angle: PolAngle {
-                beam,
-                recoil: recoil.as_ref().into(),
+            pol_magnitude: PolMagnitude::new(beam),
+            pol_angle: PolAngle::new(beam, recoil),
+        }
+    }
+}
+
+/// A struct used to calculate Mandelstam variables ($`s`$, $`t`$, or $`u`$).
+///
+/// By convention, the metric is chosen to be $`(+---)`$ and the variables are defined as follows
+/// (ignoring factors of $`c`$):
+///
+/// $`s = (p_1 + p_2)^2 = (p_3 + p_4)^2`$
+///
+/// $`t = (p_1 - p_3)^2 = (p_4 - p_2)^2`$
+///
+/// $`u = (p_1 - p_4)^2 = (p_3 - p_2)^2`$
+#[derive(Clone, Debug)]
+pub struct Mandelstam {
+    p1: Vec<usize>,
+    p2: Vec<usize>,
+    p3: Vec<usize>,
+    p4: Vec<usize>,
+    missing: Option<u8>,
+    channel: Channel,
+}
+impl Mandelstam {
+    /// Constructs the Mandelstam variable for the given `channel` and particles.
+    /// Fields which can take lists of more than one index will add
+    /// the relevant four-momenta to make a new particle from the constituents.
+    pub fn new<T, U, V, W>(p1: T, p2: U, p3: V, p4: W, channel: Channel) -> Result<Self, LadduError>
+    where
+        T: AsRef<[usize]>,
+        U: AsRef<[usize]>,
+        V: AsRef<[usize]>,
+        W: AsRef<[usize]>,
+    {
+        let mut missing = None;
+        if p1.as_ref().is_empty() {
+            missing = Some(1)
+        }
+        if p2.as_ref().is_empty() {
+            if missing.is_none() {
+                missing = Some(2)
+            } else {
+                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
+            }
+        }
+        if p3.as_ref().is_empty() {
+            if missing.is_none() {
+                missing = Some(3)
+            } else {
+                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
+            }
+        }
+        if p4.as_ref().is_empty() {
+            if missing.is_none() {
+                missing = Some(4)
+            } else {
+                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
+            }
+        }
+        Ok(Self {
+            p1: p1.as_ref().into(),
+            p2: p2.as_ref().into(),
+            p3: p3.as_ref().into(),
+            p4: p4.as_ref().into(),
+            missing,
+            channel,
+        })
+    }
+}
+
+impl Variable for Mandelstam {
+    fn value(&self, event: &Event) -> Float {
+        match self.channel {
+            Channel::S => match self.missing {
+                None | Some(3) | Some(4) => {
+                    let p1 = event.get_p4_sum(&self.p1);
+                    let p2 = event.get_p4_sum(&self.p2);
+                    (p1 + p2).mag2()
+                }
+                Some(1) | Some(2) => {
+                    let p3 = event.get_p4_sum(&self.p3);
+                    let p4 = event.get_p4_sum(&self.p4);
+                    (p3 + p4).mag2()
+                }
+                _ => unreachable!(),
+            },
+            Channel::T => match self.missing {
+                None | Some(2) | Some(4) => {
+                    let p1 = event.get_p4_sum(&self.p1);
+                    let p3 = event.get_p4_sum(&self.p3);
+                    (p1 - p3).mag2()
+                }
+                Some(1) | Some(3) => {
+                    let p2 = event.get_p4_sum(&self.p2);
+                    let p4 = event.get_p4_sum(&self.p4);
+                    (p4 - p2).mag2()
+                }
+                _ => unreachable!(),
+            },
+            Channel::U => match self.missing {
+                None | Some(2) | Some(3) => {
+                    let p1 = event.get_p4_sum(&self.p1);
+                    let p4 = event.get_p4_sum(&self.p4);
+                    (p1 - p4).mag2()
+                }
+                Some(1) | Some(4) => {
+                    let p2 = event.get_p4_sum(&self.p2);
+                    let p3 = event.get_p4_sum(&self.p3);
+                    (p3 - p2).mag2()
+                }
+                _ => unreachable!(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+
+    use crate::data::{test_dataset, test_event};
+
+    use super::*;
+    #[test]
+    fn test_mass_single_particle() {
+        let event = test_event();
+        let mass = Mass::new([1]);
+        assert_relative_eq!(mass.value(&event), 1.007);
+    }
+
+    #[test]
+    fn test_mass_multiple_particles() {
+        let event = test_event();
+        let mass = Mass::new([2, 3]);
+        assert_relative_eq!(mass.value(&event), 1.3743786, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_costheta_helicity() {
+        let event = test_event();
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(costheta.value(&event), -0.4611175, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_phi_helicity() {
+        let event = test_event();
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(phi.value(&event), -2.6574625, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_costheta_gottfried_jackson() {
+        let event = test_event();
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
+        assert_relative_eq!(costheta.value(&event), 0.09198832, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_phi_gottfried_jackson() {
+        let event = test_event();
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
+        assert_relative_eq!(phi.value(&event), -2.7139131, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_angles() {
+        let event = test_event();
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(angles.costheta.value(&event), -0.4611175, epsilon = 1e-7);
+        assert_relative_eq!(angles.phi.value(&event), -2.6574625, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_pol_angle() {
+        let event = test_event();
+        let pol_angle = PolAngle::new(0, vec![1]);
+        assert_relative_eq!(pol_angle.value(&event), 1.9359298, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_pol_magnitude() {
+        let event = test_event();
+        let pol_magnitude = PolMagnitude::new(0);
+        assert_relative_eq!(pol_magnitude.value(&event), 0.3856280, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_polarization() {
+        let event = test_event();
+        let polarization = Polarization::new(0, vec![1]);
+        assert_relative_eq!(
+            polarization.pol_angle.value(&event),
+            1.9359298,
+            epsilon = 1e-7
+        );
+        assert_relative_eq!(
+            polarization.pol_magnitude.value(&event),
+            0.3856280,
+            epsilon = 1e-7
+        );
+    }
+
+    #[test]
+    fn test_mandelstam() {
+        let event = test_event();
+        let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
+        let t = Mandelstam::new([0], [], [2, 3], [1], Channel::T).unwrap();
+        let u = Mandelstam::new([0], [], [2, 3], [1], Channel::U).unwrap();
+        let sp = Mandelstam::new([], [0], [1], [2, 3], Channel::S).unwrap();
+        let tp = Mandelstam::new([], [0], [1], [2, 3], Channel::T).unwrap();
+        let up = Mandelstam::new([], [0], [1], [2, 3], Channel::U).unwrap();
+        assert_relative_eq!(s.value(&event), 18.504011, epsilon = 1e-7);
+        assert_relative_eq!(s.value(&event), sp.value(&event), epsilon = 1e-7);
+        assert_relative_eq!(t.value(&event), -0.1922285, epsilon = 1e-7);
+        assert_relative_eq!(t.value(&event), tp.value(&event), epsilon = 1e-7);
+        assert_relative_eq!(u.value(&event), -14.4041989, epsilon = 1e-7);
+        assert_relative_eq!(u.value(&event), up.value(&event), epsilon = 1e-7);
+        let m2_beam = test_event().get_p4_sum(&[0]).m2();
+        let m2_recoil = test_event().get_p4_sum(&[1]).m2();
+        let m2_res = test_event().get_p4_sum(&[2, 3]).m2();
+        assert_relative_eq!(
+            s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
+            1.00,
+            epsilon = 1e-2
+        );
+        // Note: not very accurate, but considering the values in test_event only go to about 3
+        // decimal places, this is probably okay
+    }
+
+    #[test]
+    fn test_variable_value_on() {
+        let dataset = Arc::new(test_dataset());
+        let mass = Mass::new(vec![2, 3]);
+
+        let values = mass.value_on(&dataset);
+        assert_eq!(values.len(), 1);
+        assert_relative_eq!(values[0], 1.3743786, epsilon = 1e-7);
     }
 }

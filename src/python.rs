@@ -693,11 +693,11 @@ pub(crate) mod laddu {
         }
         /// Separates a Dataset into histogram bins by a Variable value
         ///
-        /// Currently supports ``laddu.Mass`` as the binning variable.
+        /// Currently supports ``laddu.Mass`` and ``laddu.Mandelstam`` as the binning variable.
         ///
         /// Parameters
         /// ----------
-        /// variable : Mass
+        /// variable : Mass or Mandelstam
         ///     The Variable by which each Event is binned
         /// bins : int
         ///     The number of equally-spaced bins
@@ -712,6 +712,7 @@ pub(crate) mod laddu {
         /// See Also
         /// --------
         /// laddu.Mass
+        /// laddu.Mandelstam
         ///
         #[pyo3(signature = (variable, bins, range))]
         fn bin_by(
@@ -720,12 +721,17 @@ pub(crate) mod laddu {
             bins: usize,
             range: (Float, Float),
         ) -> PyResult<BinnedDataset> {
-            let rust_variable = if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
-                py_mass.0.clone()
+            if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
+                Ok(BinnedDataset(self.0.bin_by(py_mass.0.clone(), bins, range)))
+            } else if let Ok(py_mandelstam) = variable.extract::<PyRef<Mandelstam>>() {
+                Ok(BinnedDataset(self.0.bin_by(
+                    py_mandelstam.0.clone(),
+                    bins,
+                    range,
+                )))
             } else {
                 return Err(PyTypeError::new_err("Unsupported variable!"));
-            };
-            Ok(BinnedDataset(self.0.bin_by(rust_variable, bins, range)))
+            }
         }
         /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
         ///
@@ -1288,6 +1294,96 @@ pub(crate) mod laddu {
         #[getter]
         fn pol_angle(&self) -> PolAngle {
             PolAngle(self.0.pol_angle.clone())
+        }
+    }
+
+    /// Mandelstam variables s, t, and u
+    ///
+    /// By convention, the metric is chosen to be :math:`(+---)` and the variables are defined as follows
+    /// (ignoring factors of :math:`c`):
+    ///
+    /// .. math:: s = (p_1 + p_2)^2 = (p_3 + p_4)^2
+    ///
+    /// .. math:: t = (p_1 - p_3)^2 = (p_4 - p_2)^2
+    ///
+    /// .. math:: u = (p_1 - p_4)^2 = (p_3 - p_2)^2
+    ///
+    /// Parameters
+    /// ----------
+    /// p1: list of int
+    ///     The indices of particles to combine to create :math:`p_1` in the diagram
+    /// p2: list of int
+    ///     The indices of particles to combine to create :math:`p_2` in the diagram
+    /// p3: list of int
+    ///     The indices of particles to combine to create :math:`p_3` in the diagram
+    /// p4: list of int
+    ///     The indices of particles to combine to create :math:`p_4` in the diagram
+    /// channel: {'s', 't', 'u', 'S', 'T', 'U'}
+    ///     The Mandelstam channel to calculate
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If more than one particle list is empty
+    ///
+    /// Notes
+    /// -----
+    /// At most one of the input particles may be omitted by using an empty list. This will cause
+    /// the calculation to use whichever equality listed above does not contain that particle.
+    ///
+    /// By default, the first equality is used if no particle lists are empty.
+    ///
+    #[pyclass]
+    #[derive(Clone)]
+    struct Mandelstam(rust::utils::variables::Mandelstam);
+
+    #[pymethods]
+    impl Mandelstam {
+        #[new]
+        fn new(
+            p1: Vec<usize>,
+            p2: Vec<usize>,
+            p3: Vec<usize>,
+            p4: Vec<usize>,
+            channel: &str,
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::Mandelstam::new(
+                p1,
+                p2,
+                p3,
+                p4,
+                channel.parse().unwrap(),
+            )?))
+        }
+        /// The value of this Variable for the given Event
+        ///
+        /// Parameters
+        /// ----------
+        /// event : Event
+        ///     The Event upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// value : float
+        ///     The value of the Variable for the given `event`
+        ///
+        fn value(&self, event: &Event) -> Float {
+            self.0.value(&event.0)
+        }
+        /// All values of this Variable on the given Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// dataset : Dataset
+        ///     The Dataset upon which the Variable is calculated
+        ///
+        /// Returns
+        /// -------
+        /// values : array_like
+        ///     The values of the Variable for each Event in the given `dataset`
+        ///
+        fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
         }
     }
 
