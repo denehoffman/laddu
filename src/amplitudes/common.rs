@@ -158,3 +158,126 @@ impl Amplitude for PolarComplexScalar {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::amplitudes::{parameter, Manager};
+    use crate::data::test_dataset;
+    use approx::assert_relative_eq;
+    use std::{f64::consts::PI, sync::Arc};
+
+    #[test]
+    fn test_scalar_creation_and_evaluation() {
+        let mut manager = Manager::default();
+        let amp = Scalar::new("test_scalar", parameter("test_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into(); // Direct amplitude evaluation
+        let evaluator = manager.load(&dataset, &expr);
+
+        let params = vec![2.5];
+        let result = evaluator.evaluate(&params);
+
+        assert_relative_eq!(result[0].re, 2.5);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    fn test_scalar_gradient() {
+        let mut manager = Manager::default();
+        let amp = Scalar::new("test_scalar", parameter("test_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.norm_sqr(); // |f(x)|^2
+        let evaluator = manager.load(&dataset, &expr);
+
+        let params = vec![2.0];
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        // For |f(x)|^2 where f(x) = x, the derivative should be 2x
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+    }
+
+    #[test]
+    fn test_complex_scalar_evaluation() {
+        let mut manager = Manager::default();
+        let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let params = vec![1.5, 2.5]; // Real and imaginary parts
+        let result = evaluator.evaluate(&params);
+
+        assert_relative_eq!(result[0].re, 1.5);
+        assert_relative_eq!(result[0].im, 2.5);
+    }
+
+    #[test]
+    fn test_complex_scalar_gradient() {
+        let mut manager = Manager::default();
+        let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.norm_sqr(); // |f(x + iy)|^2
+        let evaluator = manager.load(&dataset, &expr);
+
+        let params = vec![3.0, 4.0]; // Real and imaginary parts
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        // For |f(x + iy)|^2, partial derivatives should be 2x and 2y
+        assert_relative_eq!(gradient[0][0].re, 6.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 8.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+    }
+
+    #[test]
+    fn test_polar_complex_scalar_evaluation() {
+        let mut manager = Manager::default();
+        let amp =
+            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let r = 2.0;
+        let theta = PI / 4.0;
+        let params = vec![r, theta];
+        let result = evaluator.evaluate(&params);
+
+        // r * (cos(theta) + i*sin(theta))
+        assert_relative_eq!(result[0].re, r * theta.cos());
+        assert_relative_eq!(result[0].im, r * theta.sin());
+    }
+
+    #[test]
+    fn test_polar_complex_scalar_gradient() {
+        let mut manager = Manager::default();
+        let amp =
+            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into(); // f(r,θ) = re^(iθ)
+        let evaluator = manager.load(&dataset, &expr);
+
+        let params = vec![2.0, PI / 4.0]; // r and theta
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
+        assert_relative_eq!(gradient[0][0].re, f64::cos(PI / 4.0));
+        assert_relative_eq!(gradient[0][0].im, f64::sin(PI / 4.0));
+        assert_relative_eq!(gradient[0][1].re, -2.0 * f64::sin(PI / 4.0));
+        assert_relative_eq!(gradient[0][1].im, 2.0 * f64::cos(PI / 4.0));
+    }
+}
