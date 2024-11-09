@@ -81,8 +81,12 @@ impl Display for Event {
 
 impl Event {
     /// Return a four-momentum from the sum of four-momenta at the given indices in the [`Event`].
-    pub fn get_p4_sum(&self, indices: &[usize]) -> Vector4<Float> {
-        indices.iter().map(|i| self.p4s[*i]).sum::<Vector4<Float>>()
+    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vector4<Float> {
+        indices
+            .as_ref()
+            .iter()
+            .map(|i| self.p4s[*i])
+            .sum::<Vector4<Float>>()
     }
 }
 
