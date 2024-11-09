@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8](https://github.com/denehoffman/laddu/compare/v0.1.7...v0.1.8) - 2024-11-09
+
+### Added
+
+- *(data)* make `Event::get_p4_sum` generic over its argument
+- *(variables)* add Mandelstam variables
+- *(enums)* add `Channel` enum
+- *(enums)* add serde to enums
+- *(amplitudes)* add `From` impl for `AmplitudeID` to `Expression` conversion
+- *(data)* create `test_dataset` method for testing purposes as well as add `Default` impl to `Event`
+- *(enums)* add equality comparison to enums and convert to lowercase before string conversion
+
+### Fixed
+
+- *(enums)* Gottfried-Jackson string conversions were accidentally being redirected to Helicity
+
+### Other
+
+- *(python)* fix equations in Mandelstam docs
+- fix some documentation issues
+- ignore  in codecov, eventually need to test this on the Python side instead
+- *(amplitudes)* add unit tests for `ylm`, `zlm`, `breit_wigner`, and `kmatrix` modules
+- *(common)* add unit tests for `common` amplitudes
+- *(variables)* add unit tests for `variables` module
+- *(amplitudes)* add unit tests for `amplitudes` mod
+- *(variables)* use new instead of full struct definition for combined `Variable`s
+- *(enums)* add unit tests for converting strings to enums
+- *(resources)* add unit tests for  module
+- *(data)* add unit tests for  module
+- correct docs to reflect some recent changes in how NLLs are calculated
+
 ## [0.1.7](https://github.com/denehoffman/laddu/compare/v0.1.6...v0.1.7) - 2024-11-08
 
 ### Added
