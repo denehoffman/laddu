@@ -931,3 +931,362 @@ impl Amplitude for KopfKMatrixPi1 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // Note: These tests are not exhaustive, they only check one channel
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::amplitudes::{parameter, Manager};
+    use crate::data::test_dataset;
+    use crate::utils::variables::Mass;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_f0_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixF0::new(
+            "f0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+                [parameter("p4"), parameter("p5")],
+                [parameter("p6"), parameter("p7")],
+                [parameter("p8"), parameter("p9")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+
+        assert_relative_eq!(result[0].re, 0.2674945, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, 0.7289451, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_f0_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixF0::new(
+            "f0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+                [parameter("p4"), parameter("p5")],
+                [parameter("p6"), parameter("p7")],
+                [parameter("p8"), parameter("p9")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result =
+            evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+
+        assert_relative_eq!(result[0][0].re, -0.0324912, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, -0.0110734, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+        assert_relative_eq!(result[0][2].re, 0.0241053, epsilon = 1e-7);
+        assert_relative_eq!(result[0][2].im, 0.0079184, epsilon = 1e-7);
+        assert_relative_eq!(result[0][3].re, -result[0][2].im);
+        assert_relative_eq!(result[0][3].im, result[0][2].re);
+        assert_relative_eq!(result[0][4].re, -0.0316345, epsilon = 1e-7);
+        assert_relative_eq!(result[0][4].im, 0.0149155, epsilon = 1e-7);
+        assert_relative_eq!(result[0][5].re, -result[0][4].im);
+        assert_relative_eq!(result[0][5].im, result[0][4].re);
+        assert_relative_eq!(result[0][6].re, 0.5838982, epsilon = 1e-7);
+        assert_relative_eq!(result[0][6].im, 0.2071617, epsilon = 1e-7);
+        assert_relative_eq!(result[0][7].re, -result[0][6].im);
+        assert_relative_eq!(result[0][7].im, result[0][6].re);
+        assert_relative_eq!(result[0][8].re, 0.0914546, epsilon = 1e-7);
+        assert_relative_eq!(result[0][8].im, 0.0360771, epsilon = 1e-7);
+        assert_relative_eq!(result[0][9].re, -result[0][8].im);
+        assert_relative_eq!(result[0][9].im, result[0][8].re);
+    }
+
+    #[test]
+    fn test_f2_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixF2::new(
+            "f2",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+                [parameter("p4"), parameter("p5")],
+                [parameter("p6"), parameter("p7")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+
+        assert_relative_eq!(result[0].re, 0.0252330, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, 0.3971239, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_f2_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixF2::new(
+            "f2",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+                [parameter("p4"), parameter("p5")],
+                [parameter("p6"), parameter("p7")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+
+        assert_relative_eq!(result[0][0].re, -0.3078948, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, 0.3808689, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+        assert_relative_eq!(result[0][2].re, 0.4290085, epsilon = 1e-7);
+        assert_relative_eq!(result[0][2].im, 0.0799660, epsilon = 1e-7);
+        assert_relative_eq!(result[0][3].re, -result[0][2].im);
+        assert_relative_eq!(result[0][3].im, result[0][2].re);
+        assert_relative_eq!(result[0][4].re, 0.1657487, epsilon = 1e-7);
+        assert_relative_eq!(result[0][4].im, -0.0041382, epsilon = 1e-7);
+        assert_relative_eq!(result[0][5].re, -result[0][4].im);
+        assert_relative_eq!(result[0][5].im, result[0][4].re);
+        assert_relative_eq!(result[0][6].re, 0.0594691, epsilon = 1e-7);
+        assert_relative_eq!(result[0][6].im, 0.1143819, epsilon = 1e-7);
+        assert_relative_eq!(result[0][7].re, -result[0][6].im);
+        assert_relative_eq!(result[0][7].im, result[0][6].re);
+    }
+
+    #[test]
+    fn test_a0_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0].re, -0.8002759, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, -0.1359306, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_a0_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0][0].re, 0.2906192, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, -0.0998906, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+        assert_relative_eq!(result[0][2].re, -1.3136838, epsilon = 1e-7);
+        assert_relative_eq!(result[0][2].im, 1.1380269, epsilon = 1e-7);
+        assert_relative_eq!(result[0][3].re, -result[0][2].im);
+        assert_relative_eq!(result[0][3].im, result[0][2].re);
+    }
+
+    #[test]
+    fn test_a2_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixA2::new(
+            "a2",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0].re, -0.2092661, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, -0.0985062, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_a2_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixA2::new(
+            "a2",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0][0].re, -0.5756896, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, 0.9398863, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+        assert_relative_eq!(result[0][2].re, -0.0811143, epsilon = 1e-7);
+        assert_relative_eq!(result[0][2].im, -0.1522787, epsilon = 1e-7);
+        assert_relative_eq!(result[0][3].re, -result[0][2].im);
+        assert_relative_eq!(result[0][3].im, result[0][2].re);
+    }
+
+    #[test]
+    fn test_rho_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixRho::new(
+            "rho",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0].re, 0.0948355, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, 0.2609183, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_rho_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixRho::new(
+            "rho",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
+
+        assert_relative_eq!(result[0][0].re, 0.0265203, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, -0.0266026, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+        assert_relative_eq!(result[0][2].re, 0.5172379, epsilon = 1e-7);
+        assert_relative_eq!(result[0][2].im, 0.1707373, epsilon = 1e-7);
+        assert_relative_eq!(result[0][3].re, -result[0][2].im);
+        assert_relative_eq!(result[0][3].im, result[0][2].re);
+    }
+
+    #[test]
+    fn test_pi1_evaluation() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[0.1, 0.2]);
+
+        assert_relative_eq!(result[0].re, -0.1101758, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, 0.2638717, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_pi1_gradient() {
+        let mut manager = Manager::default();
+        let res_mass = Mass::new([2, 3]);
+        let amp = KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
+
+        assert_relative_eq!(result[0][0].re, -14.7987174, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, -5.8430094, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -result[0][0].im);
+        assert_relative_eq!(result[0][1].im, result[0][0].re);
+    }
+}

@@ -101,3 +101,48 @@ impl Amplitude for Zlm {
         // This amplitude is independent of free parameters
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::amplitudes::Manager;
+    use crate::data::test_dataset;
+    use crate::utils::enums::Frame;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_zlm_evaluation() {
+        let mut manager = Manager::default();
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let polarization = Polarization::new(0, [1]);
+        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, 0.0428412, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, -0.2385963, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_zlm_gradient() {
+        let mut manager = Manager::default();
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let polarization = Polarization::new(0, [1]);
+        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[]);
+        assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+}

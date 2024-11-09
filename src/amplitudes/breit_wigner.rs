@@ -103,3 +103,60 @@ impl Amplitude for BreitWigner {
         self.central_difference_with_indices(&indices, parameters, event, cache, gradient)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::amplitudes::{constant, Manager};
+    use crate::data::test_dataset;
+    use crate::utils::variables::Mass;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn test_bw_evaluation() {
+        let mut manager = Manager::default();
+        let amp = BreitWigner::new(
+            "bw",
+            constant(1.5),
+            constant(0.3),
+            2,
+            &Mass::new([2]),
+            &Mass::new([3]),
+            &Mass::new([2, 3]),
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, 1.4585691, epsilon = 1e-7);
+        assert_relative_eq!(result[0].im, 1.4107341, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_bw_gradient() {
+        let mut manager = Manager::default();
+        let amp = BreitWigner::new(
+            "bw",
+            constant(1.5),
+            constant(0.3),
+            2,
+            &Mass::new([2]),
+            &Mass::new([3]),
+            &Mass::new([2, 3]),
+        );
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let evaluator = manager.load(&dataset, &expr);
+
+        let result = evaluator.evaluate_gradient(&[]);
+        assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+}
