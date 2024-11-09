@@ -73,3 +73,15 @@ class Polarization:
     pol_magnitude: PolMagnitude
     pol_angle: PolAngle
     def __init__(self, beam: int, recoil: list[int]) -> None: ...
+
+class Mandelstam:
+    def __init__(
+        self,
+        p1: list[int],
+        p2: list[int],
+        p3: list[int],
+        p4: list[int],
+        channel: Literal["s", "t", "u"],
+    ): ...
+    def value(self, event: Event) -> float: ...
+    def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...

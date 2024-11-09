@@ -8,7 +8,7 @@ from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
 from laddu.data import BinnedDataset, Dataset, open
 from laddu.likelihoods import NLL, LikelihoodManager, Status
-from laddu.utils.variables import Angles, CosTheta, Mass, Phi, PolAngle, Polarization, PolMagnitude
+from laddu.utils.variables import Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, Polarization, PolMagnitude
 from laddu.utils.vectors import Vector3, Vector4
 
 from . import amplitudes, convert, data, likelihoods, utils
@@ -42,6 +42,7 @@ __all__ = [
     "PolMagnitude",
     "PolAngle",
     "Polarization",
+    "Mandelstam",
     "Mass",
     "Manager",
     "LikelihoodManager",
