@@ -305,3 +305,101 @@ impl Polarization {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use approx::assert_relative_eq;
+
+    use crate::data::{test_dataset, test_event};
+
+    use super::*;
+    #[test]
+    fn test_mass_single_particle() {
+        let event = test_event();
+        let mass = Mass::new([1]);
+        assert_relative_eq!(mass.value(&event), 1.007);
+    }
+
+    #[test]
+    fn test_mass_multiple_particles() {
+        let event = test_event();
+        let mass = Mass::new([2, 3]);
+        assert_relative_eq!(mass.value(&event), 1.3743786, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_costheta_helicity() {
+        let event = test_event();
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(costheta.value(&event), -0.4611175, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_phi_helicity() {
+        let event = test_event();
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(phi.value(&event), -2.6574625, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_costheta_gottfried_jackson() {
+        let event = test_event();
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
+        assert_relative_eq!(costheta.value(&event), 0.09198832, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_phi_gottfried_jackson() {
+        let event = test_event();
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
+        assert_relative_eq!(phi.value(&event), -2.7139131, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_angles() {
+        let event = test_event();
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_relative_eq!(angles.costheta.value(&event), -0.4611175, epsilon = 1e-7);
+        assert_relative_eq!(angles.phi.value(&event), -2.6574625, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_pol_angle() {
+        let event = test_event();
+        let pol_angle = PolAngle::new(0, vec![1]);
+        assert_relative_eq!(pol_angle.value(&event), 1.9359298, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_pol_magnitude() {
+        let event = test_event();
+        let pol_magnitude = PolMagnitude::new(0);
+        assert_relative_eq!(pol_magnitude.value(&event), 0.3856280, epsilon = 1e-7);
+    }
+
+    #[test]
+    fn test_polarization() {
+        let event = test_event();
+        let polarization = Polarization::new(0, vec![1]);
+        assert_relative_eq!(
+            polarization.pol_angle.value(&event),
+            1.9359298,
+            epsilon = 1e-7
+        );
+        assert_relative_eq!(
+            polarization.pol_magnitude.value(&event),
+            0.3856280,
+            epsilon = 1e-7
+        );
+    }
+
+    #[test]
+    fn test_variable_value_on() {
+        let dataset = Arc::new(test_dataset());
+        let mass = Mass::new(vec![2, 3]);
+
+        let values = mass.value_on(&dataset);
+        assert_eq!(values.len(), 1);
+        assert_relative_eq!(values[0], 1.3743786, epsilon = 1e-7);
+    }
+}
