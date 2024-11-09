@@ -185,6 +185,12 @@ impl Display for AmplitudeID {
     }
 }
 
+impl From<AmplitudeID> for Expression {
+    fn from(value: AmplitudeID) -> Self {
+        Self::Amp(value)
+    }
+}
+
 /// An expression tree which contains [`AmplitudeID`]s and operators over them.
 #[derive(Clone)]
 pub enum Expression {
