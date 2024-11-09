@@ -1302,11 +1302,11 @@ pub(crate) mod laddu {
     /// By convention, the metric is chosen to be :math:`(+---)` and the variables are defined as follows
     /// (ignoring factors of :math:`c`):
     ///
-    /// ..math :: s = (p_1 + p_2)^2 = (p_3 + p_4)^2
+    /// .. math:: s = (p_1 + p_2)^2 = (p_3 + p_4)^2
     ///
-    /// ..math :: t = (p_1 - p_3)^2 = (p_4 - p_2)^2
+    /// .. math:: t = (p_1 - p_3)^2 = (p_4 - p_2)^2
     ///
-    /// ..math :: u = (p_1 - p_4)^2 = (p_3 - p_2)^2
+    /// .. math:: u = (p_1 - p_4)^2 = (p_3 - p_2)^2
     ///
     /// Parameters
     /// ----------
