@@ -34,8 +34,17 @@ pub fn test_event() -> Event {
     }
 }
 
+/// An dataset that can be used to test the implementation of an
+/// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a singular
+/// [`Event`] generated from [`test_event`].
+pub fn test_dataset() -> Dataset {
+    Dataset {
+        events: vec![Arc::new(test_event())],
+    }
+}
+
 /// A single event in a [`Dataset`] containing all the relevant particle information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Event {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vector4<Float>>,
@@ -554,8 +563,7 @@ mod tests {
 
     #[test]
     fn test_dataset_filtering() {
-        let mut dataset = Dataset::default();
-        dataset.events.push(Arc::new(test_event()));
+        let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: vec![
                 Vector4::from_momentum(&vector![0.0, 0.0, 5.0], 0.0),
@@ -607,8 +615,7 @@ mod tests {
 
     #[test]
     fn test_dataset_bootstrap() {
-        let mut dataset = Dataset::default();
-        dataset.events.push(Arc::new(test_event()));
+        let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: test_event().p4s.clone(),
             eps: test_event().eps.clone(),
