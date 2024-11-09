@@ -65,9 +65,43 @@ impl FromStr for Sign {
     }
 }
 
+/// An enum for Mandelstam variables
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Channel {
+    /// s-channel
+    S,
+    /// t-channel
+    T,
+    /// u-channel
+    U,
+}
+
+impl Display for Channel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Channel::S => write!(f, "s"),
+            Channel::T => write!(f, "t"),
+            Channel::U => write!(f, "u"),
+        }
+    }
+}
+
+impl FromStr for Channel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_ref() {
+            "s" => Ok(Self::S),
+            "t" => Ok(Self::T),
+            "u" => Ok(Self::U),
+            _ => Err("Invalid Mandelstam variable".to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::utils::enums::{Frame, Sign};
+    use super::*;
     use std::str::FromStr;
 
     #[test]
@@ -76,6 +110,9 @@ mod tests {
         assert_eq!(format!("{}", Frame::GottfriedJackson), "Gottfried-Jackson");
         assert_eq!(format!("{}", Sign::Positive), "+");
         assert_eq!(format!("{}", Sign::Negative), "-");
+        assert_eq!(format!("{}", Channel::S), "s");
+        assert_eq!(format!("{}", Channel::T), "t");
+        assert_eq!(format!("{}", Channel::U), "u");
     }
 
     #[test]
@@ -104,5 +141,11 @@ mod tests {
         assert_eq!(Sign::from_str("minus").unwrap(), Sign::Negative);
         assert_eq!(Sign::from_str("neg").unwrap(), Sign::Negative);
         assert_eq!(Sign::from_str("Negative").unwrap(), Sign::Negative);
+        assert_eq!(Channel::from_str("S").unwrap(), Channel::S);
+        assert_eq!(Channel::from_str("s").unwrap(), Channel::S);
+        assert_eq!(Channel::from_str("T").unwrap(), Channel::T);
+        assert_eq!(Channel::from_str("t").unwrap(), Channel::T);
+        assert_eq!(Channel::from_str("U").unwrap(), Channel::U);
+        assert_eq!(Channel::from_str("u").unwrap(), Channel::U);
     }
 }
