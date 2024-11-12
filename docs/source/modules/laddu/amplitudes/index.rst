@@ -1,4 +1,4 @@
-Amplitudes
+amplitudes
 ==========
 
 .. automodule:: laddu.amplitudes
