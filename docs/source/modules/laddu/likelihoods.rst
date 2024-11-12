@@ -1,4 +1,4 @@
-Likelihoods
+likelihoods
 ===========
 
 .. automodule:: laddu.likelihoods
