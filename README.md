@@ -197,7 +197,7 @@ def main():
     
     s0p = manager.register(ld.Scalar("s0p", parameter("s0p")))
     s0n = manager.register(ld.Scalar("s0n", parameter("s0n")))
-    d2p = manager.register(ld.ComplexScalar("d2", parameter("d2 re"), parameter("d2 im")))
+    d2p = manager.register(ld.ComplexScalar("d2p", parameter("d2 re"), parameter("d2 im")))
 
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
@@ -205,15 +205,21 @@ def main():
     neg_im = (s0n * z00n.imag()).norm_sqr()
     model = pos_re + pos_im + neg_re + neg_im
 
-    nll = ld.NLL(manager, ds_data, ds_mc)
-    status = nll.minimize(model, [1.0] * len(nll.parameters))
+    nll = ld.NLL(manager, model, ds_data, ds_mc)
+    status = nll.minimize([1.0] * len(nll.parameters))
     print(status)
-    fit_weights = nll.project(status.x, model)
+    fit_weights = nll.project(status.x)
+    s0p_weights = nll.project_with(status.x, ["z00p", "s0p"])
+    s0n_weights = nll.project_with(status.x, ["z00n", "s0n"])
+    d2p_weights = nll.project_with(status.x, ["z22p", "d2p"])
     masses_mc = res_mass.value_on(ds_mc)
     masses_data = res_mass.value_on(ds_data)
     weights_data = ds_data.weights
     plt.hist(masses_data, weights=weights_data, bins=80, range=(1.0, 2.0), label="Data", histtype="step")
     plt.hist(masses_mc, weights=fit_weights, bins=80, range=(1.0, 2.0), label="Fit", histtype="step")
+    plt.hist(masses_mc, weights=s0p_weights, bins=80, range=(1.0, 2.0), label="$S_0^+$", histtype="step")
+    plt.hist(masses_mc, weights=s0n_weights, bins=80, range=(1.0, 2.0), label="$S_0^-$", histtype="step")
+    plt.hist(masses_mc, weights=d2p_weights, bins=80, range=(1.0, 2.0), label="$D_2^+$", histtype="step")
     plt.legend()
     plt.savefig("demo.svg")
 

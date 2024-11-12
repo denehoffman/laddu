@@ -178,13 +178,13 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
     d2p_res = []
     d2p_res_err = []
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)
 
     for ibin in range(bins):
         logger.info(f"Fitting Bin #{ibin}")
         best_nll = np.inf
         best_status = None
-        nll = ld.NLL(manager, data_ds_binned[ibin], accmc_ds_binned[ibin], model)
+        nll = ld.NLL(manager, model, data_ds_binned[ibin], accmc_ds_binned[ibin])
         for iiter in range(niters):
             logger.info(f"Fitting Iteration #{iiter}")
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
@@ -210,7 +210,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
         for iboot in range(nboot):
             logger.info(f"Running bootstrap fit #{iboot}")
             boot_nll = ld.NLL(
-                manager, data_ds_binned[ibin].bootstrap(iboot), accmc_ds_binned[ibin].bootstrap(iboot), model
+                manager, model, data_ds_binned[ibin].bootstrap(iboot), accmc_ds_binned[ibin].bootstrap(iboot)
             )
             boot_status = boot_nll.minimize(best_status.x)
 
@@ -253,7 +253,7 @@ def fit_unbinned(
     pos_im = (s0p * bw_f01500 * z00p.imag() + d2p * bw_f21525 * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)
 
     best_nll = np.inf
     best_status = None
@@ -264,7 +264,7 @@ def fit_unbinned(
         (-1000.0, 1000.0),
         (-1000.0, 1000.0),
     ]
-    nll = ld.NLL(manager, data_ds, accmc_ds, model)
+    nll = ld.NLL(manager, model, data_ds, accmc_ds)
     for iiter in range(niters):
         logger.info(f"Fitting Iteration #{iiter}")
         p0 = rng.uniform(-1000.0, 1000.0, 3)
@@ -288,7 +288,7 @@ def fit_unbinned(
     boot_statuses = []
     for iboot in range(nboot):
         logger.info(f"Running bootstrap fit #{iboot}")
-        boot_nll = ld.NLL(manager, data_ds.bootstrap(iboot), accmc_ds.bootstrap(iboot), model)
+        boot_nll = ld.NLL(manager, model, data_ds.bootstrap(iboot), accmc_ds.bootstrap(iboot))
         boot_statuses.append(boot_nll.minimize(best_status.x))
 
     return (tot_weights, s0p_weights, d2p_weights, best_status, boot_statuses, nll.parameters)
