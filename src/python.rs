@@ -1915,10 +1915,17 @@ pub(crate) mod laddu {
     ///     The Manager to use for precalculation
     /// ds_data : Dataset
     ///     A Dataset representing true signal data
-    /// ds_mc : Dataset
-    ///     A Dataset of physically flat Monte Carlo data used for normalization
+    /// ds_accmc : Dataset
+    ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
+    /// ds_genmc : Dataset, optional
+    ///     A Dataset of physically flat generated Monte Carlo data used for normalization
     /// expression : Expression
     ///     The Expression to evaluate
+    ///
+    /// Notes
+    /// -----
+    /// If no generated Monte Carlo dataset is given, the accepted Monte Carlo will be used in its
+    /// place.
     ///
     #[pyclass]
     #[derive(Clone)]
@@ -1927,17 +1934,20 @@ pub(crate) mod laddu {
     #[pymethods]
     impl NLL {
         #[new]
+        #[pyo3(signature = (manager, expression, ds_data, ds_accmc, ds_genmc=None))]
         fn new(
             manager: &Manager,
-            ds_data: &Dataset,
-            ds_mc: &Dataset,
             expression: &Expression,
+            ds_data: &Dataset,
+            ds_accmc: &Dataset,
+            ds_genmc: Option<&Dataset>,
         ) -> Self {
             Self(rust::likelihoods::NLL::new(
                 &manager.0,
-                &ds_data.0,
-                &ds_mc.0,
                 &expression.0,
+                &ds_data.0,
+                &ds_accmc.0,
+                ds_genmc.map(|ds| &ds.0),
             ))
         }
         /// The underlying signal dataset used in calculating the NLL
@@ -1950,15 +1960,25 @@ pub(crate) mod laddu {
         fn data(&self) -> Dataset {
             Dataset(self.0.data_evaluator.dataset.clone())
         }
-        /// The underlying Monte Carlo dataset used in calculating the NLL
+        /// The underlying accepted Monte Carlo dataset used in calculating the NLL
         ///
         /// Returns
         /// -------
         /// Dataset
         ///
         #[getter]
-        fn mc(&self) -> Dataset {
-            Dataset(self.0.mc_evaluator.dataset.clone())
+        fn accmc(&self) -> Dataset {
+            Dataset(self.0.accmc_evaluator.dataset.clone())
+        }
+        /// The underlying generated Monte Carlo dataset used in calculating the NLL
+        ///
+        /// Returns
+        /// -------
+        /// Dataset
+        ///
+        #[getter]
+        fn genmc(&self) -> Dataset {
+            Dataset(self.0.genmc_evaluator.dataset.clone())
         }
         /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
         ///
@@ -2073,7 +2093,7 @@ pub(crate) mod laddu {
         ///
         /// This is defined as
         ///
-        /// .. math:: NLL(\vec{p}; D, MC) = -2 \left( \sum_{e \in D} (e_w \log(\mathcal{L}(e) / N_D)) - \frac{1}{N_{MC}} \sum_{e \in MC} (e_w \mathcal{L}(e)) \right)
+        /// .. math:: NLL(\vec{p}; D, MC) = -2 \left( \sum_{e \in D} (e_w \log(\mathcal{L}(e))) - \frac{1}{N_{MC}} \sum_{e \in MC} (e_w \mathcal{L}(e)) \right)
         ///
         /// Parameters
         /// ----------
@@ -2098,18 +2118,22 @@ pub(crate) mod laddu {
         /// ----------
         /// parameters : list of float
         ///     The values to use for the free parameters
+        /// corrected : bool=False
+        ///     Use generated Monte Carlo, thus returning acceptance-corrected results
         ///
         /// Returns
         /// -------
         /// result : array_like
         ///     Weights for every Monte Carlo event which represent the fit to data
         ///
+        #[pyo3(signature = (parameters, *, corrected = false))]
         fn project<'py>(
             &self,
             py: Python<'py>,
             parameters: Vec<Float>,
+            corrected: bool,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.project(&parameters))
+            PyArray1::from_slice_bound(py, &self.0.project(&parameters, corrected))
         }
 
         /// Project the model over the Monte Carlo dataset with the given parameter values, first
@@ -2126,6 +2150,8 @@ pub(crate) mod laddu {
         ///     The values to use for the free parameters
         /// arg : str or list of str
         ///     Names of Amplitudes to be isolated
+        /// corrected : bool=False
+        ///     Use generated Monte Carlo, thus returning acceptance-corrected results
         ///
         /// Returns
         /// -------
@@ -2137,11 +2163,13 @@ pub(crate) mod laddu {
         /// TypeError
         ///     If `arg` is not a str or list of str
         ///
+        #[pyo3(signature = (parameters, arg, *, corrected = false))]
         fn project_with<'py>(
             &self,
             py: Python<'py>,
             parameters: Vec<Float>,
             arg: &Bound<'_, PyAny>,
+            corrected: bool,
         ) -> PyResult<Bound<'py, PyArray1<Float>>> {
             let names = if let Ok(string_arg) = arg.extract::<String>() {
                 vec![string_arg]
@@ -2155,7 +2183,7 @@ pub(crate) mod laddu {
             };
             Ok(PyArray1::from_slice_bound(
                 py,
-                &self.0.project_with(&parameters, &names),
+                &self.0.project_with(&parameters, &names, corrected),
             ))
         }
 
