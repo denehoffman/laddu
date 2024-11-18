@@ -2781,6 +2781,12 @@ pub(crate) mod laddu {
             *self = Status(deserialize(state.as_bytes()).unwrap());
             Ok(())
         }
+        /// Converts a Status into a Python dictionary
+        ///
+        /// Returns
+        /// -------
+        /// dict
+        ///
         fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
             let dict = PyDict::new_bound(py);
             dict.set_item("x", self.x(py))?;
