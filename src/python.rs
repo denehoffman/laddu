@@ -20,6 +20,7 @@ pub(crate) mod laddu {
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
+    use bincode::{deserialize, serialize};
     use ganesh::algorithms::lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator};
     use ganesh::algorithms::nelder_mead::{
         NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod,
@@ -28,6 +29,7 @@ pub(crate) mod laddu {
     use num::Complex;
     use numpy::{PyArray1, PyArray2};
     use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+    use pyo3::types::PyBytes;
     use pyo3::types::{PyDict, PyList};
 
     #[pyfunction]
@@ -2765,6 +2767,35 @@ pub(crate) mod laddu {
         fn load(path: &str) -> PyResult<Self> {
             Ok(Status(ganesh::Status::load(path)?))
         }
+        #[new]
+        fn new() -> Self {
+            Status(ganesh::Status::default())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new_bound(
+                py,
+                serialize(&self.0).unwrap().as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Status(deserialize(state.as_bytes()).unwrap());
+            Ok(())
+        }
+        fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("x", self.x(py))?;
+            dict.set_item("err", self.err(py))?;
+            dict.set_item("x0", self.x0(py))?;
+            dict.set_item("fx", self.fx())?;
+            dict.set_item("cov", self.cov(py))?;
+            dict.set_item("hess", self.hess(py))?;
+            dict.set_item("message", self.message())?;
+            dict.set_item("converged", self.converged())?;
+            dict.set_item("bounds", self.bounds())?;
+            dict.set_item("n_f_evals", self.n_f_evals())?;
+            dict.set_item("n_g_evals", self.n_g_evals())?;
+            Ok(dict)
+        }
     }
 
     /// A class representing a lower and upper bound on a free parameter
@@ -2772,7 +2803,7 @@ pub(crate) mod laddu {
     #[pyclass]
     #[derive(Clone)]
     #[pyo3(name = "Bound")]
-    struct ParameterBound(ganesh::Bound<Float>);
+    pub(crate) struct ParameterBound(pub(crate) ganesh::Bound<Float>);
     #[pymethods]
     impl ParameterBound {
         /// The lower bound
@@ -3464,5 +3495,10 @@ impl Observer<Float, ()> for crate::python::laddu::PyObserver {
 impl FromPyObject<'_> for crate::python::laddu::PyObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(crate::python::laddu::PyObserver(ob.clone().into()))
+    }
+}
+impl ToPyObject for crate::python::laddu::ParameterBound {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        PyTuple::new_bound(py, vec![self.0.lower(), self.0.upper()]).into()
     }
 }
