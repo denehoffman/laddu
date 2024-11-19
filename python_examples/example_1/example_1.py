@@ -27,17 +27,20 @@ from uncertainties import ufloat
 def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_file = str(script_dir / "data_1.parquet")
-    mc_file = str(script_dir / "mc_1.parquet")
+    accmc_file = str(script_dir / "mc_1.parquet")
+    genmc_file = str(script_dir / "mc_1.parquet")
     start = perf_counter()
     logger.info("Opening Data file...")
     data_ds = ld.open(data_file)
-    logger.info("Opening MC file...")
-    accmc_ds = ld.open(mc_file)
+    logger.info("Opening AccMC file...")
+    accmc_ds = ld.open(accmc_file)
+    logger.info("Opening GenMC file...")
+    genmc_ds = ld.open(genmc_file)
     binned_tot_res, binned_tot_err, binned_s0p_res, binned_s0p_err, binned_d2p_res, binned_d2p_err, bin_edges = (
-        fit_binned(bins, niters, nboot, data_ds, accmc_ds)
+        fit_binned(bins, niters, nboot, data_ds, accmc_ds, genmc_ds)
     )
     tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = fit_unbinned(
-        niters, nboot, data_ds, accmc_ds
+        niters, nboot, data_ds, accmc_ds, genmc_ds
     )
     end = perf_counter()
     logger.info(f"Total time: {end - start:.3f}s")
@@ -155,13 +158,14 @@ def main(bins: int, niters: int, nboot: int):  # noqa: PLR0915
     plt.savefig("example_1.svg")
 
 
-def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset):
+def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset, genmc_ds: ld.Dataset):
     logger.info("Starting Binned Fit")
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
     polarization = ld.Polarization(0, [1])
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
+    genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
     z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
@@ -184,7 +188,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
         logger.info(f"Fitting Bin #{ibin}")
         best_nll = np.inf
         best_status = None
-        nll = ld.NLL(manager, model, data_ds_binned[ibin], accmc_ds_binned[ibin])
+        nll = ld.NLL(manager, model, data_ds_binned[ibin], accmc_ds_binned[ibin], len(genmc_ds_binned[ibin]))
         for iiter in range(niters):
             logger.info(f"Fitting Iteration #{iiter}")
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
@@ -198,10 +202,8 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
             sys.exit(1)
 
         tot_res.append(nll.project(best_status.x).sum())
-        nll.isolate(["Z00+", "S0+"])
-        s0p_res.append(nll.project(best_status.x).sum())
-        nll.isolate(["Z22+", "D2+"])
-        d2p_res.append(nll.project(best_status.x).sum())
+        s0p_res.append(nll.project_with(best_status.x, ["Z00+", "S0+"]).sum())
+        d2p_res.append(nll.project_with(best_status.x, ["Z22+", "D2+"]).sum())
         nll.activate_all()
 
         tot_boot = []
@@ -215,10 +217,8 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
             boot_status = boot_nll.minimize(best_status.x)
 
             tot_boot.append(boot_nll.project(boot_status.x).sum())
-            boot_nll.isolate(["Z00+", "S0+"])
-            s0p_boot.append(boot_nll.project(boot_status.x).sum())
-            boot_nll.isolate(["Z22+", "D2+"])
-            d2p_boot.append(boot_nll.project(boot_status.x).sum())
+            s0p_boot.append(boot_nll.project_with(boot_status.x, ["Z00+", "S0+"]).sum())
+            d2p_boot.append(boot_nll.project_with(boot_status.x, ["Z22+", "D2+"]).sum())
             boot_nll.activate_all()
         tot_res_err.append(np.std(tot_boot))
         s0p_res_err.append(np.std(s0p_boot))
@@ -228,7 +228,7 @@ def fit_binned(bins: int, niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds
 
 
 def fit_unbinned(
-    niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset
+    niters: int, nboot: int, data_ds: ld.Dataset, accmc_ds: ld.Dataset, genmc_ds: ld.Dataset
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, ld.Status, list[ld.Status], list[str]]:
     logger.info("Starting Unbinned Fit")
     res_mass = ld.Mass([2, 3])
@@ -264,7 +264,7 @@ def fit_unbinned(
         (-1000.0, 1000.0),
         (-1000.0, 1000.0),
     ]
-    nll = ld.NLL(manager, model, data_ds, accmc_ds)
+    nll = ld.NLL(manager, model, data_ds, accmc_ds, len(genmc_ds))
     for iiter in range(niters):
         logger.info(f"Fitting Iteration #{iiter}")
         p0 = rng.uniform(-1000.0, 1000.0, 3)

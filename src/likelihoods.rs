@@ -93,7 +93,7 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 pub struct NLL {
     pub(crate) data_evaluator: Evaluator,
     pub(crate) accmc_evaluator: Evaluator,
-    pub(crate) genmc_evaluator: Evaluator,
+    pub(crate) gen_len: usize,
 }
 
 impl NLL {
@@ -105,13 +105,13 @@ impl NLL {
         expression: &Expression,
         ds_data: &Arc<Dataset>,
         ds_accmc: &Arc<Dataset>,
-        ds_genmc: Option<&Arc<Dataset>>,
+        gen_len: Option<usize>,
     ) -> Box<Self> {
-        let ds_genmc = ds_genmc.unwrap_or(ds_accmc);
+        let gen_len = gen_len.unwrap_or(ds_accmc.len());
         Self {
             data_evaluator: manager.clone().load(ds_data, expression),
             accmc_evaluator: manager.clone().load(ds_accmc, expression),
-            genmc_evaluator: manager.clone().load(ds_genmc, expression),
+            gen_len,
         }
         .into()
     }
@@ -119,49 +119,41 @@ impl NLL {
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.activate(&name);
         self.accmc_evaluator.activate(&name);
-        self.genmc_evaluator.activate(name);
     }
     /// Activate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.activate_many(names);
         self.accmc_evaluator.activate_many(names);
-        self.genmc_evaluator.activate_many(names);
     }
     /// Activate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
-        self.genmc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.deactivate(&name);
         self.accmc_evaluator.deactivate(&name);
-        self.genmc_evaluator.deactivate(name);
     }
     /// Deactivate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.deactivate_many(names);
         self.accmc_evaluator.deactivate_many(names);
-        self.genmc_evaluator.deactivate_many(names);
     }
     /// Deactivate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
-        self.genmc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.data_evaluator.isolate(&name);
         self.accmc_evaluator.isolate(&name);
-        self.genmc_evaluator.isolate(name);
     }
     /// Isolate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name (deactivate the rest).
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.data_evaluator.isolate_many(names);
         self.accmc_evaluator.isolate_many(names);
-        self.genmc_evaluator.isolate_many(names);
     }
 
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -178,11 +170,11 @@ impl NLL {
     /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
     /// otherwise it will use the accepted Monte Carlo.
     #[cfg(feature = "rayon")]
-    pub fn project(&self, parameters: &[Float], corrected: bool) -> Vec<Float> {
-        let (events, result) = if corrected {
+    pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
+        let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
-                &self.genmc_evaluator.dataset,
-                self.genmc_evaluator.evaluate(parameters),
+                &mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
             )
         } else {
             (
@@ -212,11 +204,11 @@ impl NLL {
     /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
     /// otherwise it will use the accepted Monte Carlo.
     #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, parameters: &[Float], corrected: bool) -> Vec<Float> {
-        let (events, result) = if corrected {
+    pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
+        let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
-                &self.genmc_evaluator.dataset,
-                self.genmc_evaluator.evaluate(parameters),
+                &mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
             )
         } else {
             (
@@ -254,16 +246,16 @@ impl NLL {
         &self,
         parameters: &[Float],
         names: &[T],
-        corrected: bool,
+        mc_evaluator: Option<Evaluator>,
     ) -> Vec<Float> {
         let current_active_data = self.data_evaluator.resources.read().active.clone();
         let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
         let current_active_genmc = self.accmc_evaluator.resources.read().active.clone();
         self.isolate_many(names);
-        let (events, result) = if corrected {
+        let (events, result) = if let Some(mc_evaluator) = &mc_evaluator {
             (
-                &self.genmc_evaluator.dataset,
-                self.genmc_evaluator.evaluate(parameters),
+                &mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
             )
         } else {
             (
@@ -279,7 +271,9 @@ impl NLL {
             .collect();
         self.data_evaluator.resources.write().active = current_active_data;
         self.accmc_evaluator.resources.write().active = current_active_accmc;
-        self.genmc_evaluator.resources.write().active = current_active_genmc;
+        if let Some(mc_evaluator) = &mc_evaluator {
+            mc_evaluator.resources.write().active = current_active_genmc;
+        }
         res
     }
 
@@ -301,15 +295,21 @@ impl NLL {
     /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
     /// otherwise it will use the accepted Monte Carlo.
     #[cfg(not(feature = "rayon"))]
-    pub fn project_with<T: AsRef<str>>(&self, parameters: &[Float], names: &[T]) -> Vec<Float> {
+
+    pub fn project_with<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Vec<Float> {
         let current_active_data = self.data_evaluator.resources.read().active.clone();
         let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
         let current_active_genmc = self.accmc_evaluator.resources.read().active.clone();
         self.isolate_many(names);
-        let (events, result) = if corrected {
+        let (events, result) = if let Some(mc_evaluator) = &mc_evaluator {
             (
-                &self.genmc_evaluator.dataset,
-                self.genmc_evaluator.evaluate(parameters),
+                &mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
             )
         } else {
             (
@@ -325,7 +325,9 @@ impl NLL {
             .collect();
         self.data_evaluator.resources.write().active = current_active_data;
         self.accmc_evaluator.resources.write().active = current_active_accmc;
-        self.genmc_evaluator.resources.write().active = current_active_genmc;
+        if let Some(mc_evaluator) = &mc_evaluator {
+            mc_evaluator.resources.write().active = current_active_genmc;
+        }
         res
     }
 }
@@ -355,7 +357,6 @@ impl LikelihoodTerm for NLL {
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
         let mc_result = self.accmc_evaluator.evaluate(parameters);
-        let n_mc = self.genmc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
@@ -366,7 +367,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.accmc_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * l.re)
             .parallel_sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.gen_len as Float)
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -383,7 +384,6 @@ impl LikelihoodTerm for NLL {
         let data_result = self.data_evaluator.evaluate(parameters);
         let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.accmc_evaluator.evaluate(parameters);
-        let n_mc = self.genmc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .iter()
             .zip(self.data_evaluator.dataset.iter())
@@ -394,7 +394,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re)
             .sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.gen_len as Float)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -407,7 +407,6 @@ impl LikelihoodTerm for NLL {
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.genmc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -508,7 +507,7 @@ impl LikelihoodTerm for NLL {
             .collect::<Vec<DVector<Float>>>()
             .iter()
             .sum();
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.gen_len as Float)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -523,7 +522,6 @@ impl LikelihoodTerm for NLL {
         let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.genmc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -620,7 +618,7 @@ impl LikelihoodTerm for NLL {
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
             .sum();
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.gen_len as Float)
     }
 }
 
