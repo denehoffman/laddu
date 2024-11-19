@@ -2033,20 +2033,18 @@ pub(crate) mod laddu {
     #[pymethods]
     impl NLL {
         #[new]
-        #[pyo3(signature = (manager, expression, ds_data, ds_accmc, gen_len=None))]
+        #[pyo3(signature = (manager, expression, ds_data, ds_accmc))]
         fn new(
             manager: &Manager,
             expression: &Expression,
             ds_data: &Dataset,
             ds_accmc: &Dataset,
-            gen_len: Option<usize>,
         ) -> Self {
             Self(rust::likelihoods::NLL::new(
                 &manager.0,
                 &expression.0,
                 &ds_data.0,
                 &ds_accmc.0,
-                gen_len,
             ))
         }
         /// The underlying signal dataset used in calculating the NLL
@@ -2068,16 +2066,6 @@ pub(crate) mod laddu {
         #[getter]
         fn accmc(&self) -> Dataset {
             Dataset(self.0.accmc_evaluator.dataset.clone())
-        }
-        /// The underlying generated Monte Carlo dataset used in calculating the NLL
-        ///
-        /// Returns
-        /// -------
-        /// Dataset
-        ///
-        #[getter]
-        fn gen_len(&self) -> usize {
-            self.0.gen_len
         }
         /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
         ///

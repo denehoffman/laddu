@@ -44,14 +44,12 @@ class NLL:
     parameters: list[str]
     data: Dataset
     accmc: Dataset
-    gen_len: int
     def __init__(
         self,
         manager: Manager,
         expression: Expression,
         ds_data: Dataset,
         ds_accmc: Dataset,
-        gen_len: int | None = None,
     ) -> None: ...
     def as_term(self) -> LikelihoodTerm: ...
     def activate(self, name: str | list[str]) -> None: ...

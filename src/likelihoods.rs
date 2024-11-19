@@ -93,7 +93,6 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 pub struct NLL {
     pub(crate) data_evaluator: Evaluator,
     pub(crate) accmc_evaluator: Evaluator,
-    pub(crate) gen_len: usize,
 }
 
 impl NLL {
@@ -105,13 +104,10 @@ impl NLL {
         expression: &Expression,
         ds_data: &Arc<Dataset>,
         ds_accmc: &Arc<Dataset>,
-        gen_len: Option<usize>,
     ) -> Box<Self> {
-        let gen_len = gen_len.unwrap_or(ds_accmc.len());
         Self {
             data_evaluator: manager.clone().load(ds_data, expression),
             accmc_evaluator: manager.clone().load(ds_accmc, expression),
-            gen_len,
         }
         .into()
     }
@@ -167,8 +163,8 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
     /// ```
     ///
-    /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
-    /// otherwise it will use the accepted Monte Carlo.
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
     #[cfg(feature = "rayon")]
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
         let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
@@ -182,7 +178,7 @@ impl NLL {
                 self.accmc_evaluator.evaluate(parameters),
             )
         };
-        let n_mc = events.len() as Float;
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         result
             .par_iter()
             .zip(events.par_iter())
@@ -201,8 +197,8 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{1}{N_{\text{MC}}}
     /// ```
     ///
-    /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
-    /// otherwise it will use the accepted Monte Carlo.
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
     #[cfg(not(feature = "rayon"))]
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
         let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
@@ -216,7 +212,7 @@ impl NLL {
                 self.accmc_evaluator.evaluate(parameters),
             )
         };
-        let n_mc = events.len() as Float;
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         result
             .iter()
             .zip(events.iter())
@@ -239,8 +235,8 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
     /// ```
     ///
-    /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
-    /// otherwise it will use the accepted Monte Carlo.
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
     #[cfg(feature = "rayon")]
     pub fn project_with<T: AsRef<str>>(
         &self,
@@ -248,33 +244,35 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> Vec<Float> {
-        let current_active_data = self.data_evaluator.resources.read().active.clone();
-        let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-        let current_active_genmc = self.accmc_evaluator.resources.read().active.clone();
-        self.isolate_many(names);
-        let (events, result) = if let Some(mc_evaluator) = &mc_evaluator {
-            (
-                &mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate(parameters),
-            )
-        } else {
-            (
-                &self.accmc_evaluator.dataset,
-                self.accmc_evaluator.evaluate(parameters),
-            )
-        };
-        let n_mc = events.len() as Float;
-        let res = result
-            .par_iter()
-            .zip(events.par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect();
-        self.data_evaluator.resources.write().active = current_active_data;
-        self.accmc_evaluator.resources.write().active = current_active_accmc;
         if let Some(mc_evaluator) = &mc_evaluator {
-            mc_evaluator.resources.write().active = current_active_genmc;
+            let current_active_mc = mc_evaluator.resources.read().active.clone();
+            mc_evaluator.isolate_many(names);
+            let events = mc_evaluator.dataset.clone();
+            let result = mc_evaluator.evaluate(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            let res = result
+                .par_iter()
+                .zip(events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            mc_evaluator.resources.write().active = current_active_mc;
+            res
+        } else {
+            let current_active_data = self.data_evaluator.resources.read().active.clone();
+            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
+            self.isolate_many(names);
+            let events = &self.accmc_evaluator.dataset;
+            let result = self.accmc_evaluator.evaluate(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            let res = result
+                .par_iter()
+                .zip(events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            self.data_evaluator.resources.write().active = current_active_data;
+            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            res
         }
-        res
     }
 
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -292,43 +290,44 @@ impl NLL {
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
     /// ```
     ///
-    /// If `corrected` is `true`, this will use the generated Monte Carlo in the calculation,
-    /// otherwise it will use the accepted Monte Carlo.
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
     #[cfg(not(feature = "rayon"))]
-
     pub fn project_with<T: AsRef<str>>(
         &self,
         parameters: &[Float],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> Vec<Float> {
-        let current_active_data = self.data_evaluator.resources.read().active.clone();
-        let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-        let current_active_genmc = self.accmc_evaluator.resources.read().active.clone();
-        self.isolate_many(names);
-        let (events, result) = if let Some(mc_evaluator) = &mc_evaluator {
-            (
-                &mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate(parameters),
-            )
-        } else {
-            (
-                &self.accmc_evaluator.dataset,
-                self.accmc_evaluator.evaluate(parameters),
-            )
-        };
-        let n_mc = events.len() as Float;
-        let res = result
-            .iter()
-            .zip(events.iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect();
-        self.data_evaluator.resources.write().active = current_active_data;
-        self.accmc_evaluator.resources.write().active = current_active_accmc;
         if let Some(mc_evaluator) = &mc_evaluator {
-            mc_evaluator.resources.write().active = current_active_genmc;
+            let current_active_mc = mc_evaluator.resources.read().active.clone();
+            mc_evaluator.isolate_many(names);
+            let events = mc_evaluator.dataset.clone();
+            let result = mc_evaluator.evaluate(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            let res = result
+                .iter()
+                .zip(events.iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            mc_evaluator.resources.write().active = current_active_mc;
+            res
+        } else {
+            let current_active_data = self.data_evaluator.resources.read().active.clone();
+            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
+            self.isolate_many(names);
+            let events = &self.accmc_evaluator.dataset;
+            let result = self.accmc_evaluator.evaluate(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            let res = result
+                .iter()
+                .zip(events.iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            self.data_evaluator.resources.write().active = current_active_data;
+            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            res
         }
-        res
     }
 }
 
@@ -351,12 +350,13 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_G}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(feature = "rayon")]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
         let mc_result = self.accmc_evaluator.evaluate(parameters);
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
@@ -367,7 +367,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.accmc_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * l.re)
             .parallel_sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / self.gen_len as Float)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -377,13 +377,14 @@ impl LikelihoodTerm for NLL {
     /// result is given by the following formula:
     ///
     /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_G}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
+    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     #[cfg(not(feature = "rayon"))]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
         let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.accmc_evaluator.evaluate(parameters);
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
             .iter()
             .zip(self.data_evaluator.dataset.iter())
@@ -394,7 +395,7 @@ impl LikelihoodTerm for NLL {
             .zip(self.mc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re)
             .sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / self.gen_len as Float)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -407,6 +408,7 @@ impl LikelihoodTerm for NLL {
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -507,7 +509,7 @@ impl LikelihoodTerm for NLL {
             .collect::<Vec<DVector<Float>>>()
             .iter()
             .sum();
-        -2.0 * (data_term - mc_term / self.gen_len as Float)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
@@ -522,6 +524,7 @@ impl LikelihoodTerm for NLL {
         let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -618,7 +621,7 @@ impl LikelihoodTerm for NLL {
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
             .sum();
-        -2.0 * (data_term - mc_term / self.gen_len as Float)
+        -2.0 * (data_term - mc_term / n_mc)
     }
 }
 
