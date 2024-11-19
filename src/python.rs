@@ -53,11 +53,35 @@ pub(crate) mod laddu {
         fn new(px: Float, py: Float, pz: Float) -> Self {
             Self(nalgebra::Vector3::new(px, py, pz))
         }
-        fn __add__(&self, other: Self) -> Self {
-            Self(self.0 + other.0)
+        fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Vector3>>() {
+                Ok(Vector3(self.0 + other_vec.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
         }
-        fn __radd__(&self, other: Self) -> Self {
-            other.__add__(self.clone())
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Vector3>>() {
+                Ok(Vector3(other_vec.0 + self.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
         }
         /// The dot product
         ///
@@ -270,11 +294,35 @@ pub(crate) mod laddu {
         fn new(e: Float, px: Float, py: Float, pz: Float) -> Self {
             Self(nalgebra::Vector4::new(e, px, py, pz))
         }
-        fn __add__(&self, other: Self) -> Self {
-            Self(self.0 + other.0)
+        fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Vector4>>() {
+                Ok(Vector4(self.0 + other_vec.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
         }
-        fn __radd__(&self, other: Self) -> Self {
-            other.__add__(self.clone())
+        fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Vector4>>() {
+                Ok(Vector4(other_vec.0 + self.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for +"))
+            }
         }
         /// The magnitude of the 4-vector
         ///
@@ -1444,6 +1492,16 @@ pub(crate) mod laddu {
                 Ok(Expression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(self.0.clone() + other_expr.0.clone()))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(Expression(rust::amplitudes::Expression::Amp(
+                        self.0.clone(),
+                    )))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -1453,6 +1511,16 @@ pub(crate) mod laddu {
                 Ok(Expression(other_aid.0.clone() + self.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(other_expr.0.clone() + self.0.clone()))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(Expression(rust::amplitudes::Expression::Amp(
+                        self.0.clone(),
+                    )))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -1462,6 +1530,15 @@ pub(crate) mod laddu {
                 Ok(Expression(self.0.clone() * other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Expression> {
+            if let Ok(other_aid) = other.extract::<PyRef<AmplitudeID>>() {
+                Ok(Expression(other_aid.0.clone() * self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<Expression>() {
+                Ok(Expression(other_expr.0.clone() * self.0.clone()))
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for *"))
             }
@@ -1513,6 +1590,14 @@ pub(crate) mod laddu {
                 Ok(Expression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(self.0.clone() + other_expr.0.clone()))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(Expression(self.0.clone()))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -1522,6 +1607,14 @@ pub(crate) mod laddu {
                 Ok(Expression(other_aid.0.clone() + self.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(other_expr.0.clone() + self.0.clone()))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(Expression(self.0.clone()))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -1531,6 +1624,15 @@ pub(crate) mod laddu {
                 Ok(Expression(self.0.clone() * other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<Expression>() {
                 Ok(Expression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<Expression> {
+            if let Ok(other_aid) = other.extract::<PyRef<AmplitudeID>>() {
+                Ok(Expression(other_aid.0.clone() * self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<Expression>() {
+                Ok(Expression(other_expr.0.clone() * self.0.clone()))
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for *"))
             }
@@ -2287,6 +2389,16 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(self.0.clone() + other_expr.0.clone()))
+            } else if let Ok(int) = other.extract::<usize>() {
+                if int == 0 {
+                    Ok(LikelihoodExpression(
+                        rust::likelihoods::LikelihoodExpression::Term(self.0.clone()),
+                    ))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -2296,6 +2408,16 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(other_aid.0.clone() + self.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(other_expr.0.clone() + self.0.clone()))
+            } else if let Ok(int) = other.extract::<usize>() {
+                if int == 0 {
+                    Ok(LikelihoodExpression(
+                        rust::likelihoods::LikelihoodExpression::Term(self.0.clone()),
+                    ))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -2305,6 +2427,15 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(other_aid.0.clone() * self.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(other_expr.0.clone() * self.0.clone()))
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for *"))
             }
@@ -2324,6 +2455,14 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(self.0.clone() + other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(self.0.clone() + other_expr.0.clone()))
+            } else if let Ok(int) = other.extract::<usize>() {
+                if int == 0 {
+                    Ok(LikelihoodExpression(self.0.clone()))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
@@ -2333,11 +2472,28 @@ pub(crate) mod laddu {
                 Ok(LikelihoodExpression(other_aid.0.clone() + self.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
                 Ok(LikelihoodExpression(other_expr.0.clone() + self.0.clone()))
+            } else if let Ok(int) = other.extract::<usize>() {
+                if int == 0 {
+                    Ok(LikelihoodExpression(self.0.clone()))
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Addition with an integer for this type is only defined for 0",
+                    ))
+                }
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
         }
         fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
+            if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
+            } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
+                Ok(LikelihoodExpression(self.0.clone() * other_expr.0.clone()))
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for *"))
+            }
+        }
+        fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<LikelihoodExpression> {
             if let Ok(other_aid) = other.extract::<PyRef<LikelihoodID>>() {
                 Ok(LikelihoodExpression(self.0.clone() * other_aid.0.clone()))
             } else if let Ok(other_expr) = other.extract::<LikelihoodExpression>() {
