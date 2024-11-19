@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn test_event_p4_sum() {
         let event = test_event();
-        let sum = event.get_p4_sum(&[2, 3]);
+        let sum = event.get_p4_sum([2, 3]);
         assert_relative_eq!(sum[0], event.p4s[2].e() + event.p4s[3].e());
         assert_relative_eq!(sum[1], event.p4s[2].px() + event.p4s[3].px());
         assert_relative_eq!(sum[2], event.p4s[2].py() + event.p4s[3].py());

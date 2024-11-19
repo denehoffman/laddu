@@ -520,9 +520,9 @@ mod tests {
         assert_relative_eq!(t.value(&event), tp.value(&event), epsilon = 1e-7);
         assert_relative_eq!(u.value(&event), -14.4041989, epsilon = 1e-7);
         assert_relative_eq!(u.value(&event), up.value(&event), epsilon = 1e-7);
-        let m2_beam = test_event().get_p4_sum(&[0]).m2();
-        let m2_recoil = test_event().get_p4_sum(&[1]).m2();
-        let m2_res = test_event().get_p4_sum(&[2, 3]).m2();
+        let m2_beam = test_event().get_p4_sum([0]).m2();
+        let m2_recoil = test_event().get_p4_sum([1]).m2();
+        let m2_res = test_event().get_p4_sum([2, 3]).m2();
         assert_relative_eq!(
             s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
             1.00,
