@@ -106,8 +106,8 @@ impl NLL {
         ds_accmc: &Arc<Dataset>,
     ) -> Box<Self> {
         Self {
-            data_evaluator: manager.clone().load(ds_data, expression),
-            accmc_evaluator: manager.clone().load(ds_accmc, expression),
+            data_evaluator: manager.clone().load(expression, ds_data),
+            accmc_evaluator: manager.clone().load(expression, ds_accmc),
         }
         .into()
     }

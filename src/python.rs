@@ -1690,10 +1690,10 @@ pub(crate) mod laddu {
         ///
         /// Parameters
         /// ----------
-        /// dataset : Dataset
-        ///     The Dataset to use in precalculation
         /// expression : Expression
         ///     The expression to use in precalculation
+        /// dataset : Dataset
+        ///     The Dataset to use in precalculation
         ///
         /// Returns
         /// -------
@@ -1708,8 +1708,8 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, dataset: &Dataset, expression: &Expression) -> Evaluator {
-            Evaluator(self.0.load(&dataset.0, &expression.0))
+        fn load(&self, expression: &Expression, dataset: &Dataset) -> Evaluator {
+            Evaluator(self.0.load(&expression.0, &dataset.0))
         }
     }
 
