@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10](https://github.com/denehoffman/laddu/compare/v0.1.9...v0.1.10) - 2024-11-20
+
+### Added
+
+- switch API for acceptance correction to not process genmc till projection
+- change the way NLLs are constructed to allow the user to specify a generated dataset
+
+### Fixed
+
+- change `NLL` to always use len(accmc) for `n_mc`
+
+### Other
+
+- use pyproject.toml for doc dependencies
+- add copy button to code
+- update tutorial page
+- add under construction notes
+- finish unbinned tutorial
+- fix doctests and update example_1 results
+- switch argument ordering in `Manager.load`
+- reorganize main page and include tutorials
+- *(docs)* fix doctest with missing parameter
+
 ## [0.1.9](https://github.com/denehoffman/laddu/compare/v0.1.8...v0.1.9) - 2024-11-19
 
 ### Added
