@@ -371,7 +371,7 @@ impl Manager {
     /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&self, dataset: &Arc<Dataset>, expression: &Expression) -> Evaluator {
+    pub fn load(&self, expression: &Expression, dataset: &Arc<Dataset>) -> Evaluator {
         let loaded_resources = Arc::new(RwLock::new(self.resources.clone()));
         loaded_resources.write().reserve_cache(dataset.len());
         for amplitude in &self.amplitudes {
@@ -616,7 +616,7 @@ mod tests {
             events: vec![Arc::new(test_event())],
         });
         let expr = Expression::Amp(aid);
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex::from(2.0));
     }
@@ -628,7 +628,7 @@ mod tests {
         let aid = manager.register(amp).unwrap();
         let dataset = Arc::new(test_dataset());
         let expr = Expression::Amp(aid);
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
         let result = evaluator.evaluate(&[3.0]);
         assert_eq!(result[0], Complex::from(3.0));
     }
@@ -648,61 +648,61 @@ mod tests {
 
         // Test (amp) addition
         let expr_add = &aid1 + &aid2;
-        let eval_add = manager.load(&dataset, &expr_add);
+        let eval_add = manager.load(&expr_add, &dataset);
         let result_add = eval_add.evaluate(&[]);
         assert_eq!(result_add[0], Complex::new(2.0, 1.0));
 
         // Test (amp) multiplication
         let expr_mul = &aid1 * &aid2;
-        let eval_mul = manager.load(&dataset, &expr_mul);
+        let eval_mul = manager.load(&expr_mul, &dataset);
         let result_mul = eval_mul.evaluate(&[]);
         assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
-        let eval_add2 = manager.load(&dataset, &expr_add2);
+        let eval_add2 = manager.load(&expr_add2, &dataset);
         let result_add2 = eval_add2.evaluate(&[]);
         assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
 
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
-        let eval_mul2 = manager.load(&dataset, &expr_mul2);
+        let eval_mul2 = manager.load(&expr_mul2, &dataset);
         let result_mul2 = eval_mul2.evaluate(&[]);
         assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
 
         // Test (amp) real
         let expr_real = aid3.real();
-        let eval_real = manager.load(&dataset, &expr_real);
+        let eval_real = manager.load(&expr_real, &dataset);
         let result_real = eval_real.evaluate(&[]);
         assert_eq!(result_real[0], Complex::new(3.0, 0.0));
 
         // Test (expr) real
         let expr_mul2_real = expr_mul2.real();
-        let eval_mul2_real = manager.load(&dataset, &expr_mul2_real);
+        let eval_mul2_real = manager.load(&expr_mul2_real, &dataset);
         let result_mul2_real = eval_mul2_real.evaluate(&[]);
         assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
 
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
-        let eval_mul2_imag = manager.load(&dataset, &expr_mul2_imag);
+        let eval_mul2_imag = manager.load(&expr_mul2_imag, &dataset);
         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
         assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
 
         // Test (amp) imag
         let expr_imag = aid3.imag();
-        let eval_imag = manager.load(&dataset, &expr_imag);
+        let eval_imag = manager.load(&expr_imag, &dataset);
         let result_imag = eval_imag.evaluate(&[]);
         assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
 
         // Test (amp) norm_sqr
         let expr_norm = aid1.norm_sqr();
-        let eval_norm = manager.load(&dataset, &expr_norm);
+        let eval_norm = manager.load(&expr_norm, &dataset);
         let result_norm = eval_norm.evaluate(&[]);
         assert_eq!(result_norm[0], Complex::new(4.0, 0.0));
 
         // Test (expr) norm_sqr
         let expr_mul2_norm = expr_mul2.norm_sqr();
-        let eval_mul2_norm = manager.load(&dataset, &expr_mul2_norm);
+        let eval_mul2_norm = manager.load(&expr_mul2_norm, &dataset);
         let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
         assert_eq!(result_mul2_norm[0], Complex::new(20.0, 0.0));
     }
@@ -718,7 +718,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = &aid1 + &aid2;
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         // Test initial state (all active)
         let result = evaluator.evaluate(&[]);
@@ -748,7 +748,7 @@ mod tests {
         let aid = manager.register(amp).unwrap();
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);

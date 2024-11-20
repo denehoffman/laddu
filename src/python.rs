@@ -1690,10 +1690,10 @@ pub(crate) mod laddu {
         ///
         /// Parameters
         /// ----------
-        /// dataset : Dataset
-        ///     The Dataset to use in precalculation
         /// expression : Expression
         ///     The expression to use in precalculation
+        /// dataset : Dataset
+        ///     The Dataset to use in precalculation
         ///
         /// Returns
         /// -------
@@ -1708,8 +1708,8 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, dataset: &Dataset, expression: &Expression) -> Evaluator {
-            Evaluator(self.0.load(&dataset.0, &expression.0))
+        fn load(&self, expression: &Expression, dataset: &Dataset) -> Evaluator {
+            Evaluator(self.0.load(&expression.0, &dataset.0))
         }
     }
 
@@ -2019,8 +2019,10 @@ pub(crate) mod laddu {
     ///     The Manager to use for precalculation
     /// ds_data : Dataset
     ///     A Dataset representing true signal data
-    /// ds_mc : Dataset
-    ///     A Dataset of physically flat Monte Carlo data used for normalization
+    /// ds_accmc : Dataset
+    ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
+    /// gen_len: int, optional
+    ///     The size of the generated dataset (will use ``len(ds_accmc)`` if None)
     /// expression : Expression
     ///     The Expression to evaluate
     ///
@@ -2031,17 +2033,18 @@ pub(crate) mod laddu {
     #[pymethods]
     impl NLL {
         #[new]
+        #[pyo3(signature = (manager, expression, ds_data, ds_accmc))]
         fn new(
             manager: &Manager,
-            ds_data: &Dataset,
-            ds_mc: &Dataset,
             expression: &Expression,
+            ds_data: &Dataset,
+            ds_accmc: &Dataset,
         ) -> Self {
             Self(rust::likelihoods::NLL::new(
                 &manager.0,
-                &ds_data.0,
-                &ds_mc.0,
                 &expression.0,
+                &ds_data.0,
+                &ds_accmc.0,
             ))
         }
         /// The underlying signal dataset used in calculating the NLL
@@ -2054,15 +2057,15 @@ pub(crate) mod laddu {
         fn data(&self) -> Dataset {
             Dataset(self.0.data_evaluator.dataset.clone())
         }
-        /// The underlying Monte Carlo dataset used in calculating the NLL
+        /// The underlying accepted Monte Carlo dataset used in calculating the NLL
         ///
         /// Returns
         /// -------
         /// Dataset
         ///
         #[getter]
-        fn mc(&self) -> Dataset {
-            Dataset(self.0.mc_evaluator.dataset.clone())
+        fn accmc(&self) -> Dataset {
+            Dataset(self.0.accmc_evaluator.dataset.clone())
         }
         /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
         ///
@@ -2177,7 +2180,7 @@ pub(crate) mod laddu {
         ///
         /// This is defined as
         ///
-        /// .. math:: NLL(\vec{p}; D, MC) = -2 \left( \sum_{e \in D} (e_w \log(\mathcal{L}(e) / N_D)) - \frac{1}{N_{MC}} \sum_{e \in MC} (e_w \mathcal{L}(e)) \right)
+        /// .. math:: NLL(\vec{p}; D, MC) = -2 \left( \sum_{e \in D} (e_w \log(\mathcal{L}(e))) - \frac{1}{N_{MC}} \sum_{e \in MC} (e_w \mathcal{L}(e)) \right)
         ///
         /// Parameters
         /// ----------
@@ -2202,18 +2205,27 @@ pub(crate) mod laddu {
         /// ----------
         /// parameters : list of float
         ///     The values to use for the free parameters
+        /// mc_evaluator: Evaluator, optional
+        ///     Project using the given Evaluator or use the stored ``accmc`` if None
         ///
         /// Returns
         /// -------
         /// result : array_like
         ///     Weights for every Monte Carlo event which represent the fit to data
         ///
+        #[pyo3(signature = (parameters, *, mc_evaluator = None))]
         fn project<'py>(
             &self,
             py: Python<'py>,
             parameters: Vec<Float>,
+            mc_evaluator: Option<Evaluator>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.project(&parameters))
+            PyArray1::from_slice_bound(
+                py,
+                &self
+                    .0
+                    .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone())),
+            )
         }
 
         /// Project the model over the Monte Carlo dataset with the given parameter values, first
@@ -2230,6 +2242,8 @@ pub(crate) mod laddu {
         ///     The values to use for the free parameters
         /// arg : str or list of str
         ///     Names of Amplitudes to be isolated
+        /// mc_evaluator: Evaluator, optional
+        ///     Project using the given Evaluator or use the stored ``accmc`` if None
         ///
         /// Returns
         /// -------
@@ -2241,11 +2255,13 @@ pub(crate) mod laddu {
         /// TypeError
         ///     If `arg` is not a str or list of str
         ///
+        #[pyo3(signature = (parameters, arg, *, mc_evaluator = None))]
         fn project_with<'py>(
             &self,
             py: Python<'py>,
             parameters: Vec<Float>,
             arg: &Bound<'_, PyAny>,
+            mc_evaluator: Option<Evaluator>,
         ) -> PyResult<Bound<'py, PyArray1<Float>>> {
             let names = if let Ok(string_arg) = arg.extract::<String>() {
                 vec![string_arg]
@@ -2259,7 +2275,11 @@ pub(crate) mod laddu {
             };
             Ok(PyArray1::from_slice_bound(
                 py,
-                &self.0.project_with(&parameters, &names),
+                &self.0.project_with(
+                    &parameters,
+                    &names,
+                    mc_evaluator.map(|pyeval| pyeval.0.clone()),
+                ),
             ))
         }
 

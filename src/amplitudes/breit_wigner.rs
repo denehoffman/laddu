@@ -130,7 +130,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[]);
 
@@ -154,7 +154,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

@@ -963,7 +963,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
 
@@ -991,7 +991,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result =
             evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
@@ -1037,7 +1037,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
@@ -1064,7 +1064,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
@@ -1103,7 +1103,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1128,7 +1128,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1159,7 +1159,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1184,7 +1184,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1215,7 +1215,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1240,7 +1240,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1263,7 +1263,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
@@ -1280,7 +1280,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 

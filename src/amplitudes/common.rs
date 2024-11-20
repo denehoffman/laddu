@@ -175,7 +175,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into(); // Direct amplitude evaluation
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![2.5];
         let result = evaluator.evaluate(&params);
@@ -192,7 +192,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr(); // |f(x)|^2
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -210,7 +210,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
         let result = evaluator.evaluate(&params);
@@ -227,7 +227,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr(); // |f(x + iy)|^2
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
         let gradient = evaluator.evaluate_gradient(&params);
@@ -248,7 +248,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let r = 2.0;
         let theta = PI / 4.0;
@@ -269,7 +269,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into(); // f(r,θ) = re^(iθ)
-        let evaluator = manager.load(&dataset, &expr);
+        let evaluator = manager.load(&expr, &dataset);
 
         let params = vec![2.0, PI / 4.0]; // r and theta
         let gradient = evaluator.evaluate_gradient(&params);

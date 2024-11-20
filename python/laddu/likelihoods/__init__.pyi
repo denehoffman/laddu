@@ -4,7 +4,7 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Expression, Manager
+from laddu.amplitudes import Evaluator, Expression, Manager
 from laddu.data import Dataset
 
 class LikelihoodID:
@@ -43,8 +43,14 @@ class LikelihoodEvaluator:
 class NLL:
     parameters: list[str]
     data: Dataset
-    mc: Dataset
-    def __init__(self, manager: Manager, ds_data: Dataset, ds_mc: Dataset, expression: Expression) -> None: ...
+    accmc: Dataset
+    def __init__(
+        self,
+        manager: Manager,
+        expression: Expression,
+        ds_data: Dataset,
+        ds_accmc: Dataset,
+    ) -> None: ...
     def as_term(self) -> LikelihoodTerm: ...
     def activate(self, name: str | list[str]) -> None: ...
     def activate_all(self) -> None: ...
@@ -52,9 +58,15 @@ class NLL:
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
     def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
-    def project(self, parameters: list[float] | npt.NDArray[np.float64]) -> npt.NDArray[np.float64]: ...
+    def project(
+        self, parameters: list[float] | npt.NDArray[np.float64], *, mc_evaluator: Evaluator | None = None
+    ) -> npt.NDArray[np.float64]: ...
     def project_with(
-        self, parameters: list[float] | npt.NDArray[np.float64], name: str | list[str]
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        name: str | list[str],
+        *,
+        mc_evaluator: Evaluator | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
