@@ -90,8 +90,8 @@ impl FourVector for Vector4<Float> {
         let b2 = beta.dot(beta);
         let gamma = 1.0 / Float::sqrt(1.0 - b2);
         let p3 =
-            self.momentum() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 - gamma * self[0]);
-        Vector4::new(gamma * self[0] - beta.dot(&self.vec3()), p3.x, p3.y, p3.z)
+            self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 - gamma * self[0]);
+        Vector4::new(gamma * (self[0] - beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
     }
 
     fn vec3(&self) -> VectorView<Float, U3, U1, U4> {
@@ -296,5 +296,16 @@ mod tests {
         assert_relative_eq!(zero[1], 0.0);
         assert_relative_eq!(zero[2], 0.0);
         assert_relative_eq!(zero[3], 0.0);
+    }
+
+    #[test]
+    fn test_boost() {
+        let p1 = vector![10.0, 3.0, 4.0, 5.0];
+        let p2 = vector![9.0, 3.4, 2.3, 1.2];
+        let p1_boosted = p1.boost_along(&p2);
+        assert_relative_eq!(p1_boosted.e(), 8.157632144622882);
+        assert_relative_eq!(p1_boosted.px(), -0.6489200627053444);
+        assert_relative_eq!(p1_boosted.py(), 1.5316128987581492);
+        assert_relative_eq!(p1_boosted.pz(), 3.712145860221643);
     }
 }
