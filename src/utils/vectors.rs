@@ -34,8 +34,6 @@ pub trait FourMomentum: FourVector {
     fn m(&self) -> Float;
     /// The squared mass of the corresponding object.
     fn m2(&self) -> Float;
-    /// Creates a [`FourMomentum`] from a [`ThreeMomentum`] and a mass using $`E^2 = m^2 + p^2`$.
-    fn from_momentum(momentum: &dyn ThreeMomentum, mass: Float) -> Self;
     /// Pretty-prints the four-momentum.
     fn to_p4_string(&self) -> String {
         format!(
@@ -73,6 +71,10 @@ pub trait ThreeMomentum: ThreeVector {
     fn py(&self) -> Float;
     /// Momentum in the $`z`$-direction
     fn pz(&self) -> Float;
+    /// Converts this three-momentum to a four-momentum with the given mass.
+    fn with_mass(&self, mass: Float) -> Vector4<Float>;
+    /// Converts this three-momentum to a four-momentum with the given energy.
+    fn with_energy(&self, energy: Float) -> Vector4<Float>;
 }
 
 impl FourVector for Vector4<Float> {
@@ -135,11 +137,6 @@ impl FourMomentum for Vector4<Float> {
     fn m2(&self) -> Float {
         self.mag2()
     }
-
-    fn from_momentum(momentum: &dyn ThreeMomentum, mass: Float) -> Self {
-        let e = Float::sqrt(mass.powi(2) + momentum.mag2());
-        Self::new(momentum.px(), momentum.py(), momentum.pz(), e)
-    }
 }
 
 impl ThreeMomentum for Vector3<Float> {
@@ -153,6 +150,15 @@ impl ThreeMomentum for Vector3<Float> {
 
     fn pz(&self) -> Float {
         self[2]
+    }
+
+    fn with_mass(&self, mass: Float) -> Vector4<Float> {
+        let e = Float::sqrt(mass.powi(2) + self.mag2());
+        Vector4::new(self.px(), self.py(), self.pz(), e)
+    }
+
+    fn with_energy(&self, energy: Float) -> Vector4<Float> {
+        Vector4::new(self.px(), self.py(), self.pz(), energy)
     }
 }
 
@@ -194,6 +200,15 @@ impl<'a> ThreeMomentum for VectorView<'a, Float, U3, U1, U4> {
     fn pz(&self) -> Float {
         self[2]
     }
+
+    fn with_mass(&self, mass: Float) -> Vector4<Float> {
+        let e = Float::sqrt(mass.powi(2) + self.mag2());
+        Vector4::new(self.px(), self.py(), self.pz(), e)
+    }
+
+    fn with_energy(&self, energy: Float) -> Vector4<Float> {
+        Vector4::new(self.px(), self.py(), self.pz(), energy)
+    }
 }
 
 impl<'a> ThreeVector for VectorView<'a, Float, U3, U1, U4> {
@@ -228,6 +243,22 @@ mod tests {
     use nalgebra::vector;
 
     use super::*;
+
+    #[test]
+    fn test_three_to_four_momentum_conversion() {
+        let p3 = vector![1.0, 2.0, 3.0];
+        let target_p4 = vector![1.0, 2.0, 3.0, 10.0];
+        let p4_from_mass = p3.with_mass(target_p4.m());
+        assert_eq!(target_p4.e(), p4_from_mass.e());
+        assert_eq!(target_p4.px(), p4_from_mass.px());
+        assert_eq!(target_p4.py(), p4_from_mass.py());
+        assert_eq!(target_p4.pz(), p4_from_mass.pz());
+        let p4_from_energy = p3.with_energy(target_p4.e());
+        assert_eq!(target_p4.e(), p4_from_energy.e());
+        assert_eq!(target_p4.px(), p4_from_energy.px());
+        assert_eq!(target_p4.py(), p4_from_energy.py());
+        assert_eq!(target_p4.pz(), p4_from_energy.pz());
+    }
 
     #[test]
     fn test_four_momentum_basics() {

@@ -254,6 +254,40 @@ pub(crate) mod laddu {
         fn pz(&self) -> Float {
             self.0.pz()
         }
+        /// Convert a 3-vector momentum to a 4-momentum with the given mass
+        ///
+        /// The mass-energy equivalence is used to compute the energy of the 4-momentum:
+        ///
+        /// .. math:: E = \sqrt{m^2 + p^2}
+        ///
+        /// Parameters
+        /// ----------
+        /// mass: float
+        ///     The mass of the new 4-momentum
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     A new 4-momentum with the given mass
+        ///
+        fn with_mass(&self, mass: Float) -> Vector4 {
+            Vector4(self.0.with_mass(mass))
+        }
+        /// Convert a 3-vector momentum to a 4-momentum with the given energy
+        ///
+        /// Parameters
+        /// ----------
+        /// energy: float
+        ///     The mass of the new 4-momentum
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     A new 4-momentum with the given energy
+        ///
+        fn with_energy(&self, mass: Float) -> Vector4 {
+            Vector4(self.0.with_energy(mass))
+        }
         /// Convert the 3-vector to a ``numpy`` array
         ///
         /// Returns
@@ -554,28 +588,6 @@ pub(crate) mod laddu {
         #[getter]
         fn m2(&self) -> Float {
             self.0.m2()
-        }
-        /// Construct a 4-momentum from a 3-momentum and corresponding `mass`
-        ///
-        /// The mass-energy equivalence is used to compute the energy of the 4-momentum:
-        ///
-        /// .. math:: E = \sqrt{m^2 + p^2}
-        ///
-        /// Parameters
-        /// ----------
-        /// momentum : Vector3
-        ///     The spatial 3-momentum
-        /// mass : float
-        ///     The associated rest mass
-        ///
-        /// Returns
-        /// -------
-        /// Vector4
-        ///     A new 4-momentum with the given spatial `momentum` and `mass`
-        ///
-        #[staticmethod]
-        fn from_momentum(momentum: &Vector3, mass: Float) -> Self {
-            Self(nalgebra::Vector4::from_momentum(&momentum.0, mass))
         }
         /// Convert the 4-vector to a `numpy` array
         ///
