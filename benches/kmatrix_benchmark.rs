@@ -154,20 +154,18 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(threads),
             &threads,
             |b, &_threads| {
-                pool.install(|| {
-                    let mut rng = rand::thread_rng();
-                    let range = Uniform::new(-100.0, 100.0);
-                    b.iter_batched(
-                        || {
-                            let p: Vec<Float> = (0..nll.parameters().len())
-                                .map(|_| rng.sample(range))
-                                .collect();
-                            p
-                        },
-                        |p| black_box(nll.evaluate(&p)),
-                        BatchSize::SmallInput,
-                    )
-                })
+                let mut rng = rand::thread_rng();
+                let range = Uniform::new(-100.0, 100.0);
+                b.iter_batched(
+                    || {
+                        let p: Vec<Float> = (0..nll.parameters().len())
+                            .map(|_| rng.sample(range))
+                            .collect();
+                        p
+                    },
+                    |p| pool.install(|| black_box(nll.evaluate(&p))),
+                    BatchSize::SmallInput,
+                )
             },
         );
     }
