@@ -48,6 +48,7 @@ approx = "0.5.1"
 criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features = [
   "html_reports",
 ] }
+num_cpus = "1.16.0"
 
 [[bench]]
 name = "kmatrix_benchmark"
