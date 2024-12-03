@@ -358,7 +358,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        p4s.push(Vector4::new(e, px, py, pz));
+        p4s.push(Vector4::new(px, py, pz, e));
     }
 
     // TODO: insert empty vectors if not provided
@@ -532,11 +532,12 @@ mod tests {
     #[test]
     fn test_event_p4_sum() {
         let event = test_event();
+        println!("{}", event);
         let sum = event.get_p4_sum([2, 3]);
-        assert_relative_eq!(sum[0], event.p4s[2].e() + event.p4s[3].e());
-        assert_relative_eq!(sum[1], event.p4s[2].px() + event.p4s[3].px());
-        assert_relative_eq!(sum[2], event.p4s[2].py() + event.p4s[3].py());
-        assert_relative_eq!(sum[3], event.p4s[2].pz() + event.p4s[3].pz());
+        assert_relative_eq!(sum[0], event.p4s[2].px() + event.p4s[3].px());
+        assert_relative_eq!(sum[1], event.p4s[2].py() + event.p4s[3].py());
+        assert_relative_eq!(sum[2], event.p4s[2].pz() + event.p4s[3].pz());
+        assert_relative_eq!(sum[3], event.p4s[2].e() + event.p4s[3].e());
     }
 
     #[test]
@@ -600,7 +601,7 @@ mod tests {
         struct BeamEnergy;
         impl Variable for BeamEnergy {
             fn value(&self, event: &Event) -> Float {
-                event.p4s[0][0]
+                event.p4s[0].e()
             }
         }
 

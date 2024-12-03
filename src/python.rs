@@ -264,6 +264,22 @@ pub(crate) mod laddu {
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.as_slice())
         }
+        /// Convert an  array into a 3-vector
+        ///
+        /// Parameters
+        /// ----------
+        /// array_like
+        ///     An array containing the components of this ``Vector3``
+        ///
+        /// Returns
+        /// -------
+        /// laddu_vec: Vector3
+        ///     A copy of the input array as a ``laddu`` vector
+        ///
+        #[staticmethod]
+        fn from_array(array: Vec<Float>) -> Self {
+            Self::new(array[0], array[1], array[2])
+        }
         fn __repr__(&self) -> String {
             format!("{:?}", self.0)
         }
@@ -274,15 +290,15 @@ pub(crate) mod laddu {
 
     /// A 4-momentum vector formed from energy and Cartesian 3-momentum components
     ///
-    /// This vector is ordered with energy as the zeroeth component (:math:`[E, p_x, p_y, p_z]`) and assumes a :math:`(+---)`
+    /// This vector is ordered with energy as the fourth component (:math:`[p_x, p_y, p_z, E]`) and assumes a :math:`(---+)`
     /// signature
     ///
     /// Parameters
     /// ----------
-    /// e : float
-    ///     The energy component
     /// px, py, pz : float
     ///     The Cartesian components of the 3-vector
+    /// e : float
+    ///     The energy component
     ///
     ///
     #[pyclass]
@@ -291,8 +307,8 @@ pub(crate) mod laddu {
     #[pymethods]
     impl Vector4 {
         #[new]
-        fn new(e: Float, px: Float, py: Float, pz: Float) -> Self {
-            Self(nalgebra::Vector4::new(e, px, py, pz))
+        fn new(px: Float, py: Float, pz: Float, e: Float) -> Self {
+            Self(nalgebra::Vector4::new(px, py, pz, e))
         }
         fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
             if let Ok(other_vec) = other.extract::<PyRef<Vector4>>() {
@@ -382,7 +398,7 @@ pub(crate) mod laddu {
         /// The resulting 4-momentum is equal to the original boosted to an inertial frame with
         /// relative velocity :math:`\beta`:
         ///
-        /// .. math:: \left[E'; \vec{p}'\right] = \left[ \gamma E - \vec{\beta}\cdot\vec{p}; \vec{p} + \left(\frac{(\gamma - 1) \vec{p}\cdot\vec{\beta}}{\beta^2} - \gamma E\right)\vec{\beta}\right]
+        /// .. math:: \left[\vec{p}'; E'\right] = \left[ \vec{p} + \left(\frac{(\gamma - 1) \vec{p}\cdot\vec{\beta}}{\beta^2} + \gamma E\right)\vec{\beta}; \gamma E + \vec{\beta}\cdot\vec{p} \right]
         ///
         /// Parameters
         /// ----------
@@ -398,7 +414,6 @@ pub(crate) mod laddu {
         /// --------
         /// Vector4.beta
         /// Vector4.gamma
-        /// Vector4.boost_along
         ///
         fn boost(&self, beta: &Vector3) -> Self {
             Self(self.0.boost(&beta.0))
@@ -477,7 +492,6 @@ pub(crate) mod laddu {
         /// --------
         /// Vector4.beta
         /// Vector4.boost
-        /// Vector4.boost_along
         ///
         #[getter]
         fn gamma(&self) -> Float {
@@ -498,7 +512,6 @@ pub(crate) mod laddu {
         /// --------
         /// Vector4.gamma
         /// Vector4.boost
-        /// Vector4.boost_along
         ///
         #[getter]
         fn beta(&self) -> Vector3 {
@@ -542,30 +555,6 @@ pub(crate) mod laddu {
         fn m2(&self) -> Float {
             self.0.m2()
         }
-        /// Boost the given 4-momentum into the rest frame of another
-        ///
-        /// The resulting 4-momentum is equal to the original boosted into the rest frame
-        /// of `other`
-        ///
-        /// Boosting a vector by itself should yield that vector in its own rest frame
-        ///
-        /// Parameters
-        /// ----------
-        /// other : Vector4
-        ///     The 4-momentum whose rest-frame is the boost target
-        ///
-        /// Returns
-        /// -------
-        /// Vector4
-        ///     The boosted 4-momentum
-        ///
-        /// See Also
-        /// --------
-        /// Vector4.boost
-        ///
-        fn boost_along(&self, other: &Self) -> Self {
-            Self(self.0.boost_along(&other.0))
-        }
         /// Construct a 4-momentum from a 3-momentum and corresponding `mass`
         ///
         /// The mass-energy equivalence is used to compute the energy of the 4-momentum:
@@ -597,6 +586,22 @@ pub(crate) mod laddu {
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice_bound(py, self.0.as_slice())
+        }
+        /// Convert an  array into a 4-vector
+        ///
+        /// Parameters
+        /// ----------
+        /// array_like
+        ///     An array containing the components of this ``Vector4``
+        ///
+        /// Returns
+        /// -------
+        /// laddu_vec: Vector4
+        ///     A copy of the input array as a ``laddu`` vector
+        ///
+        #[staticmethod]
+        fn from_array(array: Vec<Float>) -> Self {
+            Self::new(array[0], array[1], array[2], array[3])
         }
         fn __str__(&self) -> String {
             format!("{}", self.0)

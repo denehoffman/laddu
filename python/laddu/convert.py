@@ -20,7 +20,9 @@ from docopt import docopt
 from loguru import logger
 
 
-def read_root_file(input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries=None):
+def read_root_file(
+    input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries=None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read ROOT file and extract data with optional polarization from the beam."""
     logger.info(f"Reading ROOT file: {input_file}")
     tfile = uproot.open(input_file)
@@ -40,10 +42,10 @@ def read_root_file(input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude,
     Pz_final = np.array(list(tree["Pz_FinalState"].array(library="np", entry_stop=num_entries)))  # pyright: ignore
 
     # Handle beam four-vector: (nevents, 4)
-    p4_beam = np.stack([E_beam, Px_beam, Py_beam, Pz_beam], axis=-1)
+    p4_beam = np.stack([Px_beam, Py_beam, Pz_beam, E_beam], axis=-1)
 
     # Handle final state four-vectors: (nevents, nparticles, 4)
-    p4_final = np.stack([E_final, Px_final, Py_final, Pz_final], axis=-1)
+    p4_final = np.stack([Px_final, Py_final, Pz_final, E_final], axis=-1)
 
     # Check if EPS branch exists and update eps if needed
     if "EPS" in tree:
@@ -58,8 +60,9 @@ def read_root_file(input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude,
         logger.info("Using beam's momentum for polarization (eps).")
         eps = np.stack([Px_beam, Py_beam, Pz_beam], axis=-1)[:, np.newaxis]
         # Reset beam momentum
-        p4_beam[:, 1:] = 0  # Set Px, Py to 0
-        p4_beam[:, 3] = E_beam  # Set Pz = E for beam
+        p4_beam[:, 0] = 0  # Set Px to 0
+        p4_beam[:, 1] = 0  # Set Py to 0
+        p4_beam[:, 2] = E_beam  # Set Pz = E for beam
     elif pol_angle is not None and pol_magnitude is not None:
         logger.info(f"Using input polarization angle ({pol_angle}) and magnitude ({pol_magnitude}).")
         eps_x = pol_magnitude * np.cos(pol_angle) * np.ones_like(E_beam)
@@ -74,10 +77,10 @@ def read_root_file(input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude,
     logger.info("Concatenating beam and final state particles.")
     p4s = np.concatenate([p4_beam[:, np.newaxis, :], p4_final], axis=1)
 
-    return p4s.astype(np.float32), weight, eps.astype(np.float32)
+    return p4s.astype(np.float32), eps.astype(np.float32), weight
 
 
-def save_as_parquet(p4s, weight, eps, output_file):
+def save_as_parquet(p4s, eps, weight, output_file):
     """Save the processed data into Parquet format."""
     logger.info("Saving data to Parquet format.")
 
@@ -85,10 +88,10 @@ def save_as_parquet(p4s, weight, eps, output_file):
     columns = {}
     n_particles = p4s.shape[1]
     for i in range(n_particles):
-        columns[f"p4_{i}_E"] = p4s[:, i, 0]
-        columns[f"p4_{i}_Px"] = p4s[:, i, 1]
-        columns[f"p4_{i}_Py"] = p4s[:, i, 2]
-        columns[f"p4_{i}_Pz"] = p4s[:, i, 3]
+        columns[f"p4_{i}_Px"] = p4s[:, i, 0]
+        columns[f"p4_{i}_Py"] = p4s[:, i, 1]
+        columns[f"p4_{i}_Pz"] = p4s[:, i, 2]
+        columns[f"p4_{i}_E"] = p4s[:, i, 3]
 
     n_eps = eps.shape[1]
     for i in range(n_eps):
@@ -110,12 +113,12 @@ def convert_from_amptools(
     output_path: Path,
     tree_name: str = "kin",
     pol_in_beam: bool = False,  # noqa: FBT001, FBT002
-    pol_angle_deg: float | None = None,
+    pol_angle: float | None = None,
     pol_magnitude: float | None = None,
     num_entries: int | None = None,
 ):
-    p4s, weight, eps = read_root_file(input_path, tree_name, pol_in_beam, pol_angle_deg, pol_magnitude, num_entries)
-    save_as_parquet(p4s, weight, eps, output_path)
+    p4s, eps, weight = read_root_file(input_path, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries)
+    save_as_parquet(p4s, eps, weight, output_path)
 
 
 def run():
@@ -136,6 +139,4 @@ def run():
     df_read = pd.read_parquet(output_file)
     print("Output Parquet File (head):")  # noqa: T201
     print(df_read.head())  # noqa: T201
-    print("Output Columns:")  # noqa: T201
-    for column in df_read.columns:
-        print(column)  # noqa: T201
+    print(f"Total Entries: {len(df_read)}")  # noqa: T201

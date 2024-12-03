@@ -96,10 +96,10 @@ impl Variable for CosTheta {
         let recoil = event.get_p4_sum(&self.recoil);
         let daughter = event.get_p4_sum(&self.daughter);
         let resonance = event.get_p4_sum(&self.resonance);
-        let daughter_res = daughter.boost_along(&resonance);
+        let daughter_res = daughter.boost(&-resonance.beta());
         match self.frame {
             Frame::Helicity => {
-                let recoil_res = recoil.boost_along(&resonance);
+                let recoil_res = recoil.boost(&-resonance.beta());
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
@@ -111,7 +111,7 @@ impl Variable for CosTheta {
                 angles.costheta()
             }
             Frame::GottfriedJackson => {
-                let beam_res = beam.boost_along(&resonance);
+                let beam_res = beam.boost(&-resonance.beta());
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
@@ -174,10 +174,10 @@ impl Variable for Phi {
         let recoil = event.get_p4_sum(&self.recoil);
         let daughter = event.get_p4_sum(&self.daughter);
         let resonance = event.get_p4_sum(&self.resonance);
-        let daughter_res = daughter.boost_along(&resonance);
+        let daughter_res = daughter.boost(&-resonance.beta());
         match self.frame {
             Frame::Helicity => {
-                let recoil_res = recoil.boost_along(&resonance);
+                let recoil_res = recoil.boost(&-resonance.beta());
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
@@ -189,7 +189,7 @@ impl Variable for Phi {
                 angles.phi()
             }
             Frame::GottfriedJackson => {
-                let beam_res = beam.boost_along(&resonance);
+                let beam_res = beam.boost(&-resonance.beta());
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
