@@ -382,7 +382,6 @@ impl LikelihoodTerm for NLL {
     #[cfg(not(feature = "rayon"))]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
-        let n_data = self.data_evaluator.dataset.len() as Float;
         let mc_result = self.accmc_evaluator.evaluate(parameters);
         let n_mc = self.accmc_evaluator.dataset.len() as Float;
         let data_term: Float = data_result
@@ -392,7 +391,7 @@ impl LikelihoodTerm for NLL {
             .sum_with_accumulator::<Klein<Float>>();
         let mc_term: Float = mc_result
             .iter()
-            .zip(self.mc_evaluator.dataset.iter())
+            .zip(self.accmc_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * l.re)
             .sum_with_accumulator::<Klein<Float>>();
         -2.0 * (data_term - mc_term / n_mc)
@@ -521,7 +520,6 @@ impl LikelihoodTerm for NLL {
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let n_data = self.data_evaluator.dataset.weighted_len();
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_mc = self.accmc_evaluator.dataset.len() as Float;
@@ -575,14 +573,14 @@ impl LikelihoodTerm for NLL {
             .sum();
 
         let mc_term: DVector<Float> = self
-            .mc_evaluator
+            .accmc_evaluator
             .dataset
             .iter()
             .zip(mc_resources.caches.iter())
             .map(|(event, cache)| {
                 let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.mc_evaluator.amplitudes.len()];
-                self.mc_evaluator
+                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
+                self.accmc_evaluator
                     .amplitudes
                     .iter()
                     .zip(mc_resources.active.iter())
@@ -595,7 +593,7 @@ impl LikelihoodTerm for NLL {
                 (
                     event.weight,
                     AmplitudeValues(
-                        self.mc_evaluator
+                        self.accmc_evaluator
                             .amplitudes
                             .iter()
                             .zip(mc_resources.active.iter())
@@ -614,7 +612,7 @@ impl LikelihoodTerm for NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.mc_evaluator
+                    self.accmc_evaluator
                         .expression
                         .evaluate_gradient(&amp_vals, &grad_vals),
                 )
