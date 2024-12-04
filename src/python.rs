@@ -461,7 +461,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn e(&self) -> Float {
-            self.0[0]
+            self.0.e()
         }
         /// The x-component of this vector
         ///
