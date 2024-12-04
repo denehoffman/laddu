@@ -261,9 +261,44 @@ pub(crate) mod laddu {
         /// float
         ///     The x-component
         ///
+        /// See Also
+        /// --------
+        /// Vector3.x
+        ///
         #[getter]
         fn px(&self) -> Float {
             self.0.px()
+        }
+        /// The x-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The x-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector3.px
+        ///
+        #[getter]
+        fn x(&self) -> Float {
+            self.0.x
+        }
+
+        /// The y-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The y-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector3.y
+        ///
+        #[getter]
+        fn py(&self) -> Float {
+            self.0.py()
         }
         /// The y-component of this vector
         ///
@@ -272,9 +307,13 @@ pub(crate) mod laddu {
         /// float
         ///     The y-component
         ///
+        /// See Also
+        /// --------
+        /// Vector3.py
+        ///
         #[getter]
-        fn py(&self) -> Float {
-            self.0.py()
+        fn y(&self) -> Float {
+            self.0.y
         }
         /// The z-component of this vector
         ///
@@ -283,9 +322,28 @@ pub(crate) mod laddu {
         /// float
         ///     The z-component
         ///
+        /// See Also
+        /// --------
+        /// Vector3.z
+        ///
         #[getter]
         fn pz(&self) -> Float {
             self.0.pz()
+        }
+        /// The z-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The z-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector3.pz
+        ///
+        #[getter]
+        fn z(&self) -> Float {
+            self.0.z
         }
         /// Convert a 3-vector momentum to a 4-momentum with the given mass
         ///
@@ -352,6 +410,12 @@ pub(crate) mod laddu {
         }
         fn __str__(&self) -> String {
             format!("{}", self.0)
+        }
+        fn __getitem__(&self, index: usize) -> PyResult<Float> {
+            self.0
+                .get(index)
+                .ok_or(PyIndexError::new_err("index out of range"))
+                .copied()
         }
     }
 
@@ -529,6 +593,17 @@ pub(crate) mod laddu {
         fn e(&self) -> Float {
             self.0.e()
         }
+        /// The energy associated with this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The energy
+        ///
+        #[getter]
+        fn w(&self) -> Float {
+            self.0.w
+        }
         /// The x-component of this vector
         ///
         /// Returns
@@ -536,9 +611,44 @@ pub(crate) mod laddu {
         /// float
         ///     The x-component
         ///
+        /// See Also
+        /// --------
+        /// Vector4.x
+        ///
         #[getter]
         fn px(&self) -> Float {
             self.0.px()
+        }
+        /// The x-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The x-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.px
+        ///
+        #[getter]
+        fn x(&self) -> Float {
+            self.0.x
+        }
+
+        /// The y-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The y-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.y
+        ///
+        #[getter]
+        fn py(&self) -> Float {
+            self.0.py()
         }
         /// The y-component of this vector
         ///
@@ -547,9 +657,13 @@ pub(crate) mod laddu {
         /// float
         ///     The y-component
         ///
+        /// See Also
+        /// --------
+        /// Vector4.py
+        ///
         #[getter]
-        fn py(&self) -> Float {
-            self.0.py()
+        fn y(&self) -> Float {
+            self.0.y
         }
         /// The z-component of this vector
         ///
@@ -558,9 +672,28 @@ pub(crate) mod laddu {
         /// float
         ///     The z-component
         ///
+        /// See Also
+        /// --------
+        /// Vector4.z
+        ///
         #[getter]
         fn pz(&self) -> Float {
             self.0.pz()
+        }
+        /// The z-component of this vector
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///     The z-component
+        ///
+        /// See Also
+        /// --------
+        /// Vector4.pz
+        ///
+        #[getter]
+        fn z(&self) -> Float {
+            self.0.z
         }
         /// The 3-momentum part of this 4-momentum
         ///
@@ -687,6 +820,12 @@ pub(crate) mod laddu {
         fn __repr__(&self) -> String {
             self.0.to_p4_string()
         }
+        fn __getitem__(&self, index: usize) -> PyResult<Float> {
+            self.0
+                .get(index)
+                .ok_or(PyIndexError::new_err("index out of range"))
+                .copied()
+        }
     }
 
     /// A single event
@@ -740,6 +879,21 @@ pub(crate) mod laddu {
         #[getter]
         pub(crate) fn get_weight(&self) -> Float {
             self.0.weight
+        }
+        /// Get the sum of the four-momenta within the event at the given indices
+        ///
+        /// Parameters
+        /// ----------
+        /// indices : list of int
+        ///     The indices of the four-momenta to sum
+        ///
+        /// Returns
+        /// -------
+        /// Vector4
+        ///     The result of summing the given four-momenta
+        ///
+        pub(crate) fn get_p4_sum(&self, indices: Vec<usize>) -> Vector4 {
+            Vector4(self.0.get_p4_sum(indices))
         }
     }
 

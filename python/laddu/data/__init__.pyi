@@ -9,6 +9,7 @@ class Event:
     eps: list[Vector3]
     weight: float
     def __init__(self, p4s: list[Vector4], eps: list[Vector3], weight: float): ...
+    def get_p4_sum(self, indices: list[int]) -> Vector4: ...
 
 class Dataset:
     events: list[Event]
