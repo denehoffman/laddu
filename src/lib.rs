@@ -263,7 +263,9 @@
 
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
+#[cfg(feature = "python")]
 use pyo3::PyErr;
+
 use thiserror::Error;
 
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.

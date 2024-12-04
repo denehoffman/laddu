@@ -4,9 +4,9 @@ use crate::Float;
 
 /// An object which behaves as a four-vector.
 pub trait FourVector {
-    /// The magnitude of the vector (with $`+---`$ signature).
+    /// The magnitude of the vector (with $`---+`$ signature).
     fn mag(&self) -> Float;
-    /// The squared magnitude of the vector (with $`+---`$ signature).
+    /// The squared magnitude of the vector (with $`---+`$ signature).
     fn mag2(&self) -> Float;
     /// Yields the three-vector part.
     fn vec3(&self) -> VectorView<Float, U3, U1, U4>;
@@ -34,10 +34,6 @@ pub trait FourMomentum: FourVector {
     fn m(&self) -> Float;
     /// The squared mass of the corresponding object.
     fn m2(&self) -> Float;
-    /// Yields the vector boosted along the direction of another [`FourMomentum`].
-    fn boost_along(&self, other: &Self) -> Self;
-    /// Creates a [`FourMomentum`] from a [`ThreeMomentum`] and a mass using $`E^2 = m^2 + p^2`$.
-    fn from_momentum(momentum: &dyn ThreeMomentum, mass: Float) -> Self;
     /// Pretty-prints the four-momentum.
     fn to_p4_string(&self) -> String {
         format!(
@@ -75,6 +71,10 @@ pub trait ThreeMomentum: ThreeVector {
     fn py(&self) -> Float;
     /// Momentum in the $`z`$-direction
     fn pz(&self) -> Float;
+    /// Converts this three-momentum to a four-momentum with the given mass.
+    fn with_mass(&self, mass: Float) -> Vector4<Float>;
+    /// Converts this three-momentum to a four-momentum with the given energy.
+    fn with_energy(&self, energy: Float) -> Vector4<Float>;
 }
 
 impl FourVector for Vector4<Float> {
@@ -83,36 +83,36 @@ impl FourVector for Vector4<Float> {
     }
 
     fn mag2(&self) -> Float {
-        self[0] * self[0] - (self[1] * self[1] + self[2] * self[2] + self[3] * self[3])
+        self[3] * self[3] - (self[0] * self[0] + self[1] * self[1] + self[2] * self[2])
     }
 
     fn boost(&self, beta: &Vector3<Float>) -> Self {
         let b2 = beta.dot(beta);
         let gamma = 1.0 / Float::sqrt(1.0 - b2);
         let p3 =
-            self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 - gamma * self[0]);
-        Vector4::new(gamma * (self[0] - beta.dot(&self.vec3())), p3.x, p3.y, p3.z)
+            self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self[3]);
+        Vector4::new(p3.x, p3.y, p3.z, gamma * (self[3] + beta.dot(&self.vec3())))
     }
 
     fn vec3(&self) -> VectorView<Float, U3, U1, U4> {
-        self.fixed_rows::<3>(1)
+        self.fixed_rows::<3>(0)
     }
 }
 
 impl FourMomentum for Vector4<Float> {
-    fn e(&self) -> Float {
+    fn px(&self) -> Float {
         self[0]
     }
 
-    fn px(&self) -> Float {
+    fn py(&self) -> Float {
         self[1]
     }
 
-    fn py(&self) -> Float {
+    fn pz(&self) -> Float {
         self[2]
     }
 
-    fn pz(&self) -> Float {
+    fn e(&self) -> Float {
         self[3]
     }
 
@@ -137,15 +137,6 @@ impl FourMomentum for Vector4<Float> {
     fn m2(&self) -> Float {
         self.mag2()
     }
-
-    fn boost_along(&self, other: &Self) -> Self {
-        self.boost(&other.beta())
-    }
-
-    fn from_momentum(momentum: &dyn ThreeMomentum, mass: Float) -> Self {
-        let e = Float::sqrt(mass.powi(2) + momentum.mag2());
-        Self::new(e, momentum.px(), momentum.py(), momentum.pz())
-    }
 }
 
 impl ThreeMomentum for Vector3<Float> {
@@ -159,6 +150,15 @@ impl ThreeMomentum for Vector3<Float> {
 
     fn pz(&self) -> Float {
         self[2]
+    }
+
+    fn with_mass(&self, mass: Float) -> Vector4<Float> {
+        let e = Float::sqrt(mass.powi(2) + self.mag2());
+        Vector4::new(self.px(), self.py(), self.pz(), e)
+    }
+
+    fn with_energy(&self, energy: Float) -> Vector4<Float> {
+        Vector4::new(self.px(), self.py(), self.pz(), energy)
     }
 }
 
@@ -200,6 +200,15 @@ impl<'a> ThreeMomentum for VectorView<'a, Float, U3, U1, U4> {
     fn pz(&self) -> Float {
         self[2]
     }
+
+    fn with_mass(&self, mass: Float) -> Vector4<Float> {
+        let e = Float::sqrt(mass.powi(2) + self.mag2());
+        Vector4::new(self.px(), self.py(), self.pz(), e)
+    }
+
+    fn with_energy(&self, energy: Float) -> Vector4<Float> {
+        Vector4::new(self.px(), self.py(), self.pz(), energy)
+    }
 }
 
 impl<'a> ThreeVector for VectorView<'a, Float, U3, U1, U4> {
@@ -236,8 +245,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_three_to_four_momentum_conversion() {
+        let p3 = vector![1.0, 2.0, 3.0];
+        let target_p4 = vector![1.0, 2.0, 3.0, 10.0];
+        let p4_from_mass = p3.with_mass(target_p4.m());
+        assert_eq!(target_p4.e(), p4_from_mass.e());
+        assert_eq!(target_p4.px(), p4_from_mass.px());
+        assert_eq!(target_p4.py(), p4_from_mass.py());
+        assert_eq!(target_p4.pz(), p4_from_mass.pz());
+        let p4_from_energy = p3.with_energy(target_p4.e());
+        assert_eq!(target_p4.e(), p4_from_energy.e());
+        assert_eq!(target_p4.px(), p4_from_energy.px());
+        assert_eq!(target_p4.py(), p4_from_energy.py());
+        assert_eq!(target_p4.pz(), p4_from_energy.pz());
+    }
+
+    #[test]
     fn test_four_momentum_basics() {
-        let p = vector![10.0, 3.0, 4.0, 5.0];
+        let p = vector![3.0, 4.0, 5.0, 10.0];
         assert_eq!(p.e(), 10.0);
         assert_eq!(p.px(), 3.0);
         assert_eq!(p.py(), 4.0);
@@ -258,8 +283,8 @@ mod tests {
 
     #[test]
     fn test_three_momentum_basics() {
-        let p = vector![10.0, 3.0, 4.0, 5.0];
-        let q = vector![0.0, 1.2, -3.4, 7.6];
+        let p = vector![3.0, 4.0, 5.0, 10.0];
+        let q = vector![1.2, -3.4, 7.6, 0.0];
         let p3_view = p.momentum();
         let q3_view = q.momentum();
         assert_eq!(p3_view.px(), 3.0);
@@ -291,18 +316,18 @@ mod tests {
 
     #[test]
     fn test_boost_com() {
-        let p = vector![10.0, 3.0, 4.0, 5.0];
-        let zero = p.boost_along(&(-p));
+        let p = vector![3.0, 4.0, 5.0, 10.0];
+        let zero = p.boost(&-p.beta());
+        assert_relative_eq!(zero[0], 0.0);
         assert_relative_eq!(zero[1], 0.0);
         assert_relative_eq!(zero[2], 0.0);
-        assert_relative_eq!(zero[3], 0.0);
     }
 
     #[test]
     fn test_boost() {
-        let p1 = vector![10.0, 3.0, 4.0, 5.0];
-        let p2 = vector![9.0, 3.4, 2.3, 1.2];
-        let p1_boosted = p1.boost_along(&p2);
+        let p1 = vector![3.0, 4.0, 5.0, 10.0];
+        let p2 = vector![3.4, 2.3, 1.2, 9.0];
+        let p1_boosted = p1.boost(&-p2.beta());
         assert_relative_eq!(p1_boosted.e(), 8.157632144622882);
         assert_relative_eq!(p1_boosted.px(), -0.6489200627053444);
         assert_relative_eq!(p1_boosted.py(), 1.5316128987581492);

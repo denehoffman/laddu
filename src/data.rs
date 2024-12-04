@@ -24,10 +24,10 @@ pub fn test_event() -> Event {
     use crate::utils::vectors::*;
     Event {
         p4s: vec![
-            Vector4::from_momentum(&vector![0.0, 0.0, 8.747], 0.0), // beam
-            Vector4::from_momentum(&vector![0.119, 0.374, 0.222], 1.007), // "proton"
-            Vector4::from_momentum(&vector![-0.112, 0.293, 3.081], 0.498), // "kaon"
-            Vector4::from_momentum(&vector![-0.007, -0.667, 5.446], 0.498), // "kaon"
+            vector![0.0, 0.0, 8.747].with_mass(0.0),         // beam
+            vector![0.119, 0.374, 0.222].with_mass(1.007),   // "proton"
+            vector![-0.112, 0.293, 3.081].with_mass(0.498),  // "kaon"
+            vector![-0.007, -0.667, 5.446].with_mass(0.498), // "kaon"
         ],
         eps: vec![vector![0.385, 0.022, 0.000]],
         weight: 0.48,
@@ -358,7 +358,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        p4s.push(Vector4::new(e, px, py, pz));
+        p4s.push(Vector4::new(px, py, pz, e));
     }
 
     // TODO: insert empty vectors if not provided
@@ -519,6 +519,8 @@ impl BinnedDataset {
 
 #[cfg(test)]
 mod tests {
+    use crate::prelude::ThreeMomentum;
+
     use super::*;
     use approx::{assert_relative_eq, assert_relative_ne};
     #[test]
@@ -532,11 +534,12 @@ mod tests {
     #[test]
     fn test_event_p4_sum() {
         let event = test_event();
+        println!("{}", event);
         let sum = event.get_p4_sum([2, 3]);
-        assert_relative_eq!(sum[0], event.p4s[2].e() + event.p4s[3].e());
-        assert_relative_eq!(sum[1], event.p4s[2].px() + event.p4s[3].px());
-        assert_relative_eq!(sum[2], event.p4s[2].py() + event.p4s[3].py());
-        assert_relative_eq!(sum[3], event.p4s[2].pz() + event.p4s[3].pz());
+        assert_relative_eq!(sum[0], event.p4s[2].px() + event.p4s[3].px());
+        assert_relative_eq!(sum[1], event.p4s[2].py() + event.p4s[3].py());
+        assert_relative_eq!(sum[2], event.p4s[2].pz() + event.p4s[3].pz());
+        assert_relative_eq!(sum[3], event.p4s[2].e() + event.p4s[3].e());
     }
 
     #[test]
@@ -570,8 +573,8 @@ mod tests {
         let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: vec![
-                Vector4::from_momentum(&vector![0.0, 0.0, 5.0], 0.0),
-                Vector4::from_momentum(&vector![0.0, 0.0, 1.0], 1.0),
+                vector![0.0, 0.0, 5.0].with_mass(0.0),
+                vector![0.0, 0.0, 1.0].with_mass(1.0),
             ],
             eps: vec![],
             weight: 1.0,
@@ -586,12 +589,12 @@ mod tests {
     fn test_binned_dataset() {
         let mut dataset = Dataset::default();
         dataset.events.push(Arc::new(Event {
-            p4s: vec![Vector4::from_momentum(&vector![0.0, 0.0, 1.0], 1.0)],
+            p4s: vec![vector![0.0, 0.0, 1.0].with_mass(1.0)],
             eps: vec![],
             weight: 1.0,
         }));
         dataset.events.push(Arc::new(Event {
-            p4s: vec![Vector4::from_momentum(&vector![0.0, 0.0, 2.0], 2.0)],
+            p4s: vec![vector![0.0, 0.0, 2.0].with_mass(2.0)],
             eps: vec![],
             weight: 2.0,
         }));
@@ -600,7 +603,7 @@ mod tests {
         struct BeamEnergy;
         impl Variable for BeamEnergy {
             fn value(&self, event: &Event) -> Float {
-                event.p4s[0][0]
+                event.p4s[0].e()
             }
         }
 

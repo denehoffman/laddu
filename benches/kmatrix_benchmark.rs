@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu::{
     amplitudes::{
         constant,
@@ -19,6 +19,10 @@ use laddu::{
 };
 use rand::{distributions::Uniform, prelude::*};
 
+#[cfg(feature = "rayon")]
+use rayon::ThreadPoolBuilder;
+
+#[cfg(feature = "rayon")]
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_data = open("benches/bench.parquet").unwrap();
     let ds_mc = open("benches/bench.parquet").unwrap();
@@ -140,20 +144,32 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let model = pos_re + pos_im + neg_re + neg_im;
     let nll = NLL::new(&manager, &model, &ds_data, &ds_mc);
-    let mut rng = rand::thread_rng();
-    let range = Uniform::new(-100.0, 100.0);
-    c.bench_function("kmatrix benchmark (nll)", |b| {
-        b.iter_batched(
-            || {
-                let p: Vec<Float> = (0..nll.parameters().len())
-                    .map(|_| rng.sample(range))
-                    .collect();
-                p
+    let mut group = c.benchmark_group("K-Matrix NLL Performance");
+    for threads in 1..=num_cpus::get() {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threads),
+            &threads,
+            |b, &_threads| {
+                let mut rng = rand::thread_rng();
+                let range = Uniform::new(-100.0, 100.0);
+                b.iter_batched(
+                    || {
+                        let p: Vec<Float> = (0..nll.parameters().len())
+                            .map(|_| rng.sample(range))
+                            .collect();
+                        p
+                    },
+                    |p| pool.install(|| black_box(nll.evaluate(&p))),
+                    BatchSize::SmallInput,
+                )
             },
-            |p| black_box(nll.evaluate(&p)),
-            BatchSize::SmallInput,
-        )
-    });
+        );
+    }
+    group.finish();
 }
 
 criterion_group! {
