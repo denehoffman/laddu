@@ -38,7 +38,7 @@ jobs:
     - name: Install pytest
       run: uv pip install pytest
     - name: Run tests
-      run: pytest
+      run: .venv/bin/pytest
 
   linux:
     needs: test
