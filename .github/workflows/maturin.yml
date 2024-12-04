@@ -60,7 +60,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install dist/wheels-linux-${{ matrix.platform.target }}
+          pip install dist/wheels-linux-${{ matrix.platform.target }}*
           pip install pytest
           pytest
       - name: pytest
@@ -76,7 +76,7 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install dist/wheels-linux-${{ matrix.platform.target }}
+            pip3 install dist/wheels-linux-${{ matrix.platform.target }}*
             pytest
 
   musllinux:
@@ -120,7 +120,7 @@ jobs:
             apk add py3-pip py3-virtualenv
             python3 -m virtualenv .venv
             source .venv/bin/activate
-            pip install dist/wheels-musllinux-${{ matrix.platform.target }}
+            pip install dist/wheels-musllinux-${{ matrix.platform.target }}*
             pip install pytest
             pytest
       - name: pytest
@@ -136,7 +136,7 @@ jobs:
             set -e
             python3 -m virtualenv .venv
             source .venv/bin/activate
-            pip install dist/wheels-musllinux-${{ matrix.platform.target }}
+            pip install dist/wheels-musllinux-${{ matrix.platform.target }}*
             pip install pytest
             pytest
 
@@ -173,7 +173,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/Scripts/activate
-          pip install dist/wheels-windows-${{ matrix.platform.target }}
+          pip install dist/wheels-windows-${{ matrix.platform.target }}*
           pip install pytest
           pytest
 
@@ -207,7 +207,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install dist/wheels-macos-${{ matrix.platform.target }}
+          pip install dist/wheels-macos-${{ matrix.platform.target }}*
           pip install pytest
           pytest
 
