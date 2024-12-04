@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12](https://github.com/denehoffman/laddu/compare/v0.1.11...v0.1.12) - 2024-12-04
+
+### Added
+
+- add basic implementation to read directly from ROOT files
+- *(bench)* updated benchmark to run over available parallelism
+
+### Fixed
+
+- correct parallelism to allow for proper codspeed benchmarking
+- minor fixes for building without rayon/pyo3
+
+### Other
+
+- Merge pull request [#23](https://github.com/denehoffman/laddu/pull/23) from denehoffman/reading-root
+- get rid of `from_momentum` method and replace with methods coming from 3-vectors
+- change order of four-vector components and modify operation of `boost`
+- bump dependencies
+
 ## [0.1.11](https://github.com/denehoffman/laddu/compare/v0.1.10...v0.1.11) - 2024-11-29
 
 ### Fixed
