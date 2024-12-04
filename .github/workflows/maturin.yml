@@ -131,7 +131,7 @@ jobs:
           distro: alpine_latest
           githubToken: ${{ github.token }}
           install: |
-            apk add git clang py3-virtualenv pkgconf python3-dev build-essential musl-dev
+            apk add git clang py3-virtualenv pkgconf python3-dev build-base musl-dev
           run: |
             set -e
             python3 -m virtualenv .venv
