@@ -54,8 +54,8 @@ pub(crate) mod laddu {
             Self(nalgebra::Vector3::new(px, py, pz))
         }
         fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-            if let Ok(other_vec) = other.extract::<PyRef<Vector3>>() {
-                Ok(Vector3(self.0 + other_vec.0))
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(self.0 + other_vec.0))
             } else if let Ok(other_int) = other.extract::<usize>() {
                 if other_int == 0 {
                     Ok(self.clone())
@@ -69,8 +69,8 @@ pub(crate) mod laddu {
             }
         }
         fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-            if let Ok(other_vec) = other.extract::<PyRef<Vector3>>() {
-                Ok(Vector3(other_vec.0 + self.0))
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(other_vec.0 + self.0))
             } else if let Ok(other_int) = other.extract::<usize>() {
                 if other_int == 0 {
                     Ok(self.clone())
@@ -82,6 +82,39 @@ pub(crate) mod laddu {
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
+        }
+        fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(self.0 - other_vec.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Subtraction with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for -"))
+            }
+        }
+        fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(other_vec.0 - self.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Subtraction with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for -"))
+            }
+        }
+        fn __neg__(&self) -> PyResult<Self> {
+            Ok(Self(-self.0))
         }
         /// The dot product
         ///
@@ -345,8 +378,8 @@ pub(crate) mod laddu {
             Self(nalgebra::Vector4::new(px, py, pz, e))
         }
         fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-            if let Ok(other_vec) = other.extract::<PyRef<Vector4>>() {
-                Ok(Vector4(self.0 + other_vec.0))
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(self.0 + other_vec.0))
             } else if let Ok(other_int) = other.extract::<usize>() {
                 if other_int == 0 {
                     Ok(self.clone())
@@ -360,8 +393,8 @@ pub(crate) mod laddu {
             }
         }
         fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-            if let Ok(other_vec) = other.extract::<PyRef<Vector4>>() {
-                Ok(Vector4(other_vec.0 + self.0))
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(other_vec.0 + self.0))
             } else if let Ok(other_int) = other.extract::<usize>() {
                 if other_int == 0 {
                     Ok(self.clone())
@@ -373,6 +406,39 @@ pub(crate) mod laddu {
             } else {
                 Err(PyTypeError::new_err("Unsupported operand type for +"))
             }
+        }
+        fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(self.0 - other_vec.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Subtraction with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for -"))
+            }
+        }
+        fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
+            if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
+                Ok(Self(other_vec.0 - self.0))
+            } else if let Ok(other_int) = other.extract::<usize>() {
+                if other_int == 0 {
+                    Ok(self.clone())
+                } else {
+                    Err(PyTypeError::new_err(
+                        "Subtraction with an integer for this type is only defined for 0",
+                    ))
+                }
+            } else {
+                Err(PyTypeError::new_err("Unsupported operand type for -"))
+            }
+        }
+        fn __neg__(&self) -> PyResult<Self> {
+            Ok(Self(-self.0))
         }
         /// The magnitude of the 4-vector
         ///
