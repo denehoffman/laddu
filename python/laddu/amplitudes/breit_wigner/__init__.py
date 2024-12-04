@@ -1,3 +1,3 @@
 from laddu.laddu import BreitWigner
 
-__all__ = ["BreitWigner"]
+__all__ = ['BreitWigner']

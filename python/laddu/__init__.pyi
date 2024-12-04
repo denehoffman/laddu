@@ -7,9 +7,18 @@ from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
-from laddu.data import BinnedDataset, Dataset, Event, open  # noqa: A004
+from laddu.data import BinnedDataset, Dataset, Event, open
 from laddu.likelihoods import NLL, LikelihoodManager, Status
-from laddu.utils.variables import Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, Polarization, PolMagnitude
+from laddu.utils.variables import (
+    Angles,
+    CosTheta,
+    Mandelstam,
+    Mass,
+    Phi,
+    PolAngle,
+    Polarization,
+    PolMagnitude,
+)
 from laddu.utils.vectors import Vector3, Vector4
 
 from . import amplitudes, convert, data, utils
@@ -22,7 +31,7 @@ class Observer(metaclass=ABCMeta):
 
 def open_amptools(
     path: str | Path,
-    tree: str = "kin",
+    tree: str = 'kin',
     *,
     pol_in_beam: bool = False,
     pol_angle: float | None = None,
@@ -31,39 +40,39 @@ def open_amptools(
 ) -> Dataset: ...
 
 __all__ = [
-    "NLL",
-    "Angles",
-    "BinnedDataset",
-    "BreitWigner",
-    "ComplexScalar",
-    "CosTheta",
-    "Dataset",
-    "Event",
-    "Expression",
-    "LikelihoodManager",
-    "Manager",
-    "Mandelstam",
-    "Mass",
-    "Observer",
-    "Phi",
-    "PolAngle",
-    "PolMagnitude",
-    "PolarComplexScalar",
-    "Polarization",
-    "Scalar",
-    "Status",
-    "Vector3",
-    "Vector4",
-    "Ylm",
-    "Zlm",
-    "__version__",
-    "amplitudes",
-    "constant",
-    "convert",
-    "convert_from_amptools",
-    "data",
-    "open",
-    "open_amptools",
-    "parameter",
-    "utils",
+    'NLL',
+    'Angles',
+    'BinnedDataset',
+    'BreitWigner',
+    'ComplexScalar',
+    'CosTheta',
+    'Dataset',
+    'Event',
+    'Expression',
+    'LikelihoodManager',
+    'Manager',
+    'Mandelstam',
+    'Mass',
+    'Observer',
+    'Phi',
+    'PolAngle',
+    'PolMagnitude',
+    'PolarComplexScalar',
+    'Polarization',
+    'Scalar',
+    'Status',
+    'Vector3',
+    'Vector4',
+    'Ylm',
+    'Zlm',
+    '__version__',
+    'amplitudes',
+    'constant',
+    'convert',
+    'convert_from_amptools',
+    'data',
+    'open',
+    'open_amptools',
+    'parameter',
+    'utils',
 ]
