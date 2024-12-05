@@ -1,5 +1,4 @@
-from laddu import Event, Dataset, BinnedDataset, Vector3, Mass
-import pytest
+from laddu import Event, Dataset, Vector3, Mass
 
 
 def make_test_event() -> Event:
