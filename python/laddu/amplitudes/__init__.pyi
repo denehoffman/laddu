@@ -30,9 +30,12 @@ class Expression:
 class Amplitude: ...
 
 class Manager:
+    parameters: list[str]
     def __init__(self) -> None: ...
     def register(self, amplitude: Amplitude) -> AmplitudeID: ...
-    def load(self, expression: Expression, dataset: Dataset) -> Evaluator: ...
+    def load(
+        self, expression: Expression | AmplitudeID, dataset: Dataset
+    ) -> Evaluator: ...
 
 class Evaluator:
     parameters: list[str]
@@ -41,20 +44,25 @@ class Evaluator:
     def deactivate(self, name: str | list[str]) -> None: ...
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> npt.NDArray[np.complex128]: ...
+    def evaluate(
+        self, parameters: list[float] | npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.complex128]: ...
+    def evaluate_gradient(
+        self, parameters: list[float] | npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.complex128]: ...
 
 __all__ = [
-    "AmplitudeID",
-    "Expression",
-    "Amplitude",
-    "Manager",
-    "Evaluator",
-    "ParameterLike",
-    "parameter",
-    "constant",
-    "common",
-    "ylm",
-    "zlm",
-    "breit_wigner",
-    "kmatrix",
+    'AmplitudeID',
+    'Expression',
+    'Amplitude',
+    'Manager',
+    'Evaluator',
+    'ParameterLike',
+    'parameter',
+    'constant',
+    'common',
+    'ylm',
+    'zlm',
+    'breit_wigner',
+    'kmatrix',
 ]

@@ -11,13 +11,13 @@ from laddu.laddu import (
 )
 
 __all__ = [
-    "NLL",
-    "Status",
-    "Bound",
-    "LikelihoodID",
-    "LikelihoodExpression",
-    "LikelihoodTerm",
-    "LikelihoodManager",
-    "LikelihoodEvaluator",
-    "LikelihoodScalar",
+    'NLL',
+    'Status',
+    'Bound',
+    'LikelihoodID',
+    'LikelihoodExpression',
+    'LikelihoodTerm',
+    'LikelihoodManager',
+    'LikelihoodEvaluator',
+    'LikelihoodScalar',
 ]

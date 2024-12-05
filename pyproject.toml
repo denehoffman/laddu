@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "laddu"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 classifiers = [
   "Programming Language :: Rust",
   "Programming Language :: Python :: Implementation :: CPython",
@@ -12,7 +12,7 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-  "numpy",
+  "numpy>=2",
   "docopt-ng",
   "loguru",
   "pandas",

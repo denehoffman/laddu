@@ -3,7 +3,7 @@ from typing import Literal
 from laddu.amplitudes import Amplitude, ParameterLike
 from laddu.utils.variables import Mass
 
-def KopfKMatrixF0(  # noqa: N802
+def KopfKMatrixF0(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
@@ -15,7 +15,7 @@ def KopfKMatrixF0(  # noqa: N802
     channel: Literal[0, 1, 2, 3, 4],
     mass: Mass,
 ) -> Amplitude: ...
-def KopfKMatrixF2(  # noqa: N802
+def KopfKMatrixF2(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
@@ -26,7 +26,7 @@ def KopfKMatrixF2(  # noqa: N802
     channel: Literal[0, 1, 2, 3],
     mass: Mass,
 ) -> Amplitude: ...
-def KopfKMatrixA0(  # noqa: N802
+def KopfKMatrixA0(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
@@ -35,7 +35,7 @@ def KopfKMatrixA0(  # noqa: N802
     channel: Literal[0, 1],
     mass: Mass,
 ) -> Amplitude: ...
-def KopfKMatrixA2(  # noqa: N802
+def KopfKMatrixA2(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
@@ -44,7 +44,7 @@ def KopfKMatrixA2(  # noqa: N802
     channel: Literal[0, 1, 2],
     mass: Mass,
 ) -> Amplitude: ...
-def KopfKMatrixRho(  # noqa: N802
+def KopfKMatrixRho(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
@@ -53,7 +53,7 @@ def KopfKMatrixRho(  # noqa: N802
     channel: Literal[0, 1, 2],
     mass: Mass,
 ) -> Amplitude: ...
-def KopfKMatrixPi1(  # noqa: N802
+def KopfKMatrixPi1(
     name: str,
     couplings: tuple[tuple[ParameterLike, ParameterLike],],
     channel: Literal[0, 1],

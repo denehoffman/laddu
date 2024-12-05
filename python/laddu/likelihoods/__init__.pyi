@@ -4,27 +4,45 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Evaluator, Expression, Manager
+from laddu.amplitudes import AmplitudeID, Evaluator, Expression, Manager
 from laddu.data import Dataset
 
 class LikelihoodID:
-    def __add__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __radd__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __mul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-    def __rmul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
+    def __add__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __radd__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __mul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
+    def __rmul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
 
 class LikelihoodExpression:
-    def __add__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __radd__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __mul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-    def __rmul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
+    def __add__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __radd__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __mul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
+    def __rmul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
 
 class LikelihoodTerm: ...
 
 class LikelihoodManager:
     def __init__(self) -> None: ...
     def register(self, likelihood_term: LikelihoodTerm) -> LikelihoodID: ...
-    def load(self, likelihood_expression: LikelihoodExpression) -> LikelihoodEvaluator: ...
+    def load(
+        self, likelihood_expression: LikelihoodExpression
+    ) -> LikelihoodEvaluator: ...
 
 class LikelihoodEvaluator:
     parameters: list[str]
@@ -32,11 +50,12 @@ class LikelihoodEvaluator:
     def minimize(
         self,
         p0: list[float] | npt.NDArray[np.float64],
+        *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
-        method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
+        method: Literal['lbfgsb', 'nelder_mead'] = 'lbfgsb',
         max_steps: int = 4000,
-        debug: bool = False,  # noqa: FBT001, FBT002
-        verbose: bool = False,  # noqa: FBT001, FBT002
+        debug: bool = False,
+        verbose: bool = False,
         **kwargs,
     ) -> Status: ...
 
@@ -47,7 +66,7 @@ class NLL:
     def __init__(
         self,
         manager: Manager,
-        expression: Expression,
+        expression: Expression | AmplitudeID,
         ds_data: Dataset,
         ds_accmc: Dataset,
     ) -> None: ...
@@ -59,7 +78,10 @@ class NLL:
     def isolate(self, name: str | list[str]) -> None: ...
     def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
     def project(
-        self, parameters: list[float] | npt.NDArray[np.float64], *, mc_evaluator: Evaluator | None = None
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        *,
+        mc_evaluator: Evaluator | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def project_with(
         self,
@@ -71,15 +93,16 @@ class NLL:
     def minimize(
         self,
         p0: list[float] | npt.NDArray[np.float64],
+        *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
-        method: Literal["lbfgsb", "nelder_mead"] = "lbfgsb",
+        method: Literal['lbfgsb', 'nelder_mead'] = 'lbfgsb',
         max_steps: int = 4000,
-        debug: bool = False,  # noqa: FBT001, FBT002
-        verbose: bool = False,  # noqa: FBT001, FBT002
+        debug: bool = False,
+        verbose: bool = False,
         **kwargs,
     ) -> Status: ...
 
-def LikelihoodScalar(name: str) -> LikelihoodTerm: ...  # noqa: N802
+def LikelihoodScalar(name: str) -> LikelihoodTerm: ...
 
 class Status:
     x: npt.NDArray[np.float64]
@@ -107,13 +130,13 @@ class Bound:
     upper: float
 
 __all__ = [
-    "NLL",
-    "Status",
-    "Bound",
-    "LikelihoodID",
-    "LikelihoodExpression",
-    "LikelihoodTerm",
-    "LikelihoodManager",
-    "LikelihoodEvaluator",
-    "LikelihoodScalar",
+    'NLL',
+    'Status',
+    'Bound',
+    'LikelihoodID',
+    'LikelihoodExpression',
+    'LikelihoodTerm',
+    'LikelihoodManager',
+    'LikelihoodEvaluator',
+    'LikelihoodScalar',
 ]

@@ -18,8 +18,14 @@ class CosTheta:
         daughter: list[int],
         resonance: list[int],
         frame: Literal[
-            "Helicity", "HX", "HEL", "GottfriedJackson", "Gottfried Jackson", "GJ", "Gottfried-Jackson"
-        ] = "Helicity",
+            'Helicity',
+            'HX',
+            'HEL',
+            'GottfriedJackson',
+            'Gottfried Jackson',
+            'GJ',
+            'Gottfried-Jackson',
+        ] = 'Helicity',
     ): ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -32,8 +38,14 @@ class Phi:
         daughter: list[int],
         resonance: list[int],
         frame: Literal[
-            "Helicity", "HX", "HEL", "GottfriedJackson", "Gottfried Jackson", "GJ", "Gottfried-Jackson"
-        ] = "Helicity",
+            'Helicity',
+            'HX',
+            'HEL',
+            'GottfriedJackson',
+            'Gottfried Jackson',
+            'GJ',
+            'Gottfried-Jackson',
+        ] = 'Helicity',
     ): ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -48,8 +60,14 @@ class Angles:
         daughter: list[int],
         resonance: list[int],
         frame: Literal[
-            "Helicity", "HX", "HEL", "GottfriedJackson", "Gottfried Jackson", "GJ", "Gottfried-Jackson"
-        ] = "Helicity",
+            'Helicity',
+            'HX',
+            'HEL',
+            'GottfriedJackson',
+            'Gottfried Jackson',
+            'GJ',
+            'Gottfried-Jackson',
+        ] = 'Helicity',
     ) -> None: ...
 
 class PolAngle:
@@ -81,7 +99,7 @@ class Mandelstam:
         p2: list[int],
         p3: list[int],
         p4: list[int],
-        channel: Literal["s", "t", "u"],
+        channel: Literal['s', 't', 'u'],
     ): ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
