@@ -271,13 +271,15 @@ mod tests {
         let expr = aid.into(); // f(r,θ) = re^(iθ)
         let evaluator = manager.load(&expr, &dataset);
 
-        let params = vec![2.0, PI / 4.0]; // r and theta
+        let r = 2.0;
+        let theta = PI / 4.0;
+        let params = vec![r, theta];
         let gradient = evaluator.evaluate_gradient(&params);
 
         // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
-        assert_relative_eq!(gradient[0][0].re, f64::cos(PI / 4.0));
-        assert_relative_eq!(gradient[0][0].im, f64::sin(PI / 4.0));
-        assert_relative_eq!(gradient[0][1].re, -2.0 * f64::sin(PI / 4.0));
-        assert_relative_eq!(gradient[0][1].im, 2.0 * f64::cos(PI / 4.0));
+        assert_relative_eq!(gradient[0][0].re, f64::cos(theta));
+        assert_relative_eq!(gradient[0][0].im, f64::sin(theta));
+        assert_relative_eq!(gradient[0][1].re, -r * f64::sin(theta));
+        assert_relative_eq!(gradient[0][1].im, r * f64::cos(theta));
     }
 }
