@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13](https://github.com/denehoffman/laddu/compare/v0.1.12...v0.1.13) - 2024-12-05
+
+### Added
+
+- add evaluate_gradient functions where evaluate is available in python API
+- add vector indexing and `Event.get_p4_sum` to python API
+- add `__sub__`, `__rsub__`, and `__neg__` implementations to Python `Vector3` and `Vector4`
+
+### Fixed
+
+- correct python method to get energy from 4-vector
+
+### Other
+
+- *(python)* write K-Matrix tests
+- *(python)* write Zlm tests
+- *(python)* write Ylm tests
+- *(python)* write Breit-Wigner tests
+- remove unused imports
+- *(breit_wigner)* properly test BreitWigner gradient
+- *(python)* write common amplitude tests
+- *(python)* write amplitude submodule tests
+- update common tests
+- write python tests for variables
+- raise minimum python version to 3.8 to allow for numpy v2 constraint
+- we were so close
+- I'll just write it myself, what could go wrong
+- the alpine package is named `build-base`, not `build-essential`
+- remove print statement in test
+- add tests for Python data submodule
+- switch back to clang and add build-essential
+- switch from clang to gcc
+- add python3-dev and pkgconf to weird linux builds
+- add git and clang to the weird OS target builds
+- misnamed wheels
+- try globing it
+- try using direct wheel path to install
+- trying this again, maybe if I specify a local path it won't try to pull `laddu` from PyPI
+- use --no-index to try to force pip to install the local wheel
+- update maturin.yml to run pytest
+- *(python)* add tests for python vector API
+- update ruff settings globally
+
 ## [0.1.12](https://github.com/denehoffman/laddu/compare/v0.1.11...v0.1.12) - 2024-12-04
 
 ### Added
