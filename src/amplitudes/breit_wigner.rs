@@ -109,7 +109,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::amplitudes::{constant, Manager};
+    use crate::amplitudes::{parameter, Manager};
     use crate::data::test_dataset;
     use crate::utils::variables::Mass;
     use approx::assert_relative_eq;
@@ -119,8 +119,8 @@ mod tests {
         let mut manager = Manager::default();
         let amp = BreitWigner::new(
             "bw",
-            constant(1.5),
-            constant(0.3),
+            parameter("mass"),
+            parameter("width"),
             2,
             &Mass::new([2]),
             &Mass::new([3]),
@@ -132,7 +132,7 @@ mod tests {
         let expr = aid.into();
         let evaluator = manager.load(&expr, &dataset);
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[1.5, 0.3]);
 
         assert_relative_eq!(result[0].re, 1.4585691, epsilon = 1e-7);
         assert_relative_eq!(result[0].im, 1.4107341, epsilon = 1e-7);
@@ -143,8 +143,8 @@ mod tests {
         let mut manager = Manager::default();
         let amp = BreitWigner::new(
             "bw",
-            constant(1.5),
-            constant(0.3),
+            parameter("mass"),
+            parameter("width"),
             2,
             &Mass::new([2]),
             &Mass::new([3]),
@@ -156,7 +156,10 @@ mod tests {
         let expr = aid.into();
         let evaluator = manager.load(&expr, &dataset);
 
-        let result = evaluator.evaluate_gradient(&[]);
-        assert_eq!(result[0].len(), 0); // amplitude has no parameters
+        let result = evaluator.evaluate_gradient(&[1.5, 0.3]);
+        assert_relative_eq!(result[0][0].re, 1.3252039, epsilon = 1e-7);
+        assert_relative_eq!(result[0][0].im, -11.6827505, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].re, -2.2688852, epsilon = 1e-7);
+        assert_relative_eq!(result[0][1].im, 2.5079719, epsilon = 1e-7);
     }
 }
