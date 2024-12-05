@@ -355,6 +355,10 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// Get the list of parameter names in the order they appear in the [`Manager`]'s [`Resources`] field.
+    pub fn parameters(&self) -> Vec<String> {
+        self.resources.parameters.iter().cloned().collect()
+    }
     /// Register the given [`Amplitude`] and return an [`AmplitudeID`] that can be used to build
     /// [`Expression`]s.
     ///
@@ -764,7 +768,7 @@ mod tests {
         let amp = Scalar::new("parametric", parameter("test_param"));
 
         manager.register(amp).unwrap();
-        let parameters = manager.resources.parameters.clone();
+        let parameters = manager.parameters();
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0], "test_param");
     }

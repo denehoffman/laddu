@@ -1902,6 +1902,17 @@ pub(crate) mod laddu {
         fn new() -> Self {
             Self(rust::amplitudes::Manager::default())
         }
+        /// The free parameters used by the Manager
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///     The list of parameter names
+        ///
+        #[getter]
+        fn parameters(&self) -> Vec<String> {
+            self.0.parameters()
+        }
         /// Register an Amplitude with the Manager
         ///
         /// Parameters
@@ -1927,7 +1938,7 @@ pub(crate) mod laddu {
         ///
         /// Parameters
         /// ----------
-        /// expression : Expression
+        /// expression : Expression or AmplitudeID
         ///     The expression to use in precalculation
         /// dataset : Dataset
         ///     The Dataset to use in precalculation
@@ -1945,8 +1956,17 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, expression: &Expression, dataset: &Dataset) -> Evaluator {
-            Evaluator(self.0.load(&expression.0, &dataset.0))
+        fn load(&self, expression: &Bound<'_, PyAny>, dataset: &Dataset) -> PyResult<Evaluator> {
+            let expression = if let Ok(expression) = expression.extract::<Expression>() {
+                Ok(expression.0)
+            } else if let Ok(aid) = expression.extract::<AmplitudeID>() {
+                Ok(rust::amplitudes::Expression::Amp(aid.0))
+            } else {
+                Err(PyTypeError::new_err(
+                    "'expression' must either by an Expression or AmplitudeID",
+                ))
+            }?;
+            Ok(Evaluator(self.0.load(&expression, &dataset.0)))
         }
     }
 
@@ -2080,6 +2100,34 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
             PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters))
+        }
+        /// Evaluate the gradient of the stored Expression over the stored Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : array_like
+        ///     A ``numpy`` 2D array of complex values for each Event in the Dataset
+        ///
+        fn evaluate_gradient<'py>(
+            &self,
+            py: Python<'py>,
+            parameters: Vec<Float>,
+        ) -> Bound<'py, PyArray2<Complex<Float>>> {
+            PyArray2::from_vec2_bound(
+                py,
+                &self
+                    .0
+                    .evaluate_gradient(&parameters)
+                    .iter()
+                    .map(|grad| grad.data.as_vec().to_vec())
+                    .collect::<Vec<Vec<Complex<Float>>>>(),
+            )
+            .expect("Gradients do not have the same length (please make an issue report on GitHub)")
         }
     }
 
@@ -2254,14 +2302,12 @@ pub(crate) mod laddu {
     /// ----------
     /// manager : Manager
     ///     The Manager to use for precalculation
+    /// expression : Expression or AmplitudeID
+    ///     The Expression to evaluate
     /// ds_data : Dataset
     ///     A Dataset representing true signal data
     /// ds_accmc : Dataset
     ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
-    /// gen_len: int, optional
-    ///     The size of the generated dataset (will use ``len(ds_accmc)`` if None)
-    /// expression : Expression
-    ///     The Expression to evaluate
     ///
     #[pyclass]
     #[derive(Clone)]
@@ -2273,16 +2319,25 @@ pub(crate) mod laddu {
         #[pyo3(signature = (manager, expression, ds_data, ds_accmc))]
         fn new(
             manager: &Manager,
-            expression: &Expression,
+            expression: &Bound<'_, PyAny>,
             ds_data: &Dataset,
             ds_accmc: &Dataset,
-        ) -> Self {
-            Self(rust::likelihoods::NLL::new(
+        ) -> PyResult<Self> {
+            let expression = if let Ok(expression) = expression.extract::<Expression>() {
+                Ok(expression.0)
+            } else if let Ok(aid) = expression.extract::<AmplitudeID>() {
+                Ok(rust::amplitudes::Expression::Amp(aid.0))
+            } else {
+                Err(PyTypeError::new_err(
+                    "'expression' must either by an Expression or AmplitudeID",
+                ))
+            }?;
+            Ok(Self(rust::likelihoods::NLL::new(
                 &manager.0,
-                &expression.0,
+                &expression,
                 &ds_data.0,
                 &ds_accmc.0,
-            ))
+            )))
         }
         /// The underlying signal dataset used in calculating the NLL
         ///
@@ -2431,6 +2486,25 @@ pub(crate) mod laddu {
         ///
         fn evaluate(&self, parameters: Vec<Float>) -> Float {
             self.0.evaluate(&parameters)
+        }
+        /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        ///
+        /// Returns
+        /// -------
+        /// result : array_like
+        ///     A ``numpy`` array of representing the gradient of the negative log-likelihood over each parameter
+        ///
+        fn evaluate_gradient<'py>(
+            &self,
+            py: Python<'py>,
+            parameters: Vec<Float>,
+        ) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice_bound(py, self.0.evaluate_gradient(&parameters).as_slice())
         }
         /// Project the model over the Monte Carlo dataset with the given parameter values
         ///

@@ -4,7 +4,7 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Evaluator, Expression, Manager
+from laddu.amplitudes import AmplitudeID, Evaluator, Expression, Manager
 from laddu.data import Dataset
 
 class LikelihoodID:
@@ -66,7 +66,7 @@ class NLL:
     def __init__(
         self,
         manager: Manager,
-        expression: Expression,
+        expression: Expression | AmplitudeID,
         ds_data: Dataset,
         ds_accmc: Dataset,
     ) -> None: ...
