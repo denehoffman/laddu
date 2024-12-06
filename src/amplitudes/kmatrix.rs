@@ -5,6 +5,7 @@ use nalgebra::{SMatrix, SVector};
 use num::traits::ConstOne;
 use num::traits::FloatConst;
 use num::Complex;
+use serde::{Deserialize, Serialize};
 
 use crate::LadduError;
 use crate::{
@@ -21,7 +22,7 @@ use crate::{
 use super::Amplitude;
 
 /// An Adler zero term used in a K-matrix.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct AdlerZero {
     /// The zero position $`s_0`$.
     pub s_0: Float,
@@ -30,7 +31,7 @@ pub struct AdlerZero {
 }
 
 /// Methods for computing various parts of a K-matrix with fixed couplings and mass poles.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FixedKMatrix<const CHANNELS: usize, const RESONANCES: usize> {
     g: SMatrix<Float, CHANNELS, RESONANCES>,
     c: SMatrix<Float, CHANNELS, CHANNELS>,
@@ -140,7 +141,7 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixF0 {
     name: String,
     channel: usize,
@@ -225,6 +226,7 @@ impl KopfKMatrixF0 {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixF0 {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -284,7 +286,7 @@ impl Amplitude for KopfKMatrixF0 {
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixF2 {
     name: String,
     channel: usize,
@@ -361,6 +363,7 @@ impl KopfKMatrixF2 {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixF2 {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -420,7 +423,7 @@ impl Amplitude for KopfKMatrixF2 {
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixA0 {
     name: String,
     channel: usize,
@@ -489,6 +492,7 @@ impl KopfKMatrixA0 {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixA0 {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -548,7 +552,7 @@ impl Amplitude for KopfKMatrixA0 {
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixA2 {
     name: String,
     channel: usize,
@@ -621,6 +625,7 @@ impl KopfKMatrixA2 {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixA2 {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -680,7 +685,7 @@ impl Amplitude for KopfKMatrixA2 {
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixRho {
     name: String,
     channel: usize,
@@ -752,6 +757,7 @@ impl KopfKMatrixRho {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixRho {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -811,7 +817,7 @@ impl Amplitude for KopfKMatrixRho {
 /// (free production couplings only).
 ///
 /// [^1]: Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of $`\bar{p}p`$-, $`\pi^- p`$- and $`\pi \pi`$-Data. The European Physical Journal C, 81(12). [doi:10.1140/epjc/s10052-021-09821-2](https://doi.org/10.1140/epjc/s10052-021-09821-2)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixPi1 {
     name: String,
     channel: usize,
@@ -879,6 +885,7 @@ impl KopfKMatrixPi1 {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for KopfKMatrixPi1 {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
@@ -963,7 +970,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
 
@@ -991,7 +999,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result =
             evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
@@ -1037,7 +1046,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
@@ -1064,7 +1074,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
@@ -1103,7 +1114,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1128,7 +1140,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1159,7 +1172,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1184,7 +1198,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1215,7 +1230,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1240,7 +1256,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -1263,7 +1280,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
@@ -1280,7 +1298,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 

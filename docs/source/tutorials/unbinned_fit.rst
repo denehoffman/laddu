@@ -149,13 +149,13 @@ Next, we combine these together according to our model. For these amplitude poin
 
    positive_real_sum = (f0_1500 * bw0 * z00p.real() + f2_1525 * bw2 * z22p.real()).norm_sqr()
    positive_imag_sum = (f0_1500 * bw0 * z00p.imag() + f2_1525 * bw2 * z22p.imag()).norm_sqr()
-   model = positive_real_sum + positive_imag_sum
+   model = manager.model(positive_real_sum + positive_imag_sum)
 
 Now that we have the model, we want to fit the free parameters, which in this case are the complex photocouplings and the widths of each Breit-Wigner. We can do this by creating an ``NLL`` object which uses the data and accepted Monte-Carlo datasets to calculate the negative log-likelihood described earlier.
 
 .. code:: python
 
-   nll = ld.NLL(manager, model, data_ds, accmc_ds)
+   nll = ld.NLL(model, data_ds, accmc_ds)
    print(nll.parameters)
    # ['Re[f_0(1500)]', "Re[f_2'(1525)]", "Im[f_2'(1525)]", 'f_0 width', 'f_2 width']
 
@@ -265,7 +265,7 @@ To create an ``Evaluator`` object, we just need to load up the manager with the 
 
 .. code:: python
 
-   gen_eval = manager.load(model, genmc_ds)
+   gen_eval = model.load(genmc_ds)
    tot_weights_acc = nll.project(status.x, mc_evaluator=gen_eval)
    f0_weights_acc = nll.project_with(status.x, ["[f_0(1500)]", "BW_0", "Z00+"], mc_evaluator=gen_eval)
    f2_weights_acc = nll.project_with(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"], mc_evaluator=gen_eval)

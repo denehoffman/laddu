@@ -3,6 +3,8 @@ use std::{array, collections::HashMap};
 use indexmap::IndexSet;
 use nalgebra::{SMatrix, SVector};
 use num::Complex;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
@@ -42,7 +44,7 @@ impl<'a> Parameters<'a> {
 }
 
 /// The main resource manager for cached values, amplitudes, parameters, and constants.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Resources {
     amplitudes: HashMap<String, AmplitudeID>,
     pub(crate) active: Vec<bool>,
@@ -60,7 +62,7 @@ pub struct Resources {
 
 /// A single cache entry corresponding to precomputed data for a particular
 /// [`Event`](crate::data::Event) in a [`Dataset`](crate::data::Dataset).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cache(Vec<Float>);
 impl Cache {
     fn new(cache_size: usize) -> Self {
@@ -162,7 +164,7 @@ impl Cache {
 }
 
 /// An object which acts as a tag to refer to either a free parameter or a constant value.
-#[derive(Default, Copy, Clone, Debug)]
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ParameterID {
     /// A free parameter.
     Parameter(usize),
@@ -174,16 +176,17 @@ pub enum ParameterID {
 }
 
 /// A tag for retrieving or storing a scalar value in a [`Cache`].
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ScalarID(usize);
 
 /// A tag for retrieving or storing a complex scalar value in a [`Cache`].
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct ComplexScalarID(usize, usize);
 
 /// A tag for retrieving or storing a vector in a [`Cache`].
-#[derive(Copy, Clone, Debug)]
-pub struct VectorID<const R: usize>([usize; R]);
+#[serde_as]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct VectorID<const R: usize>(#[serde_as(as = "[_; R]")] [usize; R]);
 
 impl<const R: usize> Default for VectorID<R> {
     fn default() -> Self {
@@ -192,8 +195,12 @@ impl<const R: usize> Default for VectorID<R> {
 }
 
 /// A tag for retrieving or storing a complex-valued vector in a [`Cache`].
-#[derive(Copy, Clone, Debug)]
-pub struct ComplexVectorID<const R: usize>([usize; R], [usize; R]);
+#[serde_as]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct ComplexVectorID<const R: usize>(
+    #[serde_as(as = "[_; R]")] [usize; R],
+    #[serde_as(as = "[_; R]")] [usize; R],
+);
 
 impl<const R: usize> Default for ComplexVectorID<R> {
     fn default() -> Self {
@@ -202,8 +209,11 @@ impl<const R: usize> Default for ComplexVectorID<R> {
 }
 
 /// A tag for retrieving or storing a matrix in a [`Cache`].
-#[derive(Copy, Clone, Debug)]
-pub struct MatrixID<const R: usize, const C: usize>([[usize; C]; R]);
+#[serde_as]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct MatrixID<const R: usize, const C: usize>(
+    #[serde_as(as = "[[_; C]; R]")] [[usize; C]; R],
+);
 
 impl<const R: usize, const C: usize> Default for MatrixID<R, C> {
     fn default() -> Self {
@@ -212,8 +222,12 @@ impl<const R: usize, const C: usize> Default for MatrixID<R, C> {
 }
 
 /// A tag for retrieving or storing a complex-valued matrix in a [`Cache`].
-#[derive(Copy, Clone, Debug)]
-pub struct ComplexMatrixID<const R: usize, const C: usize>([[usize; C]; R], [[usize; C]; R]);
+#[serde_as]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct ComplexMatrixID<const R: usize, const C: usize>(
+    #[serde_as(as = "[[_; C]; R]")] [[usize; C]; R],
+    #[serde_as(as = "[[_; C]; R]")] [[usize; C]; R],
+);
 
 impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
     fn default() -> Self {

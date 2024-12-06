@@ -11,6 +11,7 @@ use num::Complex;
 use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     data::{Dataset, Event},
@@ -30,7 +31,7 @@ pub mod ylm;
 pub mod zlm;
 
 /// An enum containing either a named free parameter or a constant value.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub enum ParameterLike {
     /// A named free parameter.
     Parameter(String),
@@ -61,6 +62,7 @@ pub fn constant(value: Float) -> ParameterLike {
 /// cache values which do not depend on free parameters.
 ///
 /// See [`BreitWigner`](breit_wigner::BreitWigner), [`Ylm`](ylm::Ylm), and [`Zlm`](zlm::Zlm) for examples which use all of these features.
+#[typetag::serde(tag = "type")]
 pub trait Amplitude: DynClone + Send + Sync {
     /// This method should be used to tell the [`Resources`] manager about all of
     /// the free parameters and cached values used by this [`Amplitude`]. It should end by
@@ -176,7 +178,7 @@ pub(crate) struct GradientValues(pub(crate) Vec<DVector<Complex<Float>>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
 impl Display for AmplitudeID {
@@ -192,8 +194,11 @@ impl From<AmplitudeID> for Expression {
 }
 
 /// An expression tree which contains [`AmplitudeID`]s and operators over them.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub enum Expression {
+    #[default]
+    /// A expression equal to zero.
+    Zero,
     /// A registered [`Amplitude`] referenced by an [`AmplitudeID`].
     Amp(AmplitudeID),
     /// The sum of two [`Expression`]s.
@@ -260,6 +265,7 @@ impl Expression {
             Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
+            Expression::Zero => Complex::ZERO,
         }
     }
     pub(crate) fn evaluate_gradient(
@@ -292,6 +298,7 @@ impl Expression {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
             }
+            Expression::Zero => DVector::zeros(0),
         }
     }
     /// Takes the real part of the given [`Expression`].
@@ -322,10 +329,11 @@ impl Expression {
             Self::Real(_) => "Re".to_string(),
             Self::Imag(_) => "Im".to_string(),
             Self::NormSqr(_) => "NormSqr".to_string(),
+            Self::Zero => "0".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match self {
-            Self::Amp(_) => {}
+            Self::Amp(_) | Self::Zero => {}
             Self::Add(a, b) | Self::Mul(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
@@ -348,7 +356,7 @@ impl Expression {
 
 /// A manager which can be used to register [`Amplitude`]s with [`Resources`]. This structure is
 /// essential to any analysis and should be constructed using the [`Manager::default()`] method.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Manager {
     amplitudes: Vec<Box<dyn Amplitude>>,
     resources: Resources,
@@ -372,20 +380,45 @@ impl Manager {
         self.amplitudes.push(amp);
         Ok(aid)
     }
-    /// Create an [`Evaluator`] which can compute the result of the given [`Expression`] built on
+    /// Turns an [`Expression`] made from registered [`Amplitude`]s into a [`Model`].
+    pub fn model(&self, expression: &Expression) -> Model {
+        Model {
+            manager: self.clone(),
+            expression: expression.clone(),
+        }
+    }
+}
+
+/// A struct which contains a set of registerd [`Amplitude`]s (inside a [`Manager`])
+/// and an [`Expression`].
+///
+/// This struct implements [`serde::Serialize`] and [`serde::Deserialize`] and is intended
+/// to be used to store models to disk.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Model {
+    pub(crate) manager: Manager,
+    pub(crate) expression: Expression,
+}
+
+impl Model {
+    /// Get the list of parameter names in the order they appear in the [`Model`]'s [`Manager`] field.
+    pub fn parameters(&self) -> Vec<String> {
+        self.manager.parameters()
+    }
+    /// Create an [`Evaluator`] which can compute the result of the internal [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
     /// information over the [`Event`]s in the [`Dataset`].
-    pub fn load(&self, expression: &Expression, dataset: &Arc<Dataset>) -> Evaluator {
-        let loaded_resources = Arc::new(RwLock::new(self.resources.clone()));
+    pub fn load(&self, dataset: &Arc<Dataset>) -> Evaluator {
+        let loaded_resources = Arc::new(RwLock::new(self.manager.resources.clone()));
         loaded_resources.write().reserve_cache(dataset.len());
-        for amplitude in &self.amplitudes {
+        for amplitude in &self.manager.amplitudes {
             amplitude.precompute_all(dataset, &mut loaded_resources.write());
         }
         Evaluator {
-            amplitudes: self.amplitudes.clone(),
+            amplitudes: self.manager.amplitudes.clone(),
             resources: loaded_resources.clone(),
             dataset: dataset.clone(),
-            expression: expression.clone(),
+            expression: self.expression.clone(),
         }
     }
 }
@@ -620,7 +653,8 @@ mod tests {
             events: vec![Arc::new(test_event())],
         });
         let expr = Expression::Amp(aid);
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex::from(2.0));
     }
@@ -632,7 +666,8 @@ mod tests {
         let aid = manager.register(amp).unwrap();
         let dataset = Arc::new(test_dataset());
         let expr = Expression::Amp(aid);
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
         let result = evaluator.evaluate(&[3.0]);
         assert_eq!(result[0], Complex::from(3.0));
     }
@@ -652,61 +687,71 @@ mod tests {
 
         // Test (amp) addition
         let expr_add = &aid1 + &aid2;
-        let eval_add = manager.load(&expr_add, &dataset);
+        let model_add = manager.model(&expr_add);
+        let eval_add = model_add.load(&dataset);
         let result_add = eval_add.evaluate(&[]);
         assert_eq!(result_add[0], Complex::new(2.0, 1.0));
 
         // Test (amp) multiplication
         let expr_mul = &aid1 * &aid2;
-        let eval_mul = manager.load(&expr_mul, &dataset);
+        let model_mul = manager.model(&expr_mul);
+        let eval_mul = model_mul.load(&dataset);
         let result_mul = eval_mul.evaluate(&[]);
         assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
-        let eval_add2 = manager.load(&expr_add2, &dataset);
+        let model_add2 = manager.model(&expr_add2);
+        let eval_add2 = model_add2.load(&dataset);
         let result_add2 = eval_add2.evaluate(&[]);
         assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
 
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
-        let eval_mul2 = manager.load(&expr_mul2, &dataset);
+        let model_mul2 = manager.model(&expr_mul2);
+        let eval_mul2 = model_mul2.load(&dataset);
         let result_mul2 = eval_mul2.evaluate(&[]);
         assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
 
         // Test (amp) real
         let expr_real = aid3.real();
-        let eval_real = manager.load(&expr_real, &dataset);
+        let model_real = manager.model(&expr_real);
+        let eval_real = model_real.load(&dataset);
         let result_real = eval_real.evaluate(&[]);
         assert_eq!(result_real[0], Complex::new(3.0, 0.0));
 
         // Test (expr) real
         let expr_mul2_real = expr_mul2.real();
-        let eval_mul2_real = manager.load(&expr_mul2_real, &dataset);
+        let model_mul2_real = manager.model(&expr_mul2_real);
+        let eval_mul2_real = model_mul2_real.load(&dataset);
         let result_mul2_real = eval_mul2_real.evaluate(&[]);
         assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
 
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
-        let eval_mul2_imag = manager.load(&expr_mul2_imag, &dataset);
+        let model_mul2_imag = manager.model(&expr_mul2_imag);
+        let eval_mul2_imag = model_mul2_imag.load(&dataset);
         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
         assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
 
         // Test (amp) imag
         let expr_imag = aid3.imag();
-        let eval_imag = manager.load(&expr_imag, &dataset);
+        let model_imag = manager.model(&expr_imag);
+        let eval_imag = model_imag.load(&dataset);
         let result_imag = eval_imag.evaluate(&[]);
         assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
 
         // Test (amp) norm_sqr
         let expr_norm = aid1.norm_sqr();
-        let eval_norm = manager.load(&expr_norm, &dataset);
+        let model_norm = manager.model(&expr_norm);
+        let eval_norm = model_norm.load(&dataset);
         let result_norm = eval_norm.evaluate(&[]);
         assert_eq!(result_norm[0], Complex::new(4.0, 0.0));
 
         // Test (expr) norm_sqr
         let expr_mul2_norm = expr_mul2.norm_sqr();
-        let eval_mul2_norm = manager.load(&expr_mul2_norm, &dataset);
+        let model_mul2_norm = manager.model(&expr_mul2_norm);
+        let eval_mul2_norm = model_mul2_norm.load(&dataset);
         let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
         assert_eq!(result_mul2_norm[0], Complex::new(20.0, 0.0));
     }
@@ -722,7 +767,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = &aid1 + &aid2;
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         // Test initial state (all active)
         let result = evaluator.evaluate(&[]);
@@ -752,7 +798,8 @@ mod tests {
         let aid = manager.register(amp).unwrap();
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -767,10 +814,14 @@ mod tests {
         let mut manager = Manager::default();
         let amp = Scalar::new("parametric", parameter("test_param"));
 
-        manager.register(amp).unwrap();
+        let aid = manager.register(amp).unwrap();
         let parameters = manager.parameters();
+        let model = manager.model(&aid.into());
+        let model_parameters = model.parameters();
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0], "test_param");
+        assert_eq!(model_parameters.len(), 1);
+        assert_eq!(model_parameters[0], "test_param");
     }
 
     #[test]

@@ -44,7 +44,8 @@ def test_f0_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     assert pytest.approx(result[0].real) == 0.2674945
     assert pytest.approx(result[0].imag) == 0.7289451
@@ -67,7 +68,8 @@ def test_f0_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient(
         [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     )
@@ -109,7 +111,8 @@ def test_f2_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     assert pytest.approx(result[0].real) == 0.02523304
     assert pytest.approx(result[0].imag) == 0.3971239
@@ -131,7 +134,8 @@ def test_f2_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     assert pytest.approx(result[0][0].real) == -0.3078948
     assert pytest.approx(result[0][0].imag) == 0.3808689
@@ -165,7 +169,8 @@ def test_a0_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == -0.8002759
     assert pytest.approx(result[0].imag) == -0.1359306
@@ -185,7 +190,8 @@ def test_a0_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == 0.2906192
     assert pytest.approx(result[0][0].imag) == -0.0998906
@@ -211,7 +217,8 @@ def test_a2_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == -0.2092661
     assert pytest.approx(result[0].imag) == -0.0985062
@@ -231,7 +238,8 @@ def test_a2_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == -0.5756896
     assert pytest.approx(result[0][0].imag) == 0.9398863
@@ -257,7 +265,8 @@ def test_rho_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == 0.0948355
     assert pytest.approx(result[0].imag) == 0.2609183
@@ -277,7 +286,8 @@ def test_rho_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == 0.0265203
     assert pytest.approx(result[0][0].imag) == -0.02660265
@@ -300,7 +310,8 @@ def test_pi1_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([0.1, 0.2])
     assert pytest.approx(result[0].real) == -0.1101758
     assert pytest.approx(result[0].imag) == 0.2638717
@@ -317,7 +328,8 @@ def test_pi1_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2])
     assert pytest.approx(result[0][0].real) == -14.7987174
     assert pytest.approx(result[0][0].imag) == -5.8430094

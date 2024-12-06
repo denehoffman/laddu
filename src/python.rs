@@ -16,7 +16,7 @@ pub(crate) mod laddu {
     use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
     use crate::likelihoods::MinimizerOptions;
-    use crate::prelude::ReadWrite;
+    use crate::traits::ReadWrite;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
@@ -1887,15 +1887,6 @@ pub(crate) mod laddu {
     #[pyclass]
     struct Manager(rust::amplitudes::Manager);
 
-    /// An Amplitude which can be registered by a Manager
-    ///
-    /// See Also
-    /// --------
-    /// laddu.Manager
-    ///
-    #[pyclass]
-    struct Amplitude(Box<dyn rust::amplitudes::Amplitude>);
-
     #[pymethods]
     impl Manager {
         #[new]
@@ -1934,12 +1925,62 @@ pub(crate) mod laddu {
         fn register(&mut self, amplitude: &Amplitude) -> PyResult<AmplitudeID> {
             Ok(AmplitudeID(self.0.register(amplitude.0.clone())?))
         }
-        /// Load an Expression by precalculating each term over the given Dataset
+        /// Generate a Model from the given expression made of registered Amplitudes
         ///
         /// Parameters
         /// ----------
         /// expression : Expression or AmplitudeID
         ///     The expression to use in precalculation
+        ///
+        /// Returns
+        /// -------
+        /// Model
+        ///     An object which represents the underlying mathematical model and can be loaded with
+        ///     a Dataset
+        ///
+        /// Notes
+        /// -----
+        /// While the given `expression` will be the one evaluated in the end, all registered
+        /// Amplitudes will be loaded, and all of their parameters will be included in the final
+        /// expression. These parameters will have no effect on evaluation, but they must be
+        /// included in function calls.
+        ///
+        fn model(&self, expression: &Bound<'_, PyAny>) -> PyResult<Model> {
+            let expression = if let Ok(expression) = expression.extract::<Expression>() {
+                Ok(expression.0)
+            } else if let Ok(aid) = expression.extract::<AmplitudeID>() {
+                Ok(rust::amplitudes::Expression::Amp(aid.0))
+            } else {
+                Err(PyTypeError::new_err(
+                    "'expression' must either by an Expression or AmplitudeID",
+                ))
+            }?;
+            Ok(Model(self.0.model(&expression)))
+        }
+    }
+
+    /// A class which represents a model composed of registered Amplitudes
+    ///
+    #[pyclass]
+    struct Model(rust::amplitudes::Model);
+
+    #[pymethods]
+    impl Model {
+        /// The free parameters used by the Manager
+        ///
+        /// Returns
+        /// -------
+        /// parameters : list of str
+        ///     The list of parameter names
+        ///
+        #[getter]
+        fn parameters(&self) -> Vec<String> {
+            self.0.parameters()
+        }
+        /// Load a Model by precalculating each term over the given Dataset
+        ///
+        /// Parameters
+        /// ----------
         /// dataset : Dataset
         ///     The Dataset to use in precalculation
         ///
@@ -1956,19 +1997,78 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, expression: &Bound<'_, PyAny>, dataset: &Dataset) -> PyResult<Evaluator> {
-            let expression = if let Ok(expression) = expression.extract::<Expression>() {
-                Ok(expression.0)
-            } else if let Ok(aid) = expression.extract::<AmplitudeID>() {
-                Ok(rust::amplitudes::Expression::Amp(aid.0))
-            } else {
-                Err(PyTypeError::new_err(
-                    "'expression' must either by an Expression or AmplitudeID",
-                ))
-            }?;
-            Ok(Evaluator(self.0.load(&expression, &dataset.0)))
+        fn load(&self, dataset: &Dataset) -> PyResult<Evaluator> {
+            Ok(Evaluator(self.0.load(&dataset.0)))
+        }
+        /// Save the Model to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the new file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        /// Load a Model from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the existing fit file
+        ///
+        /// Returns
+        /// -------
+        /// Model
+        ///     The model contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
+        #[staticmethod]
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(Model(crate::amplitudes::Model::load_from(path)?))
+        }
+        #[new]
+        fn new() -> Self {
+            Model(crate::amplitudes::Model::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new_bound(
+                py,
+                serialize(&self.0).unwrap().as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Model(deserialize(state.as_bytes()).unwrap());
+            Ok(())
         }
     }
+
+    /// An Amplitude which can be registered by a Manager
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    ///
+    #[pyclass]
+    struct Amplitude(Box<dyn rust::amplitudes::Amplitude>);
 
     /// A class which can be used to evaluate a stored Expression
     ///
@@ -2300,10 +2400,8 @@ pub(crate) mod laddu {
     ///
     /// Parameters
     /// ----------
-    /// manager : Manager
-    ///     The Manager to use for precalculation
-    /// expression : Expression or AmplitudeID
-    ///     The Expression to evaluate
+    /// model: Model
+    ///     The Model to evaluate
     /// ds_data : Dataset
     ///     A Dataset representing true signal data
     /// ds_accmc : Dataset
@@ -2316,25 +2414,10 @@ pub(crate) mod laddu {
     #[pymethods]
     impl NLL {
         #[new]
-        #[pyo3(signature = (manager, expression, ds_data, ds_accmc))]
-        fn new(
-            manager: &Manager,
-            expression: &Bound<'_, PyAny>,
-            ds_data: &Dataset,
-            ds_accmc: &Dataset,
-        ) -> PyResult<Self> {
-            let expression = if let Ok(expression) = expression.extract::<Expression>() {
-                Ok(expression.0)
-            } else if let Ok(aid) = expression.extract::<AmplitudeID>() {
-                Ok(rust::amplitudes::Expression::Amp(aid.0))
-            } else {
-                Err(PyTypeError::new_err(
-                    "'expression' must either by an Expression or AmplitudeID",
-                ))
-            }?;
+        #[pyo3(signature = (model, ds_data, ds_accmc))]
+        fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> PyResult<Self> {
             Ok(Self(rust::likelihoods::NLL::new(
-                &manager.0,
-                &expression,
+                &model.0,
                 &ds_data.0,
                 &ds_accmc.0,
             )))
@@ -3251,12 +3334,12 @@ pub(crate) mod laddu {
         /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         #[staticmethod]
-        fn load(path: &str) -> PyResult<Self> {
-            Ok(Status(ganesh::Status::load(path)?))
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(Status(ganesh::Status::load_from(path)?))
         }
         #[new]
         fn new() -> Self {
-            Status(ganesh::Status::default())
+            Status(ganesh::Status::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new_bound(

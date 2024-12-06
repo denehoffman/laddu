@@ -26,7 +26,8 @@ def test_bw_evaluation():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([1.5, 0.3])
     assert pytest.approx(result[0].real) == 1.4585691
     assert pytest.approx(result[0].imag) == 1.4107341
@@ -39,7 +40,8 @@ def test_bw_gradient():
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([1.5, 0.3])
     assert pytest.approx(result[0][0].real) == 1.3252039
     assert pytest.approx(result[0][0].imag) == -11.6827505

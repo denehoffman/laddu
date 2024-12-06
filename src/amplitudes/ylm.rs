@@ -1,5 +1,6 @@
 use nalgebra::DVector;
 use num::Complex;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     amplitudes::AmplitudeID,
@@ -15,7 +16,7 @@ use crate::{
 use super::Amplitude;
 
 /// An [`Amplitude`] for the spherical harmonic function $`Y_\ell^m(\theta, \phi)`$.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Ylm {
     name: String,
     l: usize,
@@ -39,6 +40,7 @@ impl Ylm {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for Ylm {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.csid = resources.register_complex_scalar(None);
@@ -91,7 +93,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[]);
 
@@ -108,7 +111,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

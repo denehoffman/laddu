@@ -1,4 +1,5 @@
 use nalgebra::Vector3;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[cfg(feature = "rayon")]
@@ -33,7 +34,7 @@ pub trait Variable: Clone + Send + Sync {
 
 /// A struct for obtaining the mass of a particle by indexing the four-momenta of an event, adding
 /// together multiple four-momenta if more than one index is given.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mass(Vec<usize>);
 impl Mass {
     /// Create a new [`Mass`] from the sum of the four-momenta at the given indices in the
@@ -50,7 +51,7 @@ impl Variable for Mass {
 
 /// A struct for obtaining the $`\cos\theta`$ (cosine of the polar angle) of a decay product in
 /// a given reference frame of its parent resonance.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CosTheta {
     beam: usize,
     recoil: Vec<usize>,
@@ -128,7 +129,7 @@ impl Variable for CosTheta {
 
 /// A struct for obtaining the $`\phi`$ angle (azimuthal angle) of a decay product in a given
 /// reference frame of its parent resonance.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Phi {
     beam: usize,
     recoil: Vec<usize>,
@@ -205,7 +206,7 @@ impl Variable for Phi {
 }
 
 /// A struct for obtaining both spherical angles at the same time.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Angles {
     /// See [`CosTheta`].
     pub costheta: CosTheta,
@@ -239,7 +240,7 @@ impl Angles {
 }
 
 /// A struct defining the polarization angle for a beam relative to the production plane.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolAngle {
     beam: usize,
     recoil: Vec<usize>,
@@ -268,7 +269,7 @@ impl Variable for PolAngle {
 }
 
 /// A struct defining the polarization magnitude for a beam relative to the production plane.
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PolMagnitude {
     beam: usize,
 }
@@ -286,7 +287,7 @@ impl Variable for PolMagnitude {
 }
 
 /// A struct for obtaining both the polarization angle and magnitude at the same time.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Polarization {
     /// See [`PolMagnitude`].
     pub pol_magnitude: PolMagnitude,
@@ -316,7 +317,7 @@ impl Polarization {
 /// $`t = (p_1 - p_3)^2 = (p_4 - p_2)^2`$
 ///
 /// $`u = (p_1 - p_4)^2 = (p_3 - p_2)^2`$
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mandelstam {
     p1: Vec<usize>,
     p2: Vec<usize>,

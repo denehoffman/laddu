@@ -1,5 +1,6 @@
 use nalgebra::DVector;
 use num::Complex;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     amplitudes::AmplitudeID,
@@ -20,7 +21,7 @@ use super::Amplitude;
 /// [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
 /// [^1]: Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in $`\eta\pi^0`$ photoproduction at GlueX. _Physical Review D_, **100**(5). [doi:10.1103/physrevd.100.054017](https://doi.org/10.1103/PhysRevD.100.054017)
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Zlm {
     name: String,
     l: usize,
@@ -55,6 +56,7 @@ impl Zlm {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for Zlm {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.csid = resources.register_complex_scalar(None);
@@ -122,7 +124,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[]);
 
@@ -140,7 +143,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

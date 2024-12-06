@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from laddu.amplitudes import Manager, constant, parameter
+from laddu.amplitudes import Manager, constant, parameter, Model
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
@@ -76,6 +76,7 @@ __all__ = [
     'Event',
     'LikelihoodManager',
     'Manager',
+    'Model',
     'Mandelstam',
     'Mass',
     'Observer',
