@@ -782,3 +782,4 @@ mod tests {
         assert!(manager.register(amp2).is_err());
     }
 }
+

@@ -16,3 +16,17 @@ makedocs:
 
 odoc:
   firefox ./docs/build/html/index.html
+
+clean:
+  cargo clean
+
+profile:
+  RUSTFLAGS='-C force-frame-pointers=y' cargo build --profile perf
+  perf record -g target/perf/laddu
+  perf annotate -v --asm-raw --stdio
+  perf report -g graph,0.5,caller
+
+popen:
+  mv firefox.perf.data firefox.perf.data.old
+  perf script --input=perf.data -F +pid > firefox.perf.data
+  firefox https://profiler.firefox.com
