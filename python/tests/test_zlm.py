@@ -1,4 +1,4 @@
-from laddu import Event, Dataset, Vector3, Ylm, Angles, Manager
+from laddu import Event, Dataset, Vector3, Zlm, Angles, Manager, Polarization
 import pytest
 
 
@@ -19,24 +19,28 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_ylm_evaluation():
+def test_zlm_evaluation():
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], 'Helicity')
-    amp = Ylm('ylm', 1, 1, angles)
+    polarization = Polarization(0, [1])
+    amp = Zlm('zlm', 1, 1, '+', angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == 0.2713394
-    assert pytest.approx(result[0].imag) == 0.1426897
+    assert pytest.approx(result[0].real) == 0.04284127
+    assert pytest.approx(result[0].imag) == -0.2385963
 
 
-def test_ylm_gradient():
+def test_zlm_gradient():
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], 'Helicity')
-    amp = Ylm('ylm', 1, 1, angles)
+    polarization = Polarization(0, [1])
+    amp = Zlm('zlm', 1, 1, '+', angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters

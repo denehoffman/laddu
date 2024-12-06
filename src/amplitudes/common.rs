@@ -1,5 +1,6 @@
 use nalgebra::DVector;
 use num::Complex;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
@@ -11,7 +12,7 @@ use crate::{
 use super::Amplitude;
 
 /// A scalar-valued [`Amplitude`] which just contains a single parameter as its value.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Scalar {
     name: String,
     value: ParameterLike,
@@ -30,6 +31,7 @@ impl Scalar {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for Scalar {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid = resources.register_parameter(&self.value);
@@ -55,7 +57,7 @@ impl Amplitude for Scalar {
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its real and
 /// imaginary parts.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ComplexScalar {
     name: String,
     re: ParameterLike,
@@ -78,6 +80,7 @@ impl ComplexScalar {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for ComplexScalar {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_re = resources.register_parameter(&self.re);
@@ -107,7 +110,7 @@ impl Amplitude for ComplexScalar {
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its magnitude and
 /// phase.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PolarComplexScalar {
     name: String,
     r: ParameterLike,
@@ -130,6 +133,7 @@ impl PolarComplexScalar {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for PolarComplexScalar {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_r = resources.register_parameter(&self.r);
@@ -175,7 +179,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into(); // Direct amplitude evaluation
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let params = vec![2.5];
         let result = evaluator.evaluate(&params);
@@ -192,7 +197,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr(); // |f(x)|^2
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -210,7 +216,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
         let result = evaluator.evaluate(&params);
@@ -227,7 +234,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.norm_sqr(); // |f(x + iy)|^2
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
         let gradient = evaluator.evaluate_gradient(&params);
@@ -248,7 +256,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let r = 2.0;
         let theta = PI / 4.0;
@@ -269,7 +278,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into(); // f(r,θ) = re^(iθ)
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let r = 2.0;
         let theta = PI / 4.0;

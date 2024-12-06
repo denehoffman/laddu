@@ -50,10 +50,15 @@
 //! Although this particular amplitude is already included in `laddu`, let's assume it isn't and imagine how we would write it from scratch:
 //!
 //! ```rust
-//! use laddu::prelude::*;
+//! use laddu::{
+//!    ParameterLike, Event, Cache, Resources, Mass,
+//!    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+//! };
+//! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
+//! use laddu::{Deserialize, Serialize};
 //!
-//! #[derive(Clone)]
+//! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
 //!     name: String,
 //!     mass: ParameterLike,
@@ -90,6 +95,7 @@
 //!     }
 //! }
 //!
+//! #[typetag::serde]
 //! impl Amplitude for MyBreitWigner {
 //!     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //!         self.pid_mass = resources.register_parameter(&self.mass);
@@ -123,10 +129,15 @@
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 //! ```rust
-//! # use laddu::prelude::*;
+//! # use laddu::{
+//! #    ParameterLike, Event, Cache, Resources,
+//! #    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+//! # };
+//! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
-//! #
-//! # #[derive(Clone)]
+//! # use laddu::{Deserialize, Serialize};
+//!
+//! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
 //! #     name: String,
 //! #     mass: ParameterLike,
@@ -163,6 +174,7 @@
 //! #     }
 //! # }
 //! #
+//! # #[typetag::serde]
 //! # impl Amplitude for MyBreitWigner {
 //! #     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass);
@@ -186,6 +198,7 @@
 //! #         Complex::from(f * n) / d
 //! #     }
 //! # }
+//! use laddu::{Scalar, Mass, Manager, NLL, parameter, open};
 //! let ds_data = open("test_data/data.parquet").unwrap();
 //! let ds_mc = open("test_data/mc.parquet").unwrap();
 //!
@@ -203,9 +216,10 @@
 //!     &resonance_mass,
 //! )).unwrap();
 //! let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
-//! let model = (mag * bw).norm_sqr();
+//! let expr = (mag * bw).norm_sqr();
+//! let model = manager.model(&expr);
 //!
-//! let nll = NLL::new(&manager, &model, &ds_data, &ds_mc);
+//! let nll = NLL::new(&model, &ds_data, &ds_mc);
 //! println!("Parameters names and order: {:?}", nll.parameters());
 //! let result = nll.evaluate(&[1.27, 0.120, 100.0]);
 //! println!("The extended negative log-likelihood is {}", result);
@@ -278,36 +292,42 @@ pub mod likelihoods;
 pub mod resources;
 /// Utility functions, enums, and traits
 pub mod utils;
-
-/// All of the typical things you might want in the namespace for a typical `laddu` analysis.
-pub mod prelude {
-    pub use crate::amplitudes::{
-        breit_wigner::BreitWigner,
-        common::{ComplexScalar, PolarComplexScalar, Scalar},
-        constant, parameter,
-        ylm::Ylm,
-        zlm::Zlm,
-        Amplitude, AmplitudeID, Evaluator, Expression, Manager, ParameterLike,
-    };
-    pub use crate::data::{open, BinnedDataset, Dataset, Event};
-    pub use crate::likelihoods::{
-        LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodTerm,
-        MinimizerOptions, ReadWrite, NLL,
-    };
-    pub use crate::resources::{
-        Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID,
-        Parameters, Resources, ScalarID, VectorID,
-    };
-    pub use crate::utils::enums::{Channel, Frame, Sign};
-    pub use crate::utils::variables::{
-        Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization, Variable,
-    };
+/// Useful traits for all crate structs
+pub mod traits {
+    pub use crate::amplitudes::Amplitude;
+    pub use crate::likelihoods::LikelihoodTerm;
+    pub use crate::utils::variables::Variable;
     pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
-    pub use crate::{Float, LadduError, PI};
-    pub use ganesh::Status;
-    pub use nalgebra::{DVector, Vector3, Vector4};
-    pub use num::Complex;
+    pub use crate::ReadWrite;
 }
+
+pub use crate::amplitudes::{
+    breit_wigner::BreitWigner,
+    common::{ComplexScalar, PolarComplexScalar, Scalar},
+    constant, parameter,
+    ylm::Ylm,
+    zlm::Zlm,
+    AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
+};
+pub use crate::data::{open, BinnedDataset, Dataset, Event};
+pub use crate::likelihoods::{
+    LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, MinimizerOptions,
+    NLL,
+};
+pub use crate::resources::{
+    Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
+    Resources, ScalarID, VectorID,
+};
+pub use crate::utils::enums::{Channel, Frame, Sign};
+pub use crate::utils::variables::{
+    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+};
+
+// Re-exports
+pub use ganesh::Status;
+pub use nalgebra::{DVector, Vector3, Vector4};
+pub use num::Complex;
+pub use serde::{Deserialize, Serialize};
 
 /// A module containing Python bindings with PyO3.
 #[cfg(feature = "python")]
@@ -374,6 +394,76 @@ impl From<LadduError> for PyErr {
             | LadduError::IOError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
+        }
+    }
+}
+
+use serde::de::DeserializeOwned;
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::{BufReader, BufWriter},
+    path::Path,
+};
+/// A trait which allows structs with [`Serialize`] and [`Deserialize`](`serde::Deserialize`) to be
+/// written and read from files with a certain set of types/extensions.
+///
+/// Currently, Python's pickle format is supported supported, since it's an easy-to-parse standard
+/// that supports floating point values better that JSON or TOML
+pub trait ReadWrite: Serialize + DeserializeOwned {
+    /// Create a null version of the object which acts as a shell into which Python's `pickle` module
+    /// can load data. This generally shouldn't be used to construct the struct in regular code.
+    fn create_null() -> Self;
+    /// Save a [`serde`]-object to a file path, using the extension to determine the file format
+    fn save_as<T: AsRef<str>>(&self, file_path: T) -> Result<(), LadduError> {
+        let expanded_path = shellexpand::full(file_path.as_ref())?;
+        let file_path = Path::new(expanded_path.as_ref());
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
+            .unwrap_or("".to_string());
+        let file = File::create(file_path)?;
+        let mut writer = BufWriter::new(file);
+        match extension.as_str() {
+            "pkl" | "pickle" => serde_pickle::to_writer(&mut writer, self, Default::default())?,
+            _ => {
+                return Err(LadduError::Custom(format!(
+                    "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
+                    extension
+                )))
+            }
+        };
+        Ok(())
+    }
+    /// Load a [`serde`]-object from a file path, using the extension to determine the file format
+    fn load_from<T: AsRef<str>>(file_path: T) -> Result<Self, LadduError> {
+        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+        let extension = file_path
+            .extension()
+            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
+            .unwrap_or("".to_string());
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        match extension.as_str() {
+            "pkl" | "pickle" => Ok(serde_pickle::from_reader(reader, Default::default())?),
+            _ => Err(LadduError::Custom(format!(
+                "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
+                extension
+            ))),
+        }
+    }
+}
+
+impl ReadWrite for Status<Float> {
+    fn create_null() -> Self {
+        Status::default()
+    }
+}
+impl ReadWrite for Model {
+    fn create_null() -> Self {
+        Model {
+            manager: Manager::default(),
+            expression: Expression::default(),
         }
     }
 }

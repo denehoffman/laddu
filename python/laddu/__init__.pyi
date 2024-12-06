@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from pathlib import Path
 
-from laddu.amplitudes import Expression, Manager, constant, parameter
+from laddu.amplitudes import Expression, Manager, constant, parameter, Model
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
@@ -51,6 +51,7 @@ __all__ = [
     'Expression',
     'LikelihoodManager',
     'Manager',
+    'Model',
     'Mandelstam',
     'Mass',
     'Observer',

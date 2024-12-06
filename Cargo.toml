@@ -18,7 +18,7 @@ name = "laddu"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-indexmap = "2.6.0"
+indexmap = { version = "2.6.0", features = ["serde"] }
 num = "0.4.3"
 nalgebra = "0.33.2"
 arrow = "53.3.0"
@@ -40,6 +40,8 @@ thiserror = "2.0.3"
 shellexpand = "3.1.0"
 accurate = "0.4.1"
 serde = "1.0.215"
+serde_with = "3.11.0"
+typetag = "0.2.18"
 serde-pickle = "1.2.0"
 bincode = "1.3.3"
 

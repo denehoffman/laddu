@@ -84,10 +84,15 @@ is the relativistic width correction, $`q(m_a, m_b, m_c)`$ is the breakup moment
 Although this particular amplitude is already included in `laddu`, let's assume it isn't and imagine how we would write it from scratch:
 
 ```rust
-use laddu::prelude::*;
+use laddu::{
+   ParameterLike, Event, Cache, Resources, Mass,
+   ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+};
+use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
+use laddu::{Deserialize, Serialize};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {
     name: String,
     mass: ParameterLike,
@@ -124,6 +129,7 @@ impl MyBreitWigner {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for MyBreitWigner {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
@@ -151,6 +157,7 @@ impl Amplitude for MyBreitWigner {
 ### Calculating a Likelihood
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 ```rust
+use laddu::{Scalar, Mass, Manager, NLL, parameter, open};
 let ds_data = open("test_data/data.parquet").unwrap();
 let ds_mc = open("test_data/mc.parquet").unwrap();
 
@@ -168,11 +175,12 @@ let bw = manager.register(MyBreitWigner::new(
     &resonance_mass,
 )).unwrap();
 let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
-let model = (mag * bw).norm_sqr();
+let expr = (mag * bw).norm_sqr();
+let model = manager.model(&expr);
 
-let nll = NLL::new(&manager, &ds_data, &ds_mc);
+let nll = NLL::new(&model, &ds_data, &ds_mc);
 println!("Parameters names and order: {:?}", nll.parameters());
-let result = nll.evaluate(&[1.27, 0.120, 100.0], &model);
+let result = nll.evaluate(&[1.27, 0.120, 100.0]);
 println!("The extended negative log-likelihood is {}", result);
 ```
 In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.
@@ -203,9 +211,10 @@ def main():
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
     neg_re = (s0n * z00n.real()).norm_sqr()
     neg_im = (s0n * z00n.imag()).norm_sqr()
-    model = pos_re + pos_im + neg_re + neg_im
+    expr = pos_re + pos_im + neg_re + neg_im
+    model = manager.model(expr)
 
-    nll = ld.NLL(manager, model, ds_data, ds_mc)
+    nll = ld.NLL(model, ds_data, ds_mc)
     status = nll.minimize([1.0] * len(nll.parameters))
     print(status)
     fit_weights = nll.project(status.x)

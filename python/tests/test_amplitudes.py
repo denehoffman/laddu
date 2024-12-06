@@ -33,7 +33,8 @@ def test_constant_amplitude():
     amp = Scalar('constant', constant(2.0))
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([])
     assert result[0] == 2.0 + 0.0j
 
@@ -43,7 +44,8 @@ def test_parametric_amplitude():
     amp = Scalar('parametric', parameter('test_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
-    evaluator = manager.load(aid, dataset)
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([3.0])
     assert result[0] == 3.0 + 0.0j
 
@@ -58,52 +60,62 @@ def test_expression_operations():
     aid3 = manager.register(amp3)
     dataset = make_test_dataset()
     expr_add = aid1 + aid2
-    eval_add = manager.load(expr_add, dataset)
+    model_add = manager.model(expr_add)
+    eval_add = model_add.load(dataset)
     result_add = eval_add.evaluate([])
     assert result_add[0] == 2.0 + 1.0j
 
     expr_mul = aid1 * aid2
-    eval_mul = manager.load(expr_mul, dataset)
+    model_mul = manager.model(expr_mul)
+    eval_mul = model_mul.load(dataset)
     result_mul = eval_mul.evaluate([])
     assert result_mul[0] == 0.0 + 2.0j
 
     expr_add2 = expr_add + expr_mul
-    eval_add2 = manager.load(expr_add2, dataset)
+    model_add2 = manager.model(expr_add2)
+    eval_add2 = model_add2.load(dataset)
     result_add2 = eval_add2.evaluate([])
     assert result_add2[0] == 2.0 + 3.0j
 
     expr_mul2 = expr_add * expr_mul
-    eval_mul2 = manager.load(expr_mul2, dataset)
+    model_mul2 = manager.model(expr_mul2)
+    eval_mul2 = model_mul2.load(dataset)
     result_mul2 = eval_mul2.evaluate([])
     assert result_mul2[0] == -2.0 + 4.0j
 
     expr_real = aid3.real()
-    eval_real = manager.load(expr_real, dataset)
+    model_real = manager.model(expr_real)
+    eval_real = model_real.load(dataset)
     result_real = eval_real.evaluate([])
     assert result_real[0] == 3.0 + 0.0j
 
     expr_mul2_real = expr_mul2.real()
-    eval_mul2_real = manager.load(expr_mul2_real, dataset)
+    model_mul2_real = manager.model(expr_mul2_real)
+    eval_mul2_real = model_mul2_real.load(dataset)
     result_mul2_real = eval_mul2_real.evaluate([])
     assert result_mul2_real[0] == -2.0 + 0.0j
 
     expr_imag = aid3.imag()
-    eval_imag = manager.load(expr_imag, dataset)
+    model_imag = manager.model(expr_imag)
+    eval_imag = model_imag.load(dataset)
     result_imag = eval_imag.evaluate([])
     assert result_imag[0] == 4.0 + 0.0j
 
     expr_mul2_imag = expr_mul2.imag()
-    eval_mul2_imag = manager.load(expr_mul2_imag, dataset)
+    model_mul2_imag = manager.model(expr_mul2_imag)
+    eval_mul2_imag = model_mul2_imag.load(dataset)
     result_mul2_imag = eval_mul2_imag.evaluate([])
     assert result_mul2_imag[0] == 4.0 + 0.0j
 
     expr_norm = aid1.norm_sqr()
-    eval_norm = manager.load(expr_norm, dataset)
+    model_norm = manager.model(expr_norm)
+    eval_norm = model_norm.load(dataset)
     result_norm = eval_norm.evaluate([])
     assert result_norm[0] == 4.0 + 0.0j
 
     expr_mul2_norm = expr_mul2.norm_sqr()
-    eval_mul2_norm = manager.load(expr_mul2_norm, dataset)
+    model_mul2_norm = manager.model(expr_mul2_norm)
+    eval_mul2_norm = model_mul2_norm.load(dataset)
     result_mul2_norm = eval_mul2_norm.evaluate([])
     assert result_mul2_norm[0] == 20.0 + 0.0j
 
@@ -117,7 +129,8 @@ def test_amplitude_activation():
     dataset = make_test_dataset()
 
     expr = aid1 + aid2
-    evaluator = manager.load(expr, dataset)
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
     result = evaluator.evaluate([])
     assert result[0] == 3.0 + 0.0j
 
@@ -140,7 +153,8 @@ def test_gradient():
     aid = manager.register(amp)
     dataset = make_test_dataset()
     expr = aid.norm_sqr()
-    evaluator = manager.load(expr, dataset)
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
     params = [2.0]
     gradient = evaluator.evaluate_gradient(params)
     # For |f(x)|^2 where f(x) = x, the derivative should be 2x
@@ -151,10 +165,14 @@ def test_gradient():
 def test_parameter_registration():
     manager = Manager()
     amp = Scalar('parametric', parameter('test_param'))
-    manager.register(amp)
+    aid = manager.register(amp)
     parameters = manager.parameters
+    model = manager.model(aid)
+    model_parameters = model.parameters
     assert len(parameters) == 1
     assert parameters[0] == 'test_param'
+    assert len(model_parameters) == 1
+    assert model_parameters[0] == 'test_param'
 
 
 def test_duplicate_amplitude_registration():

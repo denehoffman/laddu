@@ -519,7 +519,7 @@ impl BinnedDataset {
 
 #[cfg(test)]
 mod tests {
-    use crate::prelude::ThreeMomentum;
+    use crate::traits::ThreeMomentum;
 
     use super::*;
     use approx::{assert_relative_eq, assert_relative_ne};

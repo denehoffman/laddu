@@ -142,8 +142,9 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let pos_im = (&s0p * z00p.imag() + &d2p * z22p.imag()).norm_sqr();
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
-    let model = pos_re + pos_im + neg_re + neg_im;
-    let nll = NLL::new(&manager, &model, &ds_data, &ds_mc);
+    let expr = pos_re + pos_im + neg_re + neg_im;
+    let model = manager.model(&expr);
+    let nll = NLL::new(&model, &ds_data, &ds_mc);
     let mut group = c.benchmark_group("K-Matrix NLL Performance");
     for threads in 1..=num_cpus::get() {
         let pool = ThreadPoolBuilder::new()

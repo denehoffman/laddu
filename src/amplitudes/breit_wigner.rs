@@ -1,5 +1,6 @@
 use nalgebra::DVector;
 use num::Complex;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     amplitudes::ParameterLike,
@@ -23,7 +24,7 @@ use super::{Amplitude, AmplitudeID};
 /// \Gamma = \Gamma_0 \frac{m_0}{m} \frac{q(m, m_1, m_2)}{q(m_0, m_1, m_2)} \left(\frac{B_{\ell}(m, m_1, m_2)}{B_{\ell}(m_0, m_1, m_2)}\right)^2
 /// ```
 /// is the relativistic width correction, $`q(m_a, m_b, m_c)`$ is the breakup momentum of a particle with mass $`m_a`$ decaying into two particles with masses $`m_b`$ and $`m_c`$, $`B_{\ell}(m_a, m_b, m_c)`$ is the Blatt-Weisskopf barrier factor for the same decay assuming particle $`a`$ has angular momentum $`\ell`$, $`m_0`$ is the mass of the resonance, $`\Gamma_0`$ is the nominal width of the resonance, $`m_1`$ and $`m_2`$ are the masses of the decay products, and $`m`$ is the "input" mass.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BreitWigner {
     name: String,
     mass: ParameterLike,
@@ -63,6 +64,7 @@ impl BreitWigner {
     }
 }
 
+#[typetag::serde]
 impl Amplitude for BreitWigner {
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
@@ -130,7 +132,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
@@ -154,7 +157,8 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let expr = aid.into();
-        let evaluator = manager.load(&expr, &dataset);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate_gradient(&[1.5, 0.3]);
         assert_relative_eq!(result[0][0].re, 1.3252039, epsilon = 1e-7);
