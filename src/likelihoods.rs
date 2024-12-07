@@ -112,12 +112,12 @@ impl NLL {
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
         let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
-                &mc_evaluator.dataset.clone(),
+                mc_evaluator.dataset.clone(),
                 mc_evaluator.evaluate(parameters),
             )
         } else {
             (
-                &self.accmc_evaluator.dataset,
+                self.accmc_evaluator.dataset.clone(),
                 self.accmc_evaluator.evaluate(parameters),
             )
         };
@@ -146,12 +146,12 @@ impl NLL {
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
         let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
-                &mc_evaluator.dataset.clone(),
+                mc_evaluator.dataset.clone(),
                 mc_evaluator.evaluate(parameters),
             )
         } else {
             (
-                &self.accmc_evaluator.dataset,
+                self.accmc_evaluator.dataset.clone(),
                 self.accmc_evaluator.evaluate(parameters),
             )
         };
