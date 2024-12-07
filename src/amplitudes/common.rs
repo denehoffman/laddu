@@ -168,8 +168,9 @@ mod tests {
     use super::*;
     use crate::amplitudes::{parameter, Manager};
     use crate::data::test_dataset;
+    use crate::PI;
     use approx::assert_relative_eq;
-    use std::{f64::consts::PI, sync::Arc};
+    use std::sync::Arc;
 
     #[test]
     fn test_scalar_creation_and_evaluation() {
@@ -287,9 +288,9 @@ mod tests {
         let gradient = evaluator.evaluate_gradient(&params);
 
         // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
-        assert_relative_eq!(gradient[0][0].re, f64::cos(theta));
-        assert_relative_eq!(gradient[0][0].im, f64::sin(theta));
-        assert_relative_eq!(gradient[0][1].re, -r * f64::sin(theta));
-        assert_relative_eq!(gradient[0][1].im, r * f64::cos(theta));
+        assert_relative_eq!(gradient[0][0].re, Float::cos(theta));
+        assert_relative_eq!(gradient[0][0].im, Float::sin(theta));
+        assert_relative_eq!(gradient[0][1].re, -r * Float::sin(theta));
+        assert_relative_eq!(gradient[0][1].im, r * Float::cos(theta));
     }
 }

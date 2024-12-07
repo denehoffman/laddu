@@ -437,57 +437,93 @@ mod tests {
     fn test_mass_multiple_particles() {
         let event = test_event();
         let mass = Mass::new([2, 3]);
-        assert_relative_eq!(mass.value(&event), 1.3743786, epsilon = 1e-7);
+        assert_relative_eq!(
+            mass.value(&event),
+            1.37437863,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_costheta_helicity() {
         let event = test_event();
         let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
-        assert_relative_eq!(costheta.value(&event), -0.4611175, epsilon = 1e-7);
+        assert_relative_eq!(
+            costheta.value(&event),
+            -0.4611175,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_phi_helicity() {
         let event = test_event();
         let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
-        assert_relative_eq!(phi.value(&event), -2.6574625, epsilon = 1e-7);
+        assert_relative_eq!(
+            phi.value(&event),
+            -2.65746258,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_costheta_gottfried_jackson() {
         let event = test_event();
         let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
-        assert_relative_eq!(costheta.value(&event), 0.09198832, epsilon = 1e-7);
+        assert_relative_eq!(
+            costheta.value(&event),
+            0.09198832,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_phi_gottfried_jackson() {
         let event = test_event();
         let phi = Phi::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
-        assert_relative_eq!(phi.value(&event), -2.7139131, epsilon = 1e-7);
+        assert_relative_eq!(
+            phi.value(&event),
+            -2.71391319,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_angles() {
         let event = test_event();
         let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-        assert_relative_eq!(angles.costheta.value(&event), -0.4611175, epsilon = 1e-7);
-        assert_relative_eq!(angles.phi.value(&event), -2.6574625, epsilon = 1e-7);
+        assert_relative_eq!(
+            angles.costheta.value(&event),
+            -0.4611175,
+            epsilon = Float::EPSILON.sqrt()
+        );
+        assert_relative_eq!(
+            angles.phi.value(&event),
+            -2.65746258,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_pol_angle() {
         let event = test_event();
         let pol_angle = PolAngle::new(0, vec![1]);
-        assert_relative_eq!(pol_angle.value(&event), 1.9359298, epsilon = 1e-7);
+        assert_relative_eq!(
+            pol_angle.value(&event),
+            1.93592989,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
     fn test_pol_magnitude() {
         let event = test_event();
         let pol_magnitude = PolMagnitude::new(0);
-        assert_relative_eq!(pol_magnitude.value(&event), 0.3856280, epsilon = 1e-7);
+        assert_relative_eq!(
+            pol_magnitude.value(&event),
+            0.38562805,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
@@ -496,13 +532,13 @@ mod tests {
         let polarization = Polarization::new(0, vec![1]);
         assert_relative_eq!(
             polarization.pol_angle.value(&event),
-            1.9359298,
-            epsilon = 1e-7
+            1.93592989,
+            epsilon = Float::EPSILON.sqrt()
         );
         assert_relative_eq!(
             polarization.pol_magnitude.value(&event),
-            0.3856280,
-            epsilon = 1e-7
+            0.38562805,
+            epsilon = Float::EPSILON.sqrt()
         );
     }
 
@@ -515,12 +551,24 @@ mod tests {
         let sp = Mandelstam::new([], [0], [1], [2, 3], Channel::S).unwrap();
         let tp = Mandelstam::new([], [0], [1], [2, 3], Channel::T).unwrap();
         let up = Mandelstam::new([], [0], [1], [2, 3], Channel::U).unwrap();
-        assert_relative_eq!(s.value(&event), 18.504011, epsilon = 1e-7);
-        assert_relative_eq!(s.value(&event), sp.value(&event), epsilon = 1e-7);
-        assert_relative_eq!(t.value(&event), -0.1922285, epsilon = 1e-7);
-        assert_relative_eq!(t.value(&event), tp.value(&event), epsilon = 1e-7);
-        assert_relative_eq!(u.value(&event), -14.4041989, epsilon = 1e-7);
-        assert_relative_eq!(u.value(&event), up.value(&event), epsilon = 1e-7);
+        assert_relative_eq!(
+            s.value(&event),
+            18.50401105,
+            epsilon = Float::EPSILON.sqrt()
+        );
+        assert_relative_eq!(s.value(&event), sp.value(&event),);
+        assert_relative_eq!(
+            t.value(&event),
+            -0.19222859,
+            epsilon = Float::EPSILON.sqrt()
+        );
+        assert_relative_eq!(t.value(&event), tp.value(&event),);
+        assert_relative_eq!(
+            u.value(&event),
+            -14.40419893,
+            epsilon = Float::EPSILON.sqrt()
+        );
+        assert_relative_eq!(u.value(&event), up.value(&event),);
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
         let m2_res = test_event().get_p4_sum([2, 3]).m2();
@@ -540,6 +588,6 @@ mod tests {
 
         let values = mass.value_on(&dataset);
         assert_eq!(values.len(), 1);
-        assert_relative_eq!(values[0], 1.3743786, epsilon = 1e-7);
+        assert_relative_eq!(values[0], 1.37437863, epsilon = Float::EPSILON.sqrt());
     }
 }
