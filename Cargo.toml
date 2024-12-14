@@ -30,12 +30,12 @@ auto_ops = "0.3.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = { version = "1.10.0", optional = true }
-pyo3 = { version = "0.22.6", optional = true, features = [
+pyo3 = { version = "0.23.3", optional = true, features = [
   "num-complex",
   "abi3-py37",
 ] }
-numpy = { version = "0.22.1", optional = true, features = ["nalgebra"] }
-ganesh = "0.13.1"
+numpy = { version = "0.23.0", optional = true, features = ["nalgebra"] }
+ganesh = "0.14.1"
 thiserror = "2.0.3"
 shellexpand = "3.1.0"
 accurate = "0.4.1"
@@ -64,7 +64,7 @@ harness = false
 default = ["rayon", "python"]
 extension-module = ["pyo3/extension-module"]
 rayon = ["dep:rayon"]
-f32 = []
+f32 = ["ganesh/f32"]
 python = ["pyo3", "numpy", "extension-module"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]

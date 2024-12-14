@@ -454,7 +454,7 @@ pub trait ReadWrite: Serialize + DeserializeOwned {
     }
 }
 
-impl ReadWrite for Status<Float> {
+impl ReadWrite for Status {
     fn create_null() -> Self {
         Status::default()
     }

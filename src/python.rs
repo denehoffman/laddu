@@ -4,8 +4,6 @@ use pyo3::{
     types::{PyTuple, PyTupleMethods},
 };
 
-use crate::Float;
-
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 pub(crate) mod laddu {
@@ -387,7 +385,7 @@ pub(crate) mod laddu {
         ///     A ``numpy`` array built from the components of this ``Vector3``
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.as_slice())
+            PyArray1::from_slice(py, self.0.as_slice())
         }
         /// Convert an  array into a 3-vector
         ///
@@ -796,7 +794,7 @@ pub(crate) mod laddu {
         ///     A ``numpy`` array built from the components of this ``Vector4``
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.as_slice())
+            PyArray1::from_slice(py, self.0.as_slice())
         }
         /// Convert an  array into a 4-vector
         ///
@@ -955,7 +953,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.weights())
+            PyArray1::from_slice(py, &self.0.weights())
         }
         /// The internal list of Events stored in the Dataset
         ///
@@ -1080,7 +1078,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.edges())
+            PyArray1::from_slice(py, &self.0.edges())
         }
         fn __getitem__(&self, index: usize) -> PyResult<Dataset> {
             self.0
@@ -1165,7 +1163,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1258,7 +1256,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1351,7 +1349,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1475,7 +1473,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1531,7 +1529,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1670,7 +1668,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -2050,10 +2048,7 @@ pub(crate) mod laddu {
             Model(crate::amplitudes::Model::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new_bound(
-                py,
-                serialize(&self.0).unwrap().as_slice(),
-            ))
+            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
             *self = Model(deserialize(state.as_bytes()).unwrap());
@@ -2199,7 +2194,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
-            PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters))
+            PyArray1::from_slice(py, &self.0.evaluate(&parameters))
         }
         /// Evaluate the gradient of the stored Expression over the stored Dataset
         ///
@@ -2218,7 +2213,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray2<Complex<Float>>> {
-            PyArray2::from_vec2_bound(
+            PyArray2::from_vec2(
                 py,
                 &self
                     .0
@@ -2587,7 +2582,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.evaluate_gradient(&parameters).as_slice())
+            PyArray1::from_slice(py, self.0.evaluate_gradient(&parameters).as_slice())
         }
         /// Project the model over the Monte Carlo dataset with the given parameter values
         ///
@@ -2614,7 +2609,7 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
             mc_evaluator: Option<Evaluator>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(
+            PyArray1::from_slice(
                 py,
                 &self
                     .0
@@ -2667,7 +2662,7 @@ pub(crate) mod laddu {
                     "Argument must be either a string or a list of strings",
                 ));
             };
-            Ok(PyArray1::from_slice_bound(
+            Ok(PyArray1::from_slice(
                 py,
                 &self.0.project_with(
                     &parameters,
@@ -3150,7 +3145,7 @@ pub(crate) mod laddu {
     ///
     #[pyclass]
     #[derive(Clone)]
-    pub(crate) struct Status(pub(crate) ganesh::Status<Float>);
+    pub(crate) struct Status(pub(crate) ganesh::Status);
     #[pymethods]
     impl Status {
         /// The current best position in parameter space
@@ -3161,7 +3156,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.x.as_slice())
+            PyArray1::from_slice(py, self.0.x.as_slice())
         }
         /// The uncertainty on each parameter (``None`` if it wasn't calculated)
         ///
@@ -3174,7 +3169,7 @@ pub(crate) mod laddu {
             self.0
                 .err
                 .clone()
-                .map(|err| PyArray1::from_slice_bound(py, err.as_slice()))
+                .map(|err| PyArray1::from_slice(py, err.as_slice()))
         }
         /// The initial position at the start of the minimization
         ///
@@ -3184,7 +3179,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.x0.as_slice())
+            PyArray1::from_slice(py, self.0.x0.as_slice())
         }
         /// The optimized value of the objective function
         ///
@@ -3205,7 +3200,7 @@ pub(crate) mod laddu {
         #[getter]
         fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.cov.clone().map(|cov| {
-                PyArray2::from_vec2_bound(
+                PyArray2::from_vec2(
                     py,
                     &cov.row_iter()
                         .map(|row| row.iter().cloned().collect())
@@ -3223,7 +3218,7 @@ pub(crate) mod laddu {
         #[getter]
         fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.hess.clone().map(|hess| {
-                PyArray2::from_vec2_bound(
+                PyArray2::from_vec2(
                     py,
                     &hess
                         .row_iter()
@@ -3342,10 +3337,7 @@ pub(crate) mod laddu {
             Status(ganesh::Status::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new_bound(
-                py,
-                serialize(&self.0).unwrap().as_slice(),
-            ))
+            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
             *self = Status(deserialize(state.as_bytes()).unwrap());
@@ -3358,7 +3350,7 @@ pub(crate) mod laddu {
         /// dict
         ///
         fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             dict.set_item("x", self.x(py))?;
             dict.set_item("err", self.err(py))?;
             dict.set_item("x0", self.x0(py))?;
@@ -3379,7 +3371,7 @@ pub(crate) mod laddu {
     #[pyclass]
     #[derive(Clone)]
     #[pyo3(name = "Bound")]
-    pub(crate) struct ParameterBound(pub(crate) ganesh::Bound<Float>);
+    pub(crate) struct ParameterBound(pub(crate) ganesh::Bound);
     #[pymethods]
     impl ParameterBound {
         /// The lower bound
@@ -4037,13 +4029,8 @@ pub(crate) mod laddu {
     }
 }
 
-impl Observer<Float, ()> for crate::python::laddu::PyObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        status: &mut ganesh::Status<Float>,
-        _user_data: &mut (),
-    ) -> bool {
+impl Observer<()> for crate::python::laddu::PyObserver {
+    fn callback(&mut self, step: usize, status: &mut ganesh::Status, _user_data: &mut ()) -> bool {
         let (new_status, result) = Python::with_gil(|py| {
             let res = self
                 .0
@@ -4071,10 +4058,5 @@ impl Observer<Float, ()> for crate::python::laddu::PyObserver {
 impl FromPyObject<'_> for crate::python::laddu::PyObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(crate::python::laddu::PyObserver(ob.clone().into()))
-    }
-}
-impl ToPyObject for crate::python::laddu::ParameterBound {
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        PyTuple::new_bound(py, vec![self.0.lower(), self.0.upper()]).into()
     }
 }

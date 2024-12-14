@@ -566,7 +566,7 @@ impl LikelihoodTerm for NLL {
     }
 }
 
-impl Function<Float, (), Infallible> for NLL {
+impl Function<(), Infallible> for NLL {
     fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
         Ok(LikelihoodTerm::evaluate(self, parameters))
     }
@@ -581,8 +581,8 @@ impl Function<Float, (), Infallible> for NLL {
 
 /// A set of options that are used when minimizations are performed.
 pub struct MinimizerOptions {
-    algorithm: Box<dyn ganesh::Algorithm<Float, (), Infallible>>,
-    observers: Vec<Box<dyn Observer<Float, ()>>>,
+    algorithm: Box<dyn ganesh::Algorithm<(), Infallible>>,
+    observers: Vec<Box<dyn Observer<()>>>,
     max_steps: usize,
 }
 
@@ -601,8 +601,8 @@ struct VerboseObserver {
     show_x: bool,
     show_fx: bool,
 }
-impl Observer<Float, ()> for VerboseObserver {
-    fn callback(&mut self, step: usize, status: &mut Status<Float>, _user_data: &mut ()) -> bool {
+impl Observer<()> for VerboseObserver {
+    fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
         if self.show_step {
             println!("Step: {}", step);
         }
@@ -643,10 +643,7 @@ impl MinimizerOptions {
     }
     /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
     /// settings).
-    pub fn with_algorithm<A: Algorithm<Float, (), Infallible> + 'static>(
-        self,
-        algorithm: A,
-    ) -> Self {
+    pub fn with_algorithm<A: Algorithm<(), Infallible> + 'static>(self, algorithm: A) -> Self {
         Self {
             algorithm: Box::new(algorithm),
             observers: self.observers,
@@ -654,7 +651,7 @@ impl MinimizerOptions {
         }
     }
     /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    pub fn with_observer<O: Observer<Float, ()> + 'static>(self, observer: O) -> Self {
+    pub fn with_observer<O: Observer<()> + 'static>(self, observer: O) -> Self {
         let mut observers = self.observers;
         observers.push(Box::new(observer));
         Self {
@@ -682,7 +679,7 @@ impl NLL {
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
         options: Option<MinimizerOptions>,
-    ) -> Status<Float> {
+    ) -> Status {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
@@ -881,7 +878,7 @@ pub struct LikelihoodEvaluator {
     likelihood_expression: LikelihoodExpression,
 }
 
-impl Function<Float, (), Infallible> for LikelihoodEvaluator {
+impl Function<(), Infallible> for LikelihoodEvaluator {
     fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
@@ -981,7 +978,7 @@ impl LikelihoodEvaluator {
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
         options: Option<MinimizerOptions>,
-    ) -> Status<Float> {
+    ) -> Status {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
