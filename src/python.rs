@@ -2476,11 +2476,10 @@ pub(crate) mod laddu {
             if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
                 if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
                     for item in observer_list.iter() {
-                        if let Ok(observer) = item.extract::<PyMCMCObserver>() {
-                            // TODO: fix this
-                            observers.push(Arc::new(RwLock::new(observer)));
-                        } else if let Ok(observer) = item.downcast::<AutocorrelationObserver>() {
+                        if let Ok(observer) = item.downcast::<AutocorrelationObserver>() {
                             observers.push(observer.borrow().0.clone());
+                        } else if let Ok(observer) = item.extract::<PyMCMCObserver>() {
+                            observers.push(Arc::new(RwLock::new(observer)));
                         }
                     }
                 } else if let Ok(single_observer) =
