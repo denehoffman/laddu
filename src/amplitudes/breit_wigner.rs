@@ -74,8 +74,8 @@ impl Amplitude for BreitWigner {
 
     fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
         let mass = self.resonance_mass.value(event);
-        let mass0 = parameters.get(self.pid_mass);
-        let width0 = parameters.get(self.pid_width);
+        let mass0 = parameters.get(self.pid_mass).abs();
+        let width0 = parameters.get(self.pid_width).abs();
         let mass1 = self.daughter_1_mass.value(event);
         let mass2 = self.daughter_2_mass.value(event);
         let q0 = breakup_momentum(mass0, mass1, mass2);
