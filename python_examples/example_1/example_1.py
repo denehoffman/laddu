@@ -9,6 +9,7 @@ Options:
 """
 
 import os
+import pickle
 import sys
 from pathlib import Path
 from time import perf_counter
@@ -36,15 +37,15 @@ def main(bins: int, niters: int, nboot: int):
     accmc_ds = ld.open(accmc_file)
     logger.info('Opening GenMC file...')
     genmc_ds = ld.open(genmc_file)
+    tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = (
+        fit_unbinned(niters, nboot, data_ds, accmc_ds, genmc_ds)
+    )
     (
         (binned_tot, binned_tot_err),
         (binned_s0p, binned_s0p_err),
         (binned_d2p, binned_d2p_err),
         bin_edges,
     ) = fit_binned(bins, niters, nboot, data_ds, accmc_ds, genmc_ds)
-    tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = (
-        fit_unbinned(niters, nboot, data_ds, accmc_ds, genmc_ds)
-    )
     end = perf_counter()
     logger.info(f'Total time: {end - start:.3f}s')
     logger.info(f'\n\n{status}')
@@ -331,7 +332,7 @@ def fit_binned(
     )
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
-    model = pos_re + pos_im
+    model = manager.model(pos_re + pos_im)
 
     tot_res = []
     tot_res_acc = []
@@ -348,13 +349,13 @@ def fit_binned(
 
     rng = np.random.default_rng(0)
 
+    bin_outputs = []
     for ibin in range(bins):
         logger.info(f'Fitting Bin #{ibin}')
         best_nll = np.inf
         best_status = None
-        nll = ld.NLL(manager, model, data_ds_binned[ibin], accmc_ds_binned[ibin])
-        gen_eval = manager.load(
-            model,
+        nll = ld.NLL(model, data_ds_binned[ibin], accmc_ds_binned[ibin])
+        gen_eval = model.load(
             genmc_ds_binned[ibin],
         )
         for iiter in range(niters):
@@ -388,15 +389,16 @@ def fit_binned(
         s0p_boot_acc = []
         d2p_boot = []
         d2p_boot_acc = []
+        bootstrap_statuses = []
         for iboot in range(nboot):
             logger.info(f'Running bootstrap fit #{iboot}')
             boot_nll = ld.NLL(
-                manager,
                 model,
                 data_ds_binned[ibin].bootstrap(iboot),
                 accmc_ds_binned[ibin],
             )
             boot_status = boot_nll.minimize(best_status.x)
+            bootstrap_statuses.append(boot_status)
 
             tot_boot.append(boot_nll.project(boot_status.x).sum())
             tot_boot_acc.append(
@@ -422,6 +424,17 @@ def fit_binned(
         s0p_res_acc_err.append(np.std(s0p_boot_acc))
         d2p_res_err.append(np.std(d2p_boot))
         d2p_res_acc_err.append(np.std(d2p_boot_acc))
+        bin_outputs.append(
+            {
+                'bin': ibin,
+                'model': model,
+                'best': best_status,
+                'bootstraps': bootstrap_statuses,
+            }
+        )
+    output = {'fits': bin_outputs, 'nbins': bins, 'range': (1.0, 2.0)}
+    with open('example_1_binned_fit.pkl', 'wb') as out_file:
+        pickle.dump(output, out_file)
 
     return (
         (
@@ -489,7 +502,7 @@ def fit_unbinned(
     )
     pos_re = (s0p * bw_f01500 * z00p.real() + d2p * bw_f21525 * z22p.real()).norm_sqr()
     pos_im = (s0p * bw_f01500 * z00p.imag() + d2p * bw_f21525 * z22p.imag()).norm_sqr()
-    model = pos_re + pos_im
+    model = manager.model(pos_re + pos_im)
 
     rng = np.random.default_rng(0)
 
@@ -502,9 +515,8 @@ def fit_unbinned(
         (-1000.0, 1000.0),
         (-1000.0, 1000.0),
     ]
-    nll = ld.NLL(manager, model, data_ds, accmc_ds)
-    gen_eval = manager.load(
-        model,
+    nll = ld.NLL(model, data_ds, accmc_ds)
+    gen_eval = model.load(
         genmc_ds,
     )
     for iiter in range(niters):
@@ -535,8 +547,12 @@ def fit_unbinned(
     boot_statuses = []
     for iboot in range(nboot):
         logger.info(f'Running bootstrap fit #{iboot}')
-        boot_nll = ld.NLL(manager, model, data_ds.bootstrap(iboot), accmc_ds)
+        boot_nll = ld.NLL(model, data_ds.bootstrap(iboot), accmc_ds)
         boot_statuses.append(boot_nll.minimize(best_status.x))
+
+    output = {'model': model, 'best': best_status, 'bootstraps': boot_statuses}
+    with open('example_1_unbinned_fit.pkl', 'wb') as out_file:
+        pickle.dump(output, out_file)
 
     return (
         (tot_weights, tot_weights_acc),

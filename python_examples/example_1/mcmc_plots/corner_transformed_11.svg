@@ -1,0 +1,4576 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="396pt" height="396pt" viewBox="0 0 396 396" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2024-12-17T23:35:25.206814</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.9.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 396 
+L 396 396 
+L 396 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 72 172.8 
+L 216 172.8 
+L 216 28.8 
+L 72 28.8 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <defs>
+       <path id="ma19c6bcfe3" d="M 0 0 
+L 0 -8 
+" style="stroke: #000000"/>
+      </defs>
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="102.120132" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="136.268398" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="170.416664" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="204.56493" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_5">
+      <defs>
+       <path id="m7ce5e1babe" d="M 0 0 
+L 0 -4 
+" style="stroke: #000000"/>
+      </defs>
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="74.801519" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="81.631172" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_7">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="88.460826" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="95.290479" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_9">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="108.949785" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_10">
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="115.779438" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_11">
+     <g id="line2d_11">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="122.609092" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_12">
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="129.438745" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_13">
+     <g id="line2d_13">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="143.098051" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_14">
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="149.927704" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_15">
+     <g id="line2d_15">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="156.757357" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_16">
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="163.587011" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_17">
+     <g id="line2d_17">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="177.246317" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_18">
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="184.07597" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_19">
+     <g id="line2d_19">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="190.905623" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_20">
+     <g id="line2d_20">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="197.735277" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_21">
+     <g id="line2d_21">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="211.394583" y="172.8" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2"/>
+   <g id="patch_3">
+    <path d="M 72 172.8 
+L 72 171.742036 
+L 79.2 171.742036 
+L 79.2 169.18065 
+L 86.4 169.18065 
+L 86.4 161.496493 
+L 93.6 161.496493 
+L 93.6 141.84064 
+L 100.8 141.84064 
+L 100.8 115.837006 
+L 108 115.837006 
+L 108 85.323104 
+L 115.2 85.323104 
+L 115.2 62.549043 
+L 122.4 62.549043 
+L 122.4 41.890909 
+L 129.6 41.890909 
+L 129.6 62.326314 
+L 136.8 62.326314 
+L 136.8 84.654917 
+L 144 84.654917 
+L 144 111.549468 
+L 151.2 111.549468 
+L 151.2 132.541696 
+L 158.4 132.541696 
+L 158.4 154.814617 
+L 165.6 154.814617 
+L 165.6 162.777186 
+L 172.8 162.777186 
+L 172.8 167.95564 
+L 180 167.95564 
+L 180 170.572708 
+L 187.2 170.572708 
+L 187.2 172.465906 
+L 194.4 172.465906 
+L 194.4 172.632953 
+L 201.6 172.632953 
+L 201.6 172.744318 
+L 208.8 172.744318 
+L 208.8 172.688635 
+L 216 172.688635 
+L 216 172.8 
+" clip-path="url(#p3bd67b802d)" style="fill: none; stroke: #000000; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_22">
+    <path d="M 109.77396 172.8 
+L 109.77396 28.8 
+" clip-path="url(#p3bd67b802d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_23">
+    <path d="M 127.109743 172.8 
+L 127.109743 28.8 
+" clip-path="url(#p3bd67b802d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_24">
+    <path d="M 145.41122 172.8 
+L 145.41122 28.8 
+" clip-path="url(#p3bd67b802d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_25">
+    <path d="M 128.371309 172.8 
+L 128.371309 28.8 
+" clip-path="url(#p3bd67b802d)" style="fill: none; stroke: #4682b4; stroke-width: 1.5; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 72 172.8 
+L 72 28.8 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 216 172.8 
+L 216 28.8 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 72 172.8 
+L 216 172.8 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 72 28.8 
+L 216 28.8 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <!-- $S_0^+$ = ${118.29}_{-12.69}^{+13.40}$ -->
+    <g transform="translate(89.22 22.8) scale(0.12 -0.12)">
+     <defs>
+      <path id="DejaVuSans-Oblique-53" d="M 3859 4513 
+L 3738 3897 
+Q 3422 4066 3111 4152 
+Q 2800 4238 2509 4238 
+Q 1944 4238 1609 3991 
+Q 1275 3744 1275 3334 
+Q 1275 3109 1398 2989 
+Q 1522 2869 2034 2731 
+L 2413 2638 
+Q 3053 2472 3303 2217 
+Q 3553 1963 3553 1503 
+Q 3553 797 2998 353 
+Q 2444 -91 1538 -91 
+Q 1166 -91 791 -17 
+Q 416 56 38 206 
+L 166 856 
+Q 513 641 861 531 
+Q 1209 422 1556 422 
+Q 2147 422 2503 684 
+Q 2859 947 2859 1369 
+Q 2859 1650 2717 1795 
+Q 2575 1941 2106 2059 
+L 1728 2156 
+Q 1081 2325 845 2545 
+Q 609 2766 609 3163 
+Q 609 3859 1145 4304 
+Q 1681 4750 2541 4750 
+Q 2875 4750 3203 4690 
+Q 3531 4631 3859 4513 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-2b" d="M 2944 4013 
+L 2944 2272 
+L 4684 2272 
+L 4684 1741 
+L 2944 1741 
+L 2944 0 
+L 2419 0 
+L 2419 1741 
+L 678 1741 
+L 678 2272 
+L 2419 2272 
+L 2419 4013 
+L 2944 4013 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-30" d="M 2034 4250 
+Q 1547 4250 1301 3770 
+Q 1056 3291 1056 2328 
+Q 1056 1369 1301 889 
+Q 1547 409 2034 409 
+Q 2525 409 2770 889 
+Q 3016 1369 3016 2328 
+Q 3016 3291 2770 3770 
+Q 2525 4250 2034 4250 
+z
+M 2034 4750 
+Q 2819 4750 3233 4129 
+Q 3647 3509 3647 2328 
+Q 3647 1150 3233 529 
+Q 2819 -91 2034 -91 
+Q 1250 -91 836 529 
+Q 422 1150 422 2328 
+Q 422 3509 836 4129 
+Q 1250 4750 2034 4750 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-20" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-3d" d="M 678 2906 
+L 4684 2906 
+L 4684 2381 
+L 678 2381 
+L 678 2906 
+z
+M 678 1631 
+L 4684 1631 
+L 4684 1100 
+L 678 1100 
+L 678 1631 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-31" d="M 794 531 
+L 1825 531 
+L 1825 4091 
+L 703 3866 
+L 703 4441 
+L 1819 4666 
+L 2450 4666 
+L 2450 531 
+L 3481 531 
+L 3481 0 
+L 794 0 
+L 794 531 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-38" d="M 2034 2216 
+Q 1584 2216 1326 1975 
+Q 1069 1734 1069 1313 
+Q 1069 891 1326 650 
+Q 1584 409 2034 409 
+Q 2484 409 2743 651 
+Q 3003 894 3003 1313 
+Q 3003 1734 2745 1975 
+Q 2488 2216 2034 2216 
+z
+M 1403 2484 
+Q 997 2584 770 2862 
+Q 544 3141 544 3541 
+Q 544 4100 942 4425 
+Q 1341 4750 2034 4750 
+Q 2731 4750 3128 4425 
+Q 3525 4100 3525 3541 
+Q 3525 3141 3298 2862 
+Q 3072 2584 2669 2484 
+Q 3125 2378 3379 2068 
+Q 3634 1759 3634 1313 
+Q 3634 634 3220 271 
+Q 2806 -91 2034 -91 
+Q 1263 -91 848 271 
+Q 434 634 434 1313 
+Q 434 1759 690 2068 
+Q 947 2378 1403 2484 
+z
+M 1172 3481 
+Q 1172 3119 1398 2916 
+Q 1625 2713 2034 2713 
+Q 2441 2713 2670 2916 
+Q 2900 3119 2900 3481 
+Q 2900 3844 2670 4047 
+Q 2441 4250 2034 4250 
+Q 1625 4250 1398 4047 
+Q 1172 3844 1172 3481 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-2e" d="M 684 794 
+L 1344 794 
+L 1344 0 
+L 684 0 
+L 684 794 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-32" d="M 1228 531 
+L 3431 531 
+L 3431 0 
+L 469 0 
+L 469 531 
+Q 828 903 1448 1529 
+Q 2069 2156 2228 2338 
+Q 2531 2678 2651 2914 
+Q 2772 3150 2772 3378 
+Q 2772 3750 2511 3984 
+Q 2250 4219 1831 4219 
+Q 1534 4219 1204 4116 
+Q 875 4013 500 3803 
+L 500 4441 
+Q 881 4594 1212 4672 
+Q 1544 4750 1819 4750 
+Q 2544 4750 2975 4387 
+Q 3406 4025 3406 3419 
+Q 3406 3131 3298 2873 
+Q 3191 2616 2906 2266 
+Q 2828 2175 2409 1742 
+Q 1991 1309 1228 531 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-39" d="M 703 97 
+L 703 672 
+Q 941 559 1184 500 
+Q 1428 441 1663 441 
+Q 2288 441 2617 861 
+Q 2947 1281 2994 2138 
+Q 2813 1869 2534 1725 
+Q 2256 1581 1919 1581 
+Q 1219 1581 811 2004 
+Q 403 2428 403 3163 
+Q 403 3881 828 4315 
+Q 1253 4750 1959 4750 
+Q 2769 4750 3195 4129 
+Q 3622 3509 3622 2328 
+Q 3622 1225 3098 567 
+Q 2575 -91 1691 -91 
+Q 1453 -91 1209 -44 
+Q 966 3 703 97 
+z
+M 1959 2075 
+Q 2384 2075 2632 2365 
+Q 2881 2656 2881 3163 
+Q 2881 3666 2632 3958 
+Q 2384 4250 1959 4250 
+Q 1534 4250 1286 3958 
+Q 1038 3666 1038 3163 
+Q 1038 2656 1286 2365 
+Q 1534 2075 1959 2075 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-33" d="M 2597 2516 
+Q 3050 2419 3304 2112 
+Q 3559 1806 3559 1356 
+Q 3559 666 3084 287 
+Q 2609 -91 1734 -91 
+Q 1441 -91 1130 -33 
+Q 819 25 488 141 
+L 488 750 
+Q 750 597 1062 519 
+Q 1375 441 1716 441 
+Q 2309 441 2620 675 
+Q 2931 909 2931 1356 
+Q 2931 1769 2642 2001 
+Q 2353 2234 1838 2234 
+L 1294 2234 
+L 1294 2753 
+L 1863 2753 
+Q 2328 2753 2575 2939 
+Q 2822 3125 2822 3475 
+Q 2822 3834 2567 4026 
+Q 2313 4219 1838 4219 
+Q 1578 4219 1281 4162 
+Q 984 4106 628 3988 
+L 628 4550 
+Q 988 4650 1302 4700 
+Q 1616 4750 1894 4750 
+Q 2613 4750 3031 4423 
+Q 3450 4097 3450 3541 
+Q 3450 3153 3228 2886 
+Q 3006 2619 2597 2516 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-34" d="M 2419 4116 
+L 825 1625 
+L 2419 1625 
+L 2419 4116 
+z
+M 2253 4666 
+L 3047 4666 
+L 3047 1625 
+L 3713 1625 
+L 3713 1100 
+L 3047 1100 
+L 3047 0 
+L 2419 0 
+L 2419 1100 
+L 313 1100 
+L 313 1709 
+L 2253 4666 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-2212" d="M 678 2272 
+L 4684 2272 
+L 4684 1741 
+L 678 1741 
+L 678 2272 
+z
+" transform="scale(0.015625)"/>
+      <path id="DejaVuSans-36" d="M 2113 2584 
+Q 1688 2584 1439 2293 
+Q 1191 2003 1191 1497 
+Q 1191 994 1439 701 
+Q 1688 409 2113 409 
+Q 2538 409 2786 701 
+Q 3034 994 3034 1497 
+Q 3034 2003 2786 2293 
+Q 2538 2584 2113 2584 
+z
+M 3366 4563 
+L 3366 3988 
+Q 3128 4100 2886 4159 
+Q 2644 4219 2406 4219 
+Q 1781 4219 1451 3797 
+Q 1122 3375 1075 2522 
+Q 1259 2794 1537 2939 
+Q 1816 3084 2150 3084 
+Q 2853 3084 3261 2657 
+Q 3669 2231 3669 1497 
+Q 3669 778 3244 343 
+Q 2819 -91 2113 -91 
+Q 1303 -91 875 529 
+Q 447 1150 447 2328 
+Q 447 3434 972 4092 
+Q 1497 4750 2381 4750 
+Q 2619 4750 2861 4703 
+Q 3103 4656 3366 4563 
+z
+" transform="scale(0.015625)"/>
+     </defs>
+     <use xlink:href="#DejaVuSans-Oblique-53" transform="translate(0 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2b" transform="translate(84.314779 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-30" transform="translate(63.476562 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-20" transform="translate(159.339193 0.765625)"/>
+     <use xlink:href="#DejaVuSans-3d" transform="translate(191.126302 0.765625)"/>
+     <use xlink:href="#DejaVuSans-20" transform="translate(274.915365 0.765625)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(306.702474 0.765625)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(370.325521 0.765625)"/>
+     <use xlink:href="#DejaVuSans-38" transform="translate(433.948568 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(497.571615 0.765625)"/>
+     <use xlink:href="#DejaVuSans-32" transform="translate(523.858724 0.765625)"/>
+     <use xlink:href="#DejaVuSans-39" transform="translate(585.731771 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2b" transform="translate(650.311849 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(708.964193 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-33" transform="translate(753.500326 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(798.036458 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-34" transform="translate(820.287435 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-30" transform="translate(864.823568 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2212" transform="translate(650.311849 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(708.964193 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-32" transform="translate(753.500326 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(798.036458 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-36" transform="translate(820.287435 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-39" transform="translate(864.823568 -26.578125) scale(0.7)"/>
+    </g>
+   </g>
+  </g>
+  <g id="axes_2">
+   <g id="matplotlib.axis_3"/>
+   <g id="matplotlib.axis_4"/>
+  </g>
+  <g id="axes_3">
+   <g id="patch_8">
+    <path d="M 72 324 
+L 216 324 
+L 216 180 
+L 72 180 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <image xlink:href="data:image/png;base64,
+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" id="image760fee7679" transform="scale(1 -1) translate(0 -144.72)" x="72" y="-180" width="144.72" height="144.72"/>
+   <g id="QuadContourSet_1">
+    <path d="M 133.2 287.044898 
+L 140.4 287.530435 
+L 147.6 289.088372 
+L 154.8 290.034783 
+L 162 284.4 
+L 162 284.4 
+L 164.571429 277.2 
+L 162 274.8 
+L 160.628571 270 
+L 160.431683 262.8 
+L 156.15 255.6 
+L 154.8 253.636364 
+L 149.563636 248.4 
+L 147.6 246.694737 
+L 143.803636 241.2 
+L 140.4 236.634146 
+L 133.2 234 
+L 133.2 234 
+L 126 227.76 
+L 122.676923 226.8 
+L 118.8 225.830769 
+L 111.6 222.730435 
+L 104.4 222.8 
+L 99.490909 226.8 
+L 97.2 227.684211 
+L 92.7 234 
+L 91.728 241.2 
+L 93.181395 248.4 
+L 96.26087 255.6 
+L 97.2 256.736842 
+L 101.717647 262.8 
+L 104.4 265.2 
+L 108.812903 270 
+L 111.6 273.031579 
+L 118.8 277.147826 
+L 118.874227 277.2 
+L 126 283.6 
+L 128.88 284.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ffffff"/>
+   </g>
+   <g id="PolyQuadMesh_1">
+    <path d="M 72 324 
+L 72 316.8 
+L 79.2 316.8 
+L 79.2 324 
+L 72 324 
+L 72 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 324 
+L 79.2 316.8 
+L 86.4 316.8 
+L 86.4 324 
+L 79.2 324 
+L 79.2 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 324 
+L 86.4 316.8 
+L 93.6 316.8 
+L 93.6 324 
+L 86.4 324 
+L 86.4 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 324 
+L 93.6 316.8 
+L 100.8 316.8 
+L 100.8 324 
+L 93.6 324 
+L 93.6 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 324 
+L 100.8 316.8 
+L 108 316.8 
+L 108 324 
+L 100.8 324 
+L 100.8 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 324 
+L 108 316.8 
+L 115.2 316.8 
+L 115.2 324 
+L 108 324 
+L 108 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 324 
+L 115.2 316.8 
+L 122.4 316.8 
+L 122.4 324 
+L 115.2 324 
+L 115.2 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 324 
+L 122.4 316.8 
+L 129.6 316.8 
+L 129.6 324 
+L 122.4 324 
+L 122.4 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 324 
+L 129.6 316.8 
+L 136.8 316.8 
+L 136.8 324 
+L 129.6 324 
+L 129.6 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 324 
+L 136.8 316.8 
+L 144 316.8 
+L 144 324 
+L 136.8 324 
+L 136.8 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 324 
+L 144 316.8 
+L 151.2 316.8 
+L 151.2 324 
+L 144 324 
+L 144 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 324 
+L 151.2 316.8 
+L 158.4 316.8 
+L 158.4 324 
+L 151.2 324 
+L 151.2 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 324 
+L 158.4 316.8 
+L 165.6 316.8 
+L 165.6 324 
+L 158.4 324 
+L 158.4 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 324 
+L 165.6 316.8 
+L 172.8 316.8 
+L 172.8 324 
+L 165.6 324 
+L 165.6 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 324 
+L 172.8 316.8 
+L 180 316.8 
+L 180 324 
+L 172.8 324 
+L 172.8 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 324 
+L 180 316.8 
+L 187.2 316.8 
+L 187.2 324 
+L 180 324 
+L 180 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 324 
+L 187.2 316.8 
+L 194.4 316.8 
+L 194.4 324 
+L 187.2 324 
+L 187.2 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 324 
+L 194.4 316.8 
+L 201.6 316.8 
+L 201.6 324 
+L 194.4 324 
+L 194.4 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 324 
+L 201.6 316.8 
+L 208.8 316.8 
+L 208.8 324 
+L 201.6 324 
+L 201.6 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 324 
+L 208.8 316.8 
+L 216 316.8 
+L 216 324 
+L 208.8 324 
+L 208.8 324 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 316.8 
+L 72 309.6 
+L 79.2 309.6 
+L 79.2 316.8 
+L 72 316.8 
+L 72 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 316.8 
+L 79.2 309.6 
+L 86.4 309.6 
+L 86.4 316.8 
+L 79.2 316.8 
+L 79.2 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 316.8 
+L 86.4 309.6 
+L 93.6 309.6 
+L 93.6 316.8 
+L 86.4 316.8 
+L 86.4 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 316.8 
+L 93.6 309.6 
+L 100.8 309.6 
+L 100.8 316.8 
+L 93.6 316.8 
+L 93.6 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 316.8 
+L 100.8 309.6 
+L 108 309.6 
+L 108 316.8 
+L 100.8 316.8 
+L 100.8 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 316.8 
+L 108 309.6 
+L 115.2 309.6 
+L 115.2 316.8 
+L 108 316.8 
+L 108 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 316.8 
+L 115.2 309.6 
+L 122.4 309.6 
+L 122.4 316.8 
+L 115.2 316.8 
+L 115.2 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 316.8 
+L 122.4 309.6 
+L 129.6 309.6 
+L 129.6 316.8 
+L 122.4 316.8 
+L 122.4 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 316.8 
+L 129.6 309.6 
+L 136.8 309.6 
+L 136.8 316.8 
+L 129.6 316.8 
+L 129.6 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 316.8 
+L 136.8 309.6 
+L 144 309.6 
+L 144 316.8 
+L 136.8 316.8 
+L 136.8 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 316.8 
+L 144 309.6 
+L 151.2 309.6 
+L 151.2 316.8 
+L 144 316.8 
+L 144 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 316.8 
+L 151.2 309.6 
+L 158.4 309.6 
+L 158.4 316.8 
+L 151.2 316.8 
+L 151.2 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 316.8 
+L 158.4 309.6 
+L 165.6 309.6 
+L 165.6 316.8 
+L 158.4 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 165.6 316.8 
+L 165.6 309.6 
+L 172.8 309.6 
+L 172.8 316.8 
+L 165.6 316.8 
+L 165.6 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 316.8 
+L 172.8 309.6 
+L 180 309.6 
+L 180 316.8 
+L 172.8 316.8 
+L 172.8 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 316.8 
+L 180 309.6 
+L 187.2 309.6 
+L 187.2 316.8 
+L 180 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 187.2 316.8 
+L 187.2 309.6 
+L 194.4 309.6 
+L 194.4 316.8 
+L 187.2 316.8 
+L 187.2 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 316.8 
+L 194.4 309.6 
+L 201.6 309.6 
+L 201.6 316.8 
+L 194.4 316.8 
+L 194.4 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 316.8 
+L 201.6 309.6 
+L 208.8 309.6 
+L 208.8 316.8 
+L 201.6 316.8 
+L 201.6 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 316.8 
+L 208.8 309.6 
+L 216 309.6 
+L 216 316.8 
+L 208.8 316.8 
+L 208.8 316.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 309.6 
+L 72 302.4 
+L 79.2 302.4 
+L 79.2 309.6 
+L 72 309.6 
+L 72 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 309.6 
+L 79.2 302.4 
+L 86.4 302.4 
+L 86.4 309.6 
+L 79.2 309.6 
+L 79.2 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 309.6 
+L 86.4 302.4 
+L 93.6 302.4 
+L 93.6 309.6 
+L 86.4 309.6 
+L 86.4 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 309.6 
+L 93.6 302.4 
+L 100.8 302.4 
+L 100.8 309.6 
+L 93.6 309.6 
+L 93.6 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 309.6 
+L 100.8 302.4 
+L 108 302.4 
+L 108 309.6 
+L 100.8 309.6 
+L 100.8 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 309.6 
+L 108 302.4 
+L 115.2 302.4 
+L 115.2 309.6 
+L 108 309.6 
+L 108 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 309.6 
+L 115.2 302.4 
+L 122.4 302.4 
+L 122.4 309.6 
+L 115.2 309.6 
+L 115.2 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 309.6 
+L 122.4 302.4 
+L 129.6 302.4 
+L 129.6 309.6 
+L 122.4 309.6 
+L 122.4 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 309.6 
+L 129.6 302.4 
+L 136.8 302.4 
+L 136.8 309.6 
+L 129.6 309.6 
+L 129.6 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 309.6 
+L 136.8 302.4 
+L 144 302.4 
+L 144 309.6 
+L 136.8 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 144 309.6 
+L 144 302.4 
+L 151.2 302.4 
+L 151.2 309.6 
+L 144 309.6 
+L 144 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 309.6 
+L 151.2 302.4 
+L 158.4 302.4 
+L 158.4 309.6 
+L 151.2 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 158.4 309.6 
+L 158.4 302.4 
+L 165.6 302.4 
+L 165.6 309.6 
+L 158.4 309.6 
+L 158.4 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 309.6 
+L 165.6 302.4 
+L 172.8 302.4 
+L 172.8 309.6 
+L 165.6 309.6 
+L 165.6 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 309.6 
+L 172.8 302.4 
+L 180 302.4 
+L 180 309.6 
+L 172.8 309.6 
+L 172.8 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 309.6 
+L 180 302.4 
+L 187.2 302.4 
+L 187.2 309.6 
+L 180 309.6 
+L 180 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 309.6 
+L 187.2 302.4 
+L 194.4 302.4 
+L 194.4 309.6 
+L 187.2 309.6 
+L 187.2 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 309.6 
+L 194.4 302.4 
+L 201.6 302.4 
+L 201.6 309.6 
+L 194.4 309.6 
+L 194.4 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 309.6 
+L 201.6 302.4 
+L 208.8 302.4 
+L 208.8 309.6 
+L 201.6 309.6 
+L 201.6 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 309.6 
+L 208.8 302.4 
+L 216 302.4 
+L 216 309.6 
+L 208.8 309.6 
+L 208.8 309.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 302.4 
+L 72 295.2 
+L 79.2 295.2 
+L 79.2 302.4 
+L 72 302.4 
+L 72 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 302.4 
+L 79.2 295.2 
+L 86.4 295.2 
+L 86.4 302.4 
+L 79.2 302.4 
+L 79.2 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 302.4 
+L 86.4 295.2 
+L 93.6 295.2 
+L 93.6 302.4 
+L 86.4 302.4 
+L 86.4 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 302.4 
+L 93.6 295.2 
+L 100.8 295.2 
+L 100.8 302.4 
+L 93.6 302.4 
+L 93.6 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 302.4 
+L 100.8 295.2 
+L 108 295.2 
+L 108 302.4 
+L 100.8 302.4 
+L 100.8 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 302.4 
+L 108 295.2 
+L 115.2 295.2 
+L 115.2 302.4 
+L 108 302.4 
+L 108 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 302.4 
+L 115.2 295.2 
+L 122.4 295.2 
+L 122.4 302.4 
+L 115.2 302.4 
+L 115.2 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 302.4 
+L 122.4 295.2 
+L 129.6 295.2 
+L 129.6 302.4 
+L 122.4 302.4 
+L 122.4 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 302.4 
+L 129.6 295.2 
+L 136.8 295.2 
+L 136.8 302.4 
+L 129.6 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fafafa; fill-opacity: 0.019608"/>
+    <path d="M 136.8 302.4 
+L 136.8 295.2 
+L 144 295.2 
+L 144 302.4 
+L 136.8 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 144 302.4 
+L 144 295.2 
+L 151.2 295.2 
+L 151.2 302.4 
+L 144 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f8f8f8; fill-opacity: 0.027451"/>
+    <path d="M 151.2 302.4 
+L 151.2 295.2 
+L 158.4 295.2 
+L 158.4 302.4 
+L 151.2 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f6f6f6; fill-opacity: 0.035294"/>
+    <path d="M 158.4 302.4 
+L 158.4 295.2 
+L 165.6 295.2 
+L 165.6 302.4 
+L 158.4 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f4f4f4; fill-opacity: 0.043137"/>
+    <path d="M 165.6 302.4 
+L 165.6 295.2 
+L 172.8 295.2 
+L 172.8 302.4 
+L 165.6 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 172.8 302.4 
+L 172.8 295.2 
+L 180 295.2 
+L 180 302.4 
+L 172.8 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 180 302.4 
+L 180 295.2 
+L 187.2 295.2 
+L 187.2 302.4 
+L 180 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 187.2 302.4 
+L 187.2 295.2 
+L 194.4 295.2 
+L 194.4 302.4 
+L 187.2 302.4 
+L 187.2 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 302.4 
+L 194.4 295.2 
+L 201.6 295.2 
+L 201.6 302.4 
+L 194.4 302.4 
+L 194.4 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 302.4 
+L 201.6 295.2 
+L 208.8 295.2 
+L 208.8 302.4 
+L 201.6 302.4 
+L 201.6 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 302.4 
+L 208.8 295.2 
+L 216 295.2 
+L 216 302.4 
+L 208.8 302.4 
+L 208.8 302.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 295.2 
+L 72 288 
+L 79.2 288 
+L 79.2 295.2 
+L 72 295.2 
+L 72 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 295.2 
+L 79.2 288 
+L 86.4 288 
+L 86.4 295.2 
+L 79.2 295.2 
+L 79.2 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 295.2 
+L 86.4 288 
+L 93.6 288 
+L 93.6 295.2 
+L 86.4 295.2 
+L 86.4 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 295.2 
+L 93.6 288 
+L 100.8 288 
+L 100.8 295.2 
+L 93.6 295.2 
+L 93.6 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 295.2 
+L 100.8 288 
+L 108 288 
+L 108 295.2 
+L 100.8 295.2 
+L 100.8 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 295.2 
+L 108 288 
+L 115.2 288 
+L 115.2 295.2 
+L 108 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 115.2 295.2 
+L 115.2 288 
+L 122.4 288 
+L 122.4 295.2 
+L 115.2 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 122.4 295.2 
+L 122.4 288 
+L 129.6 288 
+L 129.6 295.2 
+L 122.4 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 129.6 295.2 
+L 129.6 288 
+L 136.8 288 
+L 136.8 295.2 
+L 129.6 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f1f1f1; fill-opacity: 0.054902"/>
+    <path d="M 136.8 295.2 
+L 136.8 288 
+L 144 288 
+L 144 295.2 
+L 136.8 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #efefef; fill-opacity: 0.062745"/>
+    <path d="M 144 295.2 
+L 144 288 
+L 151.2 288 
+L 151.2 295.2 
+L 144 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e9e9e9; fill-opacity: 0.086275"/>
+    <path d="M 151.2 295.2 
+L 151.2 288 
+L 158.4 288 
+L 158.4 295.2 
+L 151.2 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e4e4e4; fill-opacity: 0.105882"/>
+    <path d="M 158.4 295.2 
+L 158.4 288 
+L 165.6 288 
+L 165.6 295.2 
+L 158.4 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #eaeaea; fill-opacity: 0.082353"/>
+    <path d="M 165.6 295.2 
+L 165.6 288 
+L 172.8 288 
+L 172.8 295.2 
+L 165.6 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f1f1f1; fill-opacity: 0.054902"/>
+    <path d="M 172.8 295.2 
+L 172.8 288 
+L 180 288 
+L 180 295.2 
+L 172.8 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 180 295.2 
+L 180 288 
+L 187.2 288 
+L 187.2 295.2 
+L 180 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 187.2 295.2 
+L 187.2 288 
+L 194.4 288 
+L 194.4 295.2 
+L 187.2 295.2 
+L 187.2 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 295.2 
+L 194.4 288 
+L 201.6 288 
+L 201.6 295.2 
+L 194.4 295.2 
+L 194.4 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 295.2 
+L 201.6 288 
+L 208.8 288 
+L 208.8 295.2 
+L 201.6 295.2 
+L 201.6 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 295.2 
+L 208.8 288 
+L 216 288 
+L 216 295.2 
+L 208.8 295.2 
+L 208.8 295.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 288 
+L 72 280.8 
+L 79.2 280.8 
+L 79.2 288 
+L 72 288 
+L 72 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 288 
+L 79.2 280.8 
+L 86.4 280.8 
+L 86.4 288 
+L 79.2 288 
+L 79.2 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 288 
+L 86.4 280.8 
+L 93.6 280.8 
+L 93.6 288 
+L 86.4 288 
+L 86.4 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 288 
+L 93.6 280.8 
+L 100.8 280.8 
+L 100.8 288 
+L 93.6 288 
+L 93.6 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 288 
+L 100.8 280.8 
+L 108 280.8 
+L 108 288 
+L 100.8 288 
+L 100.8 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 288 
+L 108 280.8 
+L 115.2 280.8 
+L 115.2 288 
+L 108 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 115.2 288 
+L 115.2 280.8 
+L 122.4 280.8 
+L 122.4 288 
+L 115.2 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f4f4f4; fill-opacity: 0.043137"/>
+    <path d="M 122.4 288 
+L 122.4 280.8 
+L 129.6 280.8 
+L 129.6 288 
+L 122.4 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e8e8e8; fill-opacity: 0.090196"/>
+    <path d="M 129.6 288 
+L 129.6 280.8 
+L 136.8 280.8 
+L 136.8 288 
+L 129.6 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d9d9d9; fill-opacity: 0.14902"/>
+    <path d="M 136.8 288 
+L 136.8 280.8 
+L 144 280.8 
+L 144 288 
+L 136.8 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d8d8d8; fill-opacity: 0.152941"/>
+    <path d="M 144 288 
+L 144 280.8 
+L 151.2 280.8 
+L 151.2 288 
+L 144 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d4d4d4; fill-opacity: 0.168627"/>
+    <path d="M 151.2 288 
+L 151.2 280.8 
+L 158.4 280.8 
+L 158.4 288 
+L 151.2 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d9d9d9; fill-opacity: 0.14902"/>
+    <path d="M 158.4 288 
+L 158.4 280.8 
+L 165.6 280.8 
+L 165.6 288 
+L 158.4 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e2e2e2; fill-opacity: 0.113725"/>
+    <path d="M 165.6 288 
+L 165.6 280.8 
+L 172.8 280.8 
+L 172.8 288 
+L 165.6 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #efefef; fill-opacity: 0.062745"/>
+    <path d="M 172.8 288 
+L 172.8 280.8 
+L 180 280.8 
+L 180 288 
+L 172.8 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f7f7f7; fill-opacity: 0.031373"/>
+    <path d="M 180 288 
+L 180 280.8 
+L 187.2 280.8 
+L 187.2 288 
+L 180 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 187.2 288 
+L 187.2 280.8 
+L 194.4 280.8 
+L 194.4 288 
+L 187.2 288 
+L 187.2 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 288 
+L 194.4 280.8 
+L 201.6 280.8 
+L 201.6 288 
+L 194.4 288 
+L 194.4 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 288 
+L 201.6 280.8 
+L 208.8 280.8 
+L 208.8 288 
+L 201.6 288 
+L 201.6 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 288 
+L 208.8 280.8 
+L 216 280.8 
+L 216 288 
+L 208.8 288 
+L 208.8 288 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 280.8 
+L 72 273.6 
+L 79.2 273.6 
+L 79.2 280.8 
+L 72 280.8 
+L 72 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 280.8 
+L 79.2 273.6 
+L 86.4 273.6 
+L 86.4 280.8 
+L 79.2 280.8 
+L 79.2 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 280.8 
+L 86.4 273.6 
+L 93.6 273.6 
+L 93.6 280.8 
+L 86.4 280.8 
+L 86.4 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 280.8 
+L 93.6 273.6 
+L 100.8 273.6 
+L 100.8 280.8 
+L 93.6 280.8 
+L 93.6 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 280.8 
+L 100.8 273.6 
+L 108 273.6 
+L 108 280.8 
+L 100.8 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 108 280.8 
+L 108 273.6 
+L 115.2 273.6 
+L 115.2 280.8 
+L 108 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f2f2f2; fill-opacity: 0.05098"/>
+    <path d="M 115.2 280.8 
+L 115.2 273.6 
+L 122.4 273.6 
+L 122.4 280.8 
+L 115.2 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e2e2e2; fill-opacity: 0.113725"/>
+    <path d="M 122.4 280.8 
+L 122.4 273.6 
+L 129.6 273.6 
+L 129.6 280.8 
+L 122.4 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #b3b3b3; fill-opacity: 0.298039"/>
+    <path d="M 129.6 280.8 
+L 129.6 273.6 
+L 136.8 273.6 
+L 136.8 280.8 
+L 129.6 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #afafaf; fill-opacity: 0.313725"/>
+    <path d="M 136.8 280.8 
+L 136.8 273.6 
+L 144 273.6 
+L 144 280.8 
+L 136.8 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #959595; fill-opacity: 0.415686"/>
+    <path d="M 144 280.8 
+L 144 273.6 
+L 151.2 273.6 
+L 151.2 280.8 
+L 144 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #aaaaaa; fill-opacity: 0.333333"/>
+    <path d="M 151.2 280.8 
+L 151.2 273.6 
+L 158.4 273.6 
+L 158.4 280.8 
+L 151.2 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #bbbbbb; fill-opacity: 0.266667"/>
+    <path d="M 158.4 280.8 
+L 158.4 273.6 
+L 165.6 273.6 
+L 165.6 280.8 
+L 158.4 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dddddd; fill-opacity: 0.133333"/>
+    <path d="M 165.6 280.8 
+L 165.6 273.6 
+L 172.8 273.6 
+L 172.8 280.8 
+L 165.6 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ebebeb; fill-opacity: 0.078431"/>
+    <path d="M 172.8 280.8 
+L 172.8 273.6 
+L 180 273.6 
+L 180 280.8 
+L 172.8 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f9f9f9; fill-opacity: 0.023529"/>
+    <path d="M 180 280.8 
+L 180 273.6 
+L 187.2 273.6 
+L 187.2 280.8 
+L 180 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 187.2 280.8 
+L 187.2 273.6 
+L 194.4 273.6 
+L 194.4 280.8 
+L 187.2 280.8 
+L 187.2 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 280.8 
+L 194.4 273.6 
+L 201.6 273.6 
+L 201.6 280.8 
+L 194.4 280.8 
+L 194.4 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 280.8 
+L 201.6 273.6 
+L 208.8 273.6 
+L 208.8 280.8 
+L 201.6 280.8 
+L 201.6 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 280.8 
+L 208.8 273.6 
+L 216 273.6 
+L 216 280.8 
+L 208.8 280.8 
+L 208.8 280.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 273.6 
+L 72 266.4 
+L 79.2 266.4 
+L 79.2 273.6 
+L 72 273.6 
+L 72 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 273.6 
+L 79.2 266.4 
+L 86.4 266.4 
+L 86.4 273.6 
+L 79.2 273.6 
+L 79.2 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 273.6 
+L 86.4 266.4 
+L 93.6 266.4 
+L 93.6 273.6 
+L 86.4 273.6 
+L 86.4 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 273.6 
+L 93.6 266.4 
+L 100.8 266.4 
+L 100.8 273.6 
+L 93.6 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fafafa; fill-opacity: 0.019608"/>
+    <path d="M 100.8 273.6 
+L 100.8 266.4 
+L 108 266.4 
+L 108 273.6 
+L 100.8 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f4f4f4; fill-opacity: 0.043137"/>
+    <path d="M 108 273.6 
+L 108 266.4 
+L 115.2 266.4 
+L 115.2 273.6 
+L 108 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d6d6d6; fill-opacity: 0.160784"/>
+    <path d="M 115.2 273.6 
+L 115.2 266.4 
+L 122.4 266.4 
+L 122.4 273.6 
+L 115.2 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #a0a0a0; fill-opacity: 0.372549"/>
+    <path d="M 122.4 273.6 
+L 122.4 266.4 
+L 129.6 266.4 
+L 129.6 273.6 
+L 122.4 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #767676; fill-opacity: 0.537255"/>
+    <path d="M 129.6 273.6 
+L 129.6 266.4 
+L 136.8 266.4 
+L 136.8 273.6 
+L 129.6 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #6c6c6c; fill-opacity: 0.576471"/>
+    <path d="M 136.8 273.6 
+L 136.8 266.4 
+L 144 266.4 
+L 144 273.6 
+L 136.8 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #6b6b6b; fill-opacity: 0.580392"/>
+    <path d="M 144 273.6 
+L 144 266.4 
+L 151.2 266.4 
+L 151.2 273.6 
+L 144 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #8a8a8a; fill-opacity: 0.458824"/>
+    <path d="M 151.2 273.6 
+L 151.2 266.4 
+L 158.4 266.4 
+L 158.4 273.6 
+L 151.2 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #b9b9b9; fill-opacity: 0.27451"/>
+    <path d="M 158.4 273.6 
+L 158.4 266.4 
+L 165.6 266.4 
+L 165.6 273.6 
+L 158.4 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ececec; fill-opacity: 0.07451"/>
+    <path d="M 165.6 273.6 
+L 165.6 266.4 
+L 172.8 266.4 
+L 172.8 273.6 
+L 165.6 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #eeeeee; fill-opacity: 0.066667"/>
+    <path d="M 172.8 273.6 
+L 172.8 266.4 
+L 180 266.4 
+L 180 273.6 
+L 172.8 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f5f5f5; fill-opacity: 0.039216"/>
+    <path d="M 180 273.6 
+L 180 266.4 
+L 187.2 266.4 
+L 187.2 273.6 
+L 180 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 187.2 273.6 
+L 187.2 266.4 
+L 194.4 266.4 
+L 194.4 273.6 
+L 187.2 273.6 
+L 187.2 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 273.6 
+L 194.4 266.4 
+L 201.6 266.4 
+L 201.6 273.6 
+L 194.4 273.6 
+L 194.4 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 273.6 
+L 201.6 266.4 
+L 208.8 266.4 
+L 208.8 273.6 
+L 201.6 273.6 
+L 201.6 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 273.6 
+L 208.8 266.4 
+L 216 266.4 
+L 216 273.6 
+L 208.8 273.6 
+L 208.8 273.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 266.4 
+L 72 259.2 
+L 79.2 259.2 
+L 79.2 266.4 
+L 72 266.4 
+L 72 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 266.4 
+L 79.2 259.2 
+L 86.4 259.2 
+L 86.4 266.4 
+L 79.2 266.4 
+L 79.2 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 266.4 
+L 86.4 259.2 
+L 93.6 259.2 
+L 93.6 266.4 
+L 86.4 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f9f9f9; fill-opacity: 0.023529"/>
+    <path d="M 93.6 266.4 
+L 93.6 259.2 
+L 100.8 259.2 
+L 100.8 266.4 
+L 93.6 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f1f1f1; fill-opacity: 0.054902"/>
+    <path d="M 100.8 266.4 
+L 100.8 259.2 
+L 108 259.2 
+L 108 266.4 
+L 100.8 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d9d9d9; fill-opacity: 0.14902"/>
+    <path d="M 108 266.4 
+L 108 259.2 
+L 115.2 259.2 
+L 115.2 266.4 
+L 108 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #a5a5a5; fill-opacity: 0.352941"/>
+    <path d="M 115.2 266.4 
+L 115.2 259.2 
+L 122.4 259.2 
+L 122.4 266.4 
+L 115.2 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #5c5c5c; fill-opacity: 0.639216"/>
+    <path d="M 122.4 266.4 
+L 122.4 259.2 
+L 129.6 259.2 
+L 129.6 266.4 
+L 122.4 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #0e0e0e; fill-opacity: 0.945098"/>
+    <path d="M 129.6 266.4 
+L 129.6 259.2 
+L 136.8 259.2 
+L 136.8 266.4 
+L 129.6 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #1f1f1f; fill-opacity: 0.878431"/>
+    <path d="M 136.8 266.4 
+L 136.8 259.2 
+L 144 259.2 
+L 144 266.4 
+L 136.8 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #656565; fill-opacity: 0.603922"/>
+    <path d="M 144 266.4 
+L 144 259.2 
+L 151.2 259.2 
+L 151.2 266.4 
+L 144 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #848484; fill-opacity: 0.482353"/>
+    <path d="M 151.2 266.4 
+L 151.2 259.2 
+L 158.4 259.2 
+L 158.4 266.4 
+L 151.2 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #bcbcbc; fill-opacity: 0.262745"/>
+    <path d="M 158.4 266.4 
+L 158.4 259.2 
+L 165.6 259.2 
+L 165.6 266.4 
+L 158.4 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ededed; fill-opacity: 0.070588"/>
+    <path d="M 165.6 266.4 
+L 165.6 259.2 
+L 172.8 259.2 
+L 172.8 266.4 
+L 165.6 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 172.8 266.4 
+L 172.8 259.2 
+L 180 259.2 
+L 180 266.4 
+L 172.8 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fafafa; fill-opacity: 0.019608"/>
+    <path d="M 180 266.4 
+L 180 259.2 
+L 187.2 259.2 
+L 187.2 266.4 
+L 180 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 187.2 266.4 
+L 187.2 259.2 
+L 194.4 259.2 
+L 194.4 266.4 
+L 187.2 266.4 
+L 187.2 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 266.4 
+L 194.4 259.2 
+L 201.6 259.2 
+L 201.6 266.4 
+L 194.4 266.4 
+L 194.4 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 266.4 
+L 201.6 259.2 
+L 208.8 259.2 
+L 208.8 266.4 
+L 201.6 266.4 
+L 201.6 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 266.4 
+L 208.8 259.2 
+L 216 259.2 
+L 216 266.4 
+L 208.8 266.4 
+L 208.8 266.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 259.2 
+L 72 252 
+L 79.2 252 
+L 79.2 259.2 
+L 72 259.2 
+L 72 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 259.2 
+L 79.2 252 
+L 86.4 252 
+L 86.4 259.2 
+L 79.2 259.2 
+L 79.2 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 259.2 
+L 86.4 252 
+L 93.6 252 
+L 93.6 259.2 
+L 86.4 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f5f5f5; fill-opacity: 0.039216"/>
+    <path d="M 93.6 259.2 
+L 93.6 252 
+L 100.8 252 
+L 100.8 259.2 
+L 93.6 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dfdfdf; fill-opacity: 0.12549"/>
+    <path d="M 100.8 259.2 
+L 100.8 252 
+L 108 252 
+L 108 259.2 
+L 100.8 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #b6b6b6; fill-opacity: 0.286275"/>
+    <path d="M 108 259.2 
+L 108 252 
+L 115.2 252 
+L 115.2 259.2 
+L 108 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #757575; fill-opacity: 0.541176"/>
+    <path d="M 115.2 259.2 
+L 115.2 252 
+L 122.4 252 
+L 122.4 259.2 
+L 115.2 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #2d2d2d; fill-opacity: 0.823529"/>
+    <path d="M 122.4 259.2 
+L 122.4 252 
+L 129.6 252 
+L 129.6 259.2 
+L 122.4 259.2 
+z
+" clip-path="url(#pcb50e4555d)"/>
+    <path d="M 129.6 259.2 
+L 129.6 252 
+L 136.8 252 
+L 136.8 259.2 
+L 129.6 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #3c3c3c; fill-opacity: 0.764706"/>
+    <path d="M 136.8 259.2 
+L 136.8 252 
+L 144 252 
+L 144 259.2 
+L 136.8 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #777777; fill-opacity: 0.533333"/>
+    <path d="M 144 259.2 
+L 144 252 
+L 151.2 252 
+L 151.2 259.2 
+L 144 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #b9b9b9; fill-opacity: 0.27451"/>
+    <path d="M 151.2 259.2 
+L 151.2 252 
+L 158.4 252 
+L 158.4 259.2 
+L 151.2 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dedede; fill-opacity: 0.129412"/>
+    <path d="M 158.4 259.2 
+L 158.4 252 
+L 165.6 252 
+L 165.6 259.2 
+L 158.4 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f5f5f5; fill-opacity: 0.039216"/>
+    <path d="M 165.6 259.2 
+L 165.6 252 
+L 172.8 252 
+L 172.8 259.2 
+L 165.6 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fafafa; fill-opacity: 0.019608"/>
+    <path d="M 172.8 259.2 
+L 172.8 252 
+L 180 252 
+L 180 259.2 
+L 172.8 259.2 
+L 172.8 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 259.2 
+L 180 252 
+L 187.2 252 
+L 187.2 259.2 
+L 180 259.2 
+L 180 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 259.2 
+L 187.2 252 
+L 194.4 252 
+L 194.4 259.2 
+L 187.2 259.2 
+L 187.2 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 259.2 
+L 194.4 252 
+L 201.6 252 
+L 201.6 259.2 
+L 194.4 259.2 
+L 194.4 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 259.2 
+L 201.6 252 
+L 208.8 252 
+L 208.8 259.2 
+L 201.6 259.2 
+L 201.6 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 259.2 
+L 208.8 252 
+L 216 252 
+L 216 259.2 
+L 208.8 259.2 
+L 208.8 259.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 252 
+L 72 244.8 
+L 79.2 244.8 
+L 79.2 252 
+L 72 252 
+L 72 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 252 
+L 79.2 244.8 
+L 86.4 244.8 
+L 86.4 252 
+L 79.2 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 86.4 252 
+L 86.4 244.8 
+L 93.6 244.8 
+L 93.6 252 
+L 86.4 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f4f4f4; fill-opacity: 0.043137"/>
+    <path d="M 93.6 252 
+L 93.6 244.8 
+L 100.8 244.8 
+L 100.8 252 
+L 93.6 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #cbcbcb; fill-opacity: 0.203922"/>
+    <path d="M 100.8 252 
+L 100.8 244.8 
+L 108 244.8 
+L 108 252 
+L 100.8 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #929292; fill-opacity: 0.427451"/>
+    <path d="M 108 252 
+L 108 244.8 
+L 115.2 244.8 
+L 115.2 252 
+L 108 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #606060; fill-opacity: 0.623529"/>
+    <path d="M 115.2 252 
+L 115.2 244.8 
+L 122.4 244.8 
+L 122.4 252 
+L 115.2 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #363636; fill-opacity: 0.788235"/>
+    <path d="M 122.4 252 
+L 122.4 244.8 
+L 129.6 244.8 
+L 129.6 252 
+L 122.4 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #373737; fill-opacity: 0.784314"/>
+    <path d="M 129.6 252 
+L 129.6 244.8 
+L 136.8 244.8 
+L 136.8 252 
+L 129.6 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #7a7a7a; fill-opacity: 0.521569"/>
+    <path d="M 136.8 252 
+L 136.8 244.8 
+L 144 244.8 
+L 144 252 
+L 136.8 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #a7a7a7; fill-opacity: 0.345098"/>
+    <path d="M 144 252 
+L 144 244.8 
+L 151.2 244.8 
+L 151.2 252 
+L 144 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dedede; fill-opacity: 0.129412"/>
+    <path d="M 151.2 252 
+L 151.2 244.8 
+L 158.4 244.8 
+L 158.4 252 
+L 151.2 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #eeeeee; fill-opacity: 0.066667"/>
+    <path d="M 158.4 252 
+L 158.4 244.8 
+L 165.6 244.8 
+L 165.6 252 
+L 158.4 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 165.6 252 
+L 165.6 244.8 
+L 172.8 244.8 
+L 172.8 252 
+L 165.6 252 
+L 165.6 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 252 
+L 172.8 244.8 
+L 180 244.8 
+L 180 252 
+L 172.8 252 
+L 172.8 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 252 
+L 180 244.8 
+L 187.2 244.8 
+L 187.2 252 
+L 180 252 
+L 180 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 252 
+L 187.2 244.8 
+L 194.4 244.8 
+L 194.4 252 
+L 187.2 252 
+L 187.2 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 252 
+L 194.4 244.8 
+L 201.6 244.8 
+L 201.6 252 
+L 194.4 252 
+L 194.4 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 252 
+L 201.6 244.8 
+L 208.8 244.8 
+L 208.8 252 
+L 201.6 252 
+L 201.6 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 252 
+L 208.8 244.8 
+L 216 244.8 
+L 216 252 
+L 208.8 252 
+L 208.8 252 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 244.8 
+L 72 237.6 
+L 79.2 237.6 
+L 79.2 244.8 
+L 72 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 79.2 244.8 
+L 79.2 237.6 
+L 86.4 237.6 
+L 86.4 244.8 
+L 79.2 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f8f8f8; fill-opacity: 0.027451"/>
+    <path d="M 86.4 244.8 
+L 86.4 237.6 
+L 93.6 237.6 
+L 93.6 244.8 
+L 86.4 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ebebeb; fill-opacity: 0.078431"/>
+    <path d="M 93.6 244.8 
+L 93.6 237.6 
+L 100.8 237.6 
+L 100.8 244.8 
+L 93.6 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #c6c6c6; fill-opacity: 0.223529"/>
+    <path d="M 100.8 244.8 
+L 100.8 237.6 
+L 108 237.6 
+L 108 244.8 
+L 100.8 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #949494; fill-opacity: 0.419608"/>
+    <path d="M 108 244.8 
+L 108 237.6 
+L 115.2 237.6 
+L 115.2 244.8 
+L 108 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #787878; fill-opacity: 0.529412"/>
+    <path d="M 115.2 244.8 
+L 115.2 237.6 
+L 122.4 237.6 
+L 122.4 244.8 
+L 115.2 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #898989; fill-opacity: 0.462745"/>
+    <path d="M 122.4 244.8 
+L 122.4 237.6 
+L 129.6 237.6 
+L 129.6 244.8 
+L 122.4 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #8d8d8d; fill-opacity: 0.447059"/>
+    <path d="M 129.6 244.8 
+L 129.6 237.6 
+L 136.8 237.6 
+L 136.8 244.8 
+L 129.6 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #b2b2b2; fill-opacity: 0.301961"/>
+    <path d="M 136.8 244.8 
+L 136.8 237.6 
+L 144 237.6 
+L 144 244.8 
+L 136.8 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #d5d5d5; fill-opacity: 0.164706"/>
+    <path d="M 144 244.8 
+L 144 237.6 
+L 151.2 237.6 
+L 151.2 244.8 
+L 144 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f0f0f0; fill-opacity: 0.058824"/>
+    <path d="M 151.2 244.8 
+L 151.2 237.6 
+L 158.4 237.6 
+L 158.4 244.8 
+L 151.2 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f4f4f4; fill-opacity: 0.043137"/>
+    <path d="M 158.4 244.8 
+L 158.4 237.6 
+L 165.6 237.6 
+L 165.6 244.8 
+L 158.4 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 165.6 244.8 
+L 165.6 237.6 
+L 172.8 237.6 
+L 172.8 244.8 
+L 165.6 244.8 
+L 165.6 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 244.8 
+L 172.8 237.6 
+L 180 237.6 
+L 180 244.8 
+L 172.8 244.8 
+L 172.8 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 244.8 
+L 180 237.6 
+L 187.2 237.6 
+L 187.2 244.8 
+L 180 244.8 
+L 180 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 244.8 
+L 187.2 237.6 
+L 194.4 237.6 
+L 194.4 244.8 
+L 187.2 244.8 
+L 187.2 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 244.8 
+L 194.4 237.6 
+L 201.6 237.6 
+L 201.6 244.8 
+L 194.4 244.8 
+L 194.4 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 244.8 
+L 201.6 237.6 
+L 208.8 237.6 
+L 208.8 244.8 
+L 201.6 244.8 
+L 201.6 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 244.8 
+L 208.8 237.6 
+L 216 237.6 
+L 216 244.8 
+L 208.8 244.8 
+L 208.8 244.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 237.6 
+L 72 230.4 
+L 79.2 230.4 
+L 79.2 237.6 
+L 72 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fcfcfc; fill-opacity: 0.011765"/>
+    <path d="M 79.2 237.6 
+L 79.2 230.4 
+L 86.4 230.4 
+L 86.4 237.6 
+L 79.2 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f9f9f9; fill-opacity: 0.023529"/>
+    <path d="M 86.4 237.6 
+L 86.4 230.4 
+L 93.6 230.4 
+L 93.6 237.6 
+L 86.4 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f0f0f0; fill-opacity: 0.058824"/>
+    <path d="M 93.6 237.6 
+L 93.6 230.4 
+L 100.8 230.4 
+L 100.8 237.6 
+L 93.6 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #cacaca; fill-opacity: 0.207843"/>
+    <path d="M 100.8 237.6 
+L 100.8 230.4 
+L 108 230.4 
+L 108 237.6 
+L 100.8 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #aaaaaa; fill-opacity: 0.333333"/>
+    <path d="M 108 237.6 
+L 108 230.4 
+L 115.2 230.4 
+L 115.2 237.6 
+L 108 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #949494; fill-opacity: 0.419608"/>
+    <path d="M 115.2 237.6 
+L 115.2 230.4 
+L 122.4 230.4 
+L 122.4 237.6 
+L 115.2 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ababab; fill-opacity: 0.329412"/>
+    <path d="M 122.4 237.6 
+L 122.4 230.4 
+L 129.6 230.4 
+L 129.6 237.6 
+L 122.4 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #cfcfcf; fill-opacity: 0.188235"/>
+    <path d="M 129.6 237.6 
+L 129.6 230.4 
+L 136.8 230.4 
+L 136.8 237.6 
+L 129.6 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e2e2e2; fill-opacity: 0.113725"/>
+    <path d="M 136.8 237.6 
+L 136.8 230.4 
+L 144 230.4 
+L 144 237.6 
+L 136.8 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e9e9e9; fill-opacity: 0.086275"/>
+    <path d="M 144 237.6 
+L 144 230.4 
+L 151.2 230.4 
+L 151.2 237.6 
+L 144 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f6f6f6; fill-opacity: 0.035294"/>
+    <path d="M 151.2 237.6 
+L 151.2 230.4 
+L 158.4 230.4 
+L 158.4 237.6 
+L 151.2 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 158.4 237.6 
+L 158.4 230.4 
+L 165.6 230.4 
+L 165.6 237.6 
+L 158.4 237.6 
+L 158.4 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 237.6 
+L 165.6 230.4 
+L 172.8 230.4 
+L 172.8 237.6 
+L 165.6 237.6 
+L 165.6 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 237.6 
+L 172.8 230.4 
+L 180 230.4 
+L 180 237.6 
+L 172.8 237.6 
+L 172.8 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 237.6 
+L 180 230.4 
+L 187.2 230.4 
+L 187.2 237.6 
+L 180 237.6 
+L 180 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 237.6 
+L 187.2 230.4 
+L 194.4 230.4 
+L 194.4 237.6 
+L 187.2 237.6 
+L 187.2 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 237.6 
+L 194.4 230.4 
+L 201.6 230.4 
+L 201.6 237.6 
+L 194.4 237.6 
+L 194.4 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 237.6 
+L 201.6 230.4 
+L 208.8 230.4 
+L 208.8 237.6 
+L 201.6 237.6 
+L 201.6 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 237.6 
+L 208.8 230.4 
+L 216 230.4 
+L 216 237.6 
+L 208.8 237.6 
+L 208.8 237.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 230.4 
+L 72 223.2 
+L 79.2 223.2 
+L 79.2 230.4 
+L 72 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 79.2 230.4 
+L 79.2 223.2 
+L 86.4 223.2 
+L 86.4 230.4 
+L 79.2 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fafafa; fill-opacity: 0.019608"/>
+    <path d="M 86.4 230.4 
+L 86.4 223.2 
+L 93.6 223.2 
+L 93.6 230.4 
+L 86.4 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #ebebeb; fill-opacity: 0.078431"/>
+    <path d="M 93.6 230.4 
+L 93.6 223.2 
+L 100.8 223.2 
+L 100.8 230.4 
+L 93.6 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e5e5e5; fill-opacity: 0.101961"/>
+    <path d="M 100.8 230.4 
+L 100.8 223.2 
+L 108 223.2 
+L 108 230.4 
+L 100.8 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dbdbdb; fill-opacity: 0.141176"/>
+    <path d="M 108 230.4 
+L 108 223.2 
+L 115.2 223.2 
+L 115.2 230.4 
+L 108 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #cfcfcf; fill-opacity: 0.188235"/>
+    <path d="M 115.2 230.4 
+L 115.2 223.2 
+L 122.4 223.2 
+L 122.4 230.4 
+L 115.2 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #dfdfdf; fill-opacity: 0.12549"/>
+    <path d="M 122.4 230.4 
+L 122.4 223.2 
+L 129.6 223.2 
+L 129.6 230.4 
+L 122.4 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e5e5e5; fill-opacity: 0.101961"/>
+    <path d="M 129.6 230.4 
+L 129.6 223.2 
+L 136.8 223.2 
+L 136.8 230.4 
+L 129.6 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f6f6f6; fill-opacity: 0.035294"/>
+    <path d="M 136.8 230.4 
+L 136.8 223.2 
+L 144 223.2 
+L 144 230.4 
+L 136.8 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 144 230.4 
+L 144 223.2 
+L 151.2 223.2 
+L 151.2 230.4 
+L 144 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 151.2 230.4 
+L 151.2 223.2 
+L 158.4 223.2 
+L 158.4 230.4 
+L 151.2 230.4 
+L 151.2 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 230.4 
+L 158.4 223.2 
+L 165.6 223.2 
+L 165.6 230.4 
+L 158.4 230.4 
+L 158.4 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 230.4 
+L 165.6 223.2 
+L 172.8 223.2 
+L 172.8 230.4 
+L 165.6 230.4 
+L 165.6 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 230.4 
+L 172.8 223.2 
+L 180 223.2 
+L 180 230.4 
+L 172.8 230.4 
+L 172.8 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 230.4 
+L 180 223.2 
+L 187.2 223.2 
+L 187.2 230.4 
+L 180 230.4 
+L 180 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 230.4 
+L 187.2 223.2 
+L 194.4 223.2 
+L 194.4 230.4 
+L 187.2 230.4 
+L 187.2 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 230.4 
+L 194.4 223.2 
+L 201.6 223.2 
+L 201.6 230.4 
+L 194.4 230.4 
+L 194.4 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 230.4 
+L 201.6 223.2 
+L 208.8 223.2 
+L 208.8 230.4 
+L 201.6 230.4 
+L 201.6 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 230.4 
+L 208.8 223.2 
+L 216 223.2 
+L 216 230.4 
+L 208.8 230.4 
+L 208.8 230.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 223.2 
+L 72 216 
+L 79.2 216 
+L 79.2 223.2 
+L 72 223.2 
+L 72 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 223.2 
+L 79.2 216 
+L 86.4 216 
+L 86.4 223.2 
+L 79.2 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 86.4 223.2 
+L 86.4 216 
+L 93.6 216 
+L 93.6 223.2 
+L 86.4 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f6f6f6; fill-opacity: 0.035294"/>
+    <path d="M 93.6 223.2 
+L 93.6 216 
+L 100.8 216 
+L 100.8 223.2 
+L 93.6 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #efefef; fill-opacity: 0.062745"/>
+    <path d="M 100.8 223.2 
+L 100.8 216 
+L 108 216 
+L 108 223.2 
+L 100.8 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #e8e8e8; fill-opacity: 0.090196"/>
+    <path d="M 108 223.2 
+L 108 216 
+L 115.2 216 
+L 115.2 223.2 
+L 108 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f0f0f0; fill-opacity: 0.058824"/>
+    <path d="M 115.2 223.2 
+L 115.2 216 
+L 122.4 216 
+L 122.4 223.2 
+L 115.2 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f8f8f8; fill-opacity: 0.027451"/>
+    <path d="M 122.4 223.2 
+L 122.4 216 
+L 129.6 216 
+L 129.6 223.2 
+L 122.4 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f7f7f7; fill-opacity: 0.031373"/>
+    <path d="M 129.6 223.2 
+L 129.6 216 
+L 136.8 216 
+L 136.8 223.2 
+L 129.6 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 136.8 223.2 
+L 136.8 216 
+L 144 216 
+L 144 223.2 
+L 136.8 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 144 223.2 
+L 144 216 
+L 151.2 216 
+L 151.2 223.2 
+L 144 223.2 
+L 144 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 223.2 
+L 151.2 216 
+L 158.4 216 
+L 158.4 223.2 
+L 151.2 223.2 
+L 151.2 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 223.2 
+L 158.4 216 
+L 165.6 216 
+L 165.6 223.2 
+L 158.4 223.2 
+L 158.4 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 223.2 
+L 165.6 216 
+L 172.8 216 
+L 172.8 223.2 
+L 165.6 223.2 
+L 165.6 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 223.2 
+L 172.8 216 
+L 180 216 
+L 180 223.2 
+L 172.8 223.2 
+L 172.8 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 223.2 
+L 180 216 
+L 187.2 216 
+L 187.2 223.2 
+L 180 223.2 
+L 180 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 223.2 
+L 187.2 216 
+L 194.4 216 
+L 194.4 223.2 
+L 187.2 223.2 
+L 187.2 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 223.2 
+L 194.4 216 
+L 201.6 216 
+L 201.6 223.2 
+L 194.4 223.2 
+L 194.4 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 223.2 
+L 201.6 216 
+L 208.8 216 
+L 208.8 223.2 
+L 201.6 223.2 
+L 201.6 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 223.2 
+L 208.8 216 
+L 216 216 
+L 216 223.2 
+L 208.8 223.2 
+L 208.8 223.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 216 
+L 72 208.8 
+L 79.2 208.8 
+L 79.2 216 
+L 72 216 
+L 72 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 216 
+L 79.2 208.8 
+L 86.4 208.8 
+L 86.4 216 
+L 79.2 216 
+L 79.2 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 216 
+L 86.4 208.8 
+L 93.6 208.8 
+L 93.6 216 
+L 86.4 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 93.6 216 
+L 93.6 208.8 
+L 100.8 208.8 
+L 100.8 216 
+L 93.6 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #f9f9f9; fill-opacity: 0.023529"/>
+    <path d="M 100.8 216 
+L 100.8 208.8 
+L 108 208.8 
+L 108 216 
+L 100.8 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 108 216 
+L 108 208.8 
+L 115.2 208.8 
+L 115.2 216 
+L 108 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fbfbfb; fill-opacity: 0.015686"/>
+    <path d="M 115.2 216 
+L 115.2 208.8 
+L 122.4 208.8 
+L 122.4 216 
+L 115.2 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 122.4 216 
+L 122.4 208.8 
+L 129.6 208.8 
+L 129.6 216 
+L 122.4 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 129.6 216 
+L 129.6 208.8 
+L 136.8 208.8 
+L 136.8 216 
+L 129.6 216 
+L 129.6 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 216 
+L 136.8 208.8 
+L 144 208.8 
+L 144 216 
+L 136.8 216 
+L 136.8 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 216 
+L 144 208.8 
+L 151.2 208.8 
+L 151.2 216 
+L 144 216 
+L 144 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 216 
+L 151.2 208.8 
+L 158.4 208.8 
+L 158.4 216 
+L 151.2 216 
+L 151.2 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 216 
+L 158.4 208.8 
+L 165.6 208.8 
+L 165.6 216 
+L 158.4 216 
+L 158.4 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 216 
+L 165.6 208.8 
+L 172.8 208.8 
+L 172.8 216 
+L 165.6 216 
+L 165.6 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 216 
+L 172.8 208.8 
+L 180 208.8 
+L 180 216 
+L 172.8 216 
+L 172.8 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 216 
+L 180 208.8 
+L 187.2 208.8 
+L 187.2 216 
+L 180 216 
+L 180 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 216 
+L 187.2 208.8 
+L 194.4 208.8 
+L 194.4 216 
+L 187.2 216 
+L 187.2 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 216 
+L 194.4 208.8 
+L 201.6 208.8 
+L 201.6 216 
+L 194.4 216 
+L 194.4 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 216 
+L 201.6 208.8 
+L 208.8 208.8 
+L 208.8 216 
+L 201.6 216 
+L 201.6 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 216 
+L 208.8 208.8 
+L 216 208.8 
+L 216 216 
+L 208.8 216 
+L 208.8 216 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 208.8 
+L 72 201.6 
+L 79.2 201.6 
+L 79.2 208.8 
+L 72 208.8 
+L 72 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 208.8 
+L 79.2 201.6 
+L 86.4 201.6 
+L 86.4 208.8 
+L 79.2 208.8 
+L 79.2 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 208.8 
+L 86.4 201.6 
+L 93.6 201.6 
+L 93.6 208.8 
+L 86.4 208.8 
+L 86.4 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 208.8 
+L 93.6 201.6 
+L 100.8 201.6 
+L 100.8 208.8 
+L 93.6 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fdfdfd; fill-opacity: 0.007843"/>
+    <path d="M 100.8 208.8 
+L 100.8 201.6 
+L 108 201.6 
+L 108 208.8 
+L 100.8 208.8 
+L 100.8 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 208.8 
+L 108 201.6 
+L 115.2 201.6 
+L 115.2 208.8 
+L 108 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 115.2 208.8 
+L 115.2 201.6 
+L 122.4 201.6 
+L 122.4 208.8 
+L 115.2 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: #fefefe; fill-opacity: 0.003922"/>
+    <path d="M 122.4 208.8 
+L 122.4 201.6 
+L 129.6 201.6 
+L 129.6 208.8 
+L 122.4 208.8 
+L 122.4 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 208.8 
+L 129.6 201.6 
+L 136.8 201.6 
+L 136.8 208.8 
+L 129.6 208.8 
+L 129.6 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 208.8 
+L 136.8 201.6 
+L 144 201.6 
+L 144 208.8 
+L 136.8 208.8 
+L 136.8 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 208.8 
+L 144 201.6 
+L 151.2 201.6 
+L 151.2 208.8 
+L 144 208.8 
+L 144 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 208.8 
+L 151.2 201.6 
+L 158.4 201.6 
+L 158.4 208.8 
+L 151.2 208.8 
+L 151.2 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 208.8 
+L 158.4 201.6 
+L 165.6 201.6 
+L 165.6 208.8 
+L 158.4 208.8 
+L 158.4 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 208.8 
+L 165.6 201.6 
+L 172.8 201.6 
+L 172.8 208.8 
+L 165.6 208.8 
+L 165.6 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 208.8 
+L 172.8 201.6 
+L 180 201.6 
+L 180 208.8 
+L 172.8 208.8 
+L 172.8 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 208.8 
+L 180 201.6 
+L 187.2 201.6 
+L 187.2 208.8 
+L 180 208.8 
+L 180 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 208.8 
+L 187.2 201.6 
+L 194.4 201.6 
+L 194.4 208.8 
+L 187.2 208.8 
+L 187.2 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 208.8 
+L 194.4 201.6 
+L 201.6 201.6 
+L 201.6 208.8 
+L 194.4 208.8 
+L 194.4 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 208.8 
+L 201.6 201.6 
+L 208.8 201.6 
+L 208.8 208.8 
+L 201.6 208.8 
+L 201.6 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 208.8 
+L 208.8 201.6 
+L 216 201.6 
+L 216 208.8 
+L 208.8 208.8 
+L 208.8 208.8 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 201.6 
+L 72 194.4 
+L 79.2 194.4 
+L 79.2 201.6 
+L 72 201.6 
+L 72 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 201.6 
+L 79.2 194.4 
+L 86.4 194.4 
+L 86.4 201.6 
+L 79.2 201.6 
+L 79.2 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 201.6 
+L 86.4 194.4 
+L 93.6 194.4 
+L 93.6 201.6 
+L 86.4 201.6 
+L 86.4 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 201.6 
+L 93.6 194.4 
+L 100.8 194.4 
+L 100.8 201.6 
+L 93.6 201.6 
+L 93.6 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 201.6 
+L 100.8 194.4 
+L 108 194.4 
+L 108 201.6 
+L 100.8 201.6 
+L 100.8 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 201.6 
+L 108 194.4 
+L 115.2 194.4 
+L 115.2 201.6 
+L 108 201.6 
+L 108 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 201.6 
+L 115.2 194.4 
+L 122.4 194.4 
+L 122.4 201.6 
+L 115.2 201.6 
+L 115.2 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 201.6 
+L 122.4 194.4 
+L 129.6 194.4 
+L 129.6 201.6 
+L 122.4 201.6 
+L 122.4 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 201.6 
+L 129.6 194.4 
+L 136.8 194.4 
+L 136.8 201.6 
+L 129.6 201.6 
+L 129.6 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 201.6 
+L 136.8 194.4 
+L 144 194.4 
+L 144 201.6 
+L 136.8 201.6 
+L 136.8 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 201.6 
+L 144 194.4 
+L 151.2 194.4 
+L 151.2 201.6 
+L 144 201.6 
+L 144 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 201.6 
+L 151.2 194.4 
+L 158.4 194.4 
+L 158.4 201.6 
+L 151.2 201.6 
+L 151.2 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 201.6 
+L 158.4 194.4 
+L 165.6 194.4 
+L 165.6 201.6 
+L 158.4 201.6 
+L 158.4 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 201.6 
+L 165.6 194.4 
+L 172.8 194.4 
+L 172.8 201.6 
+L 165.6 201.6 
+L 165.6 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 201.6 
+L 172.8 194.4 
+L 180 194.4 
+L 180 201.6 
+L 172.8 201.6 
+L 172.8 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 201.6 
+L 180 194.4 
+L 187.2 194.4 
+L 187.2 201.6 
+L 180 201.6 
+L 180 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 201.6 
+L 187.2 194.4 
+L 194.4 194.4 
+L 194.4 201.6 
+L 187.2 201.6 
+L 187.2 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 201.6 
+L 194.4 194.4 
+L 201.6 194.4 
+L 201.6 201.6 
+L 194.4 201.6 
+L 194.4 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 201.6 
+L 201.6 194.4 
+L 208.8 194.4 
+L 208.8 201.6 
+L 201.6 201.6 
+L 201.6 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 201.6 
+L 208.8 194.4 
+L 216 194.4 
+L 216 201.6 
+L 208.8 201.6 
+L 208.8 201.6 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 194.4 
+L 72 187.2 
+L 79.2 187.2 
+L 79.2 194.4 
+L 72 194.4 
+L 72 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 194.4 
+L 79.2 187.2 
+L 86.4 187.2 
+L 86.4 194.4 
+L 79.2 194.4 
+L 79.2 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 194.4 
+L 86.4 187.2 
+L 93.6 187.2 
+L 93.6 194.4 
+L 86.4 194.4 
+L 86.4 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 194.4 
+L 93.6 187.2 
+L 100.8 187.2 
+L 100.8 194.4 
+L 93.6 194.4 
+L 93.6 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 194.4 
+L 100.8 187.2 
+L 108 187.2 
+L 108 194.4 
+L 100.8 194.4 
+L 100.8 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 194.4 
+L 108 187.2 
+L 115.2 187.2 
+L 115.2 194.4 
+L 108 194.4 
+L 108 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 194.4 
+L 115.2 187.2 
+L 122.4 187.2 
+L 122.4 194.4 
+L 115.2 194.4 
+L 115.2 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 194.4 
+L 122.4 187.2 
+L 129.6 187.2 
+L 129.6 194.4 
+L 122.4 194.4 
+L 122.4 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 194.4 
+L 129.6 187.2 
+L 136.8 187.2 
+L 136.8 194.4 
+L 129.6 194.4 
+L 129.6 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 194.4 
+L 136.8 187.2 
+L 144 187.2 
+L 144 194.4 
+L 136.8 194.4 
+L 136.8 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 194.4 
+L 144 187.2 
+L 151.2 187.2 
+L 151.2 194.4 
+L 144 194.4 
+L 144 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 194.4 
+L 151.2 187.2 
+L 158.4 187.2 
+L 158.4 194.4 
+L 151.2 194.4 
+L 151.2 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 194.4 
+L 158.4 187.2 
+L 165.6 187.2 
+L 165.6 194.4 
+L 158.4 194.4 
+L 158.4 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 194.4 
+L 165.6 187.2 
+L 172.8 187.2 
+L 172.8 194.4 
+L 165.6 194.4 
+L 165.6 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 194.4 
+L 172.8 187.2 
+L 180 187.2 
+L 180 194.4 
+L 172.8 194.4 
+L 172.8 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 194.4 
+L 180 187.2 
+L 187.2 187.2 
+L 187.2 194.4 
+L 180 194.4 
+L 180 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 194.4 
+L 187.2 187.2 
+L 194.4 187.2 
+L 194.4 194.4 
+L 187.2 194.4 
+L 187.2 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 194.4 
+L 194.4 187.2 
+L 201.6 187.2 
+L 201.6 194.4 
+L 194.4 194.4 
+L 194.4 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 194.4 
+L 201.6 187.2 
+L 208.8 187.2 
+L 208.8 194.4 
+L 201.6 194.4 
+L 201.6 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 194.4 
+L 208.8 187.2 
+L 216 187.2 
+L 216 194.4 
+L 208.8 194.4 
+L 208.8 194.4 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 72 187.2 
+L 72 180 
+L 79.2 180 
+L 79.2 187.2 
+L 72 187.2 
+L 72 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 79.2 187.2 
+L 79.2 180 
+L 86.4 180 
+L 86.4 187.2 
+L 79.2 187.2 
+L 79.2 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 86.4 187.2 
+L 86.4 180 
+L 93.6 180 
+L 93.6 187.2 
+L 86.4 187.2 
+L 86.4 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 93.6 187.2 
+L 93.6 180 
+L 100.8 180 
+L 100.8 187.2 
+L 93.6 187.2 
+L 93.6 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 100.8 187.2 
+L 100.8 180 
+L 108 180 
+L 108 187.2 
+L 100.8 187.2 
+L 100.8 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 108 187.2 
+L 108 180 
+L 115.2 180 
+L 115.2 187.2 
+L 108 187.2 
+L 108 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 115.2 187.2 
+L 115.2 180 
+L 122.4 180 
+L 122.4 187.2 
+L 115.2 187.2 
+L 115.2 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 122.4 187.2 
+L 122.4 180 
+L 129.6 180 
+L 129.6 187.2 
+L 122.4 187.2 
+L 122.4 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 129.6 187.2 
+L 129.6 180 
+L 136.8 180 
+L 136.8 187.2 
+L 129.6 187.2 
+L 129.6 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 136.8 187.2 
+L 136.8 180 
+L 144 180 
+L 144 187.2 
+L 136.8 187.2 
+L 136.8 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 144 187.2 
+L 144 180 
+L 151.2 180 
+L 151.2 187.2 
+L 144 187.2 
+L 144 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 151.2 187.2 
+L 151.2 180 
+L 158.4 180 
+L 158.4 187.2 
+L 151.2 187.2 
+L 151.2 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 158.4 187.2 
+L 158.4 180 
+L 165.6 180 
+L 165.6 187.2 
+L 158.4 187.2 
+L 158.4 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 165.6 187.2 
+L 165.6 180 
+L 172.8 180 
+L 172.8 187.2 
+L 165.6 187.2 
+L 165.6 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 172.8 187.2 
+L 172.8 180 
+L 180 180 
+L 180 187.2 
+L 172.8 187.2 
+L 172.8 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 180 187.2 
+L 180 180 
+L 187.2 180 
+L 187.2 187.2 
+L 180 187.2 
+L 180 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 187.2 187.2 
+L 187.2 180 
+L 194.4 180 
+L 194.4 187.2 
+L 187.2 187.2 
+L 187.2 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 194.4 187.2 
+L 194.4 180 
+L 201.6 180 
+L 201.6 187.2 
+L 194.4 187.2 
+L 194.4 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 201.6 187.2 
+L 201.6 180 
+L 208.8 180 
+L 208.8 187.2 
+L 201.6 187.2 
+L 201.6 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+    <path d="M 208.8 187.2 
+L 208.8 180 
+L 216 180 
+L 216 187.2 
+L 208.8 187.2 
+L 208.8 187.2 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none"/>
+   </g>
+   <g id="matplotlib.axis_5">
+    <g id="xtick_22">
+     <g id="line2d_26">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="102.120132" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <!-- 100 -->
+      <g transform="translate(91.566121 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-30" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_23">
+     <g id="line2d_27">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="136.268398" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <!-- 125 -->
+      <g transform="translate(125.714387 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <defs>
+        <path id="DejaVuSans-35" d="M 691 4666 
+L 3169 4666 
+L 3169 4134 
+L 1269 4134 
+L 1269 2991 
+Q 1406 3038 1543 3061 
+Q 1681 3084 1819 3084 
+Q 2600 3084 3056 2656 
+Q 3513 2228 3513 1497 
+Q 3513 744 3044 326 
+Q 2575 -91 1722 -91 
+Q 1428 -91 1123 -41 
+Q 819 9 494 109 
+L 494 744 
+Q 775 591 1075 516 
+Q 1375 441 1709 441 
+Q 2250 441 2565 725 
+Q 2881 1009 2881 1497 
+Q 2881 1984 2565 2268 
+Q 2250 2553 1709 2553 
+Q 1456 2553 1204 2497 
+Q 953 2441 691 2322 
+L 691 4666 
+z
+" transform="scale(0.015625)"/>
+       </defs>
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-32" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-35" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_24">
+     <g id="line2d_28">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="170.416664" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <!-- 150 -->
+      <g transform="translate(159.862653 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-35" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_25">
+     <g id="line2d_29">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="204.56493" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <!-- 175 -->
+      <g transform="translate(194.010919 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <defs>
+        <path id="DejaVuSans-37" d="M 525 4666 
+L 3525 4666 
+L 3525 4397 
+L 1831 0 
+L 1172 0 
+L 2766 4134 
+L 525 4134 
+L 525 4666 
+z
+" transform="scale(0.015625)"/>
+       </defs>
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-37" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-35" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_26">
+     <g id="line2d_30">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="74.801519" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_27">
+     <g id="line2d_31">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="81.631172" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_28">
+     <g id="line2d_32">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="88.460826" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_29">
+     <g id="line2d_33">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="95.290479" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_30">
+     <g id="line2d_34">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="108.949785" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_31">
+     <g id="line2d_35">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="115.779438" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_32">
+     <g id="line2d_36">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="122.609092" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_33">
+     <g id="line2d_37">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="129.438745" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_34">
+     <g id="line2d_38">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="143.098051" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_35">
+     <g id="line2d_39">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="149.927704" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_36">
+     <g id="line2d_40">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="156.757357" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_37">
+     <g id="line2d_41">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="163.587011" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_38">
+     <g id="line2d_42">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="177.246317" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_39">
+     <g id="line2d_43">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="184.07597" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_40">
+     <g id="line2d_44">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="190.905623" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_41">
+     <g id="line2d_45">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="197.735277" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_42">
+     <g id="line2d_46">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="211.394583" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="text_6">
+     <!-- $S_0^+$ -->
+     <g transform="translate(126.4 385.46) scale(0.22 -0.22)">
+      <use xlink:href="#DejaVuSans-Oblique-53" transform="translate(0 0.826562)"/>
+      <use xlink:href="#DejaVuSans-2b" transform="translate(84.314779 39.107813) scale(0.7)"/>
+      <use xlink:href="#DejaVuSans-30" transform="translate(63.476562 -26.517188) scale(0.7)"/>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_6">
+    <g id="ytick_1">
+     <g id="line2d_47">
+      <defs>
+       <path id="mf10122656c" d="M 0 0 
+L 8 0 
+" style="stroke: #000000"/>
+      </defs>
+      <g>
+       <use xlink:href="#mf10122656c" x="72" y="291.894243" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <!-- 150 -->
+      <g transform="translate(35.571584 325.049538) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-35" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_48">
+      <g>
+       <use xlink:href="#mf10122656c" x="72" y="257.468961" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <!-- 180 -->
+      <g transform="translate(35.571584 290.624256) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-38" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_49">
+      <g>
+       <use xlink:href="#mf10122656c" x="72" y="223.043679" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <!-- 210 -->
+      <g transform="translate(35.571584 256.198974) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-32"/>
+       <use xlink:href="#DejaVuSans-31" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_50">
+      <g>
+       <use xlink:href="#mf10122656c" x="72" y="188.618397" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_10">
+      <!-- 240 -->
+      <g transform="translate(35.571584 221.773692) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-32"/>
+       <use xlink:href="#DejaVuSans-34" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_51">
+      <defs>
+       <path id="m622fe347a5" d="M 0 0 
+L 4 0 
+" style="stroke: #000000"/>
+      </defs>
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="317.713205" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_52">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="309.106884" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_53">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="300.500564" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_54">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="283.287923" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_9">
+     <g id="line2d_55">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="274.681602" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_10">
+     <g id="line2d_56">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="266.075282" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_11">
+     <g id="line2d_57">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="248.862641" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_12">
+     <g id="line2d_58">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="240.25632" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_13">
+     <g id="line2d_59">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="231.649999" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_14">
+     <g id="line2d_60">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="214.437358" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_15">
+     <g id="line2d_61">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="205.831038" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_16">
+     <g id="line2d_62">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="197.224717" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="ytick_17">
+     <g id="line2d_63">
+      <g>
+       <use xlink:href="#m622fe347a5" x="72" y="180.012076" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="text_11">
+     <!-- $D_2^+$ -->
+     <g transform="translate(22.64 271.03) rotate(-90) scale(0.22 -0.22)">
+      <defs>
+       <path id="DejaVuSans-Oblique-44" d="M 1081 4666 
+L 2438 4666 
+Q 3519 4666 4070 4208 
+Q 4622 3750 4622 2847 
+Q 4622 2250 4412 1698 
+Q 4203 1147 3834 769 
+Q 3463 381 2891 190 
+Q 2319 0 1538 0 
+L 172 0 
+L 1081 4666 
+z
+M 1613 4147 
+L 909 519 
+L 1734 519 
+Q 2794 519 3375 1128 
+Q 3956 1738 3956 2847 
+Q 3956 3519 3581 3833 
+Q 3206 4147 2406 4147 
+L 1613 4147 
+z
+" transform="scale(0.015625)"/>
+      </defs>
+      <use xlink:href="#DejaVuSans-Oblique-44" transform="translate(0 0.826562)"/>
+      <use xlink:href="#DejaVuSans-2b" transform="translate(97.656419 39.107813) scale(0.7)"/>
+      <use xlink:href="#DejaVuSans-32" transform="translate(77.001953 -26.517188) scale(0.7)"/>
+     </g>
+    </g>
+   </g>
+   <g id="QuadContourSet_2">
+    <path d="M 133.2 287.044898 
+L 140.4 287.530435 
+L 147.6 289.088372 
+L 154.8 290.034783 
+L 162 284.4 
+L 162 284.4 
+L 164.571429 277.2 
+L 162 274.8 
+L 160.628571 270 
+L 160.431683 262.8 
+L 156.15 255.6 
+L 154.8 253.636364 
+L 149.563636 248.4 
+L 147.6 246.694737 
+L 143.803636 241.2 
+L 140.4 236.634146 
+L 133.2 234 
+L 133.2 234 
+L 126 227.76 
+L 122.676923 226.8 
+L 118.8 225.830769 
+L 111.6 222.730435 
+L 104.4 222.8 
+L 99.490909 226.8 
+L 97.2 227.684211 
+L 92.7 234 
+L 91.728 241.2 
+L 93.181395 248.4 
+L 96.26087 255.6 
+L 97.2 256.736842 
+L 101.717647 262.8 
+L 104.4 265.2 
+L 108.812903 270 
+L 111.6 273.031579 
+L 118.8 277.147826 
+L 118.874227 277.2 
+L 126 283.6 
+L 128.88 284.4 
+L 133.2 287.044898 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #000000; stroke-width: 1.5"/>
+    <path d="M 140.4 279.965217 
+L 147.6 278.027586 
+L 149.657143 277.2 
+L 153.315464 270 
+L 153.172174 262.8 
+L 147.6 256.921101 
+L 146.533333 255.6 
+L 141.483186 248.4 
+L 140.4 247.125 
+L 133.2 241.572414 
+L 132.631579 241.2 
+L 126 237.494118 
+L 119.578378 234 
+L 118.8 233.456604 
+L 111.6 230.727273 
+L 104.4 233.215842 
+L 103.2 234 
+L 100.55534 241.2 
+L 100.707692 248.4 
+L 104.4 254.237838 
+L 105.157895 255.6 
+L 110.186916 262.8 
+L 111.6 264.282353 
+L 116.761062 270 
+L 118.8 271.669565 
+L 126 276.685714 
+L 133.2 277.2 
+L 133.2 277.2 
+L 140.4 279.965217 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #000000; stroke-width: 1.5"/>
+    <path d="M 133.2 271.139568 
+L 140.4 271.963636 
+L 143.1 270 
+L 144.45 262.8 
+L 140.4 255.978947 
+L 140.282927 255.6 
+L 133.2 248.79375 
+L 132.834783 248.4 
+L 126 243.101124 
+L 118.8 242.842105 
+L 111.6 241.640816 
+L 108.384466 248.4 
+L 111.491729 255.6 
+L 111.6 255.746939 
+L 116.208 262.8 
+L 118.8 265.597122 
+L 126 270 
+L 126 270 
+L 133.2 271.139568 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #000000; stroke-width: 1.5"/>
+    <path d="M 126 263.972093 
+L 133.2 262.8 
+L 129.774194 255.6 
+L 126 251.494737 
+L 121.021277 255.6 
+L 124.434783 262.8 
+L 126 263.972093 
+z
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_64">
+    <path d="M 128.371309 324 
+L 128.371309 180 
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #4682b4; stroke-width: 1.5; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_65">
+    <path d="M 72 257.696771 
+L 216 257.696771 
+" clip-path="url(#pcb50e4555d)" style="fill: none; stroke: #4682b4; stroke-width: 1.5; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_66">
+    <defs>
+     <path id="m081f987afe" d="M -3 3 
+L 3 3 
+L 3 -3 
+L -3 -3 
+z
+" style="stroke: #4682b4; stroke-linejoin: miter"/>
+    </defs>
+    <g clip-path="url(#pcb50e4555d)">
+     <use xlink:href="#m081f987afe" x="128.371309" y="257.696771" style="fill: #4682b4; stroke: #4682b4; stroke-linejoin: miter"/>
+    </g>
+   </g>
+   <g id="patch_9">
+    <path d="M 72 324 
+L 72 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 216 324 
+L 216 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_11">
+    <path d="M 72 324 
+L 216 324 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_12">
+    <path d="M 72 180 
+L 216 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+  </g>
+  <g id="axes_4">
+   <g id="patch_13">
+    <path d="M 223.2 324 
+L 367.2 324 
+L 367.2 180 
+L 223.2 180 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_7">
+    <g id="xtick_43">
+     <g id="line2d_67">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="255.305757" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_12">
+      <!-- 150 -->
+      <g transform="translate(244.751746 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-35" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_44">
+     <g id="line2d_68">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="289.731039" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_13">
+      <!-- 180 -->
+      <g transform="translate(279.177028 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-31"/>
+       <use xlink:href="#DejaVuSans-38" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_45">
+     <g id="line2d_69">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="324.156321" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_14">
+      <!-- 210 -->
+      <g transform="translate(313.60231 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-32"/>
+       <use xlink:href="#DejaVuSans-31" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_46">
+     <g id="line2d_70">
+      <g>
+       <use xlink:href="#ma19c6bcfe3" x="358.581603" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+     <g id="text_15">
+      <!-- 240 -->
+      <g transform="translate(348.027593 369.013576) rotate(-45) scale(0.22 -0.22)">
+       <use xlink:href="#DejaVuSans-32"/>
+       <use xlink:href="#DejaVuSans-34" x="63.623047"/>
+       <use xlink:href="#DejaVuSans-30" x="127.246094"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_47">
+     <g id="line2d_71">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="229.486795" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_48">
+     <g id="line2d_72">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="238.093116" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_49">
+     <g id="line2d_73">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="246.699436" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_50">
+     <g id="line2d_74">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="263.912077" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_51">
+     <g id="line2d_75">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="272.518398" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_52">
+     <g id="line2d_76">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="281.124718" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_53">
+     <g id="line2d_77">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="298.337359" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_54">
+     <g id="line2d_78">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="306.94368" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_55">
+     <g id="line2d_79">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="315.550001" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_56">
+     <g id="line2d_80">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="332.762642" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_57">
+     <g id="line2d_81">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="341.368962" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_58">
+     <g id="line2d_82">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="349.975283" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="xtick_59">
+     <g id="line2d_83">
+      <g>
+       <use xlink:href="#m7ce5e1babe" x="367.187924" y="324" style="stroke: #000000"/>
+      </g>
+     </g>
+    </g>
+    <g id="text_16">
+     <!-- $D_2^+$ -->
+     <g transform="translate(276.17 385.46) scale(0.22 -0.22)">
+      <use xlink:href="#DejaVuSans-Oblique-44" transform="translate(0 0.826562)"/>
+      <use xlink:href="#DejaVuSans-2b" transform="translate(97.656419 39.107813) scale(0.7)"/>
+      <use xlink:href="#DejaVuSans-32" transform="translate(77.001953 -26.517188) scale(0.7)"/>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_8"/>
+   <g id="patch_14">
+    <path d="M 223.2 324 
+L 223.2 323.837917 
+L 230.4 323.837917 
+L 230.4 323.351668 
+L 237.6 323.351668 
+L 237.6 322.865419 
+L 244.8 322.865419 
+L 244.8 318.056954 
+L 252 318.056954 
+L 252 308.980302 
+L 259.2 308.980302 
+L 259.2 295.257269 
+L 266.4 295.257269 
+L 266.4 265.271902 
+L 273.6 265.271902 
+L 273.6 231.612651 
+L 280.8 231.612651 
+L 280.8 195.143961 
+L 288 195.143961 
+L 288 193.090909 
+L 295.2 193.090909 
+L 295.2 210.433797 
+L 302.4 210.433797 
+L 302.4 244.687352 
+L 309.6 244.687352 
+L 309.6 271.86328 
+L 316.8 271.86328 
+L 316.8 300.119761 
+L 324 300.119761 
+L 324 313.734739 
+L 331.2 313.734739 
+L 331.2 321.298616 
+L 338.4 321.298616 
+L 338.4 323.027502 
+L 345.6 323.027502 
+L 345.6 323.891945 
+L 352.8 323.891945 
+L 352.8 324 
+L 360 324 
+L 360 323.891945 
+L 367.2 323.891945 
+L 367.2 324 
+" clip-path="url(#pda9a3ead88)" style="fill: none; stroke: #000000; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_84">
+    <path d="M 274.508484 324 
+L 274.508484 180 
+" clip-path="url(#pda9a3ead88)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_85">
+    <path d="M 290.192599 324 
+L 290.192599 180 
+" clip-path="url(#pda9a3ead88)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_86">
+    <path d="M 306.5727 324 
+L 306.5727 180 
+" clip-path="url(#pda9a3ead88)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #000000; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_87">
+    <path d="M 289.503229 324 
+L 289.503229 180 
+" clip-path="url(#pda9a3ead88)" style="fill: none; stroke: #4682b4; stroke-width: 1.5; stroke-linecap: square"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 223.2 324 
+L 223.2 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_16">
+    <path d="M 367.2 324 
+L 367.2 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_17">
+    <path d="M 223.2 324 
+L 367.2 324 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_18">
+    <path d="M 223.2 180 
+L 367.2 180 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="text_17">
+    <!-- $D_2^+$ = ${180.40}_{-13.67}^{+14.27}$ -->
+    <g transform="translate(239.22 174) scale(0.12 -0.12)">
+     <use xlink:href="#DejaVuSans-Oblique-44" transform="translate(0 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2b" transform="translate(97.656419 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-32" transform="translate(77.001953 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-20" transform="translate(172.680833 0.765625)"/>
+     <use xlink:href="#DejaVuSans-3d" transform="translate(204.467943 0.765625)"/>
+     <use xlink:href="#DejaVuSans-20" transform="translate(288.257005 0.765625)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(320.044115 0.765625)"/>
+     <use xlink:href="#DejaVuSans-38" transform="translate(383.667161 0.765625)"/>
+     <use xlink:href="#DejaVuSans-30" transform="translate(447.290208 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(510.913255 0.765625)"/>
+     <use xlink:href="#DejaVuSans-34" transform="translate(542.700365 0.765625)"/>
+     <use xlink:href="#DejaVuSans-30" transform="translate(606.323411 0.765625)"/>
+     <use xlink:href="#DejaVuSans-2b" transform="translate(670.90349 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(729.555833 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-34" transform="translate(774.091966 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(818.628099 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-32" transform="translate(837.029076 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-37" transform="translate(881.565208 39.046875) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2212" transform="translate(670.90349 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-31" transform="translate(729.555833 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-33" transform="translate(774.091966 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-2e" transform="translate(818.628099 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-36" transform="translate(840.879076 -26.578125) scale(0.7)"/>
+     <use xlink:href="#DejaVuSans-37" transform="translate(885.415208 -26.578125) scale(0.7)"/>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p3bd67b802d">
+   <rect x="72" y="28.8" width="144" height="144"/>
+  </clipPath>
+  <clipPath id="pcb50e4555d">
+   <rect x="72" y="180" width="144" height="144"/>
+  </clipPath>
+  <clipPath id="pda9a3ead88">
+   <rect x="223.2" y="180" width="144" height="144"/>
+  </clipPath>
+ </defs>
+</svg>
