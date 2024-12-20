@@ -252,6 +252,26 @@ The first example script uses data generated with [gen_amp](https://github.com/J
   />
 </p>
 
+
+Additionally, this example has an optional MCMC analysis complete with a custom observer to monitor convergence based on the integrated autocorrelation time. This can be run using `example_1_mcmc.py` script after `example_1.py` has completed, as it uses data stored during the execution of `example_1.py` to initialize the walkers. A word of warning, this analysis takes a long time, but is meant more as a demonstration of what's possible with the current system. The custom autocorrelation observer plays an important role in choosing convergence criteria, since this problem has an implicit symmetry (the absolute phase between the two waves matters, but the sign is ambiguous) which cause the posterior distributions to sometimes be multimodal, which can lead to long IATs. Instead, the custom implementation projects the walkers' positions onto the two waves and uses those projections as a proxy to the real chain. This proxy is unimodal by definition, so the IATs calculated from it are much smaller and more realistically describe convergence.
+
+Some example plots can be seen below for the first data bin:
+
+<p align="center">
+  <table>
+    <tr>
+      <td><img width="250" src="python_examples/example_1/mcmc_plots/corner_0.svg" /></td>
+      <td><img width="250" src="python_examples/example_1/mcmc_plots/corner_transformed_0.svg" /></td>
+      <td><img width="250" src="python_examples/example_1/mcmc_plots/iat_0.svg" /></td>
+    </tr>
+      <tr>
+      <td colspan="3" align="center">
+        <img width="800" src="python_examples/example_1/mcmc_plots/trace_0.svg" />
+      </td>
+    </tr>
+  </table>
+</p>
+
 # Data Format
 The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
 | Column name | Data Type | Interpretation |
