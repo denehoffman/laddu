@@ -192,3 +192,4 @@ demos/
 src/main.rs
 *.perf.*
 perf.*
+*.pkl
