@@ -254,9 +254,6 @@
 //! To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
 //!
 //! # Future Plans
-//! * Introduce Rust-side function minimization. My [`ganesh`](https://github.com/denehoffman/ganesh) was written with this library in mind, and bindings will eventually be included to smooth over the fitting interface.
-//! * Allow users to build likelihood functions from multiple terms, including non-amplitude terms like [LASSO](https://en.wikipedia.org/wiki/Lasso_(statistics)).
-//! * Create a nice interface for binning datasets along a particular variable and fitting the binned data.
 //! * MPI and GPU integration (these are incredibly difficult to do right now, but it's something I'm looking into).
 //! * As always, more tests and documentation.
 //!
