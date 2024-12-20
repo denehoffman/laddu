@@ -8,7 +8,14 @@ from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
 from laddu.data import BinnedDataset, Dataset, Event, open
-from laddu.likelihoods import NLL, LikelihoodManager, Status
+from laddu.likelihoods import (
+    NLL,
+    Ensemble,
+    LikelihoodManager,
+    Status,
+    AutocorrelationObserver,
+    integrated_autocorrelation_times,
+)
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -28,6 +35,11 @@ __version__: str
 class Observer(metaclass=ABCMeta):
     @abstractmethod
     def callback(self, step: int, status: Status) -> tuple[Status, bool]: ...
+
+class MCMCObserver(metaclass=ABCMeta):
+    @abstractmethod
+    def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]:
+        pass
 
 def open_amptools(
     path: str | Path,
@@ -55,6 +67,7 @@ __all__ = [
     'Mandelstam',
     'Mass',
     'Observer',
+    'MCMCObserver',
     'Phi',
     'PolAngle',
     'PolMagnitude',
@@ -62,6 +75,7 @@ __all__ = [
     'Polarization',
     'Scalar',
     'Status',
+    'Ensemble',
     'Vector3',
     'Vector4',
     'Ylm',
@@ -76,4 +90,6 @@ __all__ = [
     'open_amptools',
     'parameter',
     'utils',
+    'AutocorrelationObserver',
+    'integrated_autocorrelation_times',
 ]

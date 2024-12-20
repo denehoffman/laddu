@@ -14,12 +14,20 @@ use crate::{
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
+use fastrand::Rng;
 use ganesh::{
-    algorithms::LBFGSB, observers::DebugObserver, Algorithm, Function, Minimizer, Observer, Status,
+    algorithms::LBFGSB,
+    mcmc::{
+        aies::WeightedAIESMove, ess::WeightedESSMove, ESSMove, Ensemble, MCMCObserver, AIES, ESS,
+    },
+    observers::{DebugMCMCObserver, DebugObserver},
+    traits::MCMCAlgorithm,
+    Algorithm, Function, Minimizer, Observer, Sampler, Status,
 };
 use nalgebra::DVector;
 use num::Complex;
 
+use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
@@ -579,10 +587,24 @@ impl Function<(), Infallible> for NLL {
     }
 }
 
+pub(crate) struct LogLikelihood<'a>(&'a NLL);
+impl<'a> Function<(), Infallible> for LogLikelihood<'a> {
+    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, Infallible> {
+        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        user_data: &mut (),
+    ) -> Result<DVector<Float>, Infallible> {
+        Function::gradient(self.0, parameters, user_data).map(|res| -res)
+    }
+}
+
 /// A set of options that are used when minimizations are performed.
 pub struct MinimizerOptions {
     algorithm: Box<dyn ganesh::Algorithm<(), Infallible>>,
-    observers: Vec<Box<dyn Observer<()>>>,
+    observers: Vec<Arc<RwLock<dyn Observer<()>>>>,
     max_steps: usize,
 }
 
@@ -601,6 +623,11 @@ struct VerboseObserver {
     show_x: bool,
     show_fx: bool,
 }
+impl VerboseObserver {
+    fn build(self) -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(self))
+    }
+}
 impl Observer<()> for VerboseObserver {
     fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
         if self.show_step {
@@ -612,7 +639,21 @@ impl Observer<()> for VerboseObserver {
         if self.show_fx {
             println!("Current Best Value: {}", status.fx);
         }
-        true
+        false
+    }
+}
+
+struct VerboseMCMCObserver;
+impl VerboseMCMCObserver {
+    fn build() -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(Self))
+    }
+}
+
+impl MCMCObserver<()> for VerboseMCMCObserver {
+    fn callback(&mut self, step: usize, _ensemble: &mut Ensemble, _user_data: &mut ()) -> bool {
+        println!("Step: {}", step);
+        false
     }
 }
 
@@ -620,7 +661,7 @@ impl MinimizerOptions {
     /// Adds the [`DebugObserver`] to the minimization.
     pub fn debug(self) -> Self {
         let mut observers = self.observers;
-        observers.push(Box::new(DebugObserver));
+        observers.push(DebugObserver::build());
         Self {
             algorithm: self.algorithm,
             observers,
@@ -630,11 +671,14 @@ impl MinimizerOptions {
     /// Adds a customizable `VerboseObserver` to the minimization.
     pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
         let mut observers = self.observers;
-        observers.push(Box::new(VerboseObserver {
-            show_step,
-            show_x,
-            show_fx,
-        }));
+        observers.push(
+            VerboseObserver {
+                show_step,
+                show_x,
+                show_fx,
+            }
+            .build(),
+        );
         Self {
             algorithm: self.algorithm,
             observers,
@@ -651,9 +695,9 @@ impl MinimizerOptions {
         }
     }
     /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    pub fn with_observer<O: Observer<()> + 'static>(self, observer: O) -> Self {
+    pub fn with_observer(self, observer: Arc<RwLock<dyn Observer<()>>>) -> Self {
         let mut observers = self.observers;
-        observers.push(Box::new(observer));
+        observers.push(observer.clone());
         Self {
             algorithm: self.algorithm,
             observers,
@@ -671,8 +715,65 @@ impl MinimizerOptions {
     }
 }
 
+/// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
+pub struct MCMCOptions {
+    algorithm: Box<dyn MCMCAlgorithm<(), Infallible>>,
+    observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>>,
+}
+
+impl MCMCOptions {
+    /// Use the [`ESS`] algorithm with `100` adaptive steps.
+    pub fn new_ess<T: AsRef<[WeightedESSMove]>>(moves: T, rng: Rng) -> Self {
+        Self {
+            algorithm: Box::new(ESS::new(moves, rng).with_n_adaptive(100)),
+            observers: Default::default(),
+        }
+    }
+    /// Use the [`AIES`] algorithm.
+    pub fn new_aies<T: AsRef<[WeightedAIESMove]>>(moves: T, rng: Rng) -> Self {
+        Self {
+            algorithm: Box::new(AIES::new(moves, rng)),
+            observers: Default::default(),
+        }
+    }
+    /// Adds the [`DebugMCMCObserver`] to the minimization.
+    pub fn debug(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(DebugMCMCObserver::build());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+        }
+    }
+    /// Adds a customizable `VerboseObserver` to the minimization.
+    pub fn verbose(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(VerboseMCMCObserver::build());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+        }
+    }
+    /// Set the [`MCMCAlgorithm`] to be used in the minimization.
+    pub fn with_algorithm<A: MCMCAlgorithm<(), Infallible> + 'static>(self, algorithm: A) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: self.observers,
+        }
+    }
+    /// Add an [`MCMCObserver`] to the list of [`MCMCObserver`]s used in the minimization.
+    pub fn with_observer(self, observer: Arc<RwLock<dyn MCMCObserver<()>>>) -> Self {
+        let mut observers = self.observers;
+        observers.push(observer.clone());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+        }
+    }
+}
+
 impl NLL {
-    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm, a limited-memory
+    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm (by default), a limited-memory
     /// quasi-Newton minimizer which supports bounded optimization.
     pub fn minimize(
         &self,
@@ -683,11 +784,33 @@ impl NLL {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
-            .with_observers(options.observers)
             .with_max_steps(options.max_steps);
+        for observer in options.observers {
+            m = m.with_observer(observer);
+        }
         m.minimize(self, p0, &mut ())
             .unwrap_or_else(|never| match never {});
         m.status
+    }
+    /// Perform Markov Chain Monte Carlo sampling on this [`NLL`]. By default, this uses the [`ESS`] sampler.
+    pub fn mcmc<T: AsRef<[DVector<Float>]>>(
+        &self,
+        p0: T,
+        n_steps: usize,
+        options: Option<MCMCOptions>,
+        rng: Rng,
+    ) -> Result<Ensemble, Infallible> {
+        let options = options.unwrap_or(MCMCOptions::new_ess(
+            [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
+            rng,
+        ));
+        let mut m = Sampler::new_from_box(options.algorithm, p0.as_ref().to_vec());
+        for observer in options.observers {
+            m = m.with_observer(observer);
+        }
+        let func = LogLikelihood(self);
+        m.sample(&func, &mut (), n_steps)?;
+        Ok(m.ensemble)
     }
 }
 
@@ -958,6 +1081,20 @@ impl Function<(), Infallible> for LikelihoodEvaluator {
     }
 }
 
+pub(crate) struct NegativeLikelihoodEvaluator<'a>(&'a LikelihoodEvaluator);
+impl<'a> Function<(), Infallible> for NegativeLikelihoodEvaluator<'a> {
+    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, Infallible> {
+        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        user_data: &mut (),
+    ) -> Result<DVector<Float>, Infallible> {
+        Function::gradient(self.0, parameters, user_data).map(|res| -res)
+    }
+}
+
 impl LikelihoodEvaluator {
     /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
     pub fn parameters(&self) -> Vec<String> {
@@ -982,11 +1119,38 @@ impl LikelihoodEvaluator {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
-            .with_observers(options.observers)
             .with_max_steps(options.max_steps);
+        for observer in options.observers {
+            m = m.with_observer(observer)
+        }
         m.minimize(self, p0, &mut ())
             .unwrap_or_else(|never| match never {});
         m.status
+    }
+
+    /// A function that can be called to perform Markov Chain Monte Carlo sampling
+    /// of the sum/product of the [`LikelihoodTerm`]s
+    /// contained by this [`LikelihoodEvaluator`].
+    ///
+    /// See [`NLL::mcmc`] for more details.
+    pub fn mcmc<T: AsRef<[DVector<Float>]>>(
+        &self,
+        p0: T,
+        n_steps: usize,
+        options: Option<MCMCOptions>,
+        rng: Rng,
+    ) -> Result<Ensemble, Infallible> {
+        let options = options.unwrap_or(MCMCOptions::new_ess(
+            [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
+            rng,
+        ));
+        let mut m = Sampler::new_from_box(options.algorithm, p0.as_ref().to_vec());
+        for observer in options.observers {
+            m = m.with_observer(observer);
+        }
+        let func = NegativeLikelihoodEvaluator(self);
+        m.sample(&func, &mut (), n_steps)?;
+        Ok(m.ensemble)
     }
 }
 

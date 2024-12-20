@@ -8,11 +8,15 @@ from laddu.laddu import (
     LikelihoodScalar,
     LikelihoodTerm,
     Status,
+    Ensemble,
+    AutocorrelationObserver,
+    integrated_autocorrelation_times,
 )
 
 __all__ = [
     'NLL',
     'Status',
+    'Ensemble',
     'Bound',
     'LikelihoodID',
     'LikelihoodExpression',
@@ -20,4 +24,6 @@ __all__ = [
     'LikelihoodManager',
     'LikelihoodEvaluator',
     'LikelihoodScalar',
+    'AutocorrelationObserver',
+    'integrated_autocorrelation_times',
 ]

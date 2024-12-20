@@ -277,6 +277,7 @@
 
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
+use ganesh::mcmc::Ensemble;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -457,6 +458,11 @@ pub trait ReadWrite: Serialize + DeserializeOwned {
 impl ReadWrite for Status {
     fn create_null() -> Self {
         Status::default()
+    }
+}
+impl ReadWrite for Ensemble {
+    fn create_null() -> Self {
+        Ensemble::new(Vec::default())
     }
 }
 impl ReadWrite for Model {

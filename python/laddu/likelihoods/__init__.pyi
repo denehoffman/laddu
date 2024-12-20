@@ -4,7 +4,7 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import AmplitudeID, Evaluator, Expression, Manager
+from laddu.amplitudes import Evaluator, Model
 from laddu.data import Dataset
 
 class LikelihoodID:
@@ -58,6 +58,17 @@ class LikelihoodEvaluator:
         verbose: bool = False,
         **kwargs,
     ) -> Status: ...
+    def mcmc(
+        self,
+        p0: list[list[float]] | npt.NDArray[np.float64],
+        n_steps: int,
+        *,
+        method: Literal['ESS', 'AIES'] = 'ESS',
+        debug: bool = False,
+        verbose: bool = False,
+        seed: int = 0,
+        **kwargs,
+    ) -> Ensemble: ...
 
 class NLL:
     parameters: list[str]
@@ -65,8 +76,7 @@ class NLL:
     accmc: Dataset
     def __init__(
         self,
-        manager: Manager,
-        expression: Expression | AmplitudeID,
+        model: Model,
         ds_data: Dataset,
         ds_accmc: Dataset,
     ) -> None: ...
@@ -101,6 +111,17 @@ class NLL:
         verbose: bool = False,
         **kwargs,
     ) -> Status: ...
+    def mcmc(
+        self,
+        p0: list[list[float]] | npt.NDArray[np.float64],
+        n_steps: int,
+        *,
+        method: Literal['ESS', 'AIES'] = 'ESS',
+        debug: bool = False,
+        verbose: bool = False,
+        seed: int = 0,
+        **kwargs,
+    ) -> Ensemble: ...
 
 def LikelihoodScalar(name: str) -> LikelihoodTerm: ...
 
@@ -125,13 +146,49 @@ class Status:
     def __getstate__(self) -> object: ...
     def __setstate__(self, state: object) -> None: ...
 
+class Ensemble:
+    dimension: tuple[int, int, int]
+
+    def __init__(self) -> None: ...
+    def save_as(self, path: str) -> None: ...
+    @staticmethod
+    def load_from(path: str) -> Status: ...
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
+    def get_chain(self, *, burn: int = 0, thin: int = 1) -> npt.NDArray[np.float64]: ...
+    def get_flat_chain(
+        self, *, burn: int = 0, thin: int = 1
+    ) -> npt.NDArray[np.float64]: ...
+    def get_integrated_autocorrelation_times(
+        self, *, c: float = 7.0, burn: int = 0, thin: int = 1
+    ) -> npt.NDArray[np.float64]: ...
+
 class Bound:
     lower: float
     upper: float
 
+def integrated_autocorrelation_times(
+    x: npt.NDArray[np.float64], *, c: float = 7.0
+) -> npt.NDArray[np.float64]: ...
+
+class AutocorrelationObserver:
+    taus: npt.NDArray[np.float64]
+    def __init__(
+        self,
+        *,
+        n_check=50,
+        n_taus_threshold=50,
+        dtau_threshold=0.01,
+        discard=0.5,
+        terminate=True,
+        c=7.0,
+        verbose=False,
+    ) -> None: ...
+
 __all__ = [
     'NLL',
     'Status',
+    'Ensemble',
     'Bound',
     'LikelihoodID',
     'LikelihoodExpression',
@@ -139,4 +196,6 @@ __all__ = [
     'LikelihoodManager',
     'LikelihoodEvaluator',
     'LikelihoodScalar',
+    'AutocorrelationObserver',
+    'integrated_autocorrelation_times',
 ]
