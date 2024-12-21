@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15](https://github.com/denehoffman/laddu/compare/v0.1.14...v0.1.15) - 2024-12-21
+
+### Added
+
+- add MCMC samplers from `ganesh` to `laddu`
+- use absolute value of mass and width in Breit-Wigner amplitude
+- bump versions on `ganesh`, `pyo3`, and (rust) `numpy` and make appropriate updates for each
+
+### Fixed
+
+- make some small corrections to the python example_1 and test out the built-in autocorrelation observer
+- minor modification to allow for MSRV of 1.70
+
+### Other
+
+- update the `Future Plans` section of docs (long overdue)
+- update README to include a section about MCMC
+- ignore pickle files
+- use `cargo-hack` to run checks and tests over all features
+- update tests to allow them to work with `f32` feature
+
 ## [0.1.14](https://github.com/denehoffman/laddu/compare/v0.1.13...v0.1.14) - 2024-12-06
 
 ### Added
