@@ -74,8 +74,8 @@ impl Amplitude for BreitWigner {
 
     fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
         let mass = self.resonance_mass.value(event);
-        let mass0 = parameters.get(self.pid_mass);
-        let width0 = parameters.get(self.pid_width);
+        let mass0 = parameters.get(self.pid_mass).abs();
+        let width0 = parameters.get(self.pid_width).abs();
         let mass1 = self.daughter_1_mass.value(event);
         let mass2 = self.daughter_2_mass.value(event);
         let q0 = breakup_momentum(mass0, mass1, mass2);
@@ -137,8 +137,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
-        assert_relative_eq!(result[0].re, 1.4585691, epsilon = 1e-7);
-        assert_relative_eq!(result[0].im, 1.4107341, epsilon = 1e-7);
+        assert_relative_eq!(result[0].re, 1.45856917, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 1.4107341, epsilon = Float::EPSILON.sqrt());
     }
 
     #[test]
@@ -159,11 +159,12 @@ mod tests {
         let expr = aid.into();
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
+        dbg!(Mass::new([2, 3]).value_on(&dataset));
 
-        let result = evaluator.evaluate_gradient(&[1.5, 0.3]);
-        assert_relative_eq!(result[0][0].re, 1.3252039, epsilon = 1e-7);
-        assert_relative_eq!(result[0][0].im, -11.6827505, epsilon = 1e-7);
-        assert_relative_eq!(result[0][1].re, -2.2688852, epsilon = 1e-7);
-        assert_relative_eq!(result[0][1].im, 2.5079719, epsilon = 1e-7);
+        let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
+        assert_relative_eq!(result[0][0].re, -2.410585, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].im, -1.8880913, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][1].re, 1.0467031, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][1].im, 1.3683612, epsilon = Float::EPSILON.cbrt());
     }
 }

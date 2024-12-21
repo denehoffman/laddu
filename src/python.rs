@@ -1,10 +1,8 @@
-use ganesh::Observer;
+use ganesh::{mcmc::MCMCObserver, Observer};
 use pyo3::{
     prelude::*,
     types::{PyTuple, PyTupleMethods},
 };
-
-use crate::Float;
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
@@ -15,19 +13,26 @@ pub(crate) mod laddu {
     use super::*;
     use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
+    use crate::likelihoods::MCMCOptions;
     use crate::likelihoods::MinimizerOptions;
     use crate::traits::ReadWrite;
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
     use bincode::{deserialize, serialize};
+    use fastrand::Rng;
     use ganesh::algorithms::lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator};
     use ganesh::algorithms::nelder_mead::{
         NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod,
     };
     use ganesh::algorithms::{NelderMead, LBFGSB};
+    use ganesh::mcmc::aies::WeightedAIESMove;
+    use ganesh::mcmc::ess::WeightedESSMove;
+    use ganesh::mcmc::{AIESMove, ESSMove, AIES, ESS};
+    use nalgebra::DVector;
     use num::Complex;
-    use numpy::{PyArray1, PyArray2};
+    use numpy::{PyArray1, PyArray2, PyArray3};
+    use parking_lot::RwLock;
     use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
     use pyo3::types::PyBytes;
     use pyo3::types::{PyDict, PyList};
@@ -387,7 +392,7 @@ pub(crate) mod laddu {
         ///     A ``numpy`` array built from the components of this ``Vector3``
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.as_slice())
+            PyArray1::from_slice(py, self.0.as_slice())
         }
         /// Convert an  array into a 3-vector
         ///
@@ -796,7 +801,7 @@ pub(crate) mod laddu {
         ///     A ``numpy`` array built from the components of this ``Vector4``
         ///
         fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.as_slice())
+            PyArray1::from_slice(py, self.0.as_slice())
         }
         /// Convert an  array into a 4-vector
         ///
@@ -955,7 +960,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.weights())
+            PyArray1::from_slice(py, &self.0.weights())
         }
         /// The internal list of Events stored in the Dataset
         ///
@@ -1080,7 +1085,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.edges())
+            PyArray1::from_slice(py, &self.0.edges())
         }
         fn __getitem__(&self, index: usize) -> PyResult<Dataset> {
             self.0
@@ -1165,7 +1170,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1258,7 +1263,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1351,7 +1356,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1475,7 +1480,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1531,7 +1536,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -1670,7 +1675,7 @@ pub(crate) mod laddu {
         ///     The values of the Variable for each Event in the given `dataset`
         ///
         fn value_on<'py>(&self, py: Python<'py>, dataset: &Dataset) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, &self.0.value_on(&dataset.0))
+            PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
         }
     }
 
@@ -2050,10 +2055,7 @@ pub(crate) mod laddu {
             Model(crate::amplitudes::Model::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new_bound(
-                py,
-                serialize(&self.0).unwrap().as_slice(),
-            ))
+            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
             *self = Model(deserialize(state.as_bytes()).unwrap());
@@ -2199,7 +2201,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Complex<Float>>> {
-            PyArray1::from_slice_bound(py, &self.0.evaluate(&parameters))
+            PyArray1::from_slice(py, &self.0.evaluate(&parameters))
         }
         /// Evaluate the gradient of the stored Expression over the stored Dataset
         ///
@@ -2218,7 +2220,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray2<Complex<Float>>> {
-            PyArray2::from_vec2_bound(
+            PyArray2::from_vec2(
                 py,
                 &self
                     .0
@@ -2294,17 +2296,15 @@ pub(crate) mod laddu {
             let nelder_mead_x_terminator = kwargs
                 .get_extract::<String>("nelder_mead_x_terminator")?
                 .unwrap_or("singer".into());
-            let mut observers: Vec<PyObserver> = Vec::default();
-            // } else if let Ok(list_arg) = arg.downcast::<PyList>() {
-            //     let vec: Vec<String> = list_arg.extract()?;
+            let mut observers: Vec<Arc<RwLock<PyObserver>>> = Vec::default();
             if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
                 if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
                     for item in observer_list.iter() {
                         let observer = item.extract::<PyObserver>()?;
-                        observers.push(observer);
+                        observers.push(Arc::new(RwLock::new(observer)));
                     }
                 } else if let Ok(single_observer) = observer_arg.extract::<PyObserver>() {
-                    observers.push(single_observer);
+                    observers.push(Arc::new(RwLock::new(single_observer)));
                 } else {
                     return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
                 }
@@ -2393,6 +2393,132 @@ pub(crate) mod laddu {
             options = options.verbose(show_step, show_x, show_fx);
         }
         options = options.with_max_steps(max_steps);
+        Ok(options)
+    }
+
+    fn _parse_mcmc_options(
+        method: &str,
+        debug: bool,
+        verbose: bool,
+        kwargs: Option<&Bound<'_, PyDict>>,
+        rng: Rng,
+    ) -> PyResult<MCMCOptions> {
+        let default_ess_moves = [ESSMove::differential(0.9), ESSMove::gaussian(0.1)];
+        let default_aies_moves = [AIESMove::stretch(0.9), AIESMove::walk(0.1)];
+        let mut options = MCMCOptions::new_ess(default_ess_moves, rng.clone());
+        if let Some(kwargs) = kwargs {
+            let n_adaptive = kwargs.get_extract::<usize>("n_adaptive")?.unwrap_or(100);
+            let mu = kwargs.get_extract::<Float>("mu")?.unwrap_or(1.0);
+            let max_ess_steps = kwargs
+                .get_extract::<usize>("max_ess_steps")?
+                .unwrap_or(10000);
+            let mut ess_moves: Vec<WeightedESSMove> = Vec::default();
+            if let Ok(Some(ess_move_list_arg)) = kwargs.get_item("ess_moves") {
+                if let Ok(ess_move_list) = ess_move_list_arg.downcast::<PyList>() {
+                    for item in ess_move_list.iter() {
+                        let item_tuple = item.downcast::<PyTuple>()?;
+                        let move_name = item_tuple.get_item(0)?.extract::<String>()?;
+                        let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
+                        match move_name.to_lowercase().as_ref() {
+                            "differential" => ess_moves.push(ESSMove::differential(move_weight)),
+                            "gaussian" => ess_moves.push(ESSMove::gaussian(move_weight)),
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Unknown ESS move type: {}",
+                                    move_name
+                                )))
+                            }
+                        }
+                    }
+                }
+            }
+            if ess_moves.is_empty() {
+                ess_moves = default_ess_moves.to_vec();
+            }
+            let mut aies_moves: Vec<WeightedAIESMove> = Vec::default();
+            if let Ok(Some(aies_move_list_arg)) = kwargs.get_item("aies_moves") {
+                if let Ok(aies_move_list) = aies_move_list_arg.downcast::<PyList>() {
+                    for item in aies_move_list.iter() {
+                        let item_tuple = item.downcast::<PyTuple>()?;
+                        if let Ok(move_name) = item_tuple.get_item(0)?.extract::<String>() {
+                            let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
+                            match move_name.to_lowercase().as_ref() {
+                                "stretch" => aies_moves.push(AIESMove::stretch(move_weight)),
+                                "walk" => aies_moves.push(AIESMove::walk(move_weight)),
+                                _ => {
+                                    return Err(PyValueError::new_err(format!(
+                                        "Unknown AIES move type: {}",
+                                        move_name
+                                    )))
+                                }
+                            }
+                        } else if let Ok(move_spec) = item_tuple.get_item(0)?.downcast::<PyTuple>()
+                        {
+                            let move_name = move_spec.get_item(0)?.extract::<String>()?;
+                            let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
+                            if move_name.to_lowercase() == "stretch" {
+                                let a = move_spec.get_item(1)?.extract::<Float>()?;
+                                aies_moves.push((AIESMove::Stretch { a }, move_weight))
+                            } else {
+                                return Err(PyValueError::new_err(
+                                    "Only the 'stretch' move has a hyperparameter",
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            if aies_moves.is_empty() {
+                aies_moves = default_aies_moves.to_vec();
+            }
+            let mut observers: Vec<Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<()>>>> =
+                Vec::default();
+            if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
+                if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
+                    for item in observer_list.iter() {
+                        if let Ok(observer) = item.downcast::<AutocorrelationObserver>() {
+                            observers.push(observer.borrow().0.clone());
+                        } else if let Ok(observer) = item.extract::<PyMCMCObserver>() {
+                            observers.push(Arc::new(RwLock::new(observer)));
+                        }
+                    }
+                } else if let Ok(single_observer) =
+                    observer_arg.downcast::<AutocorrelationObserver>()
+                {
+                    observers.push(single_observer.borrow().0.clone());
+                } else if let Ok(single_observer) = observer_arg.extract::<PyMCMCObserver>() {
+                    observers.push(Arc::new(RwLock::new(single_observer)));
+                } else {
+                    return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single MCMCObserver or a list of MCMCObservers!"));
+                }
+            }
+            for observer in observers {
+                options = options.with_observer(observer.clone());
+            }
+            match method.to_lowercase().as_ref() {
+                "ess" => {
+                    options = options.with_algorithm(
+                        ESS::new(ess_moves, rng)
+                            .with_mu(mu)
+                            .with_n_adaptive(n_adaptive)
+                            .with_max_steps(max_ess_steps),
+                    )
+                }
+                "aies" => options = options.with_algorithm(AIES::new(aies_moves, rng)),
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "Invalid \"method\": \"{}\"",
+                        method
+                    )))
+                }
+            }
+        }
+        if debug {
+            options = options.debug();
+        }
+        if verbose {
+            options = options.verbose();
+        }
         Ok(options)
     }
 
@@ -2587,7 +2713,7 @@ pub(crate) mod laddu {
             py: Python<'py>,
             parameters: Vec<Float>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.evaluate_gradient(&parameters).as_slice())
+            PyArray1::from_slice(py, self.0.evaluate_gradient(&parameters).as_slice())
         }
         /// Project the model over the Monte Carlo dataset with the given parameter values
         ///
@@ -2614,7 +2740,7 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
             mc_evaluator: Option<Evaluator>,
         ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(
+            PyArray1::from_slice(
                 py,
                 &self
                     .0
@@ -2667,7 +2793,7 @@ pub(crate) mod laddu {
                     "Argument must be either a string or a list of strings",
                 ));
             };
-            Ok(PyArray1::from_slice_bound(
+            Ok(PyArray1::from_slice(
                 py,
                 &self.0.project_with(
                     &parameters,
@@ -2739,7 +2865,7 @@ pub(crate) mod laddu {
         /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
         ///     The positional terminator used by the Nelder-Mead algorithm
         ///
-        #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
             &self,
@@ -2767,6 +2893,80 @@ pub(crate) mod laddu {
                 _parse_minimizer_options(n_parameters, method, max_steps, debug, verbose, kwargs)?;
             let status = self.0.minimize(&p0, bounds, Some(options));
             Ok(Status(status))
+        }
+        /// Run an MCMC algorithm on the free parameters of the NLL's model
+        ///
+        /// This method can be used to sample the underlying log-likelihood given an initial
+        /// position for each walker `p0`.
+        ///
+        /// Parameters
+        /// ----------
+        /// p0 : array_like
+        ///     The initial parameters at the start of optimization
+        /// n_steps : int,
+        ///     The number of MCMC steps each walker should take
+        /// method : {'ESS', 'AIES'}
+        ///     The MCMC algorithm to use (see additional parameters for fine-tuning)
+        /// debug : bool, default=False
+        ///     Set to ``True`` to print out debugging information at each step
+        /// verbose : bool, default=False
+        ///     Set to ``True`` to print verbose information at each step
+        /// seed : int,
+        ///     The seed for the random number generator
+        /// ess_moves : list of tuple
+        ///     A list of moves for the ESS algorithm (see notes)
+        /// aies_moves : list of tuple
+        ///     A list of moves for the AIES algorithm (see notes)
+        /// n_adaptive : int, default=100
+        ///     Number of adaptive ESS steps to perform at the start of sampling
+        /// mu : float, default=1.0
+        ///     ESS adaptive parameter
+        /// max_ess_steps : int, default=10000
+        ///     The maximum number of slice expansions/contractions performed in the ESS algorithm
+        ///
+        /// Returns
+        /// -------
+        /// Ensemble
+        ///     The resulting ensemble of walkers
+        ///
+        /// Notes
+        /// -----
+        /// Moves may be specified as tuples of ``(move name, usage weight)`` where the move name
+        /// depends on the algorithm and the usage weight gives the proportion of time that move is
+        /// used relative to the others in the list.
+        ///
+        /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
+        /// "gaussian", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+        ///
+        /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
+        /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
+        ///
+        /// For AIES, the "stretch" move can also be given with an adaptive parameter ``a``
+        /// (default=``2``). To add a stretch move with a different value of ``a``, the "move name"
+        /// can be instead given as a tuple ``(move name, a)``. For example, ``(("stretch", 2.2), 0.3)``
+        /// creates a stretch move with ``a=2.2`` and usage weight of ``0.3``.
+        ///
+        /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
+        /// function sign is automatically flipped when calling this method.
+        ///
+        #[pyo3(signature = (p0, n_steps, *, method="ESS", debug=false, verbose=false, seed=0, **kwargs))]
+        #[allow(clippy::too_many_arguments)]
+        fn mcmc(
+            &self,
+            p0: Vec<Vec<Float>>,
+            n_steps: usize,
+            method: &str,
+            debug: bool,
+            verbose: bool,
+            seed: u64,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Ensemble> {
+            let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
+            let mut rng = Rng::new();
+            rng.seed(seed);
+            let options = _parse_mcmc_options(method, debug, verbose, kwargs, rng.clone())?;
+            let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
+            Ok(Ensemble(ensemble))
         }
     }
 
@@ -3086,7 +3286,7 @@ pub(crate) mod laddu {
         /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
         ///     The positional terminator used by the Nelder-Mead algorithm
         ///
-        #[pyo3(signature = (p0, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+        #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
             &self,
@@ -3114,6 +3314,81 @@ pub(crate) mod laddu {
                 _parse_minimizer_options(n_parameters, method, max_steps, debug, verbose, kwargs)?;
             let status = self.0.minimize(&p0, bounds, Some(options));
             Ok(Status(status))
+        }
+
+        /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
+        ///
+        /// This method can be used to sample the underlying log-likelihood given an initial
+        /// position for each walker `p0`.
+        ///
+        /// Parameters
+        /// ----------
+        /// p0 : array_like
+        ///     The initial parameters at the start of optimization
+        /// n_steps : int,
+        ///     The number of MCMC steps each walker should take
+        /// method : {'ESS', 'AIES'}
+        ///     The MCMC algorithm to use (see additional parameters for fine-tuning)
+        /// debug : bool, default=False
+        ///     Set to ``True`` to print out debugging information at each step
+        /// verbose : bool, default=False
+        ///     Set to ``True`` to print verbose information at each step
+        /// seed : int,
+        ///     The seed for the random number generator
+        /// ess_moves : list of tuple
+        ///     A list of moves for the ESS algorithm (see notes)
+        /// aies_moves : list of tuple
+        ///     A list of moves for the AIES algorithm (see notes)
+        /// n_adaptive : int, default=100
+        ///     Number of adaptive ESS steps to perform at the start of sampling
+        /// mu : float, default=1.0
+        ///     ESS adaptive parameter
+        /// max_ess_steps : int, default=10000
+        ///     The maximum number of slice expansions/contractions performed in the ESS algorithm
+        ///
+        /// Returns
+        /// -------
+        /// Ensemble
+        ///     The resulting ensemble of walkers
+        ///
+        /// Notes
+        /// -----
+        /// Moves may be specified as tuples of ``(move name, usage weight)`` where the move name
+        /// depends on the algorithm and the usage weight gives the proportion of time that move is
+        /// used relative to the others in the list.
+        ///
+        /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
+        /// "gaussian", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+        ///
+        /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
+        /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
+        ///
+        /// For AIES, the "stretch" move can also be given with an adaptive parameter ``a``
+        /// (default=``2``). To add a stretch move with a different value of ``a``, the "move name"
+        /// can be instead given as a tuple ``(move name, a)``. For example, ``(("stretch", 2.2), 0.3)``
+        /// creates a stretch move with ``a=2.2`` and usage weight of ``0.3``.
+        ///
+        /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
+        /// function sign is automatically flipped when calling this method.
+        ///
+        #[pyo3(signature = (p0, n_steps, *, method="ESS", debug=false, verbose=false, seed=0, **kwargs))]
+        #[allow(clippy::too_many_arguments)]
+        fn mcmc(
+            &self,
+            p0: Vec<Vec<Float>>,
+            n_steps: usize,
+            method: &str,
+            debug: bool,
+            verbose: bool,
+            seed: u64,
+            kwargs: Option<&Bound<'_, PyDict>>,
+        ) -> PyResult<Ensemble> {
+            let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
+            let mut rng = Rng::new();
+            rng.seed(seed);
+            let options = _parse_mcmc_options(method, debug, verbose, kwargs, rng.clone())?;
+            let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
+            Ok(Ensemble(ensemble))
         }
     }
 
@@ -3145,12 +3420,23 @@ pub(crate) mod laddu {
         }
     }
 
+    #[pyclass]
+    #[pyo3(name = "MCMCObserver")]
+    pub(crate) struct PyMCMCObserver(pub(crate) Py<PyAny>);
+
+    #[pymethods]
+    impl PyMCMCObserver {
+        #[new]
+        pub fn new(observer: Py<PyAny>) -> Self {
+            Self(observer)
+        }
+    }
+
     /// The status/result of a minimization
-    ///
     ///
     #[pyclass]
     #[derive(Clone)]
-    pub(crate) struct Status(pub(crate) ganesh::Status<Float>);
+    pub(crate) struct Status(pub(crate) ganesh::Status);
     #[pymethods]
     impl Status {
         /// The current best position in parameter space
@@ -3161,7 +3447,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.x.as_slice())
+            PyArray1::from_slice(py, self.0.x.as_slice())
         }
         /// The uncertainty on each parameter (``None`` if it wasn't calculated)
         ///
@@ -3174,7 +3460,7 @@ pub(crate) mod laddu {
             self.0
                 .err
                 .clone()
-                .map(|err| PyArray1::from_slice_bound(py, err.as_slice()))
+                .map(|err| PyArray1::from_slice(py, err.as_slice()))
         }
         /// The initial position at the start of the minimization
         ///
@@ -3184,7 +3470,7 @@ pub(crate) mod laddu {
         ///
         #[getter]
         fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice_bound(py, self.0.x0.as_slice())
+            PyArray1::from_slice(py, self.0.x0.as_slice())
         }
         /// The optimized value of the objective function
         ///
@@ -3205,7 +3491,7 @@ pub(crate) mod laddu {
         #[getter]
         fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.cov.clone().map(|cov| {
-                PyArray2::from_vec2_bound(
+                PyArray2::from_vec2(
                     py,
                     &cov.row_iter()
                         .map(|row| row.iter().cloned().collect())
@@ -3223,7 +3509,7 @@ pub(crate) mod laddu {
         #[getter]
         fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.hess.clone().map(|hess| {
-                PyArray2::from_vec2_bound(
+                PyArray2::from_vec2(
                     py,
                     &hess
                         .row_iter()
@@ -3342,10 +3628,7 @@ pub(crate) mod laddu {
             Status(ganesh::Status::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new_bound(
-                py,
-                serialize(&self.0).unwrap().as_slice(),
-            ))
+            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
             *self = Status(deserialize(state.as_bytes()).unwrap());
@@ -3358,7 +3641,7 @@ pub(crate) mod laddu {
         /// dict
         ///
         fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             dict.set_item("x", self.x(py))?;
             dict.set_item("err", self.err(py))?;
             dict.set_item("x0", self.x0(py))?;
@@ -3374,12 +3657,267 @@ pub(crate) mod laddu {
         }
     }
 
+    /// An ensemble of MCMC walkers
+    ///
+    #[pyclass]
+    #[derive(Clone)]
+    pub(crate) struct Ensemble(pub(crate) ganesh::mcmc::Ensemble);
+    #[pymethods]
+    impl Ensemble {
+        /// The dimension of the Ensemble ``(n_walkers, n_steps, n_variables)``
+        #[getter]
+        fn dimension(&self) -> (usize, usize, usize) {
+            self.0.dimension()
+        }
+        /// Get the contents of the Ensemble
+        ///
+        /// Parameters
+        /// ----------
+        /// burn: int, default = 0
+        ///     The number of steps to burn from the beginning of each walker's history
+        /// thin: int, default = 1
+        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
+        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///     An array with dimension ``(n_walkers, n_steps, n_parameters)``
+        ///
+        #[pyo3(signature = (*, burn = 0, thin = 1))]
+        fn get_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> Bound<'py, PyArray3<Float>> {
+            let chain = self.0.get_chain(burn, thin);
+            PyArray3::from_vec3(
+                py,
+                &chain
+                    .iter()
+                    .map(|walker| {
+                        walker
+                            .iter()
+                            .map(|step| step.data.as_vec().to_vec())
+                            .collect()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        }
+        /// Get the contents of the Ensemble, flattened over walkers
+        ///
+        /// Parameters
+        /// ----------
+        /// burn: int, default = 0
+        ///     The number of steps to burn from the beginning of each walker's history
+        /// thin: int, default = 1
+        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
+        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///     An array with dimension ``(n_steps, n_parameters)``
+        ///
+        #[pyo3(signature = (*, burn = 0, thin = 1))]
+        fn get_flat_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> Bound<'py, PyArray2<Float>> {
+            let chain = self.0.get_flat_chain(burn, thin);
+            PyArray2::from_vec2(
+                py,
+                &chain
+                    .iter()
+                    .map(|step| step.data.as_vec().to_vec())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        }
+        /// Save the ensemble to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the new file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        /// Load an ensemble from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the existing fit file
+        ///
+        /// Returns
+        /// -------
+        /// Ensemble
+        ///     The ensemble contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        /// Notes
+        /// -----
+        /// Valid file path names must have either the ".pickle" or ".pkl" extension
+        ///
+        #[staticmethod]
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(Ensemble(ganesh::mcmc::Ensemble::load_from(path)?))
+        }
+        #[new]
+        fn new() -> Self {
+            Ensemble(ganesh::mcmc::Ensemble::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Ensemble(deserialize(state.as_bytes()).unwrap());
+            Ok(())
+        }
+        /// Calculate the integrated autocorrelation time for each parameter according to
+        /// [Karamanis]_
+        ///
+        /// Parameters
+        /// ----------
+        /// c : float, default = 7.0
+        ///     The size of the window used in the autowindowing algorithm by [Sokal]_
+        /// burn: int, default = 0
+        ///     The number of steps to burn from the beginning of each walker's history
+        /// thin: int, default = 1
+        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
+        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
+        ///
+        #[pyo3(signature = (*, c=7.0, burn=0, thin=1))]
+        fn get_integrated_autocorrelation_times<'py>(
+            &self,
+            py: Python<'py>,
+            c: Option<Float>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice(
+                py,
+                self.0
+                    .get_integrated_autocorrelation_times(c, burn, thin)
+                    .as_slice(),
+            )
+        }
+    }
+
+    /// Calculate the integrated autocorrelation time for each parameter according to
+    /// [Karamanis]_
+    ///
+    /// Parameters
+    /// ----------
+    /// x : array_like
+    ///     An array of dimension ``(n_walkers, n_steps, n_parameters)``
+    /// c : float, default = 7.0
+    ///     The size of the window used in the autowindowing algorithm by [Sokal]_
+    ///
+    /// .. [Karamanis] Karamanis, M., & Beutler, F. (2020). Ensemble slice sampling: Parallel, black-box and gradient-free inference for correlated & multimodal distributions. arXiv Preprint arXiv: 2002. 06212.
+    /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In C. DeWitt-Morette, P. Cartier, & A. Folacci (Eds.), Functional Integration: Basics and Applications (pp. 131–192). doi:10.1007/978-1-4899-0319-8_6
+    #[pyfunction]
+    #[pyo3(signature = (x, *, c=7.0))]
+    fn integrated_autocorrelation_times(
+        py: Python<'_>,
+        x: Vec<Vec<Vec<Float>>>,
+        c: Option<Float>,
+    ) -> Bound<'_, PyArray1<Float>> {
+        let x: Vec<Vec<DVector<Float>>> = x
+            .into_iter()
+            .map(|y| y.into_iter().map(DVector::from_vec).collect())
+            .collect();
+        PyArray1::from_slice(
+            py,
+            ganesh::mcmc::integrated_autocorrelation_times(x, c).as_slice(),
+        )
+    }
+
+    /// An obsever which can check the integrated autocorrelation time of the ensemble and
+    /// terminate if convergence conditions are met
+    ///
+    /// Parameters
+    /// ----------
+    /// n_check : int, default = 50
+    ///     How often (in number of steps) to check this observer
+    /// n_tau_threshold : int, default = 50
+    ///     The number of mean integrated autocorrelation times needed to terminate
+    /// dtau_threshold : float, default = 0.01
+    ///     The threshold for the absolute change in integrated autocorrelation time (Δτ/τ)
+    /// discard : float, default = 0.5
+    ///     The fraction of steps to discard from the beginning of the chain before analysis
+    /// terminate : bool, default = True
+    ///     Set to ``False`` to forego termination even if the chains converge
+    /// c : float, default = 7.0
+    ///     The size of the window used in the autowindowing algorithm by [Sokal]_
+    /// verbose : bool, default = False
+    ///     Set to ``True`` to print out details at each check
+    ///
+    #[pyclass]
+    pub(crate) struct AutocorrelationObserver(
+        pub(crate) Arc<RwLock<ganesh::observers::AutocorrelationObserver>>,
+    );
+
+    #[pymethods]
+    impl AutocorrelationObserver {
+        #[new]
+        #[pyo3(signature = (*, n_check=50, n_taus_threshold=50, dtau_threshold=0.01, discard=0.5, terminate=true, c=7.0, verbose=false))]
+        fn new(
+            n_check: usize,
+            n_taus_threshold: usize,
+            dtau_threshold: Float,
+            discard: Float,
+            terminate: bool,
+            c: Float,
+            verbose: bool,
+        ) -> Self {
+            Self(
+                ganesh::observers::AutocorrelationObserver::default()
+                    .with_n_check(n_check)
+                    .with_n_taus_threshold(n_taus_threshold)
+                    .with_dtau_threshold(dtau_threshold)
+                    .with_discard(discard)
+                    .with_terminate(terminate)
+                    .with_sokal_window(c)
+                    .with_verbose(verbose)
+                    .build(),
+            )
+        }
+        /// The integrated autocorrelation times observed at each checking step
+        ///
+        #[getter]
+        fn taus<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            let taus = self.0.read().taus.clone();
+            PyArray1::from_vec(py, taus)
+        }
+    }
+
     /// A class representing a lower and upper bound on a free parameter
     ///
     #[pyclass]
     #[derive(Clone)]
     #[pyo3(name = "Bound")]
-    pub(crate) struct ParameterBound(pub(crate) ganesh::Bound<Float>);
+    pub(crate) struct ParameterBound(pub(crate) ganesh::Bound);
     #[pymethods]
     impl ParameterBound {
         /// The lower bound
@@ -4037,13 +4575,8 @@ pub(crate) mod laddu {
     }
 }
 
-impl Observer<Float, ()> for crate::python::laddu::PyObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        status: &mut ganesh::Status<Float>,
-        _user_data: &mut (),
-    ) -> bool {
+impl Observer<()> for crate::python::laddu::PyObserver {
+    fn callback(&mut self, step: usize, status: &mut ganesh::Status, _user_data: &mut ()) -> bool {
         let (new_status, result) = Python::with_gil(|py| {
             let res = self
                 .0
@@ -4073,8 +4606,40 @@ impl FromPyObject<'_> for crate::python::laddu::PyObserver {
         Ok(crate::python::laddu::PyObserver(ob.clone().into()))
     }
 }
-impl ToPyObject for crate::python::laddu::ParameterBound {
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        PyTuple::new_bound(py, vec![self.0.lower(), self.0.upper()]).into()
+
+impl MCMCObserver<()> for crate::python::laddu::PyMCMCObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        ensemble: &mut ganesh::mcmc::Ensemble,
+        _user_data: &mut (),
+    ) -> bool {
+        let (new_ensemble, result) = Python::with_gil(|py| {
+            let res = self
+                .0
+                .bind(py)
+                .call_method(
+                    "callback",
+                    (step, crate::python::laddu::Ensemble(ensemble.clone())),
+                    None,
+                )
+                .unwrap();
+            let res_tuple = res.downcast::<PyTuple>().unwrap();
+            let new_status = res_tuple
+                .get_item(0)
+                .unwrap()
+                .extract::<crate::python::laddu::Ensemble>()
+                .unwrap()
+                .0;
+            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            (new_status, result)
+        });
+        *ensemble = new_ensemble;
+        result
+    }
+}
+impl FromPyObject<'_> for crate::python::laddu::PyMCMCObserver {
+    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(crate::python::laddu::PyMCMCObserver(ob.clone().into()))
     }
 }

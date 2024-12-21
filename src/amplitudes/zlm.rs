@@ -129,8 +129,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.0428412, epsilon = 1e-7);
-        assert_relative_eq!(result[0].im, -0.2385963, epsilon = 1e-7);
+        assert_relative_eq!(result[0].re, 0.04284127, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, -0.23859638, epsilon = Float::EPSILON.sqrt());
     }
 
     #[test]

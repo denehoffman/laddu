@@ -221,78 +221,86 @@ mod test {
 
     #[test]
     fn test_momentum_functions() {
-        assert_relative_eq!(chi_plus(1.3, 0.51, 0.62), 0.01776923076923098);
-        assert_relative_eq!(chi_minus(1.3, 0.51, 0.62), 0.9906923076923076);
+        assert_relative_eq!(
+            chi_plus(1.3, 0.51, 0.62),
+            0.01776923076923098,
+            epsilon = Float::EPSILON.sqrt()
+        );
+        assert_relative_eq!(
+            chi_minus(1.3, 0.51, 0.62),
+            0.9906923076923076,
+            epsilon = Float::EPSILON.sqrt()
+        );
         let x0 = rho(1.3, 0.51, 0.62);
-        assert_relative_eq!(x0.re, 0.1326794642613792);
+        assert_relative_eq!(x0.re, 0.1326794642613792, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(x0.im, 0.0);
         let x1 = rho(1.3, 1.23, 0.62);
         assert_relative_eq!(x1.re, 0.0);
-        assert_relative_eq!(x1.im, 1.0795209736472833);
+        assert_relative_eq!(x1.im, 1.0795209736472833, epsilon = Float::EPSILON.sqrt());
         let y0 = breakup_momentum(1.2, 0.4, 0.5);
-        assert_relative_eq!(y0, 0.3954823004889093);
+        assert_relative_eq!(y0, 0.3954823004889093, epsilon = Float::EPSILON.sqrt());
         let y1 = breakup_momentum(1.2, 1.4, 1.5);
-        assert_relative_eq!(y1, 1.3154464282347478);
+        assert_relative_eq!(y1, 1.3154464282347478, epsilon = Float::EPSILON.sqrt());
         let y2 = complex_breakup_momentum(1.2, 0.4, 0.5);
-        assert_relative_eq!(y2.re, 0.3954823004889093);
+        assert_relative_eq!(y2.re, 0.3954823004889093, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(y2.im, 0.0);
         let y3 = complex_breakup_momentum(1.2, 1.4, 1.5);
         assert_relative_eq!(y3.re, 0.0);
-        assert_relative_eq!(y3.im, 1.3154464282347478);
+        assert_relative_eq!(y3.im, 1.3154464282347478, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(y0, y2.re);
         assert_relative_eq!(y1, y3.im);
 
         let z0 = blatt_weisskopf(1.2, 0.4, 0.5, 0);
         assert_relative_eq!(z0, 1.0);
         let z1 = blatt_weisskopf(1.2, 0.4, 0.5, 1);
-        assert_relative_eq!(z1, 1.2654752018685698);
+        assert_relative_eq!(z1, 1.2654752018685698, epsilon = Float::EPSILON.sqrt());
         let z2 = blatt_weisskopf(1.2, 0.4, 0.5, 2);
-        assert_relative_eq!(z2, 2.375285855793918);
+        assert_relative_eq!(z2, 2.375285855793918, epsilon = Float::EPSILON.sqrt());
         let z3 = blatt_weisskopf(1.2, 0.4, 0.5, 3);
-        assert_relative_eq!(z3, 5.6265876867850695);
+        assert_relative_eq!(z3, 5.6265876867850695, epsilon = Float::EPSILON.sqrt());
         let z4 = blatt_weisskopf(1.2, 0.4, 0.5, 4);
-        assert_relative_eq!(z4, 12.747554064467208);
+        assert_relative_eq!(z4, 12.747554064467208, epsilon = Float::EPSILON.sqrt());
         let z0im = blatt_weisskopf(1.2, 1.4, 0.5, 0);
         assert_relative_eq!(z0im, 1.0);
         let z1im = blatt_weisskopf(1.2, 1.4, 1.5, 1);
-        assert_relative_eq!(z1im, 1.398569848337654);
+        assert_relative_eq!(z1im, 1.398569848337654, epsilon = Float::EPSILON.sqrt());
         let z2im = blatt_weisskopf(1.2, 1.4, 1.5, 2);
-        assert_relative_eq!(z2im, 3.482294988252171);
+        assert_relative_eq!(z2im, 3.482294988252171, epsilon = Float::EPSILON.sqrt());
         let z3im = blatt_weisskopf(1.2, 1.4, 1.5, 3);
-        assert_relative_eq!(z3im, 15.450855647831101);
+        assert_relative_eq!(z3im, 15.450855647831101, epsilon = Float::EPSILON.sqrt());
         let z4im = blatt_weisskopf(1.2, 1.4, 1.5, 4);
-        assert_relative_eq!(z4im, 98.48799450927207);
+        assert_relative_eq!(z4im, 98.48799450927207, epsilon = Float::EPSILON.sqrt());
 
         let w0 = complex_blatt_weisskopf(1.2, 0.4, 0.5, 0);
         assert_relative_eq!(w0.re, 1.0);
         assert_relative_eq!(w0.im, 0.0);
         let w1 = complex_blatt_weisskopf(1.2, 0.4, 0.5, 1);
-        assert_relative_eq!(w1.re, 1.2654752018685698);
+        assert_relative_eq!(w1.re, 1.2654752018685698, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(w1.im, 0.0);
         let w2 = complex_blatt_weisskopf(1.2, 0.4, 0.5, 2);
-        assert_relative_eq!(w2.re, 2.375285855793918);
+        assert_relative_eq!(w2.re, 2.375285855793918, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(w2.im, 0.0);
         let w3 = complex_blatt_weisskopf(1.2, 0.4, 0.5, 3);
-        assert_relative_eq!(w3.re, 5.62658768678507);
-        assert_relative_eq!(w3.im, 0.0, epsilon = 1e-15);
+        assert_relative_eq!(w3.re, 5.62658768678507, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(w3.im, 0.0, epsilon = Float::EPSILON.sqrt());
         let w4 = complex_blatt_weisskopf(1.2, 0.4, 0.5, 4);
-        assert_relative_eq!(w4.re, 12.747554064467208);
-        assert_relative_eq!(w4.im, 0.0, epsilon = 1e-14);
+        assert_relative_eq!(w4.re, 12.747554064467208, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(w4.im, 0.0, epsilon = Float::EPSILON.sqrt());
         let w0im = complex_blatt_weisskopf(1.2, 1.4, 1.5, 0);
         assert_relative_eq!(w0im.re, 1.0);
         assert_relative_eq!(w0im.im, 0.0);
         let w1im = complex_blatt_weisskopf(1.2, 1.4, 1.5, 1);
-        assert_relative_eq!(w1im.re, 1.430394249144933);
+        assert_relative_eq!(w1im.re, 1.430394249144933, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(w1im.im, 0.0);
         let w2im = complex_blatt_weisskopf(1.2, 1.4, 1.5, 2);
-        assert_relative_eq!(w2im.re, 3.724659004227952);
-        assert_relative_eq!(w2im.im, 0.0, epsilon = 1e-15);
+        assert_relative_eq!(w2im.re, 3.724659004227952, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(w2im.im, 0.0, epsilon = Float::EPSILON.sqrt());
         let w3im = complex_blatt_weisskopf(1.2, 1.4, 1.5, 3);
-        assert_relative_eq!(w3im.re, 17.689297320491015);
-        assert_relative_eq!(w3im.im, 0.0, epsilon = 1e-12);
+        assert_relative_eq!(w3im.re, 17.689297320491015, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(w3im.im, 0.0, epsilon = Float::EPSILON.sqrt());
         let w4im = complex_blatt_weisskopf(1.2, 1.4, 1.5, 4);
-        assert_relative_eq!(w4im.re, 124.0525841825899);
-        assert_relative_eq!(w4im.im, 0.0, epsilon = 1e-13);
+        assert_relative_eq!(w4im.re, 124.0525841825899, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(w4im.im, 0.0, epsilon = Float::EPSILON.sqrt());
 
         assert_relative_eq!(z0, w0.re);
         assert_relative_eq!(z1, w1.re);

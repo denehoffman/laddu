@@ -254,9 +254,6 @@
 //! To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
 //!
 //! # Future Plans
-//! * Introduce Rust-side function minimization. My [`ganesh`](https://github.com/denehoffman/ganesh) was written with this library in mind, and bindings will eventually be included to smooth over the fitting interface.
-//! * Allow users to build likelihood functions from multiple terms, including non-amplitude terms like [LASSO](https://en.wikipedia.org/wiki/Lasso_(statistics)).
-//! * Create a nice interface for binning datasets along a particular variable and fitting the binned data.
 //! * MPI and GPU integration (these are incredibly difficult to do right now, but it's something I'm looking into).
 //! * As always, more tests and documentation.
 //!
@@ -277,6 +274,7 @@
 
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
+use ganesh::mcmc::Ensemble;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -454,9 +452,14 @@ pub trait ReadWrite: Serialize + DeserializeOwned {
     }
 }
 
-impl ReadWrite for Status<Float> {
+impl ReadWrite for Status {
     fn create_null() -> Self {
         Status::default()
+    }
+}
+impl ReadWrite for Ensemble {
+    fn create_null() -> Self {
+        Ensemble::new(Vec::default())
     }
 }
 impl ReadWrite for Model {
