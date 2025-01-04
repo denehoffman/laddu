@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    convert::Infallible,
     fmt::{Debug, Display},
     sync::Arc,
 };
@@ -9,7 +8,7 @@ use crate::{
     amplitudes::{AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
     resources::Parameters,
-    Float,
+    Float, LadduError,
 };
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
@@ -30,6 +29,7 @@ use num::Complex;
 use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
@@ -574,38 +574,87 @@ impl LikelihoodTerm for NLL {
     }
 }
 
-impl Function<(), Infallible> for NLL {
-    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
+#[cfg(feature = "rayon")]
+impl Function<ThreadPool, LadduError> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<Float, LadduError> {
+        Ok(thread_pool.install(|| LikelihoodTerm::evaluate(self, parameters)))
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        Ok(thread_pool.install(|| LikelihoodTerm::evaluate_gradient(self, parameters)))
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl Function<(), LadduError> for NLL {
+    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, LadduError> {
         Ok(LikelihoodTerm::evaluate(self, parameters))
     }
     fn gradient(
         &self,
         parameters: &[Float],
         _user_data: &mut (),
-    ) -> Result<DVector<Float>, Infallible> {
+    ) -> Result<DVector<Float>, LadduError> {
         Ok(LikelihoodTerm::evaluate_gradient(self, parameters))
     }
 }
 
+#[cfg(feature = "rayon")]
 pub(crate) struct LogLikelihood<'a>(&'a NLL);
-impl<'a> Function<(), Infallible> for LogLikelihood<'a> {
-    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, Infallible> {
+impl<'a> Function<ThreadPool, LadduError> for LogLikelihood<'a> {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<Float, LadduError> {
+        Function::evaluate(self.0, parameters, thread_pool).map(|res| -res)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        Function::gradient(self.0, parameters, thread_pool).map(|res| -res)
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl<'a> Function<(), LadduError> for LogLikelihood<'a> {
+    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
         Function::evaluate(self.0, parameters, user_data).map(|res| -res)
     }
     fn gradient(
         &self,
         parameters: &[Float],
         user_data: &mut (),
-    ) -> Result<DVector<Float>, Infallible> {
+    ) -> Result<DVector<Float>, LadduError> {
         Function::gradient(self.0, parameters, user_data).map(|res| -res)
     }
 }
 
+#[cfg(feature = "rayon")]
 /// A set of options that are used when minimizations are performed.
 pub struct MinimizerOptions {
-    algorithm: Box<dyn ganesh::Algorithm<(), Infallible>>,
+    algorithm: Box<dyn ganesh::Algorithm<ThreadPool, LadduError>>,
+    observers: Vec<Arc<RwLock<dyn Observer<ThreadPool>>>>,
+    max_steps: usize,
+    threads: usize,
+}
+
+#[cfg(not(feature = "rayon"))]
+/// A set of options that are used when minimizations are performed.
+pub struct MinimizerOptions {
+    algorithm: Box<dyn ganesh::Algorithm<(), LadduError>>,
     observers: Vec<Arc<RwLock<dyn Observer<()>>>>,
     max_steps: usize,
+    threads: usize,
 }
 
 impl Default for MinimizerOptions {
@@ -614,6 +663,10 @@ impl Default for MinimizerOptions {
             algorithm: Box::new(LBFGSB::default()),
             observers: Default::default(),
             max_steps: 4000,
+            #[cfg(feature = "rayon")]
+            threads: num_cpus::get(),
+            #[cfg(not(feature = "rayon"))]
+            threads: 1,
         }
     }
 }
@@ -628,6 +681,23 @@ impl VerboseObserver {
         Arc::new(RwLock::new(self))
     }
 }
+
+#[cfg(feature = "rayon")]
+impl Observer<ThreadPool> for VerboseObserver {
+    fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ThreadPool) -> bool {
+        if self.show_step {
+            println!("Step: {}", step);
+        }
+        if self.show_x {
+            println!("Current Best Position: {}", status.x.transpose());
+        }
+        if self.show_fx {
+            println!("Current Best Value: {}", status.fx);
+        }
+        false
+    }
+}
+
 impl Observer<()> for VerboseObserver {
     fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
         if self.show_step {
@@ -650,6 +720,19 @@ impl VerboseMCMCObserver {
     }
 }
 
+#[cfg(feature = "rayon")]
+impl MCMCObserver<ThreadPool> for VerboseMCMCObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        _ensemble: &mut Ensemble,
+        _thread_pool: &mut ThreadPool,
+    ) -> bool {
+        println!("Step: {}", step);
+        false
+    }
+}
+
 impl MCMCObserver<()> for VerboseMCMCObserver {
     fn callback(&mut self, step: usize, _ensemble: &mut Ensemble, _user_data: &mut ()) -> bool {
         println!("Step: {}", step);
@@ -666,6 +749,7 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
+            threads: self.threads,
         }
     }
     /// Adds a customizable `VerboseObserver` to the minimization.
@@ -683,18 +767,49 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
+            threads: self.threads,
         }
     }
     /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
     /// settings).
-    pub fn with_algorithm<A: Algorithm<(), Infallible> + 'static>(self, algorithm: A) -> Self {
+    #[cfg(feature = "rayon")]
+    pub fn with_algorithm<A: Algorithm<ThreadPool, LadduError> + 'static>(
+        self,
+        algorithm: A,
+    ) -> Self {
         Self {
             algorithm: Box::new(algorithm),
             observers: self.observers,
             max_steps: self.max_steps,
+            threads: self.threads,
+        }
+    }
+
+    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
+    /// settings).
+    #[cfg(not(feature = "rayon"))]
+    pub fn with_algorithm<A: Algorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: self.observers,
+            max_steps: self.max_steps,
+            threads: self.threads,
         }
     }
     /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
+    #[cfg(feature = "rayon")]
+    pub fn with_observer(self, observer: Arc<RwLock<dyn Observer<ThreadPool>>>) -> Self {
+        let mut observers = self.observers;
+        observers.push(observer.clone());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            max_steps: self.max_steps,
+            threads: self.threads,
+        }
+    }
+    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
+    #[cfg(not(feature = "rayon"))]
     pub fn with_observer(self, observer: Arc<RwLock<dyn Observer<()>>>) -> Self {
         let mut observers = self.observers;
         observers.push(observer.clone());
@@ -702,6 +817,7 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
+            threads: self.threads,
         }
     }
 
@@ -711,14 +827,34 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers: self.observers,
             max_steps,
+            threads: self.threads,
+        }
+    }
+
+    /// Set the number of threads to use.
+    pub fn with_threads(self, threads: usize) -> Self {
+        Self {
+            algorithm: self.algorithm,
+            observers: self.observers,
+            max_steps: self.max_steps,
+            threads,
         }
     }
 }
 
 /// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
+#[cfg(feature = "rayon")]
 pub struct MCMCOptions {
-    algorithm: Box<dyn MCMCAlgorithm<(), Infallible>>,
+    algorithm: Box<dyn MCMCAlgorithm<ThreadPool, LadduError>>,
+    observers: Vec<Arc<RwLock<dyn MCMCObserver<ThreadPool>>>>,
+    threads: usize,
+}
+
+#[cfg(not(feature = "rayon"))]
+pub struct MCMCOptions {
+    algorithm: Box<dyn MCMCAlgorithm<(), LadduError>>,
     observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>>,
+    threads: usize,
 }
 
 impl MCMCOptions {
@@ -727,6 +863,10 @@ impl MCMCOptions {
         Self {
             algorithm: Box::new(ESS::new(moves, rng).with_n_adaptive(100)),
             observers: Default::default(),
+            #[cfg(feature = "rayon")]
+            threads: num_cpus::get(),
+            #[cfg(not(feature = "rayon"))]
+            threads: 1,
         }
     }
     /// Use the [`AIES`] algorithm.
@@ -734,6 +874,10 @@ impl MCMCOptions {
         Self {
             algorithm: Box::new(AIES::new(moves, rng)),
             observers: Default::default(),
+            #[cfg(feature = "rayon")]
+            threads: num_cpus::get(),
+            #[cfg(not(feature = "rayon"))]
+            threads: 1,
         }
     }
     /// Adds the [`DebugMCMCObserver`] to the minimization.
@@ -743,6 +887,7 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
+            threads: self.threads,
         }
     }
     /// Adds a customizable `VerboseObserver` to the minimization.
@@ -752,15 +897,42 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
+            threads: self.threads,
         }
     }
     /// Set the [`MCMCAlgorithm`] to be used in the minimization.
-    pub fn with_algorithm<A: MCMCAlgorithm<(), Infallible> + 'static>(self, algorithm: A) -> Self {
+    #[cfg(feature = "rayon")]
+    pub fn with_algorithm<A: MCMCAlgorithm<ThreadPool, LadduError> + 'static>(
+        self,
+        algorithm: A,
+    ) -> Self {
         Self {
             algorithm: Box::new(algorithm),
             observers: self.observers,
+            threads: self.threads,
         }
     }
+    /// Set the [`MCMCAlgorithm`] to be used in the minimization.
+    #[cfg(not(feature = "rayon"))]
+    pub fn with_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: self.observers,
+            threads: self.threads,
+        }
+    }
+    #[cfg(feature = "rayon")]
+    /// Add an [`MCMCObserver`] to the list of [`MCMCObserver`]s used in the minimization.
+    pub fn with_observer(self, observer: Arc<RwLock<dyn MCMCObserver<ThreadPool>>>) -> Self {
+        let mut observers = self.observers;
+        observers.push(observer.clone());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            threads: self.threads,
+        }
+    }
+    #[cfg(not(feature = "rayon"))]
     /// Add an [`MCMCObserver`] to the list of [`MCMCObserver`]s used in the minimization.
     pub fn with_observer(self, observer: Arc<RwLock<dyn MCMCObserver<()>>>) -> Self {
         let mut observers = self.observers;
@@ -768,6 +940,16 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
+            threads: self.threads,
+        }
+    }
+
+    /// Set the number of threads to use.
+    pub fn with_threads(self, threads: usize) -> Self {
+        Self {
+            algorithm: self.algorithm,
+            observers: self.observers,
+            threads,
         }
     }
 }
@@ -780,17 +962,30 @@ impl NLL {
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
         options: Option<MinimizerOptions>,
-    ) -> Status {
+    ) -> Result<Status, LadduError> {
         let options = options.unwrap_or_default();
-        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
+        let mut m = Minimizer::new(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
             .with_max_steps(options.max_steps);
         for observer in options.observers {
             m = m.with_observer(observer);
         }
-        m.minimize(self, p0, &mut ())
-            .unwrap_or_else(|never| match never {});
-        m.status
+        #[cfg(feature = "rayon")]
+        {
+            m.minimize(
+                self,
+                p0,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.minimize(self, p0, &mut ())?;
+        }
+        Ok(m.status)
     }
     /// Perform Markov Chain Monte Carlo sampling on this [`NLL`]. By default, this uses the [`ESS`] sampler.
     pub fn mcmc<T: AsRef<[DVector<Float>]>>(
@@ -799,17 +994,31 @@ impl NLL {
         n_steps: usize,
         options: Option<MCMCOptions>,
         rng: Rng,
-    ) -> Result<Ensemble, Infallible> {
+    ) -> Result<Ensemble, LadduError> {
         let options = options.unwrap_or(MCMCOptions::new_ess(
             [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
             rng,
         ));
-        let mut m = Sampler::new_from_box(options.algorithm, p0.as_ref().to_vec());
+        let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
         for observer in options.observers {
             m = m.with_observer(observer);
         }
         let func = LogLikelihood(self);
-        m.sample(&func, &mut (), n_steps)?;
+        #[cfg(feature = "rayon")]
+        {
+            m.sample(
+                &func,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+                n_steps,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.sample(&func, &mut (), n_steps)?;
+        }
         Ok(m.ensemble)
     }
 }
@@ -1001,8 +1210,79 @@ pub struct LikelihoodEvaluator {
     likelihood_expression: LikelihoodExpression,
 }
 
-impl Function<(), Infallible> for LikelihoodEvaluator {
-    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, Infallible> {
+#[cfg(feature = "rayon")]
+impl Function<ThreadPool, LadduError> for LikelihoodEvaluator {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<Float, LadduError> {
+        thread_pool.install(|| self.evaluate(parameters))
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        thread_pool.install(|| self.evaluate_gradient(parameters))
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl Function<(), LadduError> for LikelihoodEvaluator {
+    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, LadduError> {
+        self.evaluate(parameters)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        _user_data: &mut (),
+    ) -> Result<DVector<Float>, LadduError> {
+        self.evaluate_gradient(parameters)
+    }
+}
+
+pub(crate) struct NegativeLikelihoodEvaluator<'a>(&'a LikelihoodEvaluator);
+#[cfg(feature = "rayon")]
+impl<'a> Function<ThreadPool, LadduError> for NegativeLikelihoodEvaluator<'a> {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<Float, LadduError> {
+        Function::evaluate(self.0, parameters, thread_pool).map(|res| -res)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        thread_pool: &mut ThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        Function::gradient(self.0, parameters, thread_pool).map(|res| -res)
+    }
+}
+
+#[cfg(not(feature = "rayon"))]
+impl<'a> Function<(), LadduError> for NegativeLikelihoodEvaluator<'a> {
+    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
+        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        user_data: &mut (),
+    ) -> Result<DVector<Float>, LadduError> {
+        Function::gradient(self.0, parameters, user_data).map(|res| -res)
+    }
+}
+
+impl LikelihoodEvaluator {
+    /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
+    pub fn parameters(&self) -> Vec<String> {
+        self.likelihood_manager.parameters()
+    }
+    /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
+    /// contained by this [`LikelihoodEvaluator`].
+    pub fn evaluate(&self, parameters: &[Float]) -> Result<Float, LadduError> {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
             .param_counts
@@ -1029,11 +1309,8 @@ impl Function<(), Infallible> for LikelihoodEvaluator {
         );
         Ok(self.likelihood_expression.evaluate(&likelihood_values))
     }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        _user_data: &mut (),
-    ) -> Result<DVector<Float>, Infallible> {
+
+    fn evaluate_gradient(&self, parameters: &[Float]) -> Result<DVector<Float>, LadduError> {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
             .param_counts
@@ -1079,32 +1356,6 @@ impl Function<(), Infallible> for LikelihoodEvaluator {
             .likelihood_expression
             .evaluate_gradient(&likelihood_values, &likelihood_gradients))
     }
-}
-
-pub(crate) struct NegativeLikelihoodEvaluator<'a>(&'a LikelihoodEvaluator);
-impl<'a> Function<(), Infallible> for NegativeLikelihoodEvaluator<'a> {
-    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, Infallible> {
-        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        user_data: &mut (),
-    ) -> Result<DVector<Float>, Infallible> {
-        Function::gradient(self.0, parameters, user_data).map(|res| -res)
-    }
-}
-
-impl LikelihoodEvaluator {
-    /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
-    pub fn parameters(&self) -> Vec<String> {
-        self.likelihood_manager.parameters()
-    }
-    /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
-    /// contained by this [`LikelihoodEvaluator`].
-    pub fn evaluate(&self, parameters: &[Float]) -> Float {
-        Function::evaluate(self, parameters, &mut ()).unwrap_or_else(|never| match never {})
-    }
 
     /// A function that can be called to minimize the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
@@ -1115,17 +1366,30 @@ impl LikelihoodEvaluator {
         p0: &[Float],
         bounds: Option<Vec<(Float, Float)>>,
         options: Option<MinimizerOptions>,
-    ) -> Status {
+    ) -> Result<Status, LadduError> {
         let options = options.unwrap_or_default();
-        let mut m = Minimizer::new_from_box(options.algorithm, self.parameters().len())
+        let mut m = Minimizer::new(options.algorithm, self.parameters().len())
             .with_bounds(bounds)
             .with_max_steps(options.max_steps);
         for observer in options.observers {
             m = m.with_observer(observer)
         }
-        m.minimize(self, p0, &mut ())
-            .unwrap_or_else(|never| match never {});
-        m.status
+        #[cfg(feature = "rayon")]
+        {
+            m.minimize(
+                self,
+                p0,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.minimize(self, p0, &mut ())?;
+        }
+        Ok(m.status)
     }
 
     /// A function that can be called to perform Markov Chain Monte Carlo sampling
@@ -1139,17 +1403,31 @@ impl LikelihoodEvaluator {
         n_steps: usize,
         options: Option<MCMCOptions>,
         rng: Rng,
-    ) -> Result<Ensemble, Infallible> {
+    ) -> Result<Ensemble, LadduError> {
         let options = options.unwrap_or(MCMCOptions::new_ess(
             [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
             rng,
         ));
-        let mut m = Sampler::new_from_box(options.algorithm, p0.as_ref().to_vec());
+        let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
         for observer in options.observers {
             m = m.with_observer(observer);
         }
         let func = NegativeLikelihoodEvaluator(self);
-        m.sample(&func, &mut (), n_steps)?;
+        #[cfg(feature = "rayon")]
+        {
+            m.sample(
+                &func,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+                n_steps,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.sample(&func, &mut (), n_steps)?;
+        }
         Ok(m.ensemble)
     }
 }
