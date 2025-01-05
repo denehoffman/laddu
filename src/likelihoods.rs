@@ -465,7 +465,6 @@ impl LikelihoodTerm for NLL {
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
-    /// ```
     #[cfg(not(feature = "rayon"))]
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
@@ -852,6 +851,7 @@ pub struct MCMCOptions {
     threads: usize,
 }
 
+/// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
 #[cfg(not(feature = "rayon"))]
 pub struct MCMCOptions {
     algorithm: Box<dyn MCMCAlgorithm<(), LadduError>>,
