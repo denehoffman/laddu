@@ -51,6 +51,11 @@ class LikelihoodEvaluator:
         parameters: list[float] | npt.NDArray[np.float64],
         threads: int | None = None,
     ) -> float: ...
+    def evaluate_gradient(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
         p0: list[float] | npt.NDArray[np.float64],
@@ -95,6 +100,11 @@ class NLL:
         parameters: list[float] | npt.NDArray[np.float64],
         threads: int | None = None,
     ) -> float: ...
+    def evaluate_gradient(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
     def project(
         self,
         parameters: list[float] | npt.NDArray[np.float64],

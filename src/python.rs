@@ -3393,6 +3393,49 @@ pub(crate) mod laddu {
                 Ok(self.0.evaluate(&parameters)?)
             }
         }
+        /// Evaluate the gradient of the sum of all terms in the evaluator
+        ///
+        /// Parameters
+        /// ----------
+        /// parameters : list of float
+        ///     The values to use for the free parameters
+        /// threads : int, optional
+        ///     The number of threads to use (setting this to None will use all available CPUs)
+        ///
+        /// Returns
+        /// -------
+        /// result : array_like
+        ///     A ``numpy`` array of representing the gradient of the sum of all terms in the
+        ///     evaluator
+        ///
+        #[pyo3(signature = (parameters, *, threads=None))]
+        fn evaluate_gradient<'py>(
+            &self,
+            py: Python<'py>,
+            parameters: Vec<Float>,
+            threads: Option<usize>,
+        ) -> PyResult<Bound<'py, PyArray1<Float>>> {
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| self.0.evaluate_gradient(&parameters))?
+                        .as_slice(),
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    self.0.evaluate_gradient(&parameters)?.as_slice(),
+                ))
+            }
+        }
+
         /// Minimize all LikelihoodTerms with respect to the free parameters in the model
         ///
         /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this

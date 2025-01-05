@@ -1316,7 +1316,9 @@ impl LikelihoodEvaluator {
         Ok(self.likelihood_expression.evaluate(&likelihood_values))
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> Result<DVector<Float>, LadduError> {
+    /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
+    /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
+    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Result<DVector<Float>, LadduError> {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
             .param_counts
