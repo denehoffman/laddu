@@ -28,8 +28,7 @@ use num::Complex;
 
 use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
-use rayon::prelude::*;
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
@@ -606,8 +605,9 @@ impl Function<(), LadduError> for NLL {
     }
 }
 
-#[cfg(feature = "rayon")]
 pub(crate) struct LogLikelihood<'a>(&'a NLL);
+
+#[cfg(feature = "rayon")]
 impl<'a> Function<ThreadPool, LadduError> for LogLikelihood<'a> {
     fn evaluate(
         &self,
@@ -663,8 +663,10 @@ impl Default for MinimizerOptions {
             algorithm: Box::new(LBFGSB::default()),
             observers: Default::default(),
             max_steps: 4000,
-            #[cfg(feature = "rayon")]
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
             threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
             #[cfg(not(feature = "rayon"))]
             threads: 1,
         }
@@ -863,8 +865,10 @@ impl MCMCOptions {
         Self {
             algorithm: Box::new(ESS::new(moves, rng).with_n_adaptive(100)),
             observers: Default::default(),
-            #[cfg(feature = "rayon")]
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
             threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
             #[cfg(not(feature = "rayon"))]
             threads: 1,
         }
@@ -874,8 +878,10 @@ impl MCMCOptions {
         Self {
             algorithm: Box::new(AIES::new(moves, rng)),
             observers: Default::default(),
-            #[cfg(feature = "rayon")]
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
             threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
             #[cfg(not(feature = "rayon"))]
             threads: 1,
         }

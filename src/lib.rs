@@ -403,9 +403,10 @@ impl From<LadduError> for PyErr {
             LadduError::ParquetError(_)
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
-            | LadduError::ThreadPoolError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
+            #[cfg(feature = "rayon")]
+            LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
         }
     }
 }

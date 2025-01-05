@@ -3,6 +3,7 @@ use pyo3::{
     prelude::*,
     types::{PyTuple, PyTupleMethods},
 };
+#[cfg(feature = "rayon")]
 use rayon::ThreadPool;
 
 #[pymodule]
@@ -20,6 +21,7 @@ pub(crate) mod laddu {
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
+    #[cfg(feature = "rayon")]
     use crate::LadduError;
     use bincode::{deserialize, serialize};
     use fastrand::Rng;
@@ -38,6 +40,7 @@ pub(crate) mod laddu {
     use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
     use pyo3::types::PyBytes;
     use pyo3::types::{PyDict, PyList};
+    #[cfg(feature = "rayon")]
     use rayon::ThreadPoolBuilder;
 
     #[pyfunction]
@@ -2208,14 +2211,21 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
             threads: Option<usize>,
         ) -> PyResult<Bound<'py, PyArray1<Complex<Float>>>> {
-            Ok(PyArray1::from_slice(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate(&parameters)),
-            ))
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    &ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| self.0.evaluate(&parameters)),
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray1::from_slice(py, &self.0.evaluate(&parameters)))
+            }
         }
         /// Evaluate the gradient of the stored Expression over the stored Dataset
         ///
@@ -2238,23 +2248,41 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
             threads: Option<usize>,
         ) -> PyResult<Bound<'py, PyArray2<Complex<Float>>>> {
-            Ok(PyArray2::from_vec2(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .evaluate_gradient(&parameters)
-                            .iter()
-                            .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex<Float>>>>()
-                    }),
-            )
-            .expect(
-                "Gradients do not have the same length (please make an issue report on GitHub)",
-            ))
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray2::from_vec2(
+                    py,
+                    &ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| {
+                            self.0
+                                .evaluate_gradient(&parameters)
+                                .iter()
+                                .map(|grad| grad.data.as_vec().to_vec())
+                                .collect::<Vec<Vec<Complex<Float>>>>()
+                        }),
+                )
+                .expect(
+                    "Gradients do not have the same length (please make an issue report on GitHub)",
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray2::from_vec2(
+                    py,
+                    &self
+                        .0
+                        .evaluate_gradient(&parameters)
+                        .iter()
+                        .map(|grad| grad.data.as_vec().to_vec())
+                        .collect::<Vec<Vec<Complex<Float>>>>(),
+                )
+                .expect(
+                    "Gradients do not have the same length (please make an issue report on GitHub)",
+                ))
+            }
         }
     }
 
@@ -2505,7 +2533,12 @@ pub(crate) mod laddu {
                 .get_extract::<usize>("threads")
                 .unwrap_or(None)
                 .unwrap_or_else(num_cpus::get);
-            let mut observers: Vec<Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<ThreadPool>>>> =
+            #[cfg(feature = "rayon")]
+            let mut observers: Vec<
+                Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<ThreadPool>>>,
+            > = Vec::default();
+            #[cfg(not(feature = "rayon"))]
+            let mut observers: Vec<Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<()>>>> =
                 Vec::default();
             if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
                 if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
@@ -2732,11 +2765,18 @@ pub(crate) mod laddu {
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
-            Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or_else(num_cpus::get))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters)))
+            #[cfg(feature = "rayon")]
+            {
+                Ok(ThreadPoolBuilder::new()
+                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .build()
+                    .map_err(LadduError::from)?
+                    .install(|| self.0.evaluate(&parameters)))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(self.0.evaluate(&parameters))
+            }
         }
         /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
         ///
@@ -2759,15 +2799,25 @@ pub(crate) mod laddu {
             parameters: Vec<Float>,
             threads: Option<usize>,
         ) -> PyResult<Bound<'py, PyArray1<Float>>> {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
-                    .as_slice(),
-            ))
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| self.0.evaluate_gradient(&parameters))
+                        .as_slice(),
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    self.0.evaluate_gradient(&parameters).as_slice(),
+                ))
+            }
         }
         /// Project the model over the Monte Carlo dataset with the given parameter values
         ///
@@ -2797,18 +2847,30 @@ pub(crate) mod laddu {
             mc_evaluator: Option<Evaluator>,
             threads: Option<usize>,
         ) -> PyResult<Bound<'py, PyArray1<Float>>> {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    })
-                    .as_slice(),
-            ))
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| {
+                            self.0
+                                .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
+                        })
+                        .as_slice(),
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    self.0
+                        .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
+                        .as_slice(),
+                ))
+            }
         }
 
         /// Project the model over the Monte Carlo dataset with the given parameter values, first
@@ -2859,21 +2921,37 @@ pub(crate) mod laddu {
                     "Argument must be either a string or a list of strings",
                 ));
             };
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0.project_with(
+            #[cfg(feature = "rayon")]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    ThreadPoolBuilder::new()
+                        .num_threads(threads.unwrap_or_else(num_cpus::get))
+                        .build()
+                        .map_err(LadduError::from)?
+                        .install(|| {
+                            self.0.project_with(
+                                &parameters,
+                                &names,
+                                mc_evaluator.map(|pyeval| pyeval.0.clone()),
+                            )
+                        })
+                        .as_slice(),
+                ))
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(PyArray1::from_slice(
+                    py,
+                    self.0
+                        .project_with(
                             &parameters,
                             &names,
                             mc_evaluator.map(|pyeval| pyeval.0.clone()),
                         )
-                    })
-                    .as_slice(),
-            ))
+                        .as_slice(),
+                ))
+            }
         }
 
         /// Minimize the NLL with respect to the free parameters in the model
@@ -3302,11 +3380,18 @@ pub(crate) mod laddu {
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
-            Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or_else(num_cpus::get))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters))?)
+            #[cfg(feature = "rayon")]
+            {
+                Ok(ThreadPoolBuilder::new()
+                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .build()
+                    .map_err(LadduError::from)?
+                    .install(|| self.0.evaluate(&parameters))?)
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                Ok(self.0.evaluate(&parameters)?)
+            }
         }
         /// Minimize all LikelihoodTerms with respect to the free parameters in the model
         ///
@@ -4690,6 +4775,7 @@ impl Observer<()> for crate::python::laddu::PyObserver {
     }
 }
 
+#[cfg(feature = "rayon")]
 impl Observer<ThreadPool> for crate::python::laddu::PyObserver {
     fn callback(
         &mut self,
@@ -4726,38 +4812,6 @@ impl FromPyObject<'_> for crate::python::laddu::PyObserver {
         Ok(crate::python::laddu::PyObserver(ob.clone().into()))
     }
 }
-
-impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
-    fn callback(
-        &mut self,
-        step: usize,
-        ensemble: &mut ganesh::mcmc::Ensemble,
-        _thread_pool: &mut ThreadPool,
-    ) -> bool {
-        let (new_ensemble, result) = Python::with_gil(|py| {
-            let res = self
-                .0
-                .bind(py)
-                .call_method(
-                    "callback",
-                    (step, crate::python::laddu::Ensemble(ensemble.clone())),
-                    None,
-                )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
-            let new_status = res_tuple
-                .get_item(0)
-                .unwrap()
-                .extract::<crate::python::laddu::Ensemble>()
-                .unwrap()
-                .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
-            (new_status, result)
-        });
-        *ensemble = new_ensemble;
-        result
-    }
-}
 impl MCMCObserver<()> for crate::python::laddu::PyMCMCObserver {
     fn callback(
         &mut self,
@@ -4789,6 +4843,39 @@ impl MCMCObserver<()> for crate::python::laddu::PyMCMCObserver {
         result
     }
 }
+#[cfg(feature = "rayon")]
+impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
+    fn callback(
+        &mut self,
+        step: usize,
+        ensemble: &mut ganesh::mcmc::Ensemble,
+        _thread_pool: &mut ThreadPool,
+    ) -> bool {
+        let (new_ensemble, result) = Python::with_gil(|py| {
+            let res = self
+                .0
+                .bind(py)
+                .call_method(
+                    "callback",
+                    (step, crate::python::laddu::Ensemble(ensemble.clone())),
+                    None,
+                )
+                .unwrap();
+            let res_tuple = res.downcast::<PyTuple>().unwrap();
+            let new_status = res_tuple
+                .get_item(0)
+                .unwrap()
+                .extract::<crate::python::laddu::Ensemble>()
+                .unwrap()
+                .0;
+            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            (new_status, result)
+        });
+        *ensemble = new_ensemble;
+        result
+    }
+}
+
 impl FromPyObject<'_> for crate::python::laddu::PyMCMCObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(crate::python::laddu::PyMCMCObserver(ob.clone().into()))
