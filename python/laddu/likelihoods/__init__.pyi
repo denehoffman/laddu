@@ -46,7 +46,16 @@ class LikelihoodManager:
 
 class LikelihoodEvaluator:
     parameters: list[str]
-    def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
+    def evaluate(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> float: ...
+    def evaluate_gradient(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
         p0: list[float] | npt.NDArray[np.float64],
@@ -86,12 +95,22 @@ class NLL:
     def deactivate(self, name: str | list[str]) -> None: ...
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
-    def evaluate(self, parameters: list[float] | npt.NDArray[np.float64]) -> float: ...
+    def evaluate(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> float: ...
+    def evaluate_gradient(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
     def project(
         self,
         parameters: list[float] | npt.NDArray[np.float64],
         *,
         mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def project_with(
         self,
@@ -99,6 +118,7 @@ class NLL:
         name: str | list[str],
         *,
         mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,

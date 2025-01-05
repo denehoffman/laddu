@@ -53,10 +53,14 @@ class Evaluator:
     def deactivate_all(self) -> None: ...
     def isolate(self, name: str | list[str]) -> None: ...
     def evaluate(
-        self, parameters: list[float] | npt.NDArray[np.float64]
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
     ) -> npt.NDArray[np.complex128]: ...
     def evaluate_gradient(
-        self, parameters: list[float] | npt.NDArray[np.float64]
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        threads: int | None = None,
     ) -> npt.NDArray[np.complex128]: ...
 
 __all__ = [

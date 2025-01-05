@@ -372,10 +372,23 @@ pub enum LadduError {
     /// An error returned by the Python pickle (de)serializer
     #[error("Pickle conversion error: {0}")]
     PickleError(#[from] serde_pickle::Error),
+    /// An error type for [`rayon`] thread pools
+    #[cfg(feature = "rayon")]
+    #[error("Error building thread pool: {0}")]
+    ThreadPoolError(#[from] rayon::ThreadPoolBuildError),
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
     Custom(String),
+}
+
+impl Clone for LadduError {
+    // This is a little hack because error types are rarely cloneable, but I need to store them in a
+    // cloneable box for minimizers and MCMC methods
+    fn clone(&self) -> Self {
+        let err_string = self.to_string();
+        LadduError::Custom(err_string)
+    }
 }
 
 #[cfg(feature = "python")]
@@ -392,6 +405,8 @@ impl From<LadduError> for PyErr {
             | LadduError::IOError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
+            #[cfg(feature = "rayon")]
+            LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
         }
     }
 }
