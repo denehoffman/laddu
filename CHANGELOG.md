@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16](https://github.com/denehoffman/laddu/compare/v0.1.15...v0.1.16) - 2025-01-05
+
+### Added
+
+- add gradient evaluation to `NLL` and `LikelihoodExpression` in Python API
+- add 'threads' argument to pretty much everything in Python API
+
+### Fixed
+
+- add better feature guards so all features can technically be used independently
+
+### Other
+
+- add docs to `MCMCOptions` in non-rayon mode and clean up some extra text
+
 ## [0.1.15](https://github.com/denehoffman/laddu/compare/v0.1.14...v0.1.15) - 2024-12-21
 
 ### Added
