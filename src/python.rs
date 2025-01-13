@@ -2061,10 +2061,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to write the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
             Ok(())
@@ -2085,10 +2081,6 @@ pub(crate) mod laddu {
         /// ------
         /// IOError
         ///     If anything fails when trying to read the file
-        ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
@@ -3960,10 +3952,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to write the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
             Ok(())
@@ -3984,10 +3972,6 @@ pub(crate) mod laddu {
         /// ------
         /// IOError
         ///     If anything fails when trying to read the file
-        ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
@@ -4140,10 +4124,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to write the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
             Ok(())
@@ -4164,10 +4144,6 @@ pub(crate) mod laddu {
         /// ------
         /// IOError
         ///     If anything fails when trying to read the file
-        ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {

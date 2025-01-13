@@ -474,39 +474,17 @@ pub trait ReadWrite: Serialize + DeserializeOwned {
     fn save_as<T: AsRef<str>>(&self, file_path: T) -> Result<(), LadduError> {
         let expanded_path = shellexpand::full(file_path.as_ref())?;
         let file_path = Path::new(expanded_path.as_ref());
-        let extension = file_path
-            .extension()
-            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
-            .unwrap_or("".to_string());
         let file = File::create(file_path)?;
         let mut writer = BufWriter::new(file);
-        match extension.as_str() {
-            "pkl" | "pickle" => serde_pickle::to_writer(&mut writer, self, Default::default())?,
-            _ => {
-                return Err(LadduError::Custom(format!(
-                    "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
-                    extension
-                )))
-            }
-        };
+        serde_pickle::to_writer(&mut writer, self, Default::default())?;
         Ok(())
     }
     /// Load a [`serde`]-object from a file path, using the extension to determine the file format
     fn load_from<T: AsRef<str>>(file_path: T) -> Result<Self, LadduError> {
         let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-        let extension = file_path
-            .extension()
-            .and_then(|ext| ext.to_str().map(|ext| ext.to_string()))
-            .unwrap_or("".to_string());
         let file = File::open(file_path)?;
         let reader = BufReader::new(file);
-        match extension.as_str() {
-            "pkl" | "pickle" => Ok(serde_pickle::from_reader(reader, Default::default())?),
-            _ => Err(LadduError::Custom(format!(
-                "Unsupported file extension: {}\nValid options are \".pkl\" or \".pickle\"",
-                extension
-            ))),
-        }
+        serde_pickle::from_reader(reader, Default::default()).map_err(LadduError::from)
     }
 }
 
