@@ -1011,6 +1011,11 @@ pub(crate) mod laddu {
         /// laddu.Mass
         /// laddu.Mandelstam
         ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If the selected `variable` is not compatible with binning
+        ///
         #[pyo3(signature = (variable, bins, range))]
         fn bin_by(
             &self,
@@ -1102,6 +1107,17 @@ pub(crate) mod laddu {
 
     /// Open a Dataset from a file
     ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///
+    /// Raises
+    /// ------
+    /// IOError
+    ///     If any of the columns are not found or have incompatible types
+    ///
+    /// Notes
+    /// -----
     /// Data should be stored in Parquet format with each column being filled with 32-bit floats
     ///
     /// Valid/required column names have the following formats:
@@ -1213,6 +1229,11 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
+    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector3.costheta
@@ -1306,6 +1327,12 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
+    ///
+    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector3.phi
@@ -1384,6 +1411,11 @@ pub(crate) mod laddu {
     ///     Indices of particles which are combined to form the `resonance`
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
     ///
     /// See Also
     /// --------
@@ -1622,6 +1654,8 @@ pub(crate) mod laddu {
     /// ------
     /// Exception
     ///     If more than one particle list is empty
+    /// ValueError
+    ///     If `channel` is not one of the valid options
     ///
     /// Notes
     /// -----
@@ -1948,6 +1982,11 @@ pub(crate) mod laddu {
         ///     An object which represents the underlying mathematical model and can be loaded with
         ///     a Dataset
         ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If the expression is not convertable to a Model
+        ///
         /// Notes
         /// -----
         /// While the given `expression` will be the one evaluated in the end, all registered
@@ -2116,6 +2155,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2148,6 +2189,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2180,6 +2223,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2207,6 +2252,11 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     A ``numpy`` array of complex values for each Event in the Dataset
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate<'py>(
@@ -2245,6 +2295,12 @@ pub(crate) mod laddu {
         /// result : array_like
         ///     A ``numpy`` 2D array of complex values for each Event in the Dataset
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
+        ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
             &self,
@@ -2268,9 +2324,7 @@ pub(crate) mod laddu {
                                 .collect::<Vec<Vec<Complex<Float>>>>()
                         }),
                 )
-                .expect(
-                    "Gradients do not have the same length (please make an issue report on GitHub)",
-                ))
+                .map_err(LadduError::NumpyError)?)
             }
             #[cfg(not(feature = "rayon"))]
             {
@@ -2283,9 +2337,7 @@ pub(crate) mod laddu {
                         .map(|grad| grad.data.as_vec().to_vec())
                         .collect::<Vec<Vec<Complex<Float>>>>(),
                 )
-                .expect(
-                    "Gradients do not have the same length (please make an issue report on GitHub)",
-                ))
+                .map_err(LadduError::NumpyError)?)
             }
         }
     }
@@ -2671,6 +2723,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2703,6 +2757,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2735,6 +2791,8 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
@@ -2767,6 +2825,11 @@ pub(crate) mod laddu {
         /// result : float
         ///     The total negative log-likelihood
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
             #[cfg(feature = "rayon")]
@@ -2795,6 +2858,12 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     A ``numpy`` array of representing the gradient of the negative log-likelihood over each parameter
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
@@ -2842,6 +2911,12 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     Weights for every Monte Carlo event which represent the fit to data
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
         fn project<'py>(
@@ -2905,6 +2980,14 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
         fn project_with<'py>(
@@ -3022,6 +3105,18 @@ pub(crate) mod laddu {
         /// threads : int, optional
         ///     The number of threads to use (setting this to None will use all available CPUs)
         ///
+        /// Returns
+        /// -------
+        /// Status
+        ///     The status of the minimization algorithm at termination
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
+        ///
         #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -3087,6 +3182,13 @@ pub(crate) mod laddu {
         /// -------
         /// Ensemble
         ///     The resulting ensemble of walkers
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
         ///
         /// Notes
         /// -----
@@ -3382,6 +3484,11 @@ pub(crate) mod laddu {
         /// result : float
         ///     The total negative log-likelihood summed over all terms
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
             #[cfg(feature = "rayon")]
@@ -3411,6 +3518,12 @@ pub(crate) mod laddu {
         /// result : array_like
         ///     A ``numpy`` array of representing the gradient of the sum of all terms in the
         ///     evaluator
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
@@ -3504,6 +3617,18 @@ pub(crate) mod laddu {
         /// threads : int, optional
         ///     The number of threads to use (setting this to None will use all available CPUs)
         ///
+        /// Returns
+        /// -------
+        /// Status
+        ///     The status of the minimization algorithm at termination
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
+        ///
         #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -3570,6 +3695,13 @@ pub(crate) mod laddu {
         /// -------
         /// Ensemble
         ///     The resulting ensemble of walkers
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
         ///
         /// Notes
         /// -----
@@ -3708,6 +3840,11 @@ pub(crate) mod laddu {
         /// -------
         /// array_like or None
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[getter]
         fn cov<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
             self.0
@@ -3729,6 +3866,11 @@ pub(crate) mod laddu {
         /// Returns
         /// -------
         /// array_like or None
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
         ///
         #[getter]
         fn hess<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
@@ -3873,6 +4015,11 @@ pub(crate) mod laddu {
         /// -------
         /// dict
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
             let dict = PyDict::new(py);
             dict.set_item("x", self.x(py))?;
@@ -3917,6 +4064,11 @@ pub(crate) mod laddu {
         /// array_like
         ///     An array with dimension ``(n_walkers, n_steps, n_parameters)``
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[pyo3(signature = (*, burn = 0, thin = 1))]
         fn get_chain<'py>(
             &self,
@@ -3953,6 +4105,11 @@ pub(crate) mod laddu {
         /// -------
         /// array_like
         ///     An array with dimension ``(n_steps, n_parameters)``
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
         ///
         #[pyo3(signature = (*, burn = 0, thin = 1))]
         fn get_flat_chain<'py>(
@@ -4360,6 +4517,11 @@ pub(crate) mod laddu {
     /// -------
     /// Amplitude
     ///     An Amplitude which can be registered by a ``Manager``
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `r` is not one of the valid options
     ///
     /// See Also
     /// --------
