@@ -62,14 +62,14 @@ impl NLL {
         .into()
     }
     /// Activate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) {
-        self.data_evaluator.activate(&name);
-        self.accmc_evaluator.activate(&name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.data_evaluator.activate(&name)?;
+        self.accmc_evaluator.activate(&name)
     }
     /// Activate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.data_evaluator.activate_many(names);
-        self.accmc_evaluator.activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.data_evaluator.activate_many(names)?;
+        self.accmc_evaluator.activate_many(names)
     }
     /// Activate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
@@ -77,14 +77,14 @@ impl NLL {
         self.accmc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
-        self.data_evaluator.deactivate(&name);
-        self.accmc_evaluator.deactivate(&name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.data_evaluator.deactivate(&name)?;
+        self.accmc_evaluator.deactivate(&name)
     }
     /// Deactivate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.data_evaluator.deactivate_many(names);
-        self.accmc_evaluator.deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.data_evaluator.deactivate_many(names)?;
+        self.accmc_evaluator.deactivate_many(names)
     }
     /// Deactivate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
@@ -92,14 +92,14 @@ impl NLL {
         self.accmc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) {
-        self.data_evaluator.isolate(&name);
-        self.accmc_evaluator.isolate(&name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.data_evaluator.isolate(&name)?;
+        self.accmc_evaluator.isolate(&name)
     }
     /// Isolate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.data_evaluator.isolate_many(names);
-        self.accmc_evaluator.isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.data_evaluator.isolate_many(names)?;
+        self.accmc_evaluator.isolate_many(names)
     }
 
     /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -193,10 +193,10 @@ impl NLL {
         parameters: &[Float],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Vec<Float> {
+    ) -> Result<Vec<Float>, LadduError> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names);
+            mc_evaluator.isolate_many(names)?;
             let events = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
@@ -206,11 +206,11 @@ impl NLL {
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             mc_evaluator.resources.write().active = current_active_mc;
-            res
+            Ok(res)
         } else {
             let current_active_data = self.data_evaluator.resources.read().active.clone();
             let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names);
+            self.isolate_many(names)?;
             let events = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
@@ -221,7 +221,7 @@ impl NLL {
                 .collect();
             self.data_evaluator.resources.write().active = current_active_data;
             self.accmc_evaluator.resources.write().active = current_active_accmc;
-            res
+            Ok(res)
         }
     }
 
@@ -248,10 +248,10 @@ impl NLL {
         parameters: &[Float],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Vec<Float> {
+    ) -> Result<Vec<Float>, LadduError> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names);
+            mc_evaluator.isolate_many(names)?;
             let events = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
@@ -261,11 +261,11 @@ impl NLL {
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             mc_evaluator.resources.write().active = current_active_mc;
-            res
+            Ok(res)
         } else {
             let current_active_data = self.data_evaluator.resources.read().active.clone();
             let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names);
+            self.isolate_many(names)?;
             let events = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
@@ -276,7 +276,7 @@ impl NLL {
                 .collect();
             self.data_evaluator.resources.write().active = current_active_data;
             self.accmc_evaluator.resources.write().active = current_active_accmc;
-            res
+            Ok(res)
         }
     }
 }

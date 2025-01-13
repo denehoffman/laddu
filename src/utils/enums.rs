@@ -2,6 +2,8 @@ use std::{fmt::Display, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
+use crate::LadduError;
+
 /// Standard reference frames for angular analyses.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Frame {
@@ -23,7 +25,7 @@ impl Display for Frame {
     }
 }
 impl FromStr for Frame {
-    type Err = String;
+    type Err = LadduError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -31,7 +33,10 @@ impl FromStr for Frame {
             "gottfriedjackson" | "gottfried jackson" | "gj" | "gottfried-jackson" => {
                 Ok(Self::GottfriedJackson)
             }
-            _ => Err("Invalid frame".to_string()),
+            _ => Err(LadduError::ParseError {
+                name: s.to_string(),
+                object: "Frame".to_string(),
+            }),
         }
     }
 }
@@ -54,13 +59,16 @@ impl Display for Sign {
 }
 
 impl FromStr for Sign {
-    type Err = String;
+    type Err = LadduError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "+" | "plus" | "pos" | "positive" => Ok(Self::Positive),
             "-" | "minus" | "neg" | "negative" => Ok(Self::Negative),
-            _ => Err("Invalid sign".to_string()),
+            _ => Err(LadduError::ParseError {
+                name: s.to_string(),
+                object: "Sign".to_string(),
+            }),
         }
     }
 }
@@ -87,14 +95,17 @@ impl Display for Channel {
 }
 
 impl FromStr for Channel {
-    type Err = String;
+    type Err = LadduError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "s" => Ok(Self::S),
             "t" => Ok(Self::T),
             "u" => Ok(Self::U),
-            _ => Err("Invalid Mandelstam variable".to_string()),
+            _ => Err(LadduError::ParseError {
+                name: s.to_string(),
+                object: "Channel".to_string(),
+            }),
         }
     }
 }

@@ -441,36 +441,36 @@ impl Evaluator {
         self.resources.read().parameters.iter().cloned().collect()
     }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) {
-        self.resources.write().activate(name);
+    pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.resources.write().activate(name)
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.resources.write().activate_many(names);
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.resources.write().activate_many(names)
     }
     /// Activate all registered [`Amplitude`]s.
     pub fn activate_all(&self) {
         self.resources.write().activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
-        self.resources.write().deactivate(name);
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.resources.write().deactivate(name)
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.resources.write().deactivate_many(names);
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.resources.write().deactivate_many(names)
     }
     /// Deactivate all registered [`Amplitude`]s.
     pub fn deactivate_all(&self) {
         self.resources.write().deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) {
-        self.resources.write().isolate(name);
+    pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+        self.resources.write().isolate(name)
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
-        self.resources.write().isolate_many(names);
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+        self.resources.write().isolate_many(names)
     }
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
@@ -775,12 +775,12 @@ mod tests {
         assert_eq!(result[0], Complex::new(3.0, 0.0));
 
         // Test deactivation
-        evaluator.deactivate("const1");
+        evaluator.deactivate("const1").unwrap();
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex::new(2.0, 0.0));
 
         // Test isolation
-        evaluator.isolate("const1");
+        evaluator.isolate("const1").unwrap();
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex::new(1.0, 0.0));
 

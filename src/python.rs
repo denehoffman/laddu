@@ -21,7 +21,6 @@ pub(crate) mod laddu {
     use crate::utils::variables::Variable;
     use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     use crate::Float;
-    #[cfg(feature = "rayon")]
     use crate::LadduError;
     use bincode::{deserialize, serialize};
     use fastrand::Rng;
@@ -1232,14 +1231,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::CosTheta::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::CosTheta::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The value of this Variable for the given Event
         ///
@@ -1325,14 +1324,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::Phi::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::Phi::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The value of this Variable for the given Event
         ///
@@ -1404,14 +1403,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::Angles::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::Angles::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The Variable representing the cosine of the polar spherical decay angle
         ///
@@ -1650,7 +1649,7 @@ pub(crate) mod laddu {
                 p2,
                 p3,
                 p4,
-                channel.parse().unwrap(),
+                channel.parse()?,
             )?))
         }
         /// The value of this Variable for the given Event
@@ -2061,10 +2060,15 @@ pub(crate) mod laddu {
             Model(crate::amplitudes::Model::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Model(deserialize(state.as_bytes()).unwrap());
+            *self = Model(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
     }
@@ -2115,10 +2119,10 @@ pub(crate) mod laddu {
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.activate(&string_arg);
+                self.0.activate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.activate_many(&vec);
+                self.0.activate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2147,10 +2151,10 @@ pub(crate) mod laddu {
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.deactivate(&string_arg);
+                self.0.deactivate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.deactivate_many(&vec);
+                self.0.deactivate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2179,10 +2183,10 @@ pub(crate) mod laddu {
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.isolate(&string_arg);
+                self.0.isolate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.isolate_many(&vec);
+                self.0.isolate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2670,10 +2674,10 @@ pub(crate) mod laddu {
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.activate(&string_arg);
+                self.0.activate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.activate_many(&vec);
+                self.0.activate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2702,10 +2706,10 @@ pub(crate) mod laddu {
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.deactivate(&string_arg);
+                self.0.deactivate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.deactivate_many(&vec);
+                self.0.deactivate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2734,10 +2738,10 @@ pub(crate) mod laddu {
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.isolate(&string_arg);
+                self.0.isolate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.isolate_many(&vec);
+                self.0.isolate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2935,7 +2939,7 @@ pub(crate) mod laddu {
                                 &names,
                                 mc_evaluator.map(|pyeval| pyeval.0.clone()),
                             )
-                        })
+                        })?
                         .as_slice(),
                 ))
             }
@@ -2948,7 +2952,7 @@ pub(crate) mod laddu {
                             &parameters,
                             &names,
                             mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                        )
+                        )?
                         .as_slice(),
                 ))
             }
@@ -3705,16 +3709,20 @@ pub(crate) mod laddu {
         /// array_like or None
         ///
         #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
-            self.0.cov.clone().map(|cov| {
-                PyArray2::from_vec2(
-                    py,
-                    &cov.row_iter()
-                        .map(|row| row.iter().cloned().collect())
-                        .collect::<Vec<Vec<Float>>>(),
-                )
-                .unwrap()
-            })
+        fn cov<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
+            self.0
+                .cov
+                .clone()
+                .map(|cov| {
+                    Ok(PyArray2::from_vec2(
+                        py,
+                        &cov.row_iter()
+                            .map(|row| row.iter().cloned().collect())
+                            .collect::<Vec<Vec<Float>>>(),
+                    )
+                    .map_err(LadduError::NumpyError)?)
+                })
+                .transpose()
         }
         /// The Hessian matrix (``None`` if it wasn't calculated)
         ///
@@ -3723,17 +3731,21 @@ pub(crate) mod laddu {
         /// array_like or None
         ///
         #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
-            self.0.hess.clone().map(|hess| {
-                PyArray2::from_vec2(
-                    py,
-                    &hess
-                        .row_iter()
-                        .map(|row| row.iter().cloned().collect())
-                        .collect::<Vec<Vec<Float>>>(),
-                )
-                .unwrap()
-            })
+        fn hess<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
+            self.0
+                .hess
+                .clone()
+                .map(|hess| {
+                    Ok(PyArray2::from_vec2(
+                        py,
+                        &hess
+                            .row_iter()
+                            .map(|row| row.iter().cloned().collect())
+                            .collect::<Vec<Vec<Float>>>(),
+                    )
+                    .map_err(LadduError::NumpyError)?)
+                })
+                .transpose()
         }
         /// A status message from the optimizer at the end of the algorithm
         ///
@@ -3844,10 +3856,15 @@ pub(crate) mod laddu {
             Status(ganesh::Status::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Status(deserialize(state.as_bytes()).unwrap());
+            *self = Status(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
         /// Converts a Status into a Python dictionary
@@ -3862,8 +3879,8 @@ pub(crate) mod laddu {
             dict.set_item("err", self.err(py))?;
             dict.set_item("x0", self.x0(py))?;
             dict.set_item("fx", self.fx())?;
-            dict.set_item("cov", self.cov(py))?;
-            dict.set_item("hess", self.hess(py))?;
+            dict.set_item("cov", self.cov(py)?)?;
+            dict.set_item("hess", self.hess(py)?)?;
             dict.set_item("message", self.message())?;
             dict.set_item("converged", self.converged())?;
             dict.set_item("bounds", self.bounds())?;
@@ -3906,9 +3923,9 @@ pub(crate) mod laddu {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray3<Float>> {
+        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
             let chain = self.0.get_chain(burn, thin);
-            PyArray3::from_vec3(
+            Ok(PyArray3::from_vec3(
                 py,
                 &chain
                     .iter()
@@ -3920,7 +3937,7 @@ pub(crate) mod laddu {
                     })
                     .collect::<Vec<_>>(),
             )
-            .unwrap()
+            .map_err(LadduError::NumpyError)?)
         }
         /// Get the contents of the Ensemble, flattened over walkers
         ///
@@ -3943,16 +3960,16 @@ pub(crate) mod laddu {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray2<Float>> {
+        ) -> PyResult<Bound<'py, PyArray2<Float>>> {
             let chain = self.0.get_flat_chain(burn, thin);
-            PyArray2::from_vec2(
+            Ok(PyArray2::from_vec2(
                 py,
                 &chain
                     .iter()
                     .map(|step| step.data.as_vec().to_vec())
                     .collect::<Vec<_>>(),
             )
-            .unwrap()
+            .map_err(LadduError::NumpyError)?)
         }
         /// Save the ensemble to a file
         ///
@@ -4004,10 +4021,15 @@ pub(crate) mod laddu {
             Ensemble(ganesh::mcmc::Ensemble::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Ensemble(deserialize(state.as_bytes()).unwrap());
+            *self = Ensemble(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
         /// Calculate the integrated autocorrelation time for each parameter according to
@@ -4357,15 +4379,15 @@ pub(crate) mod laddu {
         r: &str,
         angles: &Angles,
         polarization: &Polarization,
-    ) -> Amplitude {
-        Amplitude(rust::amplitudes::zlm::Zlm::new(
+    ) -> PyResult<Amplitude> {
+        Ok(Amplitude(rust::amplitudes::zlm::Zlm::new(
             name,
             l,
             m,
-            r.parse().unwrap(),
+            r.parse()?,
             &angles.0,
             &polarization.0,
-        ))
+        )))
     }
 
     /// An relativistic Breit-Wigner Amplitude
@@ -4802,15 +4824,21 @@ impl Observer<()> for crate::python::laddu::PyObserver {
                     (step, crate::python::laddu::Status(status.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Status>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *status = new_status;
@@ -4835,15 +4863,21 @@ impl Observer<ThreadPool> for crate::python::laddu::PyObserver {
                     (step, crate::python::laddu::Status(status.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Status>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *status = new_status;
@@ -4871,15 +4905,21 @@ impl MCMCObserver<()> for crate::python::laddu::PyMCMCObserver {
                     (step, crate::python::laddu::Ensemble(ensemble.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Ensemble>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Ensemble\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *ensemble = new_ensemble;
@@ -4903,15 +4943,21 @@ impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
                     (step, crate::python::laddu::Ensemble(ensemble.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Ensemble>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Ensemble\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *ensemble = new_ensemble;

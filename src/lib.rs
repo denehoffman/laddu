@@ -274,6 +274,7 @@
 
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
+use bincode::ErrorKind;
 use ganesh::mcmc::Ensemble;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
@@ -369,6 +370,38 @@ pub enum LadduError {
         /// Name of amplitude which is already registered
         name: String,
     },
+    /// An error which occurs when the user tries to use an unregistered amplitude.
+    #[error("No registered amplitude with name \"{name}\"!")]
+    AmplitudeNotFoundError {
+        /// Name of amplitude which failed lookup
+        name: String,
+    },
+    /// An error which occurs when the user tries to parse an invalid string of text, typically
+    /// into an enum variant.
+    #[error("Failed to parse string: \"{name}\" does not correspond to a valid \"{object}\"!")]
+    ParseError {
+        /// The string which was parsed
+        name: String,
+        /// The name of the object it failed to parse into
+        object: String,
+    },
+    /// An error returned if the input dataset is missing a required column
+    #[error("Data is missing a required column: \"{column}\"!")]
+    MissingColumnError {
+        /// The name of the column which was not found in the dataset
+        column: String,
+    },
+    /// An error returned if the given column has the wrong datatype
+    #[error("Column \"{column}\" has the wrong datatype (expected \"{expected}\")!")]
+    ColumnTypeError {
+        /// The name of the column which was not found in the dataset
+        column: String,
+        /// The expected data type
+        expected: String,
+    },
+    /// An error returned by the Rust de(serializer)
+    #[error("(De)Serialization error: {0}")]
+    SerdeError(#[from] Box<ErrorKind>),
     /// An error returned by the Python pickle (de)serializer
     #[error("Pickle conversion error: {0}")]
     PickleError(#[from] serde_pickle::Error),
@@ -376,6 +409,10 @@ pub enum LadduError {
     #[cfg(feature = "rayon")]
     #[error("Error building thread pool: {0}")]
     ThreadPoolError(#[from] rayon::ThreadPoolBuildError),
+    /// An error type for [`numpy`]-related conversions
+    #[cfg(feature = "numpy")]
+    #[error("Numpy error: {0}")]
+    NumpyError(#[from] numpy::FromVecError),
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
@@ -397,16 +434,22 @@ impl From<LadduError> for PyErr {
         use pyo3::exceptions::*;
         let err_string = err.to_string();
         match err {
-            LadduError::LookupError(_) | LadduError::RegistrationError { .. } => {
-                PyValueError::new_err(err_string)
-            }
+            LadduError::LookupError(_)
+            | LadduError::RegistrationError { .. }
+            | LadduError::AmplitudeNotFoundError { .. }
+            | LadduError::ParseError { .. } => PyValueError::new_err(err_string),
             LadduError::ParquetError(_)
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
+            | LadduError::SerdeError(_)
+            | LadduError::MissingColumnError { .. }
+            | LadduError::ColumnTypeError { .. }
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
             #[cfg(feature = "rayon")]
             LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
+            #[cfg(feature = "numpy")]
+            LadduError::NumpyError(_) => PyException::new_err(err_string),
         }
     }
 }
