@@ -19,12 +19,35 @@ jobs:
         run: rustup update stable
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate code coverage
+      - name: Generate Rust code coverage
         run: cargo llvm-cov --workspace --codecov --output-path codecov.json
-      - name: Upload coverage to Codecov
+      - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
           files: codecov.json
+          fail_ci_if_error: true
+          verbose: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        run: |
+          uv python install
+          uv venv
+          source .venv/bin/activate
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          args: -r --uv
+      - name: Install pytest
+        run: uv pip install pytest pytest-cov
+      - name: Generate Python code coverage
+        run: .venv/bin/pytest --cov --cov-report=json
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          files: coverage.json
           fail_ci_if_error: true
           verbose: true
