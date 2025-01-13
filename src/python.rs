@@ -2046,8 +2046,8 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, dataset: &Dataset) -> PyResult<Evaluator> {
-            Ok(Evaluator(self.0.load(&dataset.0)))
+        fn load(&self, dataset: &Dataset) -> Evaluator {
+            Evaluator(self.0.load(&dataset.0))
         }
         /// Save the Model to a file
         ///
@@ -2657,12 +2657,12 @@ pub(crate) mod laddu {
     impl NLL {
         #[new]
         #[pyo3(signature = (model, ds_data, ds_accmc))]
-        fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> PyResult<Self> {
-            Ok(Self(rust::likelihoods::NLL::new(
+        fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> Self {
+            Self(rust::likelihoods::NLL::new(
                 &model.0,
                 &ds_data.0,
                 &ds_accmc.0,
-            )))
+            ))
         }
         /// The underlying signal dataset used in calculating the NLL
         ///
