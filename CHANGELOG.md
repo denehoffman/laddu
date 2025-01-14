@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17](https://github.com/denehoffman/laddu/compare/v0.1.16...v0.1.17) - 2025-01-14
+
+### Added
+
+- move binning functions to `utils`
+- add `PiecewiseScalar`, `PiecewiseComplexScalar`, and `PiecewisePolarComplexScalar` amplitudes
+- add PyVariable to simplify python functions which need to take generic `Variable`s
+- improve error handling by getting rid of `unwrap`s wherever possible
+
+### Fixed
+
+- forgot to remove the error types for data reading
+- replace `f64` with `Float` in `generate_bin_edges`
+- remove `PyResult` on methods which no longer produce errors
+- remove requirement that pickled files end in ".pickle" or ".pkl"
+
+### Other
+
+- revert changes to data loading, it's twice as slow
+- fix coverage.yml to hopefully include python test coverage
+- fix some python doc links
+- change test angle for polar complex scalar
+- upload coverage for Python code alongside Rust
+- update Python documentation to include information about raised exceptions
+- update `arrow` and `parquet` to latest version
+
 ## [0.1.16](https://github.com/denehoffman/laddu/compare/v0.1.15...v0.1.16) - 2025-01-05
 
 ### Added
