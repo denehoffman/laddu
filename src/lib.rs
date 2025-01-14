@@ -385,20 +385,6 @@ pub enum LadduError {
         /// The name of the object it failed to parse into
         object: String,
     },
-    /// An error returned if the input dataset is missing a required column
-    #[error("Data is missing a required column: \"{column}\"!")]
-    MissingColumnError {
-        /// The name of the column which was not found in the dataset
-        column: String,
-    },
-    /// An error returned if the given column has the wrong datatype
-    #[error("Column \"{column}\" has the wrong datatype (expected \"{expected}\")!")]
-    ColumnTypeError {
-        /// The name of the column which was not found in the dataset
-        column: String,
-        /// The expected data type
-        expected: String,
-    },
     /// An error returned by the Rust de(serializer)
     #[error("(De)Serialization error: {0}")]
     SerdeError(#[from] Box<ErrorKind>),
@@ -442,8 +428,6 @@ impl From<LadduError> for PyErr {
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
             | LadduError::SerdeError(_)
-            | LadduError::MissingColumnError { .. }
-            | LadduError::ColumnTypeError { .. }
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
             #[cfg(feature = "rayon")]
