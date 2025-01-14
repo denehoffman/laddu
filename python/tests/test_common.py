@@ -7,7 +7,6 @@ from laddu import (
     Vector3,
     Dataset,
     parameter,
-    constant,
 )
 import numpy as np
 import pytest
@@ -90,7 +89,7 @@ def test_polar_complex_scalar_creation_and_evaluation():
     model = manager.model(aid)
     evaluator = model.load(dataset)
     r = 2.0
-    theta = np.pi / 4.0
+    theta = np.pi / 4.3
     result = evaluator.evaluate([r, theta])
     assert pytest.approx(result[0].real) == r * np.cos(theta)
     assert pytest.approx(result[0].imag) == r * np.sin(theta)
@@ -104,7 +103,7 @@ def test_polar_complex_scalar_gradient():
     model = manager.model(aid)
     evaluator = model.load(dataset)
     r = 2.0
-    theta = np.pi / 4.0
+    theta = np.pi / 4.3
     gradient = evaluator.evaluate_gradient([r, theta])
     assert pytest.approx(gradient[0][0].real) == np.cos(theta)
     assert pytest.approx(gradient[0][0].imag) == np.sin(theta)

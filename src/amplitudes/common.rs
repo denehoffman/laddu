@@ -261,7 +261,7 @@ mod tests {
         let evaluator = model.load(&dataset);
 
         let r = 2.0;
-        let theta = PI / 4.0;
+        let theta = PI / 4.3;
         let params = vec![r, theta];
         let result = evaluator.evaluate(&params);
 
@@ -283,7 +283,7 @@ mod tests {
         let evaluator = model.load(&dataset);
 
         let r = 2.0;
-        let theta = PI / 4.0;
+        let theta = PI / 4.3;
         let params = vec![r, theta];
         let gradient = evaluator.evaluate_gradient(&params);
 
