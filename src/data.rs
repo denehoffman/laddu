@@ -310,7 +310,7 @@ impl Dataset {
     }
 }
 
-fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<Event, LadduError> {
+fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     let mut p4s = Vec::new();
     let mut eps = Vec::new();
 
@@ -332,51 +332,31 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<Event, LadduError> 
     for i in 0..p4_count {
         let e = batch
             .column_by_name(&format!("p4_{}_E", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("p4_{}_E", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("p4_{}_E", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         let px = batch
             .column_by_name(&format!("p4_{}_Px", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("p4_{}_Px", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("p4_{}_Px", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         let py = batch
             .column_by_name(&format!("p4_{}_Py", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("p4_{}_Py", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("p4_{}_Py", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         let pz = batch
             .column_by_name(&format!("p4_{}_Pz", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("p4_{}_Pz", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("p4_{}_Pz", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         p4s.push(Vector4::new(px, py, pz, e));
     }
@@ -385,39 +365,24 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<Event, LadduError> 
     for i in 0..eps_count {
         let x = batch
             .column_by_name(&format!("eps_{}_x", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("eps_{}_x", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("eps_{}_x", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         let y = batch
             .column_by_name(&format!("eps_{}_y", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("eps_{}_y", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("eps_{}_y", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         let z = batch
             .column_by_name(&format!("eps_{}_z", i))
-            .ok_or(LadduError::MissingColumnError {
-                column: format!("eps_{}_z", i),
-            })?
+            .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or(LadduError::ColumnTypeError {
-                column: format!("eps_{}_z", i),
-                expected: "f32".to_string(),
-            })?
+            .unwrap()
             .value(row) as Float;
         eps.push(Vector3::new(x, y, z));
     }
@@ -429,7 +394,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Result<Event, LadduError> 
         .unwrap()
         .value(row) as Float;
 
-    Ok(Event { p4s, eps, weight })
+    Event { p4s, eps, weight }
 }
 
 /// Open a Parquet file and read the data into a [`Dataset`].
@@ -449,12 +414,12 @@ pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
 
             // Process each row in the batch
             for row in 0..num_rows {
-                let event = batch_to_event(&batch, row).map(Arc::new);
-                local_events.push(event);
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
-        .collect::<Result<Vec<Arc<Event>>, LadduError>>()?;
+        .collect();
     Ok(Arc::new(Dataset { events }))
 }
 
@@ -475,12 +440,12 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
 
             // Process each row in the batch
             for row in 0..num_rows {
-                let event = batch_to_event(&batch, row).map(Arc::new);
-                local_events.push(event);
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
             }
             local_events
         })
-        .collect::<Result<Vec<Arc<Event>>, LadduError>>()?;
+        .collect();
     Ok(Arc::new(Dataset { events }))
 }
 

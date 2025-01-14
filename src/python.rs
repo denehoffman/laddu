@@ -1107,7 +1107,13 @@ pub(crate) mod laddu {
     /// Raises
     /// ------
     /// IOError
-    ///     If any of the columns are not found or have incompatible types
+    ///     If the file could not be read
+    ///
+    /// Warnings
+    /// --------
+    /// This method will panic/fail if the columns do not have the correct names or data types.
+    /// There is currently no way to make this nicer without a large performance dip (if you find a
+    /// way, please open a PR).
     ///
     /// Notes
     /// -----
