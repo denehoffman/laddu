@@ -4343,7 +4343,7 @@ pub(crate) mod laddu {
     ///
     /// Returns
     /// -------
-    /// ParameterLike
+    /// laddu.ParameterLike
     ///     An object that can be used as the input for many Amplitude constructors
     ///
     /// Notes
@@ -4364,7 +4364,7 @@ pub(crate) mod laddu {
     ///
     /// Returns
     /// -------
-    /// ParameterLike
+    /// laddu.ParameterLike
     ///     An object that can be used as the input for many Amplitude constructors
     ///
     #[pyfunction]
@@ -4378,13 +4378,13 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// value : ParameterLike
+    /// value : laddu.ParameterLike
     ///     The scalar parameter contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4403,13 +4403,13 @@ pub(crate) mod laddu {
     ///     The Amplitude name
     /// re: ParameterLike
     ///     The real part of the complex value contained in the Amplitude
-    /// im: ParameterLike
+    /// im: laddu.ParameterLike
     ///     The imaginary part of the complex value contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4428,15 +4428,15 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// r: ParameterLike
+    /// r: laddu.ParameterLike
     ///     The magnitude of the complex value contained in the Amplitude
-    /// theta: ParameterLike
+    /// theta: laddu.ParameterLike
     ///     The argument of the complex value contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4461,13 +4461,13 @@ pub(crate) mod laddu {
     ///     The total orbital momentum (:math:`l \geq 0`)
     /// m : int
     ///     The orbital moment (:math:`-l \leq m \leq l`)
-    /// angles : Angles
+    /// angles : laddu.Angles
     ///     The spherical angles to use in the calculation
     ///     
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4493,15 +4493,15 @@ pub(crate) mod laddu {
     ///     The orbital moment (:math:`-l \leq m \leq l`)
     /// r : {'+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'}
     ///     The reflectivity (related to naturality of parity exchange)
-    /// angles : Angles
+    /// angles : laddu.Angles
     ///     The spherical angles to use in the calculation
-    /// polarization : Polarization
+    /// polarization : laddu.Polarization
     ///     The beam polarization to use in the calculation
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// Raises
     /// ------
@@ -4545,23 +4545,23 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// mass : ParameterLike
+    /// mass : laddu.ParameterLike
     ///     The mass of the resonance
-    /// width : ParameterLike
+    /// width : laddu.ParameterLike
     ///     The (nonrelativistic) width of the resonance
     /// l : int
     ///     The total orbital momentum (:math:`l > 0`)
-    /// daughter_1_mass : Mass
+    /// daughter_1_mass : laddu.Mass
     ///     The mass of the first decay product
-    /// daughter_2_mass : Mass
+    /// daughter_2_mass : laddu.Mass
     ///     The mass of the second decay product
-    /// resonance_mass: Mass
+    /// resonance_mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4594,17 +4594,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4666,17 +4666,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4732,17 +4732,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4793,17 +4793,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4850,17 +4850,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4909,17 +4909,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
