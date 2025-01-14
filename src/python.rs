@@ -4395,13 +4395,70 @@ pub(crate) mod laddu {
         Amplitude(rust::amplitudes::common::Scalar::new(name, value.0))
     }
 
-    /// An Amplitude which represents a complex scalar value
+    /// An Amplitude which represents a piecewise function of single scalar values
     ///
     /// Parameters
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// re: ParameterLike
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of ParameterLike
+    ///     The scalar parameters contained in each bin of the Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewiseScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<ParameterLike>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewiseScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values.into_iter().map(|value| value.0).collect(),
+            ),
+        ))
+    }
+
+    /// An Amplitude which represents a complex value
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// re: laddu.ParameterLike
     ///     The real part of the complex value contained in the Amplitude
     /// im: laddu.ParameterLike
     ///     The imaginary part of the complex value contained in the Amplitude
@@ -4419,6 +4476,67 @@ pub(crate) mod laddu {
     fn ComplexScalar(name: &str, re: ParameterLike, im: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::ComplexScalar::new(
             name, re.0, im.0,
+        ))
+    }
+
+    /// An Amplitude which represents a piecewise function of complex values
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of tuple of ParameterLike
+    ///     The complex parameters contained in each bin of the Amplitude (each tuple contains the
+    ///     real and imaginary part of a single bin)
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewiseComplexScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<(ParameterLike, ParameterLike)>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewiseComplexScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values
+                    .into_iter()
+                    .map(|(value_re, value_im)| (value_re.0, value_im.0))
+                    .collect(),
+            ),
         ))
     }
 
@@ -4446,6 +4564,67 @@ pub(crate) mod laddu {
     fn PolarComplexScalar(name: &str, r: ParameterLike, theta: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::PolarComplexScalar::new(
             name, r.0, theta.0,
+        ))
+    }
+
+    /// An Amplitude which represents a piecewise function of polar complex values
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of tuple of ParameterLike
+    ///     The polar complex parameters contained in each bin of the Amplitude (each tuple contains the
+    ///     magnitude and argument of a single bin)
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewisePolarComplexScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<(ParameterLike, ParameterLike)>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewisePolarComplexScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values
+                    .into_iter()
+                    .map(|(value_re, value_im)| (value_re.0, value_im.0))
+                    .collect(),
+            ),
         ))
     }
 

@@ -25,6 +25,8 @@ pub mod breit_wigner;
 pub mod common;
 /// Amplitudes related to the K-Matrix formalism.
 pub mod kmatrix;
+/// Piecewise functions as amplitudes.
+pub mod piecewise;
 /// A spherical harmonic amplitude.
 pub mod ylm;
 /// A polarized spherical harmonic amplitude.
