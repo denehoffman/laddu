@@ -1,3 +1,5 @@
+use crate::traits::{FourMomentum, FourVector, ReadWrite, ThreeMomentum, ThreeVector, Variable};
+use crate::Float;
 use ganesh::{mcmc::MCMCObserver, Observer};
 use pyo3::{
     prelude::*,
@@ -5,22 +7,18 @@ use pyo3::{
 };
 #[cfg(feature = "rayon")]
 use rayon::ThreadPool;
+use std::sync::Arc;
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 pub(crate) mod laddu {
     use std::array;
-    use std::sync::Arc;
 
     use super::*;
     use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
     use crate::likelihoods::MCMCOptions;
     use crate::likelihoods::MinimizerOptions;
-    use crate::traits::ReadWrite;
-    use crate::utils::variables::Variable;
-    use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
-    use crate::Float;
     use crate::LadduError;
     use bincode::{deserialize, serialize};
     use fastrand::Rng;
@@ -41,6 +39,8 @@ pub(crate) mod laddu {
     use pyo3::types::{PyDict, PyList};
     #[cfg(feature = "rayon")]
     use rayon::ThreadPoolBuilder;
+    use serde::Deserialize;
+    use serde::Serialize;
 
     #[pyfunction]
     fn version() -> String {
@@ -990,11 +990,9 @@ pub(crate) mod laddu {
         }
         /// Separates a Dataset into histogram bins by a Variable value
         ///
-        /// Currently supports ``laddu.Mass`` and ``laddu.Mandelstam`` as the binning variable.
-        ///
         /// Parameters
         /// ----------
-        /// variable : Mass or Mandelstam
+        /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
         ///     The Variable by which each Event is binned
         /// bins : int
         ///     The number of equally-spaced bins
@@ -1009,12 +1007,16 @@ pub(crate) mod laddu {
         /// See Also
         /// --------
         /// laddu.Mass
+        /// laddu.CosTheta
+        /// laddu.Phi
+        /// laddu.PolAngle
+        /// laddu.PolMagnitude
         /// laddu.Mandelstam
         ///
         /// Raises
         /// ------
         /// TypeError
-        ///     If the selected `variable` is not compatible with binning
+        ///     If the given `variable` is not a valid variable
         ///
         #[pyo3(signature = (variable, bins, range))]
         fn bin_by(
@@ -1023,17 +1025,8 @@ pub(crate) mod laddu {
             bins: usize,
             range: (Float, Float),
         ) -> PyResult<BinnedDataset> {
-            if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
-                Ok(BinnedDataset(self.0.bin_by(py_mass.0.clone(), bins, range)))
-            } else if let Ok(py_mandelstam) = variable.extract::<PyRef<Mandelstam>>() {
-                Ok(BinnedDataset(self.0.bin_by(
-                    py_mandelstam.0.clone(),
-                    bins,
-                    range,
-                )))
-            } else {
-                return Err(PyTypeError::new_err("Unsupported variable!"));
-            }
+            let py_variable = variable.extract::<PyVariable>()?;
+            Ok(BinnedDataset(self.0.bin_by(py_variable, bins, range)))
         }
         /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
         ///
@@ -1139,6 +1132,22 @@ pub(crate) mod laddu {
         Ok(Dataset(rust::data::open(path)?))
     }
 
+    #[derive(FromPyObject, Clone, Serialize, Deserialize)]
+    pub(crate) enum PyVariable {
+        #[pyo3(transparent)]
+        Mass(Mass),
+        #[pyo3(transparent)]
+        CosTheta(CosTheta),
+        #[pyo3(transparent)]
+        Phi(Phi),
+        #[pyo3(transparent)]
+        PolAngle(PolAngle),
+        #[pyo3(transparent)]
+        PolMagnitude(PolMagnitude),
+        #[pyo3(transparent)]
+        Mandelstam(Mandelstam),
+    }
+
     /// The invariant mass of an arbitrary combination of constituent particles in an Event
     ///
     /// This variable is calculated by summing up the 4-momenta of each particle listed by index in
@@ -1154,8 +1163,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector4.m
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Mass(rust::utils::variables::Mass);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Mass(pub(crate) rust::utils::variables::Mass);
 
     #[pymethods]
     impl Mass {
@@ -1239,8 +1248,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector3.costheta
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct CosTheta(rust::utils::variables::CosTheta);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct CosTheta(pub(crate) rust::utils::variables::CosTheta);
 
     #[pymethods]
     impl CosTheta {
@@ -1338,8 +1347,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector3.phi
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Phi(rust::utils::variables::Phi);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Phi(pub(crate) rust::utils::variables::Phi);
 
     #[pymethods]
     impl Phi {
@@ -1480,8 +1489,8 @@ pub(crate) mod laddu {
     ///     are not `beam` or part of the `resonance`)
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct PolAngle(rust::utils::variables::PolAngle);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct PolAngle(pub(crate) rust::utils::variables::PolAngle);
 
     #[pymethods]
     impl PolAngle {
@@ -1536,8 +1545,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector3.mag
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct PolMagnitude(rust::utils::variables::PolMagnitude);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct PolMagnitude(pub(crate) rust::utils::variables::PolMagnitude);
 
     #[pymethods]
     impl PolMagnitude {
@@ -1665,8 +1674,8 @@ pub(crate) mod laddu {
     /// By default, the first equality is used if no particle lists are empty.
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Mandelstam(rust::utils::variables::Mandelstam);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Mandelstam(pub(crate) rust::utils::variables::Mandelstam);
 
     #[pymethods]
     impl Mandelstam {
@@ -5106,5 +5115,29 @@ impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
 impl FromPyObject<'_> for crate::python::laddu::PyMCMCObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(crate::python::laddu::PyMCMCObserver(ob.clone().into()))
+    }
+}
+
+impl Variable for crate::python::laddu::PyVariable {
+    fn value_on(&self, dataset: &Arc<crate::Dataset>) -> Vec<Float> {
+        match self {
+            laddu::PyVariable::Mass(mass) => mass.0.value_on(dataset),
+            laddu::PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),
+            laddu::PyVariable::Phi(phi) => phi.0.value_on(dataset),
+            laddu::PyVariable::PolAngle(pol_angle) => pol_angle.0.value_on(dataset),
+            laddu::PyVariable::PolMagnitude(pol_magnitude) => pol_magnitude.0.value_on(dataset),
+            laddu::PyVariable::Mandelstam(mandelstam) => mandelstam.0.value_on(dataset),
+        }
+    }
+
+    fn value(&self, event: &crate::Event) -> Float {
+        match self {
+            laddu::PyVariable::Mass(mass) => mass.0.value(event),
+            laddu::PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),
+            laddu::PyVariable::Phi(phi) => phi.0.value(event),
+            laddu::PyVariable::PolAngle(pol_angle) => pol_angle.0.value(event),
+            laddu::PyVariable::PolMagnitude(pol_magnitude) => pol_magnitude.0.value(event),
+            laddu::PyVariable::Mandelstam(mandelstam) => mandelstam.0.value(event),
+        }
     }
 }
