@@ -101,7 +101,7 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
         let k_mat = self.k_mat(s);
         let c_mat = self.c_mat(s);
         let ikc_mat = i_mat.scale(self.product_of_poles(s)) + k_mat * c_mat;
-        let ikc_inv_mat = ikc_mat.try_inverse().unwrap();
+        let ikc_inv_mat = ikc_mat.try_inverse().expect("Matrix inverse failed!");
         ikc_inv_mat.row(channel).transpose()
     }
 

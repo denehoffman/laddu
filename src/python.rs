@@ -1,3 +1,5 @@
+use crate::traits::{FourMomentum, FourVector, ReadWrite, ThreeMomentum, ThreeVector, Variable};
+use crate::Float;
 use ganesh::{mcmc::MCMCObserver, Observer};
 use pyo3::{
     prelude::*,
@@ -5,23 +7,18 @@ use pyo3::{
 };
 #[cfg(feature = "rayon")]
 use rayon::ThreadPool;
+use std::sync::Arc;
 
 #[pymodule]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 pub(crate) mod laddu {
     use std::array;
-    use std::sync::Arc;
 
     use super::*;
     use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
     use crate::likelihoods::MCMCOptions;
     use crate::likelihoods::MinimizerOptions;
-    use crate::traits::ReadWrite;
-    use crate::utils::variables::Variable;
-    use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
-    use crate::Float;
-    #[cfg(feature = "rayon")]
     use crate::LadduError;
     use bincode::{deserialize, serialize};
     use fastrand::Rng;
@@ -42,6 +39,8 @@ pub(crate) mod laddu {
     use pyo3::types::{PyDict, PyList};
     #[cfg(feature = "rayon")]
     use rayon::ThreadPoolBuilder;
+    use serde::Deserialize;
+    use serde::Serialize;
 
     #[pyfunction]
     fn version() -> String {
@@ -991,11 +990,9 @@ pub(crate) mod laddu {
         }
         /// Separates a Dataset into histogram bins by a Variable value
         ///
-        /// Currently supports ``laddu.Mass`` and ``laddu.Mandelstam`` as the binning variable.
-        ///
         /// Parameters
         /// ----------
-        /// variable : Mass or Mandelstam
+        /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
         ///     The Variable by which each Event is binned
         /// bins : int
         ///     The number of equally-spaced bins
@@ -1010,7 +1007,16 @@ pub(crate) mod laddu {
         /// See Also
         /// --------
         /// laddu.Mass
+        /// laddu.CosTheta
+        /// laddu.Phi
+        /// laddu.PolAngle
+        /// laddu.PolMagnitude
         /// laddu.Mandelstam
+        ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If the given `variable` is not a valid variable
         ///
         #[pyo3(signature = (variable, bins, range))]
         fn bin_by(
@@ -1019,17 +1025,8 @@ pub(crate) mod laddu {
             bins: usize,
             range: (Float, Float),
         ) -> PyResult<BinnedDataset> {
-            if let Ok(py_mass) = variable.extract::<PyRef<Mass>>() {
-                Ok(BinnedDataset(self.0.bin_by(py_mass.0.clone(), bins, range)))
-            } else if let Ok(py_mandelstam) = variable.extract::<PyRef<Mandelstam>>() {
-                Ok(BinnedDataset(self.0.bin_by(
-                    py_mandelstam.0.clone(),
-                    bins,
-                    range,
-                )))
-            } else {
-                return Err(PyTypeError::new_err("Unsupported variable!"));
-            }
+            let py_variable = variable.extract::<PyVariable>()?;
+            Ok(BinnedDataset(self.0.bin_by(py_variable, bins, range)))
         }
         /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
         ///
@@ -1103,6 +1100,23 @@ pub(crate) mod laddu {
 
     /// Open a Dataset from a file
     ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///
+    /// Raises
+    /// ------
+    /// IOError
+    ///     If the file could not be read
+    ///
+    /// Warnings
+    /// --------
+    /// This method will panic/fail if the columns do not have the correct names or data types.
+    /// There is currently no way to make this nicer without a large performance dip (if you find a
+    /// way, please open a PR).
+    ///
+    /// Notes
+    /// -----
     /// Data should be stored in Parquet format with each column being filled with 32-bit floats
     ///
     /// Valid/required column names have the following formats:
@@ -1124,6 +1138,22 @@ pub(crate) mod laddu {
         Ok(Dataset(rust::data::open(path)?))
     }
 
+    #[derive(FromPyObject, Clone, Serialize, Deserialize)]
+    pub(crate) enum PyVariable {
+        #[pyo3(transparent)]
+        Mass(Mass),
+        #[pyo3(transparent)]
+        CosTheta(CosTheta),
+        #[pyo3(transparent)]
+        Phi(Phi),
+        #[pyo3(transparent)]
+        PolAngle(PolAngle),
+        #[pyo3(transparent)]
+        PolMagnitude(PolMagnitude),
+        #[pyo3(transparent)]
+        Mandelstam(Mandelstam),
+    }
+
     /// The invariant mass of an arbitrary combination of constituent particles in an Event
     ///
     /// This variable is calculated by summing up the 4-momenta of each particle listed by index in
@@ -1139,8 +1169,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector4.m
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Mass(rust::utils::variables::Mass);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Mass(pub(crate) rust::utils::variables::Mass);
 
     #[pymethods]
     impl Mass {
@@ -1214,13 +1244,18 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
+    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector3.costheta
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct CosTheta(rust::utils::variables::CosTheta);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct CosTheta(pub(crate) rust::utils::variables::CosTheta);
 
     #[pymethods]
     impl CosTheta {
@@ -1232,14 +1267,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::CosTheta::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::CosTheta::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The value of this Variable for the given Event
         ///
@@ -1307,13 +1342,19 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
+    ///
+    ///
     /// See Also
     /// --------
     /// laddu.utils.vectors.Vector3.phi
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Phi(rust::utils::variables::Phi);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Phi(pub(crate) rust::utils::variables::Phi);
 
     #[pymethods]
     impl Phi {
@@ -1325,14 +1366,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::Phi::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::Phi::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The value of this Variable for the given Event
         ///
@@ -1386,6 +1427,11 @@ pub(crate) mod laddu {
     /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
     ///     The frame to use in the  calculation
     ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `frame` is not one of the valid options
+    ///
     /// See Also
     /// --------
     /// laddu.CosTheta
@@ -1404,14 +1450,14 @@ pub(crate) mod laddu {
             daughter: Vec<usize>,
             resonance: Vec<usize>,
             frame: &str,
-        ) -> Self {
-            Self(rust::utils::variables::Angles::new(
+        ) -> PyResult<Self> {
+            Ok(Self(rust::utils::variables::Angles::new(
                 beam,
                 &recoil,
                 &daughter,
                 &resonance,
-                frame.parse().unwrap(),
-            ))
+                frame.parse()?,
+            )))
         }
         /// The Variable representing the cosine of the polar spherical decay angle
         ///
@@ -1449,8 +1495,8 @@ pub(crate) mod laddu {
     ///     are not `beam` or part of the `resonance`)
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct PolAngle(rust::utils::variables::PolAngle);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct PolAngle(pub(crate) rust::utils::variables::PolAngle);
 
     #[pymethods]
     impl PolAngle {
@@ -1505,8 +1551,8 @@ pub(crate) mod laddu {
     /// laddu.utils.vectors.Vector3.mag
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct PolMagnitude(rust::utils::variables::PolMagnitude);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct PolMagnitude(pub(crate) rust::utils::variables::PolMagnitude);
 
     #[pymethods]
     impl PolMagnitude {
@@ -1623,6 +1669,8 @@ pub(crate) mod laddu {
     /// ------
     /// Exception
     ///     If more than one particle list is empty
+    /// ValueError
+    ///     If `channel` is not one of the valid options
     ///
     /// Notes
     /// -----
@@ -1632,8 +1680,8 @@ pub(crate) mod laddu {
     /// By default, the first equality is used if no particle lists are empty.
     ///
     #[pyclass]
-    #[derive(Clone)]
-    struct Mandelstam(rust::utils::variables::Mandelstam);
+    #[derive(Clone, Serialize, Deserialize)]
+    pub(crate) struct Mandelstam(pub(crate) rust::utils::variables::Mandelstam);
 
     #[pymethods]
     impl Mandelstam {
@@ -1650,7 +1698,7 @@ pub(crate) mod laddu {
                 p2,
                 p3,
                 p4,
-                channel.parse().unwrap(),
+                channel.parse()?,
             )?))
         }
         /// The value of this Variable for the given Event
@@ -1949,6 +1997,11 @@ pub(crate) mod laddu {
         ///     An object which represents the underlying mathematical model and can be loaded with
         ///     a Dataset
         ///
+        /// Raises
+        /// ------
+        /// TypeError
+        ///     If the expression is not convertable to a Model
+        ///
         /// Notes
         /// -----
         /// While the given `expression` will be the one evaluated in the end, all registered
@@ -2008,8 +2061,8 @@ pub(crate) mod laddu {
         /// expression. These parameters will have no effect on evaluation, but they must be
         /// included in function calls.
         ///
-        fn load(&self, dataset: &Dataset) -> PyResult<Evaluator> {
-            Ok(Evaluator(self.0.load(&dataset.0)))
+        fn load(&self, dataset: &Dataset) -> Evaluator {
+            Evaluator(self.0.load(&dataset.0))
         }
         /// Save the Model to a file
         ///
@@ -2022,10 +2075,6 @@ pub(crate) mod laddu {
         /// ------
         /// IOError
         ///     If anything fails when trying to write the file
-        ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
@@ -2048,10 +2097,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to read the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
             Ok(Model(crate::amplitudes::Model::load_from(path)?))
@@ -2061,10 +2106,15 @@ pub(crate) mod laddu {
             Model(crate::amplitudes::Model::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Model(deserialize(state.as_bytes()).unwrap());
+            *self = Model(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
     }
@@ -2112,13 +2162,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.activate(&string_arg);
+                self.0.activate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.activate_many(&vec);
+                self.0.activate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2144,13 +2196,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.deactivate(&string_arg);
+                self.0.deactivate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.deactivate_many(&vec);
+                self.0.deactivate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2176,13 +2230,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.isolate(&string_arg);
+                self.0.isolate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.isolate_many(&vec);
+                self.0.isolate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2203,6 +2259,11 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     A ``numpy`` array of complex values for each Event in the Dataset
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate<'py>(
@@ -2241,6 +2302,12 @@ pub(crate) mod laddu {
         /// result : array_like
         ///     A ``numpy`` 2D array of complex values for each Event in the Dataset
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
+        ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
             &self,
@@ -2264,9 +2331,7 @@ pub(crate) mod laddu {
                                 .collect::<Vec<Vec<Complex<Float>>>>()
                         }),
                 )
-                .expect(
-                    "Gradients do not have the same length (please make an issue report on GitHub)",
-                ))
+                .map_err(LadduError::NumpyError)?)
             }
             #[cfg(not(feature = "rayon"))]
             {
@@ -2279,9 +2344,7 @@ pub(crate) mod laddu {
                         .map(|grad| grad.data.as_vec().to_vec())
                         .collect::<Vec<Vec<Complex<Float>>>>(),
                 )
-                .expect(
-                    "Gradients do not have the same length (please make an issue report on GitHub)",
-                ))
+                .map_err(LadduError::NumpyError)?)
             }
         }
     }
@@ -2609,12 +2672,12 @@ pub(crate) mod laddu {
     impl NLL {
         #[new]
         #[pyo3(signature = (model, ds_data, ds_accmc))]
-        fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> PyResult<Self> {
-            Ok(Self(rust::likelihoods::NLL::new(
+        fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> Self {
+            Self(rust::likelihoods::NLL::new(
                 &model.0,
                 &ds_data.0,
                 &ds_accmc.0,
-            )))
+            ))
         }
         /// The underlying signal dataset used in calculating the NLL
         ///
@@ -2667,13 +2730,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.activate(&string_arg);
+                self.0.activate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.activate_many(&vec);
+                self.0.activate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2699,13 +2764,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.deactivate(&string_arg);
+                self.0.deactivate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.deactivate_many(&vec);
+                self.0.deactivate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2731,13 +2798,15 @@ pub(crate) mod laddu {
         /// ------
         /// TypeError
         ///     If `arg` is not a str or list of str
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
         ///
         fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
             if let Ok(string_arg) = arg.extract::<String>() {
-                self.0.isolate(&string_arg);
+                self.0.isolate(&string_arg)?;
             } else if let Ok(list_arg) = arg.downcast::<PyList>() {
                 let vec: Vec<String> = list_arg.extract()?;
-                self.0.isolate_many(&vec);
+                self.0.isolate_many(&vec)?;
             } else {
                 return Err(PyTypeError::new_err(
                     "Argument must be either a string or a list of strings",
@@ -2762,6 +2831,11 @@ pub(crate) mod laddu {
         /// -------
         /// result : float
         ///     The total negative log-likelihood
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
@@ -2791,6 +2865,12 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     A ``numpy`` array of representing the gradient of the negative log-likelihood over each parameter
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
@@ -2838,6 +2918,12 @@ pub(crate) mod laddu {
         /// -------
         /// result : array_like
         ///     Weights for every Monte Carlo event which represent the fit to data
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
         fn project<'py>(
@@ -2902,6 +2988,14 @@ pub(crate) mod laddu {
         /// TypeError
         ///     If `arg` is not a str or list of str
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
+        /// ValueError
+        ///     If `arg` or any items of `arg` are not registered Amplitudes
+        ///
         #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
         fn project_with<'py>(
             &self,
@@ -2935,7 +3029,7 @@ pub(crate) mod laddu {
                                 &names,
                                 mc_evaluator.map(|pyeval| pyeval.0.clone()),
                             )
-                        })
+                        })?
                         .as_slice(),
                 ))
             }
@@ -2948,7 +3042,7 @@ pub(crate) mod laddu {
                             &parameters,
                             &names,
                             mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                        )
+                        )?
                         .as_slice(),
                 ))
             }
@@ -3018,6 +3112,18 @@ pub(crate) mod laddu {
         /// threads : int, optional
         ///     The number of threads to use (setting this to None will use all available CPUs)
         ///
+        /// Returns
+        /// -------
+        /// Status
+        ///     The status of the minimization algorithm at termination
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
+        ///
         #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -3083,6 +3189,13 @@ pub(crate) mod laddu {
         /// -------
         /// Ensemble
         ///     The resulting ensemble of walkers
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
         ///
         /// Notes
         /// -----
@@ -3378,6 +3491,11 @@ pub(crate) mod laddu {
         /// result : float
         ///     The total negative log-likelihood summed over all terms
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate(&self, parameters: Vec<Float>, threads: Option<usize>) -> PyResult<Float> {
             #[cfg(feature = "rayon")]
@@ -3407,6 +3525,12 @@ pub(crate) mod laddu {
         /// result : array_like
         ///     A ``numpy`` array of representing the gradient of the sum of all terms in the
         ///     evaluator
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool or problem creating the resulting
+        ///     ``numpy`` array
         ///
         #[pyo3(signature = (parameters, *, threads=None))]
         fn evaluate_gradient<'py>(
@@ -3500,6 +3624,18 @@ pub(crate) mod laddu {
         /// threads : int, optional
         ///     The number of threads to use (setting this to None will use all available CPUs)
         ///
+        /// Returns
+        /// -------
+        /// Status
+        ///     The status of the minimization algorithm at termination
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
+        ///
         #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
         #[allow(clippy::too_many_arguments)]
         fn minimize(
@@ -3566,6 +3702,13 @@ pub(crate) mod laddu {
         /// -------
         /// Ensemble
         ///     The resulting ensemble of walkers
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was an error building the thread pool
+        /// ValueError
+        ///     If any kwargs are invalid
         ///
         /// Notes
         /// -----
@@ -3704,17 +3847,26 @@ pub(crate) mod laddu {
         /// -------
         /// array_like or None
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
-            self.0.cov.clone().map(|cov| {
-                PyArray2::from_vec2(
-                    py,
-                    &cov.row_iter()
-                        .map(|row| row.iter().cloned().collect())
-                        .collect::<Vec<Vec<Float>>>(),
-                )
-                .unwrap()
-            })
+        fn cov<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
+            self.0
+                .cov
+                .clone()
+                .map(|cov| {
+                    Ok(PyArray2::from_vec2(
+                        py,
+                        &cov.row_iter()
+                            .map(|row| row.iter().cloned().collect())
+                            .collect::<Vec<Vec<Float>>>(),
+                    )
+                    .map_err(LadduError::NumpyError)?)
+                })
+                .transpose()
         }
         /// The Hessian matrix (``None`` if it wasn't calculated)
         ///
@@ -3722,18 +3874,27 @@ pub(crate) mod laddu {
         /// -------
         /// array_like or None
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
-            self.0.hess.clone().map(|hess| {
-                PyArray2::from_vec2(
-                    py,
-                    &hess
-                        .row_iter()
-                        .map(|row| row.iter().cloned().collect())
-                        .collect::<Vec<Vec<Float>>>(),
-                )
-                .unwrap()
-            })
+        fn hess<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
+            self.0
+                .hess
+                .clone()
+                .map(|hess| {
+                    Ok(PyArray2::from_vec2(
+                        py,
+                        &hess
+                            .row_iter()
+                            .map(|row| row.iter().cloned().collect())
+                            .collect::<Vec<Vec<Float>>>(),
+                    )
+                    .map_err(LadduError::NumpyError)?)
+                })
+                .transpose()
         }
         /// A status message from the optimizer at the end of the algorithm
         ///
@@ -3806,10 +3967,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to write the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
             Ok(())
@@ -3831,10 +3988,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to read the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
             Ok(Status(ganesh::Status::load_from(path)?))
@@ -3844,10 +3997,15 @@ pub(crate) mod laddu {
             Status(ganesh::Status::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Status(deserialize(state.as_bytes()).unwrap());
+            *self = Status(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
         /// Converts a Status into a Python dictionary
@@ -3856,14 +4014,19 @@ pub(crate) mod laddu {
         /// -------
         /// dict
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
             let dict = PyDict::new(py);
             dict.set_item("x", self.x(py))?;
             dict.set_item("err", self.err(py))?;
             dict.set_item("x0", self.x0(py))?;
             dict.set_item("fx", self.fx())?;
-            dict.set_item("cov", self.cov(py))?;
-            dict.set_item("hess", self.hess(py))?;
+            dict.set_item("cov", self.cov(py)?)?;
+            dict.set_item("hess", self.hess(py)?)?;
             dict.set_item("message", self.message())?;
             dict.set_item("converged", self.converged())?;
             dict.set_item("bounds", self.bounds())?;
@@ -3900,15 +4063,20 @@ pub(crate) mod laddu {
         /// array_like
         ///     An array with dimension ``(n_walkers, n_steps, n_parameters)``
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[pyo3(signature = (*, burn = 0, thin = 1))]
         fn get_chain<'py>(
             &self,
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray3<Float>> {
+        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
             let chain = self.0.get_chain(burn, thin);
-            PyArray3::from_vec3(
+            Ok(PyArray3::from_vec3(
                 py,
                 &chain
                     .iter()
@@ -3920,7 +4088,7 @@ pub(crate) mod laddu {
                     })
                     .collect::<Vec<_>>(),
             )
-            .unwrap()
+            .map_err(LadduError::NumpyError)?)
         }
         /// Get the contents of the Ensemble, flattened over walkers
         ///
@@ -3937,22 +4105,27 @@ pub(crate) mod laddu {
         /// array_like
         ///     An array with dimension ``(n_steps, n_parameters)``
         ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
         #[pyo3(signature = (*, burn = 0, thin = 1))]
         fn get_flat_chain<'py>(
             &self,
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray2<Float>> {
+        ) -> PyResult<Bound<'py, PyArray2<Float>>> {
             let chain = self.0.get_flat_chain(burn, thin);
-            PyArray2::from_vec2(
+            Ok(PyArray2::from_vec2(
                 py,
                 &chain
                     .iter()
                     .map(|step| step.data.as_vec().to_vec())
                     .collect::<Vec<_>>(),
             )
-            .unwrap()
+            .map_err(LadduError::NumpyError)?)
         }
         /// Save the ensemble to a file
         ///
@@ -3965,10 +4138,6 @@ pub(crate) mod laddu {
         /// ------
         /// IOError
         ///     If anything fails when trying to write the file
-        ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
         ///
         fn save_as(&self, path: &str) -> PyResult<()> {
             self.0.save_as(path)?;
@@ -3991,10 +4160,6 @@ pub(crate) mod laddu {
         /// IOError
         ///     If anything fails when trying to read the file
         ///
-        /// Notes
-        /// -----
-        /// Valid file path names must have either the ".pickle" or ".pkl" extension
-        ///
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
             Ok(Ensemble(ganesh::mcmc::Ensemble::load_from(path)?))
@@ -4004,10 +4169,15 @@ pub(crate) mod laddu {
             Ensemble(ganesh::mcmc::Ensemble::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(py, serialize(&self.0).unwrap().as_slice()))
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Ensemble(deserialize(state.as_bytes()).unwrap());
+            *self = Ensemble(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
             Ok(())
         }
         /// Calculate the integrated autocorrelation time for each parameter according to
@@ -4179,7 +4349,7 @@ pub(crate) mod laddu {
     ///
     /// Returns
     /// -------
-    /// ParameterLike
+    /// laddu.ParameterLike
     ///     An object that can be used as the input for many Amplitude constructors
     ///
     /// Notes
@@ -4200,7 +4370,7 @@ pub(crate) mod laddu {
     ///
     /// Returns
     /// -------
-    /// ParameterLike
+    /// laddu.ParameterLike
     ///     An object that can be used as the input for many Amplitude constructors
     ///
     #[pyfunction]
@@ -4214,13 +4384,13 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// value : ParameterLike
+    /// value : laddu.ParameterLike
     ///     The scalar parameter contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4231,21 +4401,78 @@ pub(crate) mod laddu {
         Amplitude(rust::amplitudes::common::Scalar::new(name, value.0))
     }
 
-    /// An Amplitude which represents a complex scalar value
+    /// An Amplitude which represents a piecewise function of single scalar values
     ///
     /// Parameters
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// re: ParameterLike
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of ParameterLike
+    ///     The scalar parameters contained in each bin of the Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewiseScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<ParameterLike>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewiseScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values.into_iter().map(|value| value.0).collect(),
+            ),
+        ))
+    }
+
+    /// An Amplitude which represents a complex value
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// re: laddu.ParameterLike
     ///     The real part of the complex value contained in the Amplitude
-    /// im: ParameterLike
+    /// im: laddu.ParameterLike
     ///     The imaginary part of the complex value contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4258,21 +4485,82 @@ pub(crate) mod laddu {
         ))
     }
 
+    /// An Amplitude which represents a piecewise function of complex values
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of tuple of ParameterLike
+    ///     The complex parameters contained in each bin of the Amplitude (each tuple contains the
+    ///     real and imaginary part of a single bin)
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewiseComplexScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<(ParameterLike, ParameterLike)>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewiseComplexScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values
+                    .into_iter()
+                    .map(|(value_re, value_im)| (value_re.0, value_im.0))
+                    .collect(),
+            ),
+        ))
+    }
+
     /// An Amplitude which represents a complex scalar value in polar form
     ///
     /// Parameters
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// r: ParameterLike
+    /// r: laddu.ParameterLike
     ///     The magnitude of the complex value contained in the Amplitude
-    /// theta: ParameterLike
+    /// theta: laddu.ParameterLike
     ///     The argument of the complex value contained in the Amplitude
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4282,6 +4570,67 @@ pub(crate) mod laddu {
     fn PolarComplexScalar(name: &str, r: ParameterLike, theta: ParameterLike) -> Amplitude {
         Amplitude(rust::amplitudes::common::PolarComplexScalar::new(
             name, r.0, theta.0,
+        ))
+    }
+
+    /// An Amplitude which represents a piecewise function of polar complex values
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     The Amplitude name
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The variable to use for binning
+    /// bins: usize
+    ///     The number of bins to use
+    /// range: tuple of float
+    ///     The minimum and maximum bin edges
+    /// values : list of tuple of ParameterLike
+    ///     The polar complex parameters contained in each bin of the Amplitude (each tuple contains the
+    ///     magnitude and argument of a single bin)
+    ///
+    /// Returns
+    /// -------
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// AssertionError
+    ///     If the number of bins does not match the number of parameters
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Manager
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    #[pyfunction]
+    fn PiecewisePolarComplexScalar(
+        name: &str,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+        values: Vec<(ParameterLike, ParameterLike)>,
+    ) -> PyResult<Amplitude> {
+        let variable = variable.extract::<PyVariable>()?;
+        Ok(Amplitude(
+            rust::amplitudes::piecewise::PiecewisePolarComplexScalar::new(
+                name,
+                &variable,
+                bins,
+                range,
+                values
+                    .into_iter()
+                    .map(|(value_re, value_im)| (value_re.0, value_im.0))
+                    .collect(),
+            ),
         ))
     }
 
@@ -4297,13 +4646,13 @@ pub(crate) mod laddu {
     ///     The total orbital momentum (:math:`l \geq 0`)
     /// m : int
     ///     The orbital moment (:math:`-l \leq m \leq l`)
-    /// angles : Angles
+    /// angles : laddu.Angles
     ///     The spherical angles to use in the calculation
     ///     
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4329,15 +4678,20 @@ pub(crate) mod laddu {
     ///     The orbital moment (:math:`-l \leq m \leq l`)
     /// r : {'+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'}
     ///     The reflectivity (related to naturality of parity exchange)
-    /// angles : Angles
+    /// angles : laddu.Angles
     ///     The spherical angles to use in the calculation
-    /// polarization : Polarization
+    /// polarization : laddu.Polarization
     ///     The beam polarization to use in the calculation
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If `r` is not one of the valid options
     ///
     /// See Also
     /// --------
@@ -4357,15 +4711,15 @@ pub(crate) mod laddu {
         r: &str,
         angles: &Angles,
         polarization: &Polarization,
-    ) -> Amplitude {
-        Amplitude(rust::amplitudes::zlm::Zlm::new(
+    ) -> PyResult<Amplitude> {
+        Ok(Amplitude(rust::amplitudes::zlm::Zlm::new(
             name,
             l,
             m,
-            r.parse().unwrap(),
+            r.parse()?,
             &angles.0,
             &polarization.0,
-        ))
+        )))
     }
 
     /// An relativistic Breit-Wigner Amplitude
@@ -4376,23 +4730,23 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// mass : ParameterLike
+    /// mass : laddu.ParameterLike
     ///     The mass of the resonance
-    /// width : ParameterLike
+    /// width : laddu.ParameterLike
     ///     The (nonrelativistic) width of the resonance
     /// l : int
     ///     The total orbital momentum (:math:`l > 0`)
-    /// daughter_1_mass : Mass
+    /// daughter_1_mass : laddu.Mass
     ///     The mass of the first decay product
-    /// daughter_2_mass : Mass
+    /// daughter_2_mass : laddu.Mass
     ///     The mass of the second decay product
-    /// resonance_mass: Mass
+    /// resonance_mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4425,17 +4779,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4497,17 +4851,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4563,17 +4917,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4624,17 +4978,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4681,17 +5035,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4740,17 +5094,17 @@ pub(crate) mod laddu {
     /// ----------
     /// name : str
     ///     The Amplitude name
-    /// couplings : list of list of ParameterLike
+    /// couplings : list of list of laddu.ParameterLike
     ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
     /// channel : int
     ///     The channel onto which the K-Matrix is projected
-    /// mass: Mass
+    /// mass: laddu.Mass
     ///     The total mass of the resonance
     ///
     /// Returns
     /// -------
-    /// Amplitude
-    ///     An Amplitude which can be registered by a ``Manager``
+    /// laddu.Amplitude
+    ///     An Amplitude which can be registered by a laddu.Manager
     ///
     /// See Also
     /// --------
@@ -4802,15 +5156,21 @@ impl Observer<()> for crate::python::laddu::PyObserver {
                     (step, crate::python::laddu::Status(status.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Status>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *status = new_status;
@@ -4835,15 +5195,21 @@ impl Observer<ThreadPool> for crate::python::laddu::PyObserver {
                     (step, crate::python::laddu::Status(status.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Status>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *status = new_status;
@@ -4871,15 +5237,21 @@ impl MCMCObserver<()> for crate::python::laddu::PyMCMCObserver {
                     (step, crate::python::laddu::Ensemble(ensemble.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Ensemble>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Ensemble\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *ensemble = new_ensemble;
@@ -4903,15 +5275,21 @@ impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
                     (step, crate::python::laddu::Ensemble(ensemble.clone())),
                     None,
                 )
-                .unwrap();
-            let res_tuple = res.downcast::<PyTuple>().unwrap();
+                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+            let res_tuple = res
+                .downcast::<PyTuple>()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
             let new_status = res_tuple
                 .get_item(0)
-                .unwrap()
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
                 .extract::<crate::python::laddu::Ensemble>()
-                .unwrap()
+                .expect("The first item returned from \"callback\" must be a \"laddu.Ensemble\"!")
                 .0;
-            let result = res_tuple.get_item(1).unwrap().extract::<bool>().unwrap();
+            let result = res_tuple
+                .get_item(1)
+                .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                .extract::<bool>()
+                .expect("The second item returned from \"callback\" must be a \"bool\"!");
             (new_status, result)
         });
         *ensemble = new_ensemble;
@@ -4922,5 +5300,29 @@ impl MCMCObserver<ThreadPool> for crate::python::laddu::PyMCMCObserver {
 impl FromPyObject<'_> for crate::python::laddu::PyMCMCObserver {
     fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(crate::python::laddu::PyMCMCObserver(ob.clone().into()))
+    }
+}
+
+impl Variable for crate::python::laddu::PyVariable {
+    fn value_on(&self, dataset: &Arc<crate::Dataset>) -> Vec<Float> {
+        match self {
+            laddu::PyVariable::Mass(mass) => mass.0.value_on(dataset),
+            laddu::PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),
+            laddu::PyVariable::Phi(phi) => phi.0.value_on(dataset),
+            laddu::PyVariable::PolAngle(pol_angle) => pol_angle.0.value_on(dataset),
+            laddu::PyVariable::PolMagnitude(pol_magnitude) => pol_magnitude.0.value_on(dataset),
+            laddu::PyVariable::Mandelstam(mandelstam) => mandelstam.0.value_on(dataset),
+        }
+    }
+
+    fn value(&self, event: &crate::Event) -> Float {
+        match self {
+            laddu::PyVariable::Mass(mass) => mass.0.value(event),
+            laddu::PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),
+            laddu::PyVariable::Phi(phi) => phi.0.value(event),
+            laddu::PyVariable::PolAngle(pol_angle) => pol_angle.0.value(event),
+            laddu::PyVariable::PolMagnitude(pol_magnitude) => pol_magnitude.0.value(event),
+            laddu::PyVariable::Mandelstam(mandelstam) => mandelstam.0.value(event),
+        }
     }
 }

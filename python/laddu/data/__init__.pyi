@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from laddu.utils.variables import Mass
+from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 from laddu.utils.vectors import Vector3, Vector4
 
 class Event:
@@ -20,7 +20,10 @@ class Dataset:
     def len(self) -> int: ...
     def weighted_len(self) -> float: ...
     def bin_by(
-        self, variable: Mass, bins: int, range: tuple[float, float]
+        self,
+        variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
+        bins: int,
+        range: tuple[float, float],
     ) -> BinnedDataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
 

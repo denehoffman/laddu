@@ -237,42 +237,58 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
 
 impl Resources {
     /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
-        self.active[self.amplitudes.get(name.as_ref()).unwrap().1] = true;
+    pub fn activate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
+        self.active[self
+            .amplitudes
+            .get(name.as_ref())
+            .ok_or(LadduError::AmplitudeNotFoundError {
+                name: name.as_ref().to_string(),
+            })?
+            .1] = true;
+        Ok(())
     }
     /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
         for name in names {
-            self.activate(name)
+            self.activate(name)?
         }
+        Ok(())
     }
     /// Activate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
     pub fn activate_all(&mut self) {
         self.active = vec![true; self.active.len()];
     }
     /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        self.active[self.amplitudes.get(name.as_ref()).unwrap().1] = false;
+    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
+        self.active[self
+            .amplitudes
+            .get(name.as_ref())
+            .ok_or(LadduError::AmplitudeNotFoundError {
+                name: name.as_ref().to_string(),
+            })?
+            .1] = false;
+        Ok(())
     }
     /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
         for name in names {
-            self.deactivate(name)
+            self.deactivate(name)?;
         }
+        Ok(())
     }
     /// Deactivate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
     pub fn deactivate_all(&mut self) {
         self.active = vec![false; self.active.len()];
     }
     /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
+    pub fn isolate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
         self.deactivate_all();
-        self.activate(name);
+        self.activate(name)
     }
     /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
         self.deactivate_all();
-        self.activate_many(names);
+        self.activate_many(names)
     }
     /// Register an [`Amplitude`](crate::amplitudes::Amplitude) with the [`Resources`] manager.
     /// This method should be called at the end of the
@@ -494,11 +510,11 @@ mod tests {
         assert!(resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.deactivate("amp1");
+        resources.deactivate("amp1").unwrap();
         assert!(!resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.activate("amp1");
+        resources.activate("amp1").unwrap();
         assert!(resources.active[amp1.1]);
 
         resources.deactivate_all();
@@ -509,7 +525,7 @@ mod tests {
         assert!(resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.isolate("amp1");
+        resources.isolate("amp1").unwrap();
         assert!(resources.active[amp1.1]);
         assert!(!resources.active[amp2.1]);
     }

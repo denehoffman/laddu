@@ -21,8 +21,8 @@ crate-type = ["cdylib", "rlib"]
 indexmap = { version = "2.6.0", features = ["serde"] }
 num = "0.4.3"
 nalgebra = "0.33.2"
-arrow = "53.3.0"
-parquet = "53.3.0"
+arrow = "54.0.0"
+parquet = "54.0.0"
 factorial = "0.4.0"
 parking_lot = "0.12.3"
 dyn-clone = "1.0.17"

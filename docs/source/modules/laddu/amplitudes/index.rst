@@ -11,6 +11,7 @@ amplitudes
    :caption: Amplitudes:
 
    common
+   piecewise
    ylm
    zlm
    breit_wigner
