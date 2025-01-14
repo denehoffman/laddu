@@ -12,8 +12,10 @@ use crate::{
 use super::Amplitude;
 
 fn generate_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
-    let bin_width = (range.1 - range.0) / bins as f64;
-    (0..=bins).map(|i| range.0 + i as f64 * bin_width).collect()
+    let bin_width = (range.1 - range.0) / bins as Float;
+    (0..=bins)
+        .map(|i| range.0 + i as Float * bin_width)
+        .collect()
 }
 
 fn get_index(value: Float, bin_edges: &[Float]) -> Option<usize> {
