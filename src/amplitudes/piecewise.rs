@@ -6,26 +6,11 @@ use crate::{
     data::Event,
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
+    utils::{get_bin_edges, get_bin_index},
     CosTheta, DVector, Float, LadduError, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, ScalarID,
 };
 
 use super::Amplitude;
-
-fn generate_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
-    let bin_width = (range.1 - range.0) / bins as Float;
-    (0..=bins)
-        .map(|i| range.0 + i as Float * bin_width)
-        .collect()
-}
-
-fn get_index(value: Float, bin_edges: &[Float]) -> Option<usize> {
-    if value < bin_edges[0] || value >= bin_edges[bin_edges.len() - 1] {
-        return None;
-    }
-    bin_edges
-        .windows(2)
-        .position(|edges| value >= edges[0] && value < edges[1])
-}
 
 /// A piecewise scalar-valued [`Amplitude`] which just contains a single parameter for each bin as its value.
 #[derive(Clone, Serialize, Deserialize)]
@@ -54,7 +39,7 @@ impl<V: Variable> PiecewiseScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: generate_bin_edges(bins, range),
+            bin_edges: get_bin_edges(bins, range),
             values,
             pids: Default::default(),
             bin_index: Default::default(),
@@ -78,7 +63,7 @@ macro_rules! impl_amplitude_for_piecewise_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
@@ -140,7 +125,7 @@ impl<V: Variable> PiecewiseComplexScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: generate_bin_edges(bins, range),
+            bin_edges: get_bin_edges(bins, range),
             re_ims,
             pids_re_im: Default::default(),
             bin_index: Default::default(),
@@ -165,7 +150,7 @@ macro_rules! impl_amplitude_for_piecewise_complex_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
@@ -238,7 +223,7 @@ impl<V: Variable> PiecewisePolarComplexScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: generate_bin_edges(bins, range),
+            bin_edges: get_bin_edges(bins, range),
             r_thetas,
             pids_r_theta: Default::default(),
             bin_index: Default::default(),
@@ -263,7 +248,7 @@ macro_rules! impl_amplitude_for_piecewise_polar_complex_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
@@ -345,25 +330,6 @@ mod tests {
     use crate::PI;
     use approx::assert_relative_eq;
     use std::sync::Arc;
-
-    #[test]
-    fn test_binning() {
-        let v = Mass::new([2]);
-        let dataset = Arc::new(test_dataset());
-        let bin_edges = generate_bin_edges(3, (0.0, 1.0));
-        let bin_index = get_index(v.value_on(&dataset)[0], &bin_edges);
-        assert_eq!(bin_index, Some(1));
-        let bin_index = get_index(0.0, &bin_edges);
-        assert_eq!(bin_index, Some(0));
-        let bin_index = get_index(0.1, &bin_edges);
-        assert_eq!(bin_index, Some(0));
-        let bin_index = get_index(0.9, &bin_edges);
-        assert_eq!(bin_index, Some(2));
-        let bin_index = get_index(1.0, &bin_edges);
-        assert_eq!(bin_index, None);
-        let bin_index = get_index(2.0, &bin_edges);
-        assert_eq!(bin_index, None);
-    }
 
     #[test]
     fn test_piecewise_scalar_creation_and_evaluation() {

@@ -12,6 +12,7 @@ use std::{fmt::Display, fs::File};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+use crate::utils::get_bin_edges;
 use crate::{
     utils::{variables::Variable, vectors::FourMomentum},
     Float, LadduError,
@@ -447,13 +448,6 @@ pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
         })
         .collect();
     Ok(Arc::new(Dataset { events }))
-}
-
-fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
-    let bin_width = (range.1 - range.0) / (bins as Float);
-    (0..=bins)
-        .map(|i| range.0 + (i as Float * bin_width))
-        .collect()
 }
 
 /// A list of [`Dataset`]s formed by binning [`Event`]s by some [`Variable`].
