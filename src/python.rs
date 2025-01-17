@@ -2412,6 +2412,7 @@ pub(crate) mod laddu {
             let nelder_mead_x_terminator = kwargs
                 .get_extract::<String>("nelder_mead_x_terminator")?
                 .unwrap_or("singer".into());
+            #[cfg(feature = "rayon")]
             let threads = kwargs
                 .get_extract::<usize>("threads")
                 .unwrap_or(None)
@@ -2505,7 +2506,10 @@ pub(crate) mod laddu {
                     )))
                 }
             }
-            options = options.with_threads(threads);
+            #[cfg(feature = "rayon")]
+            {
+                options = options.with_threads(threads);
+            }
         }
         if debug {
             options = options.debug();
@@ -2592,6 +2596,7 @@ pub(crate) mod laddu {
             if aies_moves.is_empty() {
                 aies_moves = default_aies_moves.to_vec();
             }
+            #[cfg(feature = "rayon")]
             let threads = kwargs
                 .get_extract::<usize>("threads")
                 .unwrap_or(None)
@@ -2642,7 +2647,10 @@ pub(crate) mod laddu {
                     )))
                 }
             }
-            options = options.with_threads(threads);
+            #[cfg(feature = "rayon")]
+            {
+                options = options.with_threads(threads);
+            }
         }
         if debug {
             options = options.debug();

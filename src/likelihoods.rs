@@ -115,7 +115,6 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    #[cfg(feature = "rayon")]
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
         let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
@@ -129,99 +128,21 @@ impl NLL {
             )
         };
         let n_mc = self.accmc_evaluator.dataset.len() as Float;
-        result
-            .par_iter()
-            .zip(events.par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect()
-    }
-
-    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) \frac{1}{N_{\text{MC}}}
-    /// ```
-    ///
-    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
-    /// regardless of the `mc_evaluator`.
-    #[cfg(not(feature = "rayon"))]
-    pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
-        let (events, result) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate(parameters),
-            )
-        } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate(parameters),
-            )
-        };
-        let n_mc = self.accmc_evaluator.dataset.len() as Float;
-        result
-            .iter()
-            .zip(events.iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect()
-    }
-
-    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
-    /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
-    /// the [`NLL`] to its prior state after calculation.
-    ///
-    /// This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
-    /// formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
-    /// ```
-    ///
-    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
-    /// regardless of the `mc_evaluator`.
-    #[cfg(feature = "rayon")]
-    pub fn project_with<T: AsRef<str>>(
-        &self,
-        parameters: &[Float],
-        names: &[T],
-        mc_evaluator: Option<Evaluator>,
-    ) -> Result<Vec<Float>, LadduError> {
-        if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names)?;
-            let events = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate(parameters);
-            let n_mc = self.accmc_evaluator.dataset.len() as Float;
-            let res = result
+        #[cfg(feature = "rayon")]
+        {
+            result
                 .par_iter()
                 .zip(events.par_iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            mc_evaluator.resources.write().active = current_active_mc;
-            Ok(res)
-        } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names)?;
-            let events = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate(parameters);
-            let n_mc = self.accmc_evaluator.dataset.len() as Float;
-            let res = result
-                .par_iter()
-                .zip(events.par_iter())
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            result
+                .iter()
+                .zip(events.iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            self.data_evaluator.resources.write().active = current_active_data;
-            self.accmc_evaluator.resources.write().active = current_active_accmc;
-            Ok(res)
+                .collect()
         }
     }
 
@@ -242,7 +163,6 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    #[cfg(not(feature = "rayon"))]
     pub fn project_with<T: AsRef<str>>(
         &self,
         parameters: &[Float],
@@ -255,6 +175,13 @@ impl NLL {
             let events = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let res = result
+                .par_iter()
+                .zip(events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            #[cfg(not(feature = "rayon"))]
             let res = result
                 .iter()
                 .zip(events.iter())
@@ -269,6 +196,13 @@ impl NLL {
             let events = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate(parameters);
             let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let res = result
+                .par_iter()
+                .zip(events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc)
+                .collect();
+            #[cfg(not(feature = "rayon"))]
             let res = result
                 .iter()
                 .zip(events.iter())
@@ -302,43 +236,29 @@ impl LikelihoodTerm for NLL {
     /// ```math
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
-    #[cfg(feature = "rayon")]
     fn evaluate(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate(parameters);
         let mc_result = self.accmc_evaluator.evaluate(parameters);
         let n_mc = self.accmc_evaluator.dataset.len() as Float;
+        #[cfg(feature = "rayon")]
         let data_term: Float = data_result
             .par_iter()
             .zip(self.data_evaluator.dataset.par_iter())
             .map(|(l, e)| e.weight * Float::ln(l.re))
             .parallel_sum_with_accumulator::<Klein<Float>>();
-        let mc_term: Float = mc_result
-            .par_iter()
-            .zip(self.accmc_evaluator.dataset.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .parallel_sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / n_mc)
-    }
-
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    #[cfg(not(feature = "rayon"))]
-    fn evaluate(&self, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate(parameters);
-        let mc_result = self.accmc_evaluator.evaluate(parameters);
-        let n_mc = self.accmc_evaluator.dataset.len() as Float;
+        #[cfg(not(feature = "rayon"))]
         let data_term: Float = data_result
             .iter()
             .zip(self.data_evaluator.dataset.iter())
             .map(|(l, e)| e.weight * Float::ln(l.re))
             .sum_with_accumulator::<Klein<Float>>();
+        #[cfg(feature = "rayon")]
+        let mc_term: Float = mc_result
+            .par_iter()
+            .zip(self.accmc_evaluator.dataset.par_iter())
+            .map(|(l, e)| e.weight * l.re)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
         let mc_term: Float = mc_result
             .iter()
             .zip(self.accmc_evaluator.dataset.iter())
@@ -351,13 +271,13 @@ impl LikelihoodTerm for NLL {
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
-    #[cfg(feature = "rayon")]
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_mc = self.accmc_evaluator.dataset.len() as Float;
+        #[cfg(feature = "rayon")]
         let data_term: DVector<Float> = self
             .data_evaluator
             .dataset
@@ -408,7 +328,56 @@ impl LikelihoodTerm for NLL {
             .collect::<Vec<DVector<Float>>>()
             .iter()
             .sum(); // TODO: replace with custom implementation of accurate crate's trait
-
+        #[cfg(not(feature = "rayon"))]
+        let data_term: DVector<Float> = self
+            .data_evaluator
+            .dataset
+            .iter()
+            .zip(data_resources.caches.iter())
+            .map(|(event, cache)| {
+                let mut gradient_values =
+                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+                self.data_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(data_resources.active.iter())
+                    .zip(gradient_values.iter_mut())
+                    .for_each(|((amp, active), grad)| {
+                        if *active {
+                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                        }
+                    });
+                (
+                    event.weight,
+                    AmplitudeValues(
+                        self.data_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(data_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&data_parameters, event, cache)
+                                } else {
+                                    Complex::ZERO
+                                }
+                            })
+                            .collect(),
+                    ),
+                    GradientValues(gradient_values),
+                )
+            })
+            .map(|(weight, amp_vals, grad_vals)| {
+                (
+                    weight,
+                    self.data_evaluator.expression.evaluate(&amp_vals),
+                    self.data_evaluator
+                        .expression
+                        .evaluate_gradient(&amp_vals, &grad_vals),
+                )
+            })
+            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
+            .sum();
+        #[cfg(feature = "rayon")]
         let mc_term: DVector<Float> = self
             .accmc_evaluator
             .dataset
@@ -458,69 +427,7 @@ impl LikelihoodTerm for NLL {
             .collect::<Vec<DVector<Float>>>()
             .iter()
             .sum();
-        -2.0 * (data_term - mc_term / n_mc)
-    }
-
-    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
-    /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
-    #[cfg(not(feature = "rayon"))]
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
-        let data_resources = self.data_evaluator.resources.read();
-        let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.accmc_evaluator.resources.read();
-        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.len() as Float;
-        let data_term: DVector<Float> = self
-            .data_evaluator
-            .dataset
-            .iter()
-            .zip(data_resources.caches.iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    AmplitudeValues(
-                        self.data_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(data_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&data_parameters, event, cache)
-                                } else {
-                                    Complex::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(gradient_values),
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.data_evaluator.expression.evaluate(&amp_vals),
-                    self.data_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .sum();
-
+        #[cfg(not(feature = "rayon"))]
         let mc_term: DVector<Float> = self
             .accmc_evaluator
             .dataset
@@ -653,7 +560,6 @@ pub struct MinimizerOptions {
     algorithm: Box<dyn ganesh::Algorithm<(), LadduError>>,
     observers: Vec<Arc<RwLock<dyn Observer<()>>>>,
     max_steps: usize,
-    threads: usize,
 }
 
 impl Default for MinimizerOptions {
@@ -666,8 +572,6 @@ impl Default for MinimizerOptions {
             threads: num_cpus::get(),
             #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
             threads: 0,
-            #[cfg(not(feature = "rayon"))]
-            threads: 1,
         }
     }
 }
@@ -750,6 +654,7 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
+            #[cfg(feature = "rayon")]
             threads: self.threads,
         }
     }
@@ -768,6 +673,7 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
+            #[cfg(feature = "rayon")]
             threads: self.threads,
         }
     }
@@ -794,7 +700,6 @@ impl MinimizerOptions {
             algorithm: Box::new(algorithm),
             observers: self.observers,
             max_steps: self.max_steps,
-            threads: self.threads,
         }
     }
     /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
@@ -818,7 +723,6 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers,
             max_steps: self.max_steps,
-            threads: self.threads,
         }
     }
 
@@ -828,11 +732,13 @@ impl MinimizerOptions {
             algorithm: self.algorithm,
             observers: self.observers,
             max_steps,
+            #[cfg(feature = "rayon")]
             threads: self.threads,
         }
     }
 
     /// Set the number of threads to use.
+    #[cfg(feature = "rayon")]
     pub fn with_threads(self, threads: usize) -> Self {
         Self {
             algorithm: self.algorithm,
@@ -856,7 +762,6 @@ pub struct MCMCOptions {
 pub struct MCMCOptions {
     algorithm: Box<dyn MCMCAlgorithm<(), LadduError>>,
     observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>>,
-    threads: usize,
 }
 
 impl MCMCOptions {
@@ -869,8 +774,6 @@ impl MCMCOptions {
             threads: num_cpus::get(),
             #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
             threads: 0,
-            #[cfg(not(feature = "rayon"))]
-            threads: 1,
         }
     }
     /// Use the [`AIES`] algorithm.
@@ -882,8 +785,6 @@ impl MCMCOptions {
             threads: num_cpus::get(),
             #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
             threads: 0,
-            #[cfg(not(feature = "rayon"))]
-            threads: 1,
         }
     }
     /// Adds the [`DebugMCMCObserver`] to the minimization.
@@ -893,6 +794,7 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
+            #[cfg(feature = "rayon")]
             threads: self.threads,
         }
     }
@@ -903,6 +805,7 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
+            #[cfg(feature = "rayon")]
             threads: self.threads,
         }
     }
@@ -924,7 +827,6 @@ impl MCMCOptions {
         Self {
             algorithm: Box::new(algorithm),
             observers: self.observers,
-            threads: self.threads,
         }
     }
     #[cfg(feature = "rayon")]
@@ -946,11 +848,11 @@ impl MCMCOptions {
         Self {
             algorithm: self.algorithm,
             observers,
-            threads: self.threads,
         }
     }
 
     /// Set the number of threads to use.
+    #[cfg(feature = "rayon")]
     pub fn with_threads(self, threads: usize) -> Self {
         Self {
             algorithm: self.algorithm,
