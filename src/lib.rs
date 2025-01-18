@@ -17,7 +17,7 @@
 //! - [Alternatives](#alternatives)
 //!
 //! # Key Features
-//! * A simple interface focused on combining [`Amplitude`](crate::amplitudes::Amplitude)s into models which can be evaluated over [`Dataset`](crate::data::Dataset)s.
+//! * A simple interface focused on combining [`Amplitude`](crate::amplitudes::Amplitude)s into models which can be evaluated over [`Dataset`]s.
 //! * A single [`Amplitude`](crate::amplitudes::Amplitude) trait which makes it easy to write new amplitudes and integrate them into the library.
 //! * Easy interfaces to precompute and cache values before the main calculation to speed up model evaluations.
 //! * Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
@@ -283,7 +283,7 @@ use thiserror::Error;
 
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes;
-/// Methods for loading and manipulating [`Event`](crate::data::Event)-based data.
+/// Methods for loading and manipulating [`Event`]-based data.
 pub mod data;
 /// Module for likelihood-related structures and methods
 pub mod likelihoods;
@@ -364,7 +364,7 @@ pub enum LadduError {
     #[error("Failed to expand path: {0}")]
     LookupError(#[from] shellexpand::LookupError<std::env::VarError>),
     /// An error which occurs when the user tries to register two amplitudes by the same name to
-    /// the same [`Manager`](crate::amplitudes::Manager).
+    /// the same [`Manager`].
     #[error("An amplitude by the name \"{name}\" is already registered by this manager!")]
     RegistrationError {
         /// Name of amplitude which is already registered

@@ -51,8 +51,7 @@ pub struct NLL {
 }
 
 impl NLL {
-    /// Construct an [`NLL`] from a [`Manager`] and two [`Dataset`]s (data and Monte Carlo), as
-    /// well as an [`Expression`]. This is the equivalent of the [`Manager::load`] method,
+    /// Construct an [`NLL`] from a [`Model`] and two [`Dataset`]s (data and Monte Carlo). This is the equivalent of the [`Model::load`] method,
     /// but for two [`Dataset`]s and a different method of evaluation.
     pub fn new(model: &Model, ds_data: &Arc<Dataset>, ds_accmc: &Arc<Dataset>) -> Box<Self> {
         Self {
@@ -102,11 +101,11 @@ impl NLL {
         self.accmc_evaluator.isolate_many(names)
     }
 
-    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
+    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
     /// formula:
     ///
     /// ```math
@@ -146,7 +145,7 @@ impl NLL {
         }
     }
 
-    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
     /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
@@ -154,7 +153,7 @@ impl NLL {
     ///
     /// This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`]). Event weights are determined by the following
+    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
     /// formula:
     ///
     /// ```math
@@ -227,10 +226,10 @@ impl LikelihoodTerm for NLL {
             .cloned()
             .collect()
     }
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]). The
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). The
     /// result is given by the following formula:
     ///
     /// ```math
@@ -267,10 +266,11 @@ impl LikelihoodTerm for NLL {
         -2.0 * (data_term - mc_term / n_mc)
     }
 
-    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`]
+    /// Evaluate the gradient of the stored [`Model`] over the events in the [`Dataset`]
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`]).
+    /// does not matter if expressions are coherent sums wrapped in
+    /// [`Expression::norm_sqr`](`crate::Expression::norm_sqr`).
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
@@ -942,7 +942,7 @@ impl Display for LikelihoodID {
     }
 }
 
-/// A [`Manager`] but for [`LikelihoodTerm`]s.
+/// A [`Manager`](`crate::Manager`) but for [`LikelihoodTerm`]s.
 #[derive(Default, Clone)]
 pub struct LikelihoodManager {
     terms: Vec<Box<dyn LikelihoodTerm>>,
