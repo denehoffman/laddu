@@ -18,14 +18,52 @@ pub(crate) fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
         .collect()
 }
 
-pub(crate) fn get_bin_index(value: Float, bin_edges: &[Float]) -> Option<usize> {
-    if value < bin_edges[0] || value >= bin_edges[bin_edges.len() - 1] {
-        return None;
+pub(crate) fn get_bin_index(value: Float, bins: usize, range: (Float, Float)) -> Option<usize> {
+    if value >= range.0 && value < range.1 {
+        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_index = ((value - range.0) / bin_width).floor() as usize;
+        Some(bin_index.min(bins - 1))
+    } else {
+        None
     }
-    bin_edges
-        .windows(2)
-        .position(|edges| value >= edges[0] && value < edges[1])
 }
+
+pub(crate) struct Histogram {
+    counts: Vec<Float>,
+    bin_edges: Vec<Float>,
+}
+
+pub(crate) fn histogram<T: AsRef<[Float]>>(
+    values: T,
+    bins: usize,
+    range: (Float, Float),
+    weights: Option<T>,
+) -> Histogram {
+    assert!(bins > 0, "Number of bins must be greater than zero!");
+    assert!(
+        range.1 > range.0,
+        "The lower edge of the range must be smaller than the upper edge!"
+    );
+    if let Some(w) = &weights {
+        assert_eq!(
+            values.as_ref().len(),
+            w.as_ref().len(),
+            "`values` and `weights` must have the same length!"
+        );
+    }
+    let mut counts = vec![0.0; bins];
+    for (i, &value) in values.as_ref().iter().enumerate() {
+        if let Some(bin_index) = get_bin_index(value, bins, range) {
+            let weight = weights.as_ref().map_or(1.0, |w| w.as_ref()[i]);
+            counts[bin_index] += weight;
+        }
+    }
+    Histogram {
+        counts,
+        bin_edges: get_bin_edges(bins, range),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -33,7 +71,7 @@ mod tests {
     use crate::{
         data::test_dataset,
         traits::Variable,
-        utils::{get_bin_edges, get_bin_index},
+        utils::{get_bin_index, histogram},
         Mass,
     };
 
@@ -41,18 +79,20 @@ mod tests {
     fn test_binning() {
         let v = Mass::new([2]);
         let dataset = Arc::new(test_dataset());
-        let bin_edges = get_bin_edges(3, (0.0, 1.0));
-        let bin_index = get_bin_index(v.value_on(&dataset)[0], &bin_edges);
+        let bin_index = get_bin_index(v.value_on(&dataset)[0], 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(1));
-        let bin_index = get_bin_index(0.0, &bin_edges);
+        let bin_index = get_bin_index(0.0, 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(0));
-        let bin_index = get_bin_index(0.1, &bin_edges);
+        let bin_index = get_bin_index(0.1, 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(0));
-        let bin_index = get_bin_index(0.9, &bin_edges);
+        let bin_index = get_bin_index(0.9, 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(2));
-        let bin_index = get_bin_index(1.0, &bin_edges);
+        let bin_index = get_bin_index(1.0, 3, (0.0, 1.0));
         assert_eq!(bin_index, None);
-        let bin_index = get_bin_index(2.0, &bin_edges);
+        let bin_index = get_bin_index(2.0, 3, (0.0, 1.0));
         assert_eq!(bin_index, None);
+        let histogram = histogram(v.value_on(&dataset), 3, (0.0, 1.0), Some(dataset.weights()));
+        assert_eq!(histogram.counts, vec![0.0, 0.48, 0.0]);
+        assert_eq!(histogram.bin_edges, vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0])
     }
 }

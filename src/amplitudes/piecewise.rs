@@ -6,7 +6,7 @@ use crate::{
     data::Event,
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
-    utils::{get_bin_edges, get_bin_index},
+    utils::get_bin_index,
     CosTheta, DVector, Float, LadduError, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, ScalarID,
 };
 
@@ -17,7 +17,8 @@ use super::Amplitude;
 pub struct PiecewiseScalar<V: Variable> {
     name: String,
     variable: V,
-    bin_edges: Vec<Float>,
+    bins: usize,
+    range: (Float, Float),
     values: Vec<ParameterLike>,
     pids: Vec<ParameterID>,
     bin_index: ScalarID,
@@ -39,7 +40,8 @@ impl<V: Variable> PiecewiseScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: get_bin_edges(bins, range),
+            bins,
+            range,
             values,
             pids: Default::default(),
             bin_index: Default::default(),
@@ -63,18 +65,18 @@ macro_rules! impl_amplitude_for_piecewise_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
-                        cache.store_scalar(self.bin_index, self.bin_edges.len() as Float);
+                        cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
                         // store ibin = nbins + 1 if outside range
                     }
                 }
 
                 fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index == self.bin_edges.len() {
+                    if bin_index == self.bins + 1 {
                         Complex::ZERO
                     } else {
                         Complex::from(parameters.get(self.pids[bin_index]))
@@ -89,7 +91,7 @@ macro_rules! impl_amplitude_for_piecewise_scalar {
                     gradient: &mut DVector<Complex<Float>>,
                 ) {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index < self.bin_edges.len() {
+                    if bin_index < self.bins + 1 {
                         gradient[bin_index] = Complex::ONE;
                     }
                 }
@@ -103,7 +105,8 @@ macro_rules! impl_amplitude_for_piecewise_scalar {
 pub struct PiecewiseComplexScalar<V: Variable> {
     name: String,
     variable: V,
-    bin_edges: Vec<Float>,
+    bins: usize,
+    range: (Float, Float),
     re_ims: Vec<(ParameterLike, ParameterLike)>,
     pids_re_im: Vec<(ParameterID, ParameterID)>,
     bin_index: ScalarID,
@@ -125,7 +128,8 @@ impl<V: Variable> PiecewiseComplexScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: get_bin_edges(bins, range),
+            bins,
+            range,
             re_ims,
             pids_re_im: Default::default(),
             bin_index: Default::default(),
@@ -150,18 +154,18 @@ macro_rules! impl_amplitude_for_piecewise_complex_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
-                        cache.store_scalar(self.bin_index, self.bin_edges.len() as Float);
+                        cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
                         // store ibin = nbins + 1 if outside range
                     }
                 }
 
                 fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index == self.bin_edges.len() {
+                    if bin_index == self.bins + 1{
                         Complex::ZERO
                     } else {
                         let pid_re_im = self.pids_re_im[bin_index];
@@ -180,7 +184,7 @@ macro_rules! impl_amplitude_for_piecewise_complex_scalar {
                     gradient: &mut DVector<Complex<Float>>,
                 ) {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index < self.bin_edges.len() {
+                    if bin_index < self.bins + 1 {
                         let pid_re_im = self.pids_re_im[bin_index];
                         if let ParameterID::Parameter(ind) = pid_re_im.0 {
                             gradient[ind] = Complex::ONE;
@@ -201,7 +205,8 @@ macro_rules! impl_amplitude_for_piecewise_complex_scalar {
 pub struct PiecewisePolarComplexScalar<V: Variable> {
     name: String,
     variable: V,
-    bin_edges: Vec<Float>,
+    bins: usize,
+    range: (Float, Float),
     r_thetas: Vec<(ParameterLike, ParameterLike)>,
     pids_r_theta: Vec<(ParameterID, ParameterID)>,
     bin_index: ScalarID,
@@ -223,7 +228,8 @@ impl<V: Variable> PiecewisePolarComplexScalar<V> {
         Self {
             name: name.to_string(),
             variable: variable.clone(),
-            bin_edges: get_bin_edges(bins, range),
+            bins,
+            range,
             r_thetas,
             pids_r_theta: Default::default(),
             bin_index: Default::default(),
@@ -248,18 +254,18 @@ macro_rules! impl_amplitude_for_piecewise_polar_complex_scalar {
                 }
 
                 fn precompute(&self, event: &Event, cache: &mut Cache) {
-                    let maybe_bin_index = get_bin_index(self.variable.value(event), &self.bin_edges);
+                    let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
                     if let Some(bin_index) = maybe_bin_index {
                         cache.store_scalar(self.bin_index, bin_index as Float);
                     } else {
-                        cache.store_scalar(self.bin_index, self.bin_edges.len() as Float);
+                        cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
                         // store ibin = nbins + 1 if outside range
                     }
                 }
 
                 fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index == self.bin_edges.len() {
+                    if bin_index == self.bins + 1 {
                         Complex::ZERO
                     } else {
                         let pid_r_theta = self.pids_r_theta[bin_index];
@@ -278,7 +284,7 @@ macro_rules! impl_amplitude_for_piecewise_polar_complex_scalar {
                     gradient: &mut DVector<Complex<Float>>,
                 ) {
                     let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-                    if bin_index < self.bin_edges.len() {
+                    if bin_index < self.bins + 1 {
                         let pid_r_theta = self.pids_r_theta[bin_index];
                         let r = parameters.get(pid_r_theta.0);
                         let theta = parameters.get(pid_r_theta.1);
