@@ -3,14 +3,15 @@ use std::time::Duration;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu::{
     amplitudes::{
-        constant,
         kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
         parameter,
         zlm::Zlm,
         Manager,
     },
+    constant,
     data::open,
-    likelihoods::{LikelihoodTerm, NLL},
+    extensions::NLL,
+    traits::*,
     utils::{
         enums::{Frame, Sign},
         variables::{Angles, Mass, Polarization},
@@ -19,10 +20,8 @@ use laddu::{
 };
 use rand::{distributions::Uniform, prelude::*};
 
-#[cfg(feature = "rayon")]
 use rayon::ThreadPoolBuilder;
 
-#[cfg(feature = "rayon")]
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_data = open("benches/bench.parquet").unwrap();
     let ds_mc = open("benches/bench.parquet").unwrap();

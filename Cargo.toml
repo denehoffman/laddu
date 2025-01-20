@@ -1,2 +1,64 @@
 [workspace]
-members = ["crates/*"]
+resolver = "2"
+members = ["crates/*", "py-laddu"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.17"
+authors = ["Nathaniel Dene Hoffman <dene@cmu.edu>"]
+edition = "2021"
+homepage = "https://github.com/denehoffman/laddu"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/denehoffman/laddu"
+rust-version = "1.70.0"
+
+[workspace.dependencies]
+accurate = "0.4.1"
+approx = "0.5.1"
+arrow = "53.4.0"
+auto_ops = "0.3.0"
+bincode = "1.3.3"
+criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features = [
+  "html_reports",
+] }
+dyn-clone = "1.0.17"
+factorial = "0.4.0"
+fastrand = "2.3.0"
+ganesh = "0.16.0"
+indexmap = { version = "2.6.0", features = ["serde"] }
+nalgebra = "0.33.2"
+num = "0.4.3"
+num_cpus = { version = "1.16.0" }
+numpy = { version = "0.23.0", features = ["nalgebra"] }
+parquet = "53.4.0"
+parking_lot = "0.12.3"
+pyo3 = { version = "0.23.3" }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+rayon = { version = "1.10.0" }
+serde = "1.0.215"
+serde-pickle = "1.2.0"
+serde_with = "3.11.0"
+shellexpand = "3.1.0"
+thiserror = "2.0.3"
+typetag = "0.2.18"
+
+laddu = { path = "crates/laddu" }
+laddu-core = { path = "crates/laddu-core" }
+laddu-amplitudes = { path = "crates/laddu-amplitudes" }
+laddu-extensions = { path = "crates/laddu-extensions" }
+laddu-python = { path = "crates/laddu-python" }
+
+[profile.release]
+lto = "thin"
+debug = "line-tables-only"
+
+[profile.debug-release]
+inherits = "release"
+debug = true
+
+[profile.dist-release]
+inherits = "release"
+codegen-units = 1
+debug = false
+lto = "fat"

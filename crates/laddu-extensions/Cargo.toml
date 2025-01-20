@@ -1,0 +1,38 @@
+[package]
+name = "laddu-extensions"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Extensions to the laddu library"
+
+[dependencies]
+laddu-core = { workspace = true }
+laddu-python = { workspace = true, optional = true }
+
+accurate = { workspace = true }
+auto_ops = { workspace = true }
+bincode = { workspace = true }
+dyn-clone = { workspace = true }
+fastrand = { workspace = true }
+ganesh = { workspace = true }
+num_cpus = { workspace = true, optional = true }
+numpy = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+parking_lot = { workspace = true }
+pyo3 = { workspace = true, features = [
+  "num-complex",
+  "abi3-py37",
+], optional = true }
+
+[features]
+default = ["rayon", "python"]
+rayon = ["dep:rayon"]
+python = ["laddu-python", "pyo3", "numpy", "num_cpus"]
+pyo3 = ["dep:pyo3"]
+laddu-python = ["dep:laddu-python"]
+numpy = ["dep:numpy"]
+num_cpus = ["dep:num_cpus"]

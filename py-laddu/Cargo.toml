@@ -1,0 +1,18 @@
+[package]
+name = "py-laddu"
+version = "0.1.17"
+edition = "2021"
+
+[lib]
+name = "laddu"
+crate-type = ["cdylib"]
+
+[dependencies]
+laddu = { workspace = true, features = ["python"] }
+laddu-python = { workspace = true }
+
+pyo3 = { workspace = true, features = [
+  "num-complex",
+  "abi3-py37",
+  "extension-module",
+] }
