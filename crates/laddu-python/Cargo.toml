@@ -1,0 +1,39 @@
+[package]
+name = "laddu-python"
+version = "0.1.17"
+edition = "2021"
+description = "Amplitude analysis made short and sweet"
+documentation = "https://docs.rs/laddu"
+readme = "README.md"
+homepage = "https://github.com/denehoffman/laddu"
+repository = "https://github.com/denehoffman/laddu"
+license = "MIT OR Apache-2.0"
+keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
+categories = ["science", "mathematics"]
+exclude = ["/python_examples"]
+rust-version = "1.70.0"
+
+[dependencies]
+laddu = { workspace = true, features = ["python"] }
+rayon = { workspace = true, optional = true }
+pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }
+numpy = { workspace = true, optional = true, features = ["nalgebra"] }
+ganesh = { workspace = true }
+shellexpand = { workspace = true }
+accurate = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+num_cpus = { workspace = true, optional = true }
+
+[features]
+default = ["rayon", "python"]
+extension-module = ["pyo3/extension-module"]
+rayon = ["dep:rayon"]
+f32 = ["ganesh/f32", "laddu/f32"]
+python = ["pyo3", "numpy", "extension-module", "num_cpus"]
+pyo3 = ["dep:pyo3"]
+numpy = ["dep:numpy"]
+num_cpus = ["dep:num_cpus"]
+
+[package.metadata.maturin]
+python-source = "python"

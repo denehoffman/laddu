@@ -1,6 +1,8 @@
 use crate::traits::{FourMomentum, FourVector, ReadWrite, ThreeMomentum, ThreeVector, Variable};
 use crate::Float;
+use bincode::{deserialize, serialize};
 use ganesh::{mcmc::MCMCObserver, Observer};
+use laddu::{Complex, DVector};
 use pyo3::{
     prelude::*,
     types::{PyTuple, PyTupleMethods},
@@ -9,18 +11,16 @@ use pyo3::{
 use rayon::ThreadPool;
 use std::sync::Arc;
 
-#[pymodule]
+#[pymodule(name = "laddu")]
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
-pub(crate) mod laddu {
+pub(crate) mod laddu_python {
     use std::array;
 
     use super::*;
-    use crate as rust;
     use crate::likelihoods::LikelihoodTerm as RustLikelihoodTerm;
     use crate::likelihoods::MCMCOptions;
     use crate::likelihoods::MinimizerOptions;
     use crate::LadduError;
-    use bincode::{deserialize, serialize};
     use fastrand::Rng;
     use ganesh::algorithms::lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator};
     use ganesh::algorithms::nelder_mead::{
@@ -30,8 +30,6 @@ pub(crate) mod laddu {
     use ganesh::mcmc::aies::WeightedAIESMove;
     use ganesh::mcmc::ess::WeightedESSMove;
     use ganesh::mcmc::{AIESMove, ESSMove, AIES, ESS};
-    use nalgebra::DVector;
-    use num::Complex;
     use numpy::{PyArray1, PyArray2, PyArray3};
     use parking_lot::RwLock;
     use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};

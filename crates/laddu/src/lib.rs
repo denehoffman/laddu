@@ -328,10 +328,6 @@ pub use nalgebra::{DVector, Vector3, Vector4};
 pub use num::Complex;
 pub use serde::{Deserialize, Serialize};
 
-/// A module containing Python bindings with PyO3.
-#[cfg(feature = "python")]
-pub mod python;
-
 /// A floating-point number type (defaults to [`f64`], see `f32` feature).
 #[cfg(not(feature = "f32"))]
 pub type Float = f64;
