@@ -64,18 +64,18 @@ class Evaluator:
     ) -> npt.NDArray[np.complex128]: ...
 
 __all__ = [
-    'AmplitudeID',
-    'Expression',
     'Amplitude',
+    'AmplitudeID',
+    'Evaluator',
+    'Expression',
     'Manager',
     'Model',
-    'Evaluator',
     'ParameterLike',
-    'parameter',
-    'constant',
+    'breit_wigner',
     'common',
+    'constant',
+    'kmatrix',
+    'parameter',
     'ylm',
     'zlm',
-    'breit_wigner',
-    'kmatrix',
 ]

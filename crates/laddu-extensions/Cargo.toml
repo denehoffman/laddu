@@ -29,10 +29,11 @@ pyo3 = { workspace = true, features = [
 ], optional = true }
 
 [features]
-default = ["rayon", "python"]
+default = ["rayon"]
 rayon = ["dep:rayon"]
 python = ["laddu-python", "pyo3", "numpy", "num_cpus"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]
 num_cpus = ["dep:num_cpus"]
+f32 = ["ganesh/f32", "laddu-core/f32"]

@@ -1,10 +1,12 @@
-from laddu import Event, Dataset, Vector3, Mass, Manager, parameter, Scalar
+import pickle
+
+import pytest
+
+from laddu import Dataset, Event, Manager, Mass, Scalar, Vector3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,
     KopfKMatrixF2,
 )
-import pytest
-import pickle
 
 
 def make_test_event() -> Event:
@@ -24,7 +26,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_serde():
+def test_serde() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     f0 = KopfKMatrixF0(

@@ -10,7 +10,10 @@ use laddu_core::{
 };
 
 #[cfg(feature = "python")]
-use laddu_python::{PyAmplitude, PyParameterLike, PyVariable};
+use laddu_python::{
+    amplitudes::{PyAmplitude, PyParameterLike},
+    utils::variables::PyVariable,
+};
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

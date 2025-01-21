@@ -1,25 +1,23 @@
-from __future__ import annotations
-
-from abc import ABCMeta, abstractmethod
-from typing import TYPE_CHECKING
-
-import numpy as np
-
-from laddu.amplitudes import Manager, constant, parameter, Model
+import laddu.laddu as _laddu
+from laddu import amplitudes, convert, data, extensions, utils
+from laddu.amplitudes import Manager, Model, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
-from laddu.convert import convert_from_amptools, read_root_file
-from laddu.data import BinnedDataset, Dataset, Event, open
-from laddu.likelihoods import (
+from laddu.convert import convert_from_amptools
+from laddu.data import BinnedDataset, Dataset, Event, open, open_amptools
+from laddu.extensions import (
     NLL,
-    LikelihoodManager,
-    Status,
-    Ensemble,
     AutocorrelationObserver,
+    Ensemble,
+    LikelihoodManager,
+    MCMCObserver,
+    Observer,
+    Status,
     integrated_autocorrelation_times,
 )
+from laddu.laddu import Vector3, Vector4
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -30,70 +28,28 @@ from laddu.utils.variables import (
     Polarization,
     PolMagnitude,
 )
-from laddu.utils.vectors import Vector3, Vector4
 
-from . import amplitudes, convert, data, likelihoods, utils
-from .laddu import version
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-__version__ = version()
-
-
-class Observer(metaclass=ABCMeta):
-    @abstractmethod
-    def callback(self, step: int, status: Status) -> tuple[Status, bool]:
-        pass
-
-
-class MCMCObserver(metaclass=ABCMeta):
-    @abstractmethod
-    def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]:
-        pass
-
-
-def open_amptools(
-    path: str | Path,
-    tree: str = 'kin',
-    *,
-    pol_in_beam: bool = False,
-    pol_angle: float | None = None,
-    pol_magnitude: float | None = None,
-    num_entries: int | None = None,
-) -> Dataset:
-    pol_angle_rad = pol_angle * np.pi / 180 if pol_angle else None
-    p4s_list, eps_list, weight_list = read_root_file(
-        path, tree, pol_in_beam, pol_angle_rad, pol_magnitude, num_entries
-    )
-    return Dataset(
-        [
-            Event(
-                [Vector4.from_array(p4) for p4 in p4s],
-                [Vector3.from_array(eps_vec) for eps_vec in eps],
-                weight,
-            )
-            for p4s, eps, weight in zip(p4s_list, eps_list, weight_list)
-        ]
-    )
-
+__doc__ = _laddu.__doc__
+__version__ = _laddu.version()
 
 __all__ = [
     'NLL',
     'Angles',
+    'AutocorrelationObserver',
     'BinnedDataset',
     'BreitWigner',
     'ComplexScalar',
     'CosTheta',
     'Dataset',
+    'Ensemble',
     'Event',
     'LikelihoodManager',
+    'MCMCObserver',
     'Manager',
-    'Model',
     'Mandelstam',
     'Mass',
+    'Model',
     'Observer',
-    'MCMCObserver',
     'Phi',
     'PolAngle',
     'PolMagnitude',
@@ -101,7 +57,6 @@ __all__ = [
     'Polarization',
     'Scalar',
     'Status',
-    'Ensemble',
     'Vector3',
     'Vector4',
     'Ylm',
@@ -112,11 +67,10 @@ __all__ = [
     'convert',
     'convert_from_amptools',
     'data',
-    'likelihoods',
+    'extensions',
+    'integrated_autocorrelation_times',
     'open',
     'open_amptools',
     'parameter',
     'utils',
-    'AutocorrelationObserver',
-    'integrated_autocorrelation_times',
 ]

@@ -1,5 +1,5 @@
 from laddu.amplitudes import Amplitude, ParameterLike
-from laddu.utils.variables import Mass, CosTheta, Phi, PolAngle, PolMagnitude, Mandelstam
+from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def PiecewiseScalar(
     name: str,

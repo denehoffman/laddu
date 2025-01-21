@@ -12,7 +12,10 @@ use laddu_core::{
 };
 
 #[cfg(feature = "python")]
-use laddu_python::{PyAmplitude, PyAngles, PyPolarization};
+use laddu_python::{
+    amplitudes::PyAmplitude,
+    utils::variables::{PyAngles, PyPolarization},
+};
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

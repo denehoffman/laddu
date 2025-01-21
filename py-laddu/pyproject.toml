@@ -10,7 +10,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dynamic = ["version"]
+dynamic = ["version", "license", "description", "readme"]
 dependencies = [
   "numpy",
   "docopt-ng",
@@ -20,12 +20,21 @@ dependencies = [
   "fastparquet",
 ]
 
+[project.urls]
+Documentation = "https://laddu.readthedocs.io/en/stable/"
+
 [project.scripts]
 amptools-to-laddu = "laddu:convert.run"
 
 [project.optional-dependencies]
 tests = ["pytest"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
+
+[tool.maturin]
+bindings = "pyo3"
+strip = true
+profile = "dist-release"
+sdist-include = ['Cargo.lock']
 
 [tool.ruff]
 target-version = "py37"
@@ -90,35 +99,35 @@ select = [
   "W",      # pycodestyle
 ]
 ignore = [
-  # ------------------------------------------------------------------
-  # TODO: Remove errors below to further improve docstring linting
-  # ------------------------------------------------------------------
   "D100", # Missing docstring in public module
+  "D101", # Missing docstring in public class
+  "D102", # Missing docstring in public method
+  "D103", # Missing docstring in public function
   "D104", # Missing docstring in public package
   "D105", # Missing docstring in magic method
   # ------------------------------------------------------------------
+  "ANN101", # Missing type annotation for self
+  "ANN102", # Missing type annotation for cls
   "ANN401", # Dynamically typed expressions (Any) are disallowed
-  "D401",   # Relax NumPy docstring convention: first line should be imperative
   "E501",   # Line length regulated by formatter
   "PT011",  # pytest.raises is too broad, set match or use a more specific exception
   "PYI041", # Use float instead of int | float
-  "RUF022", # `__all__` is not sorted
   "RUF005", # Consider expression instead of concatenation
   "SIM102", # Use a single `if` statement instead of nested `if` statements
-  "SIM108", # Use ternary operator
   "SIM114", # Combine `if` branches
   "TD002",  # Missing author in TODO
   "TD003",  # Missing issue link on the line following this TODO
   "TRY003", # Avoid specifying long messages outside the exception class
+  "PYI021", # Avoid docstring in stub file
+  "E741",   # Ambiguous variable names
 ]
-allowed-confusables = ["l"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
 [tool.ruff.format]
 line-ending = "auto"
-quot-style = "single"
+quote-style = "single"
 indent-style = "space"
 skip-magic-trailing-comma = false
 docstring-code-format = false

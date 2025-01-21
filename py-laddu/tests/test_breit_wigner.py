@@ -1,5 +1,6 @@
-from laddu import Event, Dataset, Vector3, BreitWigner, Mass, Manager, parameter
 import pytest
+
+from laddu import BreitWigner, Dataset, Event, Manager, Mass, Vector3, parameter
 
 
 def make_test_event() -> Event:
@@ -19,7 +20,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_bw_evaluation():
+def test_bw_evaluation() -> None:
     manager = Manager()
     amp = BreitWigner("bw", parameter("mass"), parameter("width"), 2, Mass([2]), Mass([3]), Mass([2, 3]))
     aid = manager.register(amp)
@@ -31,7 +32,7 @@ def test_bw_evaluation():
     assert pytest.approx(result[0].imag) == 1.4107341
 
 
-def test_bw_gradient():
+def test_bw_gradient() -> None:
     manager = Manager()
     amp = BreitWigner("bw", parameter("mass"), parameter("width"), 2, Mass([2]), Mass([3]), Mass([2, 3]))
     aid = manager.register(amp)

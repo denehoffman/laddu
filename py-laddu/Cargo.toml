@@ -1,14 +1,17 @@
 [package]
 name = "py-laddu"
-version = "0.1.17"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+readme = "README.md"
+license = { workspace = true }
 
 [lib]
 name = "laddu"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu = { workspace = true, features = ["python"] }
+laddu-amplitudes = { workspace = true, features = ["python"] }
+laddu-extensions = { workspace = true, features = ["python"] }
 laddu-python = { workspace = true }
 
 pyo3 = { workspace = true, features = [

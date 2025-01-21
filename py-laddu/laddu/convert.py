@@ -1,19 +1,21 @@
 """
 Usage:
     amptools-to-laddu <input_file> <output_file> [--tree <treename>] [--pol-in-beam | --pol-angle <angle> --pol-magnitude <magnitude>] [-n <num-entries>]
+
 Options:
     --tree <treename>            The tree name in the ROOT file [default: kin].
     --pol-in-beam                Use the beam's momentum for polarization (eps).
     --pol-angle <angle>          The polarization angle in degrees (only used if --pol-in-beam is not used)
     --pol-magnitude <magnitude>  The polarization magnitude (only used if --pol-in-beam is not used)
     -n <num-entries>             Truncate the file to the first n entries for testing.
-"""
+"""  # noqa: D205, D400
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import uproot
 from docopt import docopt
@@ -21,11 +23,18 @@ from loguru import logger
 
 
 def read_root_file(
-    input_file, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries=None
+    input_path: Path | str,
+    tree_name: str = 'kin',
+    *,
+    pol_in_beam: bool = False,
+    pol_angle: float | None = None,
+    pol_magnitude: float | None = None,
+    num_entries: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    input_path = Path(input_path)
     """Read ROOT file and extract data with optional polarization from the beam."""
-    logger.info(f'Reading ROOT file: {input_file}')
-    tfile = uproot.open(input_file)
+    logger.info(f'Reading ROOT file: {input_path}')
+    tfile = uproot.open(input_path)
     tree = tfile[tree_name]
     logger.info(f'Using tree: {tree_name}')
     # Read necessary branches
@@ -34,24 +43,24 @@ def read_root_file(
     Py_beam = tree['Py_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
     Pz_beam = tree['Pz_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
     weight = (
-        tree['Weight'].array(library='np', entry_stop=num_entries)
+        tree['Weight'].array(library='np', entry_stop=num_entries)  # pyright: ignore
         if 'Weight' in tree
         else np.ones_like(E_beam)
-    )  # pyright: ignore
+    )
 
     # Final state particles
     E_final = np.array(
-        list(tree['E_FinalState'].array(library='np', entry_stop=num_entries))
-    )  # pyright: ignore
+        list(tree['E_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    )
     Px_final = np.array(
-        list(tree['Px_FinalState'].array(library='np', entry_stop=num_entries))
-    )  # pyright: ignore
+        list(tree['Px_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    )
     Py_final = np.array(
-        list(tree['Py_FinalState'].array(library='np', entry_stop=num_entries))
-    )  # pyright: ignore
+        list(tree['Py_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    )
     Pz_final = np.array(
-        list(tree['Pz_FinalState'].array(library='np', entry_stop=num_entries))
-    )  # pyright: ignore
+        list(tree['Pz_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    )
 
     # Handle beam four-vector: (nevents, 4)
     p4_beam = np.stack([Px_beam, Py_beam, Pz_beam, E_beam], axis=-1)
@@ -94,7 +103,9 @@ def read_root_file(
     return p4s.astype(np.float32), eps.astype(np.float32), weight
 
 
-def save_as_parquet(p4s, eps, weight, output_file):
+def save_as_parquet(
+    p4s: npt.NDArray, eps: npt.NDArray, weight: npt.NDArray, output_path: Path | str
+) -> None:
     """Save the processed data into Parquet format."""
     logger.info('Saving data to Parquet format.')
 
@@ -118,27 +129,33 @@ def save_as_parquet(p4s, eps, weight, output_file):
 
     # Create a DataFrame and save as Parquet
     data = pd.DataFrame(columns)
-    data.to_parquet(output_file, index=False)
-    logger.info(f'File saved: {output_file}')
+    output_path = str(output_path)
+    data.to_parquet(output_path, index=False)
+    logger.info(f'File saved: {output_path}')
 
 
 def convert_from_amptools(
     input_path: Path,
     output_path: Path,
     tree_name: str = 'kin',
+    *,
     pol_in_beam: bool = False,
     pol_angle: float | None = None,
     pol_magnitude: float | None = None,
     num_entries: int | None = None,
-):
+) -> None:
     p4s, eps, weight = read_root_file(
-        input_path, tree_name, pol_in_beam, pol_angle, pol_magnitude, num_entries
+        input_path,
+        tree_name,
+        pol_in_beam=pol_in_beam,
+        pol_angle=pol_angle,
+        pol_magnitude=pol_magnitude,
+        num_entries=num_entries,
     )
     save_as_parquet(p4s, eps, weight, output_path)
 
 
-def run():
-    """Main entry point for the script."""
+def run() -> None:
     args = docopt(__doc__ if __doc__ else '')
     input_file = args['<input_file>']
     output_file = args['<output_file>']
@@ -152,10 +169,10 @@ def run():
         Path(input_file),
         Path(output_file),
         tree_name,
-        pol_in_beam,
-        pol_angle,
-        pol_magnitude,
-        num_entries,
+        pol_in_beam=pol_in_beam,
+        pol_angle=pol_angle,
+        pol_magnitude=pol_magnitude,
+        num_entries=num_entries,
     )
 
     df_read = pd.read_parquet(output_file)

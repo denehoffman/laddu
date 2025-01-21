@@ -382,7 +382,7 @@ pub mod py_ganesh {
 
     /// The status/result of a minimization
     ///
-    #[pyclass(name = "Status")]
+    #[pyclass(name = "Status", module = "laddu")]
     #[derive(Clone)]
     pub struct PyStatus(pub Status);
     #[pymethods]
@@ -627,7 +627,7 @@ pub mod py_ganesh {
 
     /// An ensemble of MCMC walkers
     ///
-    #[pyclass(name = "Ensemble")]
+    #[pyclass(name = "Ensemble", module = "laddu")]
     #[derive(Clone)]
     pub struct PyEnsemble(pub Ensemble);
     #[pymethods]
@@ -845,7 +845,7 @@ pub mod py_ganesh {
     /// verbose : bool, default = False
     ///     Set to ``True`` to print out details at each check
     ///
-    #[pyclass(name = "AutocorrelationObserver")]
+    #[pyclass(name = "AutocorrelationObserver", module = "laddu")]
     pub struct PyAutocorrelationObserver(Arc<RwLock<AutocorrelationObserver>>);
 
     #[pymethods]

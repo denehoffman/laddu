@@ -1,17 +1,18 @@
+import pytest
+
 from laddu import (
-    Mass,
-    CosTheta,
-    Phi,
     Angles,
-    PolMagnitude,
+    CosTheta,
+    Dataset,
+    Event,
+    Mandelstam,
+    Mass,
+    Phi,
     PolAngle,
     Polarization,
-    Mandelstam,
-    Event,
+    PolMagnitude,
     Vector3,
-    Dataset,
 )
-import pytest
 
 
 def make_test_event() -> Event:
@@ -31,69 +32,69 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_mass_single_particle():
+def test_mass_single_particle() -> None:
     event = make_test_event()
     mass = Mass([1])
     assert mass.value(event) == 1.007
 
 
-def test_mass_multiple_particles():
+def test_mass_multiple_particles() -> None:
     event = make_test_event()
     mass = Mass([2, 3])
     assert pytest.approx(mass.value(event)) == 1.3743786
 
 
-def test_costheta_helicity():
+def test_costheta_helicity() -> None:
     event = make_test_event()
     costheta = CosTheta(0, [1], [2], [2, 3], "Helicity")
     assert pytest.approx(costheta.value(event)) == -0.4611175
 
 
-def test_phi_helicity():
+def test_phi_helicity() -> None:
     event = make_test_event()
     phi = Phi(0, [1], [2], [2, 3], "Helicity")
     assert pytest.approx(phi.value(event)) == -2.6574625
 
 
-def test_costheta_gottfried_jackson():
+def test_costheta_gottfried_jackson() -> None:
     event = make_test_event()
     costheta = CosTheta(0, [1], [2], [2, 3], "Gottfried-Jackson")
     assert pytest.approx(costheta.value(event)) == 0.09198832
 
 
-def test_phi_gottfried_jackson():
+def test_phi_gottfried_jackson() -> None:
     event = make_test_event()
     phi = Phi(0, [1], [2], [2, 3], "Gottfried-Jackson")
     assert pytest.approx(phi.value(event)) == -2.7139131
 
 
-def test_angles():
+def test_angles() -> None:
     event = make_test_event()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
     assert pytest.approx(angles.costheta.value(event)) == -0.4611175
     assert pytest.approx(angles.phi.value(event)) == -2.6574625
 
 
-def test_pol_angle():
+def test_pol_angle() -> None:
     event = make_test_event()
     pol_angle = PolAngle(0, [1])
     assert pytest.approx(pol_angle.value(event)) == 1.9359298
 
 
-def test_pol_magnitude():
+def test_pol_magnitude() -> None:
     event = make_test_event()
     pol_magnitude = PolMagnitude(0)
     assert pytest.approx(pol_magnitude.value(event)) == 0.3856280
 
 
-def test_polarization():
+def test_polarization() -> None:
     event = make_test_event()
     polarization = Polarization(0, [1])
     assert pytest.approx(polarization.pol_angle.value(event)) == 1.9359298
     assert pytest.approx(polarization.pol_magnitude.value(event)) == 0.3856280
 
 
-def test_mandelstam():
+def test_mandelstam() -> None:
     event = make_test_event()
     s = Mandelstam([0], [], [2, 3], [1], "s")
     t = Mandelstam([0], [], [2, 3], [1], "t")
@@ -119,7 +120,7 @@ def test_mandelstam():
     )
 
 
-def test_variable_value_on():
+def test_variable_value_on() -> None:
     dataset = make_test_dataset()
     mass = Mass([2, 3])
     values = mass.value_on(dataset)

@@ -12,10 +12,10 @@ from laddu.laddu import (
 __all__ = [
     'Angles',
     'CosTheta',
+    'Mandelstam',
     'Mass',
     'Phi',
     'PolAngle',
-    'Polarization',
     'PolMagnitude',
-    'Mandelstam',
+    'Polarization',
 ]

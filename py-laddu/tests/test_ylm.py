@@ -1,5 +1,6 @@
-from laddu import Event, Dataset, Vector3, Ylm, Angles, Manager
 import pytest
+
+from laddu import Angles, Dataset, Event, Manager, Vector3, Ylm
 
 
 def make_test_event() -> Event:
@@ -19,7 +20,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_ylm_evaluation():
+def test_ylm_evaluation() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
     amp = Ylm("ylm", 1, 1, angles)
@@ -32,7 +33,7 @@ def test_ylm_evaluation():
     assert pytest.approx(result[0].imag) == 0.1426897
 
 
-def test_ylm_gradient():
+def test_ylm_gradient() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
     amp = Ylm("ylm", 1, 1, angles)

@@ -1,15 +1,16 @@
-from laddu import (
-    Manager,
-    Scalar,
-    ComplexScalar,
-    PolarComplexScalar,
-    Event,
-    Vector3,
-    Dataset,
-    parameter,
-)
 import numpy as np
 import pytest
+
+from laddu import (
+    ComplexScalar,
+    Dataset,
+    Event,
+    Manager,
+    PolarComplexScalar,
+    Scalar,
+    Vector3,
+    parameter,
+)
 
 
 def make_test_event() -> Event:
@@ -29,7 +30,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_scalar_creation_and_evaluation():
+def test_scalar_creation_and_evaluation() -> None:
     manager = Manager()
     amp = Scalar("test_scalar", parameter("test_param"))
     aid = manager.register(amp)
@@ -41,7 +42,7 @@ def test_scalar_creation_and_evaluation():
     assert result[0].imag == 0.0
 
 
-def test_scalar_gradient():
+def test_scalar_gradient() -> None:
     manager = Manager()
     amp = Scalar("test_scalar", parameter("test_param"))
     aid = manager.register(amp)
@@ -54,7 +55,7 @@ def test_scalar_gradient():
     assert gradient[0][0].imag == 0.0
 
 
-def test_complex_scalar_creation_and_evaluation():
+def test_complex_scalar_creation_and_evaluation() -> None:
     manager = Manager()
     amp = ComplexScalar("test_complex", parameter("re_param"), parameter("im_param"))
     aid = manager.register(amp)
@@ -66,7 +67,7 @@ def test_complex_scalar_creation_and_evaluation():
     assert result[0].imag == 2.5
 
 
-def test_complex_scalar_gradient():
+def test_complex_scalar_gradient() -> None:
     manager = Manager()
     amp = ComplexScalar("test_complex", parameter("re_param"), parameter("im_param"))
     aid = manager.register(amp)
@@ -81,7 +82,7 @@ def test_complex_scalar_gradient():
     assert gradient[0][1].imag == 0.0
 
 
-def test_polar_complex_scalar_creation_and_evaluation():
+def test_polar_complex_scalar_creation_and_evaluation() -> None:
     manager = Manager()
     amp = PolarComplexScalar("test_polar", parameter("r_param"), parameter("theta_param"))
     aid = manager.register(amp)
@@ -95,7 +96,7 @@ def test_polar_complex_scalar_creation_and_evaluation():
     assert pytest.approx(result[0].imag) == r * np.sin(theta)
 
 
-def test_polar_complex_scalar_gradient():
+def test_polar_complex_scalar_gradient() -> None:
     manager = Manager()
     amp = PolarComplexScalar("test_polar", parameter("r_param"), parameter("theta_param"))
     aid = manager.register(amp)

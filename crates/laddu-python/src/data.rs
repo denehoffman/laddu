@@ -1,0 +1,314 @@
+use crate::utils::variables::PyVariable;
+use laddu_core::{
+    data::{open, BinnedDataset, Dataset, Event},
+    Float,
+};
+use numpy::PyArray1;
+use pyo3::{exceptions::PyIndexError, prelude::*};
+use std::sync::Arc;
+
+use crate::utils::vectors::{PyVector3, PyVector4};
+
+/// A single event
+///
+/// Events are composed of a set of 4-momenta of particles in the overall
+/// center-of-momentum frame, polarizations or helicities described by 3-vectors, and a
+/// weight
+///
+/// Parameters
+/// ----------
+/// p4s : list of Vector4
+///     4-momenta of each particle in the event in the overall center-of-momentum frame
+/// eps : list of Vector3
+///     3-vectors describing the polarization or helicity of the particles
+///     given in `p4s`
+/// weight : float
+///     The weight associated with this event
+///
+#[pyclass(name = "Event", module = "laddu")]
+#[derive(Clone)]
+pub struct PyEvent(pub Arc<Event>);
+
+#[pymethods]
+impl PyEvent {
+    #[new]
+    fn new(p4s: Vec<PyVector4>, eps: Vec<PyVector3>, weight: Float) -> Self {
+        Self(Arc::new(Event {
+            p4s: p4s.into_iter().map(|arr| arr.0).collect(),
+            eps: eps.into_iter().map(|arr| arr.0).collect(),
+            weight,
+        }))
+    }
+    fn __str__(&self) -> String {
+        self.0.to_string()
+    }
+    /// The list of 4-momenta for each particle in the event
+    ///
+    #[getter]
+    fn get_p4s(&self) -> Vec<PyVector4> {
+        self.0.p4s.iter().map(|p4| PyVector4(*p4)).collect()
+    }
+    /// The list of 3-vectors describing the polarization or helicity of particles in
+    /// the event
+    ///
+    #[getter]
+    fn get_eps(&self) -> Vec<PyVector3> {
+        self.0
+            .eps
+            .iter()
+            .map(|eps_vec| PyVector3(*eps_vec))
+            .collect()
+    }
+    /// The weight of this event relative to others in a Dataset
+    ///
+    #[getter]
+    fn get_weight(&self) -> Float {
+        self.0.weight
+    }
+    /// Get the sum of the four-momenta within the event at the given indices
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : list of int
+    ///     The indices of the four-momenta to sum
+    ///
+    /// Returns
+    /// -------
+    /// Vector4
+    ///     The result of summing the given four-momenta
+    ///
+    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVector4 {
+        PyVector4(self.0.get_p4_sum(indices))
+    }
+}
+
+/// A set of Events
+///
+/// Datasets can be created from lists of Events or by using the provided ``laddu.open`` function
+///
+/// Datasets can also be indexed directly to access individual Events
+///
+/// Parameters
+/// ----------
+/// events : list of Event
+///
+/// See Also
+/// --------
+/// laddu.open
+///
+#[pyclass(name = "Dataset", module = "laddu")]
+#[derive(Clone)]
+pub struct PyDataset(pub Arc<Dataset>);
+
+#[pymethods]
+impl PyDataset {
+    #[new]
+    fn new(events: Vec<PyEvent>) -> Self {
+        Self(Arc::new(Dataset {
+            events: events.into_iter().map(|event| event.0).collect(),
+        }))
+    }
+    fn __len__(&self) -> usize {
+        self.0.len()
+    }
+    /// Get the number of Events in the Dataset
+    ///
+    /// Returns
+    /// -------
+    /// n_events : int
+    ///     The number of Events
+    ///
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    /// Get the weighted number of Events in the Dataset
+    ///
+    /// Returns
+    /// -------
+    /// n_events : float
+    ///     The sum of all Event weights
+    ///
+    fn weighted_len(&self) -> Float {
+        self.0.weighted_len()
+    }
+    /// The weights associated with the Dataset
+    ///
+    /// Returns
+    /// -------
+    /// weights : array_like
+    ///     A ``numpy`` array of Event weights
+    ///
+    #[getter]
+    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        PyArray1::from_slice(py, &self.0.weights())
+    }
+    /// The internal list of Events stored in the Dataset
+    ///
+    /// Returns
+    /// -------
+    /// events : list of Event
+    ///     The Events in the Dataset
+    ///
+    #[getter]
+    fn events(&self) -> Vec<PyEvent> {
+        self.0
+            .events
+            .iter()
+            .map(|rust_event| PyEvent(rust_event.clone()))
+            .collect()
+    }
+    fn __getitem__(&self, index: usize) -> PyResult<PyEvent> {
+        self.0
+            .get(index)
+            .ok_or(PyIndexError::new_err("index out of range"))
+            .map(|rust_event| PyEvent(rust_event.clone()))
+    }
+    /// Separates a Dataset into histogram bins by a Variable value
+    ///
+    /// Parameters
+    /// ----------
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///     The Variable by which each Event is binned
+    /// bins : int
+    ///     The number of equally-spaced bins
+    /// range : tuple[float, float]
+    ///     The minimum and maximum bin edges
+    ///
+    /// Returns
+    /// -------
+    /// datasets : BinnedDataset
+    ///     A pub structure that holds a list of Datasets binned by the given `variable`
+    ///
+    /// See Also
+    /// --------
+    /// laddu.Mass
+    /// laddu.CosTheta
+    /// laddu.Phi
+    /// laddu.PolAngle
+    /// laddu.PolMagnitude
+    /// laddu.Mandelstam
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the given `variable` is not a valid variable
+    ///
+    #[pyo3(signature = (variable, bins, range))]
+    fn bin_by(
+        &self,
+        variable: Bound<'_, PyAny>,
+        bins: usize,
+        range: (Float, Float),
+    ) -> PyResult<PyBinnedDataset> {
+        let py_variable = variable.extract::<PyVariable>()?;
+        Ok(PyBinnedDataset(self.0.bin_by(py_variable, bins, range)))
+    }
+    /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
+    ///
+    /// The new Dataset is resampled with a random generator seeded by the provided `seed`
+    ///
+    /// Parameters
+    /// ----------
+    /// seed : int
+    ///     The random seed used in the resampling process
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A bootstrapped Dataset
+    ///
+    fn bootstrap(&self, seed: usize) -> PyDataset {
+        PyDataset(self.0.bootstrap(seed))
+    }
+}
+
+/// A collection of Datasets binned by a Variable
+///
+/// BinnedDatasets can be indexed directly to access the underlying Datasets by bin
+///
+/// See Also
+/// --------
+/// laddu.Dataset.bin_by
+///
+#[pyclass(name = "BinnedDataset", module = "laddu")]
+pub struct PyBinnedDataset(BinnedDataset);
+
+#[pymethods]
+impl PyBinnedDataset {
+    fn __len__(&self) -> usize {
+        self.0.len()
+    }
+    /// Get the number of bins in the BinnedDataset
+    ///
+    /// Returns
+    /// -------
+    /// n : int
+    ///     The number of bins
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    /// The number of bins in the BinnedDataset
+    ///
+    #[getter]
+    fn bins(&self) -> usize {
+        self.0.bins()
+    }
+    /// The minimum and maximum values of the binning Variable used to create this BinnedDataset
+    ///
+    #[getter]
+    fn range(&self) -> (Float, Float) {
+        self.0.range()
+    }
+    /// The edges of each bin in the BinnedDataset
+    ///
+    #[getter]
+    fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        PyArray1::from_slice(py, &self.0.edges())
+    }
+    fn __getitem__(&self, index: usize) -> PyResult<PyDataset> {
+        self.0
+            .get(index)
+            .ok_or(PyIndexError::new_err("index out of range"))
+            .map(|rust_dataset| PyDataset(rust_dataset.clone()))
+    }
+}
+
+/// Open a Dataset from a file
+///
+/// Returns
+/// -------
+/// Dataset
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file could not be read
+///
+/// Warnings
+/// --------
+/// This method will panic/fail if the columns do not have the correct names or data types.
+/// There is currently no way to make this nicer without a large performance dip (if you find a
+/// way, please open a PR).
+///
+/// Notes
+/// -----
+/// Data should be stored in Parquet format with each column being filled with 32-bit floats
+///
+/// Valid/required column names have the following formats:
+///
+/// ``p4_{particle index}_{E|Px|Py|Pz}`` (four-momentum components for each particle)
+///
+/// ``eps_{particle index}_{x|y|z}`` (polarization/helicity vectors for each particle)
+///
+/// ``weight`` (the weight of the Event)
+///
+/// For example, the four-momentum of the 0th particle in the event would be stored in columns
+/// with the names ``p4_0_E``, ``p4_0_Px``, ``p4_0_Py``, and ``p4_0_Pz``. That particle's
+/// polarization could be stored in the columns ``eps_0_x``, ``eps_0_y``, and ``eps_0_z``. This
+/// could continue for an arbitrary number of particles. The ``weight`` column is always
+/// required.
+///
+#[pyfunction(name = "open")]
+pub fn py_open(path: &str) -> PyResult<PyDataset> {
+    Ok(PyDataset(open(path)?))
+}

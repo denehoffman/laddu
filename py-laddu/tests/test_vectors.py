@@ -1,9 +1,10 @@
-from laddu import Vector3, Vector4
 import numpy as np
 import pytest
 
+from laddu import Vector3, Vector4
 
-def test_three_to_four_momentum_conversion():
+
+def test_three_to_four_momentum_conversion() -> None:
     p3 = Vector3(1.0, 2.0, 3.0)
     target_p4 = Vector4(1.0, 2.0, 3.0, 10.0)
     p4_from_mass = p3.with_mass(target_p4.m)
@@ -18,7 +19,7 @@ def test_three_to_four_momentum_conversion():
     assert target_p4.pz == p4_from_energy.pz
 
 
-def test_four_momentum_basics():
+def test_four_momentum_basics() -> None:
     p = Vector4(3.0, 4.0, 5.0, 10.0)
     assert p.e == 10.0
     assert p.px == 3.0
@@ -35,7 +36,7 @@ def test_four_momentum_basics():
     assert repr(p) == "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
 
 
-def test_three_momentum_basics():
+def test_three_momentum_basics() -> None:
     p = Vector4(3.0, 4.0, 5.0, 10.0)
     q = Vector4(1.2, -3.4, 7.6, 0.0)
     p3_view = p.momentum
@@ -72,7 +73,7 @@ def test_three_momentum_basics():
     assert pytest.approx(p3.cross(q3).pz) == -15.0
 
 
-def test_boost_com():
+def test_boost_com() -> None:
     p = Vector4(3.0, 4.0, 5.0, 10.0)
     zero = p.boost(-p.beta)
     assert zero.px == 0.0
@@ -80,7 +81,7 @@ def test_boost_com():
     assert zero.pz == 0.0
 
 
-def test_boost():
+def test_boost() -> None:
     p1 = Vector4(3.0, 4.0, 5.0, 10.0)
     p2 = Vector4(3.4, 2.3, 1.2, 9.0)
     p1_boosted = p1.boost(-p2.beta)

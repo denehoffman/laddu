@@ -272,13 +272,10 @@
 //! ### Others
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
 
-/// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
-pub mod amplitudes {
-    pub use laddu_amplitudes::*;
-    pub use laddu_core::amplitudes::*;
-}
 /// Methods for loading and manipulating [`Event`]-based data.
-pub use laddu_core::data;
+pub mod data {
+    pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
+}
 /// Module for likelihood-related structures and methods
 pub mod extensions {
     pub use laddu_extensions::ganesh::{MCMCOptions, MinimizerOptions};
@@ -288,9 +285,13 @@ pub mod extensions {
     };
 }
 /// Structures for manipulating the cache and free parameters.
-pub use laddu_core::resources;
+pub mod resources {
+    pub use laddu_core::resources::*;
+}
 /// Utility functions, enums, and traits
-pub use laddu_core::utils;
+pub mod utils {
+    pub use laddu_core::utils::*;
+}
 /// Useful traits for all crate structs
 pub mod traits {
     pub use laddu_core::amplitudes::Amplitude;
@@ -299,25 +300,14 @@ pub mod traits {
     pub use laddu_core::ReadWrite;
     pub use laddu_extensions::likelihoods::LikelihoodTerm;
 }
-
-pub use laddu_amplitudes::{
-    breit_wigner::BreitWigner,
-    common::{ComplexScalar, PolarComplexScalar, Scalar},
-    ylm::Ylm,
-    zlm::Zlm,
-};
-pub use laddu_core::amplitudes::{
-    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
-};
-pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
-pub use laddu_core::resources::{
-    Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
-    Resources, ScalarID, VectorID,
-};
-pub use laddu_core::utils::enums::{Channel, Frame, Sign};
-pub use laddu_core::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
-};
+/// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
+pub mod amplitudes {
+    pub use laddu_amplitudes::*;
+    pub use laddu_core::amplitudes::{
+        constant, parameter, Amplitude, AmplitudeID, Evaluator, Expression, Manager, Model,
+        ParameterLike,
+    };
+}
 
 pub use laddu_core::Complex;
 pub use laddu_core::Float;

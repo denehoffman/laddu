@@ -1,3 +1,4 @@
+from abc import ABCMeta, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -6,6 +7,14 @@ import numpy.typing as npt
 
 from laddu.amplitudes import Evaluator, Model
 from laddu.data import Dataset
+
+class Observer(metaclass=ABCMeta):
+    @abstractmethod
+    def callback(self, step: int, status: Status) -> tuple[Status, bool]: ...
+
+class MCMCObserver(metaclass=ABCMeta):
+    @abstractmethod
+    def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]: ...
 
 class LikelihoodID:
     def __add__(
@@ -65,7 +74,7 @@ class LikelihoodEvaluator:
         max_steps: int = 4000,
         debug: bool = False,
         verbose: bool = False,
-        **kwargs,
+        **kwargs,  # noqa: ANN003
     ) -> Status: ...
     def mcmc(
         self,
@@ -76,7 +85,7 @@ class LikelihoodEvaluator:
         debug: bool = False,
         verbose: bool = False,
         seed: int = 0,
-        **kwargs,
+        **kwargs,  # noqa: ANN003
     ) -> Ensemble: ...
 
 class NLL:
@@ -129,7 +138,7 @@ class NLL:
         max_steps: int = 4000,
         debug: bool = False,
         verbose: bool = False,
-        **kwargs,
+        **kwargs,  # noqa: ANN003
     ) -> Status: ...
     def mcmc(
         self,
@@ -140,7 +149,7 @@ class NLL:
         debug: bool = False,
         verbose: bool = False,
         seed: int = 0,
-        **kwargs,
+        **kwargs,  # noqa: ANN003
     ) -> Ensemble: ...
 
 def LikelihoodScalar(name: str) -> LikelihoodTerm: ...
@@ -196,26 +205,26 @@ class AutocorrelationObserver:
     def __init__(
         self,
         *,
-        n_check=50,
-        n_taus_threshold=50,
-        dtau_threshold=0.01,
-        discard=0.5,
-        terminate=True,
-        c=7.0,
-        verbose=False,
+        n_check: int = 50,
+        n_taus_threshold: int = 50,
+        dtau_threshold: float = 0.01,
+        discard: float = 0.5,
+        terminate: bool = True,
+        c: float = 7.0,
+        verbose: bool = False,
     ) -> None: ...
 
 __all__ = [
     'NLL',
-    'Status',
-    'Ensemble',
-    'Bound',
-    'LikelihoodID',
-    'LikelihoodExpression',
-    'LikelihoodTerm',
-    'LikelihoodManager',
-    'LikelihoodEvaluator',
-    'LikelihoodScalar',
     'AutocorrelationObserver',
+    'Bound',
+    'Ensemble',
+    'LikelihoodEvaluator',
+    'LikelihoodExpression',
+    'LikelihoodID',
+    'LikelihoodManager',
+    'LikelihoodScalar',
+    'LikelihoodTerm',
+    'Status',
     'integrated_autocorrelation_times',
 ]

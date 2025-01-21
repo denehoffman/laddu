@@ -1,5 +1,6 @@
-from laddu import Event, Dataset, Vector3, Zlm, Angles, Manager, Polarization
 import pytest
+
+from laddu import Angles, Dataset, Event, Manager, Polarization, Vector3, Zlm
 
 
 def make_test_event() -> Event:
@@ -19,7 +20,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_zlm_evaluation():
+def test_zlm_evaluation() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
     polarization = Polarization(0, [1])
@@ -33,7 +34,7 @@ def test_zlm_evaluation():
     assert pytest.approx(result[0].imag) == -0.2385963
 
 
-def test_zlm_gradient():
+def test_zlm_gradient() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
     polarization = Polarization(0, [1])

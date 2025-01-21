@@ -1,11 +1,12 @@
 import numpy as np
-from laddu import Event, Dataset, Vector3, Mass, Manager, parameter
+import pytest
+
+from laddu import Dataset, Event, Manager, Mass, Vector3, parameter
 from laddu.amplitudes.piecewise import (
-    PiecewiseScalar,
     PiecewiseComplexScalar,
     PiecewisePolarComplexScalar,
+    PiecewiseScalar,
 )
-import pytest
 
 
 def make_test_event() -> Event:
@@ -25,7 +26,7 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_piecewise_scalar_evaluation():
+def test_piecewise_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseScalar(
@@ -44,7 +45,7 @@ def test_piecewise_scalar_evaluation():
     assert pytest.approx(result[0].imag) == 0.0
 
 
-def test_piecewise_scalar_gradient():
+def test_piecewise_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseScalar(
@@ -68,7 +69,7 @@ def test_piecewise_scalar_gradient():
     assert pytest.approx(result[0][2].imag) == 0.0
 
 
-def test_piecewise_complex_scalar_evaluation():
+def test_piecewise_complex_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseComplexScalar(
@@ -91,7 +92,7 @@ def test_piecewise_complex_scalar_evaluation():
     assert pytest.approx(result[0].imag) == 2.2
 
 
-def test_piecewise_complex_scalar_gradient():
+def test_piecewise_complex_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseComplexScalar(
@@ -126,7 +127,7 @@ def test_piecewise_complex_scalar_gradient():
     assert pytest.approx(result[0][5].imag) == 0.0
 
 
-def test_piecewise_polar_complex_scalar_evaluation():
+def test_piecewise_polar_complex_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewisePolarComplexScalar(
@@ -151,7 +152,7 @@ def test_piecewise_polar_complex_scalar_evaluation():
     assert pytest.approx(result[0].imag) == 2.1 * r * np.sin(2.2 * theta)
 
 
-def test_piecewise_polar_complex_scalar_gradient():
+def test_piecewise_polar_complex_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewisePolarComplexScalar(

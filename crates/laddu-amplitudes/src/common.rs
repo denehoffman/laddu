@@ -7,7 +7,7 @@ use laddu_core::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "python")]
-use laddu_python::{PyAmplitude, PyParameterLike};
+use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

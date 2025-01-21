@@ -1,14 +1,15 @@
+import pytest
+
 from laddu import (
+    ComplexScalar,
+    Dataset,
+    Event,
     Manager,
     Scalar,
-    ComplexScalar,
-    Event,
-    Dataset,
     Vector3,
     constant,
     parameter,
 )
-import pytest
 
 
 def make_test_event() -> Event:
@@ -28,9 +29,9 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()])
 
 
-def test_constant_amplitude():
+def test_constant_amplitude() -> None:
     manager = Manager()
-    amp = Scalar("constant", constant(2.0))
+    amp = Scalar('constant', constant(2.0))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -39,9 +40,9 @@ def test_constant_amplitude():
     assert result[0] == 2.0 + 0.0j
 
 
-def test_parametric_amplitude():
+def test_parametric_amplitude() -> None:
     manager = Manager()
-    amp = Scalar("parametric", parameter("test_param"))
+    amp = Scalar('parametric', parameter('test_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -50,11 +51,11 @@ def test_parametric_amplitude():
     assert result[0] == 3.0 + 0.0j
 
 
-def test_expression_operations():
+def test_expression_operations() -> None:
     manager = Manager()
-    amp1 = ComplexScalar("const1", constant(2.0), constant(0.0))
-    amp2 = ComplexScalar("const2", constant(0.0), constant(1.0))
-    amp3 = ComplexScalar("const3", constant(3.0), constant(4.0))
+    amp1 = ComplexScalar('const1', constant(2.0), constant(0.0))
+    amp2 = ComplexScalar('const2', constant(0.0), constant(1.0))
+    amp3 = ComplexScalar('const3', constant(3.0), constant(4.0))
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     aid3 = manager.register(amp3)
@@ -120,10 +121,10 @@ def test_expression_operations():
     assert result_mul2_norm[0] == 20.0 + 0.0j
 
 
-def test_amplitude_activation():
+def test_amplitude_activation() -> None:
     manager = Manager()
-    amp1 = ComplexScalar("const1", constant(1.0), constant(0.0))
-    amp2 = ComplexScalar("const2", constant(2.0), constant(0.0))
+    amp1 = ComplexScalar('const1', constant(1.0), constant(0.0))
+    amp2 = ComplexScalar('const2', constant(2.0), constant(0.0))
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     dataset = make_test_dataset()
@@ -134,11 +135,11 @@ def test_amplitude_activation():
     result = evaluator.evaluate([])
     assert result[0] == 3.0 + 0.0j
 
-    evaluator.deactivate("const1")
+    evaluator.deactivate('const1')
     result = evaluator.evaluate([])
     assert result[0] == 2.0 + 0.0j
 
-    evaluator.isolate("const1")
+    evaluator.isolate('const1')
     result = evaluator.evaluate([])
     assert result[0] == 1.0 + 0.0j
 
@@ -147,9 +148,9 @@ def test_amplitude_activation():
     assert result[0] == 3.0 + 0.0j
 
 
-def test_gradient():
+def test_gradient() -> None:
     manager = Manager()
-    amp = Scalar("parametric", parameter("test_param"))
+    amp = Scalar('parametric', parameter('test_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     expr = aid.norm_sqr()
@@ -162,23 +163,23 @@ def test_gradient():
     assert gradient[0][0].imag == 0.0
 
 
-def test_parameter_registration():
+def test_parameter_registration() -> None:
     manager = Manager()
-    amp = Scalar("parametric", parameter("test_param"))
+    amp = Scalar('parametric', parameter('test_param'))
     aid = manager.register(amp)
     parameters = manager.parameters
     model = manager.model(aid)
     model_parameters = model.parameters
     assert len(parameters) == 1
-    assert parameters[0] == "test_param"
+    assert parameters[0] == 'test_param'
     assert len(model_parameters) == 1
-    assert model_parameters[0] == "test_param"
+    assert model_parameters[0] == 'test_param'
 
 
-def test_duplicate_amplitude_registration():
+def test_duplicate_amplitude_registration() -> None:
     manager = Manager()
-    amp1 = ComplexScalar("same_name", constant(1.0), constant(0.0))
-    amp2 = ComplexScalar("same_name", constant(2.0), constant(0.0))
+    amp1 = ComplexScalar('same_name', constant(1.0), constant(0.0))
+    amp2 = ComplexScalar('same_name', constant(2.0), constant(0.0))
     manager.register(amp1)
     with pytest.raises(ValueError):
         manager.register(amp2)

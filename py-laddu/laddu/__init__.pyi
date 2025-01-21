@@ -1,21 +1,22 @@
-from abc import ABCMeta, abstractmethod
-from pathlib import Path
-
-from laddu.amplitudes import Expression, Manager, constant, parameter, Model
+from laddu import amplitudes, convert, data, extensions, utils
+from laddu.amplitudes import Manager, Model, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
-from laddu.data import BinnedDataset, Dataset, Event, open
-from laddu.likelihoods import (
+from laddu.data import BinnedDataset, Dataset, Event, open, open_amptools
+from laddu.extensions import (
     NLL,
+    AutocorrelationObserver,
     Ensemble,
     LikelihoodManager,
+    MCMCObserver,
+    Observer,
     Status,
-    AutocorrelationObserver,
     integrated_autocorrelation_times,
 )
+from laddu.laddu import Vector3, Vector4
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -26,48 +27,27 @@ from laddu.utils.variables import (
     Polarization,
     PolMagnitude,
 )
-from laddu.utils.vectors import Vector3, Vector4
-
-from . import amplitudes, convert, data, utils
 
 __version__: str
-
-class Observer(metaclass=ABCMeta):
-    @abstractmethod
-    def callback(self, step: int, status: Status) -> tuple[Status, bool]: ...
-
-class MCMCObserver(metaclass=ABCMeta):
-    @abstractmethod
-    def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]:
-        pass
-
-def open_amptools(
-    path: str | Path,
-    tree: str = 'kin',
-    *,
-    pol_in_beam: bool = False,
-    pol_angle: float | None = None,
-    pol_magnitude: float | None = None,
-    num_entries: int | None = None,
-) -> Dataset: ...
 
 __all__ = [
     'NLL',
     'Angles',
+    'AutocorrelationObserver',
     'BinnedDataset',
     'BreitWigner',
     'ComplexScalar',
     'CosTheta',
     'Dataset',
+    'Ensemble',
     'Event',
-    'Expression',
     'LikelihoodManager',
+    'MCMCObserver',
     'Manager',
-    'Model',
     'Mandelstam',
     'Mass',
+    'Model',
     'Observer',
-    'MCMCObserver',
     'Phi',
     'PolAngle',
     'PolMagnitude',
@@ -75,7 +55,6 @@ __all__ = [
     'Polarization',
     'Scalar',
     'Status',
-    'Ensemble',
     'Vector3',
     'Vector4',
     'Ylm',
@@ -86,10 +65,10 @@ __all__ = [
     'convert',
     'convert_from_amptools',
     'data',
+    'extensions',
+    'integrated_autocorrelation_times',
     'open',
     'open_amptools',
     'parameter',
     'utils',
-    'AutocorrelationObserver',
-    'integrated_autocorrelation_times',
 ]

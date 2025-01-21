@@ -3,12 +3,12 @@ use std::time::Duration;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu::{
     amplitudes::{
+        constant,
         kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
         parameter,
         zlm::Zlm,
         Manager,
     },
-    constant,
     data::open,
     extensions::NLL,
     traits::*,

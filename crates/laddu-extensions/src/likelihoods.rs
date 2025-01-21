@@ -24,7 +24,10 @@ use crate::ganesh::py_ganesh::{
     py_parse_mcmc_options, py_parse_minimizer_options, PyEnsemble, PyStatus,
 };
 #[cfg(feature = "python")]
-use laddu_python::{PyDataset, PyEvaluator, PyModel};
+use laddu_python::{
+    amplitudes::{PyEvaluator, PyModel},
+    data::PyDataset,
+};
 #[cfg(feature = "python")]
 use numpy::PyArray1;
 #[cfg(feature = "python")]
@@ -58,7 +61,7 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 /// NLL.as_term
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodTerm")]
+#[pyclass(name = "LikelihoodTerm", module = "laddu")]
 #[derive(Clone)]
 pub struct PyLikelihoodTerm(Box<dyn LikelihoodTerm>);
 
@@ -647,7 +650,7 @@ impl NLL {
 ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "NLL")]
+#[pyclass(name = "NLL", module = "laddu")]
 #[derive(Clone)]
 pub struct PyNLL(Box<NLL>);
 
@@ -1236,7 +1239,7 @@ impl Display for LikelihoodID {
 /// laddu.LikelihoodManager.register
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodID")]
+#[pyclass(name = "LikelihoodID", module = "laddu")]
 #[derive(Clone)]
 pub struct PyLikelihoodID(LikelihoodID);
 
@@ -1370,7 +1373,7 @@ impl LikelihoodManager {
 /// A class which can be used to register LikelihoodTerms and store precalculated data
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodManager")]
+#[pyclass(name = "LikelihoodManager", module = "laddu")]
 #[derive(Clone)]
 pub struct PyLikelihoodManager(LikelihoodManager);
 
@@ -1557,7 +1560,7 @@ impl_op_ex!(
 /// A mathematical expression formed from LikelihoodIDs
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodExpression")]
+#[pyclass(name = "LikelihoodExpression", module = "laddu")]
 #[derive(Clone)]
 pub struct PyLikelihoodExpression(LikelihoodExpression);
 
@@ -1866,7 +1869,7 @@ impl LikelihoodEvaluator {
 /// LikelihoodManager
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodEvaluator")]
+#[pyclass(name = "LikelihoodEvaluator", module = "laddu")]
 pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
 
 #[cfg(feature = "python")]
