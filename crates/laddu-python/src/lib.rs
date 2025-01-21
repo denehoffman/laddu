@@ -15,7 +15,7 @@ pub trait GetStrExtractObj {
         T: for<'py> FromPyObject<'py>;
 }
 
-#[cfg_attr(coverage, coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl GetStrExtractObj for Bound<'_, PyDict> {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
