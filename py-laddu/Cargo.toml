@@ -1,0 +1,22 @@
+[package]
+name = "py-laddu"
+version = { workspace = true }
+edition = { workspace = true }
+readme = "README.md"
+license = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+name = "laddu"
+crate-type = ["cdylib"]
+
+[dependencies]
+laddu-amplitudes = { workspace = true, features = ["python"] }
+laddu-extensions = { workspace = true, features = ["python"] }
+laddu-python = { workspace = true }
+
+pyo3 = { workspace = true, features = [
+  "num-complex",
+  "abi3-py37",
+  "extension-module",
+] }

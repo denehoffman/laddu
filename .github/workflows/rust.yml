@@ -20,6 +20,6 @@ jobs:
     - name: Run checks
       run: cargo hack check --rust-version --each-feature --no-dev-deps
     - name: Build
-      run: cargo build -r --verbose
+      run: cargo build --verbose
     - name: Run tests
       run: cargo hack test --verbose --each-feature

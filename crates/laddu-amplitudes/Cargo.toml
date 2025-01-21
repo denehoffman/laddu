@@ -1,0 +1,34 @@
+[package]
+name = "laddu-amplitudes"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Amplitudes for the laddu library"
+
+[dependencies]
+laddu-core = { workspace = true }
+laddu-python = { workspace = true, optional = true }
+
+dyn-clone = { workspace = true }
+nalgebra = { workspace = true }
+num = { workspace = true }
+pyo3 = { workspace = true, features = [
+  "num-complex",
+  "abi3-py37",
+], optional = true }
+serde = { workspace = true }
+typetag = { workspace = true }
+
+[dev-dependencies]
+approx = { workspace = true }
+
+[features]
+default = []
+python = ["laddu-python", "pyo3"]
+pyo3 = ["dep:pyo3"]
+laddu-python = ["dep:laddu-python"]
+f32 = ["laddu-core/f32", "laddu-python/f32"]

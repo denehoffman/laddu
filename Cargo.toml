@@ -1,92 +1,64 @@
-[package]
-name = "laddu"
+[workspace]
+resolver = "2"
+members = ["crates/*", "py-laddu"]
+default-members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.17"
+authors = ["Nathaniel Dene Hoffman <dene@cmu.edu>"]
 edition = "2021"
-description = "Amplitude analysis made short and sweet"
-documentation = "https://docs.rs/laddu"
-readme = "README.md"
 homepage = "https://github.com/denehoffman/laddu"
-repository = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
-keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
-categories = ["science", "mathematics"]
-exclude = ["/python_examples"]
+repository = "https://github.com/denehoffman/laddu"
 rust-version = "1.70.0"
 
-[lib]
-name = "laddu"
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-indexmap = { version = "2.6.0", features = ["serde"] }
-num = "0.4.3"
-nalgebra = "0.33.2"
-arrow = "54.0.0"
-parquet = "54.0.0"
-factorial = "0.4.0"
-parking_lot = "0.12.3"
-dyn-clone = "1.0.17"
-auto_ops = "0.3.0"
-rand = "0.8.5"
-rand_chacha = "0.3.1"
-rayon = { version = "1.10.0", optional = true }
-pyo3 = { version = "0.23.3", optional = true, features = [
-  "num-complex",
-  "abi3-py37",
-] }
-numpy = { version = "0.23.0", optional = true, features = ["nalgebra"] }
-ganesh = "0.16.0"
-thiserror = "2.0.3"
-shellexpand = "3.1.0"
+[workspace.dependencies]
 accurate = "0.4.1"
-serde = "1.0.215"
-serde_with = "3.11.0"
-typetag = "0.2.18"
-serde-pickle = "1.2.0"
-bincode = "1.3.3"
-fastrand = "2.3.0"
-num_cpus = { version = "1.16.0", optional = true }
-
-[dev-dependencies]
 approx = "0.5.1"
+arrow = "53.4.0"
+auto_ops = "0.3.0"
+bincode = "1.3.3"
 criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features = [
   "html_reports",
 ] }
+dyn-clone = "1.0.17"
+factorial = "0.4.0"
+fastrand = "2.3.0"
+ganesh = "0.16.0"
+indexmap = { version = "2.6.0", features = ["serde"] }
+nalgebra = "0.33.2"
+num = "0.4.3"
+num_cpus = { version = "1.16.0" }
+numpy = { version = "0.23.0", features = ["nalgebra"] }
+parquet = "53.4.0"
+parking_lot = "0.12.3"
+pyo3 = { version = "0.23.3" }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+rayon = { version = "1.10.0" }
+serde = "1.0.215"
+serde-pickle = "1.2.0"
+serde_with = "3.11.0"
+shellexpand = "3.1.0"
+thiserror = "2.0.3"
+typetag = "0.2.18"
 
-[[bench]]
-name = "kmatrix_benchmark"
-harness = false
-
-[[bench]]
-name = "open_benchmark"
-harness = false
-
-[features]
-default = ["rayon", "python"]
-extension-module = ["pyo3/extension-module"]
-rayon = ["dep:rayon"]
-f32 = ["ganesh/f32"]
-python = ["pyo3", "numpy", "extension-module", "num_cpus"]
-pyo3 = ["dep:pyo3"]
-numpy = ["dep:numpy"]
-num_cpus = ["dep:num_cpus"]
+laddu = { path = "crates/laddu" }
+laddu-core = { path = "crates/laddu-core" }
+laddu-amplitudes = { path = "crates/laddu-amplitudes" }
+laddu-extensions = { path = "crates/laddu-extensions" }
+laddu-python = { path = "crates/laddu-python" }
 
 [profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
+lto = "thin"
+debug = false
 
-[profile.bench]
-lto = true
-codegen-units = 1
-panic = "unwind"
-
-[profile.perf]
+[profile.debug-release]
 inherits = "release"
 debug = true
 
-[package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "./docs/docs-header.html"]
-
-[package.metadata.maturin]
-python-source = "python"
+[profile.dist-release]
+inherits = "release"
+codegen-units = 1
+debug = false
+lto = "fat"

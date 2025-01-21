@@ -1,0 +1,38 @@
+[package]
+name = "laddu-python"
+version = { workspace = true }
+description = "Amplitude analysis made short and sweet"
+edition = { workspace = true }
+authors = { workspace = true }
+homepage = { workspace = true }
+keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
+categories = ["science", "mathematics"]
+license = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+laddu-core = { workspace = true, features = ["python"] }
+
+accurate = { workspace = true }
+bincode = { workspace = true }
+fastrand = { workspace = true }
+ganesh = { workspace = true }
+num_cpus = { workspace = true }
+numpy = { workspace = true }
+parking_lot = { workspace = true }
+pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }
+rayon = { workspace = true, optional = true }
+serde = { workspace = true }
+shellexpand = { workspace = true }
+typetag = { workspace = true }
+
+[features]
+default = ["rayon"]
+rayon = ["dep:rayon"]
+f32 = ["ganesh/f32", "laddu-core/f32"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(coverage,coverage_nightly)',
+] }

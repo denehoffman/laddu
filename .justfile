@@ -2,20 +2,20 @@ default:
   just --list
 
 develop:
-  CARGO_INCREMENTAL=true maturin develop -r --uv --strip
+  CARGO_INCREMENTAL=true maturin develop --uv -m py-laddu/Cargo.toml
 
 builddocs:
-  CARGO_INCREMENTAL=true maturin build -r --strip
+  CARGO_INCREMENTAL=true maturin build -m py-laddu/Cargo.toml
   uv pip install ./target/wheels/*
-  make -C docs clean
-  make -C docs html
+  make -C py-laddu/docs clean
+  make -C py-laddu/docs html
 
 makedocs:
-  make -C docs clean
-  make -C docs html
+  make -C py-laddu/docs clean
+  make -C py-laddu/docs html
 
 odoc:
-  firefox ./docs/build/html/index.html
+  firefox ./py-laddu/docs/build/html/index.html
 
 clean:
   cargo clean

@@ -1,0 +1,42 @@
+[package]
+name = "laddu"
+version = { workspace = true }
+description = "Amplitude analysis made short and sweet"
+documentation = "https://docs.rs/laddu"
+edition = { workspace = true }
+authors = { workspace = true }
+homepage = { workspace = true }
+keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
+categories = ["science", "mathematics"]
+license = { workspace = true }
+readme = "../../README.md"
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+laddu-core = { workspace = true }
+laddu-amplitudes = { workspace = true }
+laddu-extensions = { workspace = true }
+
+serde = { workspace = true }
+typetag = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+num_cpus = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true }
+
+[[bench]]
+name = "kmatrix_benchmark"
+harness = false
+
+[features]
+default = ["rayon"]
+rayon = ["laddu-core/rayon"]
+f32 = ["laddu-core/f32", "laddu-amplitudes/f32", "laddu-extensions/f32"]
+python = [
+  "laddu-core/python",
+  "laddu-amplitudes/python",
+  "laddu-extensions/python",
+]

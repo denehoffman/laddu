@@ -10,7 +10,7 @@ build:
     rust: "latest"
 
 sphinx:
-  configuration: docs/source/conf.py
+  configuration: py-laddu/docs/source/conf.py
 
 formats:
    - pdf
@@ -18,6 +18,6 @@ formats:
 python:
    install:
     - method: pip
-      path: .
+      path: py-laddu
       extra_requirements:
         - docs

@@ -26,11 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        run: rustup update stable
+        run: rustup update nightly
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate Rust code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov
+        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --exclude py-laddu
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -51,7 +51,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: develop
-          args: -r --uv
+          args: --uv -m py-laddu/Cargo.toml
       - name: Install pytest
         run: uv pip install pytest pytest-cov
       - name: Generate Python code coverage
