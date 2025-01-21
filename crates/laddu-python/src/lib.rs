@@ -1,12 +1,12 @@
-#![cfg_attr(coverage, feature(coverage_attribute))]
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-#[cfg_attr(coverage, coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod amplitudes;
-#[cfg_attr(coverage, coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod data;
-#[cfg_attr(coverage, coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod utils;
 
 pub trait GetStrExtractObj {
