@@ -239,7 +239,7 @@ if __name__ == "__main__":
 This example would probably make the most sense for a binned fit, since there isn't actually any mass dependence in any of these amplitudes (so it will just plot the relative amount of each wave over the entire dataset).
 
 ### Other Examples
-You can find other Python examples in the `python_examples` folder. They should each have a corresponding `requirements_[#].txt` file.
+You can find other Python examples in the `py-laddu/examples` folder. They should each have a corresponding `requirements_[#].txt` file.
 
 #### Example 1
 
@@ -248,7 +248,7 @@ The first example script uses data generated with [gen_amp](https://github.com/J
 <p align="center">
   <img
     width="800"
-    src="python_examples/example_1/example_1.svg"
+    src="py-laddu/examples/example_1/example_1.svg"
   />
 </p>
 
@@ -260,13 +260,13 @@ Some example plots can be seen below for the first data bin:
 <p align="center">
   <table>
     <tr>
-      <td><img width="250" src="python_examples/example_1/mcmc_plots/corner_0.svg" /></td>
-      <td><img width="250" src="python_examples/example_1/mcmc_plots/corner_transformed_0.svg" /></td>
-      <td><img width="250" src="python_examples/example_1/mcmc_plots/iat_0.svg" /></td>
+      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/corner_0.svg" /></td>
+      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/corner_transformed_0.svg" /></td>
+      <td><img width="250" src="py-laddu/examples/example_1/mcmc_plots/iat_0.svg" /></td>
     </tr>
       <tr>
       <td colspan="3" align="center">
-        <img width="800" src="python_examples/example_1/mcmc_plots/trace_0.svg" />
+        <img width="800" src="py-laddu/examples/example_1/mcmc_plots/trace_0.svg" />
       </td>
     </tr>
   </table>

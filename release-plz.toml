@@ -21,3 +21,4 @@ name = "laddu-python"
 name = "py-laddu"
 changelog_include = ["laddu-core", "laddu-amplitudes", "laddu-extensions"]
 publish = false
+git_release_enable = false
