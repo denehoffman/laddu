@@ -30,7 +30,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate Rust code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov
+        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --exclude py-laddu
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:

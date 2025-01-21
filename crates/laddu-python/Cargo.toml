@@ -31,3 +31,8 @@ typetag = { workspace = true }
 default = ["rayon"]
 rayon = ["dep:rayon"]
 f32 = ["ganesh/f32", "laddu-core/f32"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(coverage,coverage_nightly)',
+] }
