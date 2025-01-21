@@ -9,7 +9,6 @@ pub mod data;
 #[cfg_attr(coverage, coverage(off))]
 pub mod utils;
 
-#[cfg_attr(coverage, coverage(off))]
 pub trait GetStrExtractObj {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
