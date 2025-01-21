@@ -1,17 +1,17 @@
 [package]
 name = "laddu"
-version = { workspace = true }
+version = "0.1.17"
 description = "Amplitude analysis made short and sweet"
 documentation = "https://docs.rs/laddu"
-edition = { workspace = true }
-authors = { workspace = true }
-homepage = { workspace = true }
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
 keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
 categories = ["science", "mathematics"]
-license = { workspace = true }
+license.workspace = true
 readme = "../../README.md"
-repository = { workspace = true }
-rust-version = { workspace = true }
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 laddu-core = { workspace = true }

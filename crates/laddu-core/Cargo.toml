@@ -1,6 +1,6 @@
 [package]
 name = "laddu-core"
-version.workspace = true
+version = "0.1.17"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true

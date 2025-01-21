@@ -1,10 +1,10 @@
 [package]
 name = "py-laddu"
-version = { workspace = true }
-edition = { workspace = true }
+version = "0.1.17"
+edition.workspace = true
 readme = "README.md"
-license = { workspace = true }
-rust-version = { workspace = true }
+license.workspace = true
+rust-version.workspace = true
 
 [lib]
 name = "laddu"
