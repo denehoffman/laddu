@@ -51,7 +51,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: develop
-          args: -r --uv
+          args: --uv -m py-laddu/Cargo.toml
       - name: Install pytest
         run: uv pip install pytest pytest-cov
       - name: Generate Python code coverage
