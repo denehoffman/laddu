@@ -51,7 +51,7 @@ laddu-python = { path = "crates/laddu-python" }
 
 [profile.release]
 lto = "thin"
-debug = "line-tables-only"
+debug = false
 
 [profile.debug-release]
 inherits = "release"
