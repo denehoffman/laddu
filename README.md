@@ -90,7 +90,7 @@ use laddu::{
 };
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
-use laddu::{Deserialize, Serialize};
+use laddu::{Deserialize, Serialize, typetag};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {

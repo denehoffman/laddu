@@ -110,17 +110,17 @@ mod laddu {
     use laddu_extensions::likelihoods::PyNLL;
 
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::py_integrated_autocorrelation_times;
+    use laddu_extensions::ganesh_ext::py_ganesh::py_integrated_autocorrelation_times;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyAutocorrelationObserver;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyAutocorrelationObserver;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyBound;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyBound;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyEnsemble;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyEnsemble;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyMCMCObserver;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyMCMCObserver;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyObserver;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyObserver;
     #[pymodule_export]
-    use laddu_extensions::ganesh::py_ganesh::PyStatus;
+    use laddu_extensions::ganesh_ext::py_ganesh::PyStatus;
 }

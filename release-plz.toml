@@ -1,0 +1,18 @@
+[workspace]
+dependencies_update = false
+
+[[package]]
+name = "laddu-core"
+
+[[package]]
+name = "laddu-amplitudes"
+
+[[package]]
+name = "laddu-extensions"
+
+[[package]]
+name = "laddu"
+changelog_include = ["laddu-core", "laddu-amplitudes", "laddu-extensions"]
+
+[[package]]
+name = "laddu-python"

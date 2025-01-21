@@ -56,7 +56,7 @@
 //! };
 //! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
-//! use laddu::{Deserialize, Serialize};
+//! use laddu::{Deserialize, Serialize, typetag};
 //!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
@@ -135,7 +135,7 @@
 //! # };
 //! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
-//! # use laddu::{Deserialize, Serialize};
+//! # use laddu::{Deserialize, Serialize, typetag};
 //!
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
@@ -278,11 +278,7 @@ pub mod data {
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
-    pub use laddu_extensions::ganesh::{MCMCOptions, MinimizerOptions};
-    pub use laddu_extensions::likelihoods;
-    pub use laddu_extensions::likelihoods::{
-        LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, NLL,
-    };
+    pub use laddu_extensions::*;
 }
 /// Structures for manipulating the cache and free parameters.
 pub mod resources {
@@ -309,8 +305,21 @@ pub mod amplitudes {
     };
 }
 
+pub use laddu_amplitudes::*;
+pub use laddu_core::amplitudes::{
+    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
+};
+pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
+pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
+pub use laddu_core::utils::variables::{
+    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+};
 pub use laddu_core::Complex;
 pub use laddu_core::Float;
+pub use laddu_core::LadduError;
 pub use laddu_core::Status;
 pub use laddu_core::PI;
 pub use laddu_core::{DVector, Vector3, Vector4};
+pub use laddu_extensions::*;
+pub use serde::{Deserialize, Serialize};
+pub use typetag;

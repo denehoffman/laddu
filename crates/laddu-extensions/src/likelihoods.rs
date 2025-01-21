@@ -20,7 +20,7 @@ use laddu_core::{
 };
 
 #[cfg(feature = "python")]
-use crate::ganesh::py_ganesh::{
+use crate::ganesh_ext::py_ganesh::{
     py_parse_mcmc_options, py_parse_minimizer_options, PyEnsemble, PyStatus,
 };
 #[cfg(feature = "python")]
@@ -39,7 +39,7 @@ use pyo3::{
 #[cfg(feature = "rayon")]
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
-use crate::ganesh::{MCMCOptions, MinimizerOptions};
+use crate::ganesh_ext::{MCMCOptions, MinimizerOptions};
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.

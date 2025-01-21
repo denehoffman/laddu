@@ -18,6 +18,9 @@ laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
 
+serde = { workspace = true }
+typetag = { workspace = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 num_cpus = { workspace = true }
