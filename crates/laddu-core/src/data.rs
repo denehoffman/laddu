@@ -1,5 +1,6 @@
 use arrow::array::Float32Array;
 use arrow::record_batch::RecordBatch;
+use auto_ops::impl_op_ex;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rand::{Rng, SeedableRng};
@@ -312,6 +313,8 @@ impl Dataset {
     }
 }
 
+impl_op_ex!(+ |a: &Dataset, b: &Dataset| ->  Dataset { Dataset { events: a.events.iter().chain(b.events.iter()).cloned().collect() }});
+
 fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     let mut p4s = Vec::new();
     let mut eps = Vec::new();
@@ -545,6 +548,21 @@ mod tests {
         dataset.events.push(Arc::new(test_event()));
         assert!(!dataset.is_empty());
         assert_eq!(dataset.len(), 1);
+    }
+
+    #[test]
+    fn test_dataset_sum() {
+        let dataset = test_dataset();
+        let dataset2 = Dataset {
+            events: vec![Arc::new(Event {
+                p4s: test_event().p4s,
+                eps: test_event().eps,
+                weight: 0.52,
+            })],
+        };
+        let dataset_sum = &dataset + &dataset2;
+        assert_eq!(dataset_sum[0].weight, dataset[0].weight);
+        assert_eq!(dataset_sum[1].weight, dataset2[0].weight);
     }
 
     #[test]
