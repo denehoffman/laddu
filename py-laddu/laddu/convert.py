@@ -27,7 +27,7 @@ def read_root_file(
     tree_name: str = 'kin',
     *,
     pol_in_beam: bool = False,
-    pol_angle: float | None = None,
+    pol_angle_rad: float | None = None,
     pol_magnitude: float | None = None,
     num_entries: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -84,12 +84,12 @@ def read_root_file(
         p4_beam[:, 0] = 0  # Set Px to 0
         p4_beam[:, 1] = 0  # Set Py to 0
         p4_beam[:, 2] = E_beam  # Set Pz = E for beam
-    elif pol_angle is not None and pol_magnitude is not None:
+    elif pol_angle_rad is not None and pol_magnitude is not None:
         logger.info(
-            f'Using input polarization angle ({pol_angle}) and magnitude ({pol_magnitude}).'
+            f'Using input polarization angle ({pol_angle_rad}) and magnitude ({pol_magnitude}).'
         )
-        eps_x = pol_magnitude * np.cos(pol_angle) * np.ones_like(E_beam)
-        eps_y = pol_magnitude * np.sin(pol_angle) * np.ones_like(E_beam)
+        eps_x = pol_magnitude * np.cos(pol_angle_rad) * np.ones_like(E_beam)
+        eps_y = pol_magnitude * np.sin(pol_angle_rad) * np.ones_like(E_beam)
         eps_z = np.zeros_like(E_beam)
         eps = np.stack([eps_x, eps_y, eps_z], axis=-1)[:, np.newaxis]
     else:
@@ -148,7 +148,7 @@ def convert_from_amptools(
         input_path,
         tree_name,
         pol_in_beam=pol_in_beam,
-        pol_angle=pol_angle,
+        pol_angle_rad=pol_angle,
         pol_magnitude=pol_magnitude,
         num_entries=num_entries,
     )
