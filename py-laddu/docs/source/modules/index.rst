@@ -10,3 +10,4 @@ This is the main API documentation for ``laddu``.
    laddu/data
    laddu/extensions
    laddu/utils/index
+   laddu/experimental

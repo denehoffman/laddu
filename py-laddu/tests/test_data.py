@@ -59,6 +59,14 @@ def test_dataset_weights() -> None:
     assert dataset.weighted_len() == 1.0
 
 
+def test_dataset_sum() -> None:
+    dataset = make_test_dataset()
+    dataset2 = Dataset([Event(make_test_event().p4s, make_test_event().eps, 0.52)])
+    dataset_sum = dataset + dataset2
+    assert dataset_sum[0].weight == dataset[0].weight
+    assert dataset_sum[1].weight == dataset2[0].weight
+
+
 # TODO: Dataset::filter requires free-threading or some other workaround (or maybe we make a non-parallel method)
 
 

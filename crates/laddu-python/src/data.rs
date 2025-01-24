@@ -111,6 +111,12 @@ impl PyDataset {
     fn __len__(&self) -> usize {
         self.0.len()
     }
+    fn __add__(&self, other: &PyDataset) -> PyDataset {
+        PyDataset(Arc::new(self.0.as_ref() + other.0.as_ref()))
+    }
+    fn __radd__(&self, other: &PyDataset) -> PyDataset {
+        other.__add__(self)
+    }
     /// Get the number of Events in the Dataset
     ///
     /// Returns

@@ -1,2 +1,3 @@
 ignore:
   - "crates/laddu-python" # unit tests for Python API need to be handled separately
+  - "py-laddu/tests" # no need to cover tests as if they were code

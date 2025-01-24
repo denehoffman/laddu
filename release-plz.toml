@@ -1,5 +1,4 @@
 [workspace]
-dependencies_update = false
 publish = false
 git_release_enable = false
 git_tag_enable = false
