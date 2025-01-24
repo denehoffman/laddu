@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/denehoffman/laddu/compare/laddu-core-v0.2.2...laddu-core-v0.2.3) - 2025-01-24
+
+### Added
+
+- add `BinnedGuideTerm` under new `experimental` module
+- allow users to add `Dataset`s together to form a new `Dataset`
+
 ## [0.1.17](https://github.com/denehoffman/laddu/compare/v0.1.16...v0.1.17) - 2025-01-14
 
 ### Added
