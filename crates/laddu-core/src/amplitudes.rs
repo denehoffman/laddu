@@ -157,6 +157,30 @@ pub trait Amplitude: DynClone + Send + Sync {
     }
 }
 
+/// Utility function to calculate a central finite difference gradient.
+pub fn central_difference<F: Fn(&[Float]) -> Float>(
+    parameters: &[Float],
+    func: F,
+) -> DVector<Float> {
+    let mut gradient = DVector::zeros(parameters.len());
+    let x = parameters.to_owned();
+    let h: DVector<Float> = x
+        .iter()
+        .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+        .collect::<Vec<_>>()
+        .into();
+    for i in 0..parameters.len() {
+        let mut x_plus = x.clone();
+        let mut x_minus = x.clone();
+        x_plus[i] += h[i];
+        x_minus[i] -= h[i];
+        let f_plus = func(&x_plus);
+        let f_minus = func(&x_minus);
+        gradient[i] = (f_plus - f_minus) / (2.0 * h[i]);
+    }
+    gradient
+}
+
 dyn_clone::clone_trait_object!(Amplitude);
 
 /// A helper struct that contains the value of each amplitude for a particular event

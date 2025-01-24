@@ -1,4 +1,4 @@
-from laddu import amplitudes, convert, data, extensions, utils
+from laddu import amplitudes, convert, data, experimental, extensions, utils
 from laddu.amplitudes import Manager, Model, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
@@ -65,6 +65,7 @@ __all__ = [
     'convert',
     'convert_from_amptools',
     'data',
+    'experimental',
     'extensions',
     'integrated_autocorrelation_times',
     'open',

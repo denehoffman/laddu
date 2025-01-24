@@ -13,7 +13,7 @@ use ganesh::{
     Function, Minimizer, Sampler, Status,
 };
 use laddu_core::{
-    amplitudes::{AmplitudeValues, Evaluator, GradientValues, Model},
+    amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
     resources::Parameters,
     Complex, DVector, Float, LadduError,
@@ -47,7 +47,9 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     /// Evaluate the term given some input parameters.
     fn evaluate(&self, parameters: &[Float]) -> Float;
     /// Evaluate the gradient of the term given some input parameters.
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float>;
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        central_difference(parameters, |parameters: &[Float]| self.evaluate(parameters))
+    }
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
 }
@@ -63,7 +65,7 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodTerm", module = "laddu")]
 #[derive(Clone)]
-pub struct PyLikelihoodTerm(Box<dyn LikelihoodTerm>);
+pub struct PyLikelihoodTerm(pub Box<dyn LikelihoodTerm>);
 
 /// An extended, unbinned negative log-likelihood evaluator.
 #[derive(Clone)]
@@ -652,7 +654,7 @@ impl NLL {
 #[cfg(feature = "python")]
 #[pyclass(name = "NLL", module = "laddu")]
 #[derive(Clone)]
-pub struct PyNLL(Box<NLL>);
+pub struct PyNLL(pub Box<NLL>);
 
 #[cfg(feature = "python")]
 #[pymethods]

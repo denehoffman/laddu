@@ -123,4 +123,7 @@ mod laddu {
     use laddu_extensions::ganesh_ext::py_ganesh::PyObserver;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyStatus;
+
+    #[pymodule_export]
+    use laddu_extensions::experimental::py_binned_guide_term;
 }

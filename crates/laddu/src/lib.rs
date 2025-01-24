@@ -305,6 +305,16 @@ pub mod amplitudes {
     };
 }
 
+/// <div class="warning">
+///
+/// This module contains experimental code which may be untested or unreliable. Use at your own
+/// risk! The features contained here may eventually be moved into the standard crate modules.
+///
+/// </div>
+pub mod experimental {
+    pub use laddu_extensions::experimental::*;
+}
+
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
