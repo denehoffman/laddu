@@ -23,7 +23,12 @@ def open_amptools(
 ) -> Dataset:
     pol_angle_rad = pol_angle * np.pi / 180 if pol_angle else None
     p4s_list, eps_list, weight_list = read_root_file(
-        path, tree, pol_in_beam, pol_angle_rad, pol_magnitude, num_entries
+        path,
+        tree,
+        pol_in_beam=pol_in_beam,
+        pol_angle_rad=pol_angle_rad,
+        pol_magnitude=pol_magnitude,
+        num_entries=num_entries,
     )
     return Dataset(
         [
