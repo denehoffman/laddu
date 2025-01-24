@@ -8,5 +8,5 @@ This is the main API documentation for ``laddu``.
 
    laddu/amplitudes/index
    laddu/data
-   laddu/likelihoods
+   laddu/extensions
    laddu/utils/index
