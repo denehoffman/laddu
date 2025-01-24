@@ -1,0 +1,55 @@
+SHELL := /bin/bash
+include $(AMPTOOLS_HOME)/Makefile.settings
+
+############################################################
+# Most things below here probably don't need to be changed
+#
+# (expert option for profile and tracing)
+# to build code instrumented for Vampir Trace use VTRACE=1
+
+ifndef INSTALL_LIB
+INSTALL_LIB = $(WORKDIR)/lib
+endif
+
+ifdef VTRACE
+CXX := vtcxx -vt:inst manual
+
+NVCC := vtnvcc
+CXX_FLAGS += -DVTRACE
+endif
+
+INC_DIR :=  -I$(WORKDIR)/libraries -I$(shell root-config --incdir) -I$(AMPTOOLS)
+CXX_FLAGS += $(shell root-config --cflags)
+
+SRCDIRS := dataio amplitudes
+
+# setup the targets
+DEFAULT := libBenchmark$(SUFFIX).a
+TARGET_LIBS := $(SRCDIRS:%=lib%$(SUFFIX).a)
+
+export
+
+.PHONY: test default clean lib
+
+default: lib $(DEFAULT)
+
+lib:
+	$(Q)-mkdir $(INSTALL_LIB) >& /dev/null ||:
+
+$(DEFAULT): $(TARGET_LIBS)
+	$(foreach lib, $(TARGET_LIBS), $(shell cd $(INSTALL_LIB); ar -x $(lib) ) )
+	$(Q)(cd $(INSTALL_LIB) && ar -rsc $@ .*$(SUFFIX).o && ranlib $@)
+	$(Q)(cd $(INSTALL_LIB) && rm -f .*$(SUFFIX).o)
+	$(Q)(cd $(INSTALL_LIB) && rm -f $(TARGET_LIBS))
+	$(Q)-rm -f $(INSTALL_LIB)/__*
+	$(vecho) "=== Build of $@ is complete. ==="
+
+# descend into the directory obtained by stripping lib and
+# $(SUFFIX).a and execute make with LIB set to the target
+lib%$(SUFFIX).a:
+	$(Q)$(MAKE) -C $* LIB=$@
+	$(Q)cp $*/$@ $(INSTALL_LIB)/
+
+clean:
+	$(Q)$(MAKE) -C dataio clean
+	$(Q)$(MAKE) -C amplitudes clean
