@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.3...laddu-extensions-v0.2.4) - 2025-01-26
+
+### Added
+
+- implement custom gradient for `BinnedGuideTerm`
+- add `project_gradient` and `project_gradient_with` methods to `NLL`
+
+### Other
+
+- fix some docstring links in `laddu-extensions`
+
 ## [0.2.3](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.2...laddu-extensions-v0.2.3) - 2025-01-24
 
 ### Added
