@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/denehoffman/laddu/releases/tag/py-laddu-v0.2.4) - 2025-01-26
+
+### Added
+
+- add `BinnedGuideTerm` under new `experimental` module
+- allow users to add `Dataset`s together to form a new `Dataset`
+
+### Fixed
+
+- fixed python examples and readme paths
+- modify tests and workflows to new structure
+
+### Other
+
+- bump py-laddu version
+- *(py-laddu)* release v0.2.3
+- manually update py-laddu version
+- omit tests and docs in python coverage
+- correct path of extensions module
+- *(py-laddu)* release v0.2.0
+- release all crates manually
+- release-plz does not like the way I've set up the workspace. I've looked at conda/rattler for some inspiration, but I might need to manually publish each crate once to get the ball rolling
+- add rust version to py-laddu
+- complete python integration to new py-laddu crate
+- major rewrite
+
 ## [0.2.3](https://github.com/denehoffman/laddu/releases/tag/py-laddu-v0.2.3) - 2025-01-24
 
 ### Added
