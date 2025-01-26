@@ -172,10 +172,69 @@ impl NLL {
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
-    /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
-    /// the [`NLL`] to its prior state after calculation.
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method takes the real part of the given
+    /// expression (discarding the imaginary part entirely, which does not matter if expressions
+    /// are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+    ) -> (Vec<Float>, Vec<DVector<Float>>) {
+        let (events, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
+            (
+                mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
+                mc_evaluator.evaluate_gradient(parameters),
+            )
+        } else {
+            (
+                self.accmc_evaluator.dataset.clone(),
+                self.accmc_evaluator.evaluate(parameters),
+                self.accmc_evaluator.evaluate_gradient(parameters),
+            )
+        };
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
+        #[cfg(feature = "rayon")]
+        {
+            (
+                result
+                    .par_iter()
+                    .zip(events.par_iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect(),
+                result_gradient
+                    .par_iter()
+                    .zip(events.par_iter())
+                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .collect(),
+            )
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            (
+                result
+                    .iter()
+                    .zip(events.iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect(),
+                result_gradient
+                    .iter()
+                    .zip(events.iter())
+                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .collect(),
+            )
+        }
+    }
+
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
@@ -241,6 +300,112 @@ impl NLL {
             self.data_evaluator.resources.write().active = current_active_data;
             self.accmc_evaluator.resources.write().active = current_active_accmc;
             Ok(res)
+        }
+    }
+
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
+    /// the [`NLL`] to its prior state after calculation.
+    ///
+    /// This method takes the real part of the given expression (discarding
+    /// the imaginary part entirely, which does not matter if expressions are coherent sums
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient_with<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Result<(Vec<Float>, Vec<DVector<Float>>), LadduError> {
+        if let Some(mc_evaluator) = &mc_evaluator {
+            let current_active_mc = mc_evaluator.resources.read().active.clone();
+            mc_evaluator.isolate_many(names)?;
+            let events = mc_evaluator.dataset.clone();
+            let result = mc_evaluator.evaluate(parameters);
+            let result_gradient = mc_evaluator.evaluate_gradient(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            #[cfg(not(feature = "rayon"))]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            mc_evaluator.resources.write().active = current_active_mc;
+            Ok((res, res_gradient))
+        } else {
+            let current_active_data = self.data_evaluator.resources.read().active.clone();
+            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
+            self.isolate_many(names)?;
+            let events = &self.accmc_evaluator.dataset;
+            let result = self.accmc_evaluator.evaluate(parameters);
+            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            #[cfg(not(feature = "rayon"))]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            self.data_evaluator.resources.write().active = current_active_data;
+            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            Ok((res, res_gradient))
         }
     }
 }
