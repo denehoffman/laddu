@@ -86,42 +86,42 @@ impl NLL {
         }
         .into()
     }
-    /// Activate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.activate(&name)?;
         self.accmc_evaluator.activate(&name)
     }
-    /// Activate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.activate_many(names)?;
         self.accmc_evaluator.activate_many(names)
     }
-    /// Activate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
+    /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
-    /// Dectivate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
+    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.deactivate(&name)?;
         self.accmc_evaluator.deactivate(&name)
     }
-    /// Deactivate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.deactivate_many(names)?;
         self.accmc_evaluator.deactivate_many(names)
     }
-    /// Deactivate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
+    /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
-    /// Isolate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name (deactivate the rest).
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.isolate(&name)?;
         self.accmc_evaluator.isolate(&name)
     }
-    /// Isolate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name (deactivate the rest).
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest).
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.isolate_many(names)?;
         self.accmc_evaluator.isolate_many(names)
@@ -131,8 +131,8 @@ impl NLL {
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
-    /// formula:
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
     ///
     /// ```math
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
@@ -176,11 +176,16 @@ impl NLL {
     /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
     /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
     /// the [`NLL`] to its prior state after calculation.
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
-    /// formula:
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
     ///
     /// ```math
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
@@ -255,7 +260,7 @@ impl LikelihoodTerm for NLL {
     /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). The
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`). The
     /// result is given by the following formula:
     ///
     /// ```math
@@ -296,7 +301,7 @@ impl LikelihoodTerm for NLL {
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in
-    /// [`Expression::norm_sqr`](`crate::Expression::norm_sqr`).
+    /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
@@ -1223,7 +1228,7 @@ impl PyNLL {
     }
 }
 
-/// An identifier that can be used like an [`AmplitudeID`](`crate::amplitudes::AmplitudeID`) to combine registered
+/// An identifier that can be used like an [`AmplitudeID`](`laddu_core::amplitudes::AmplitudeID`) to combine registered
 /// [`LikelihoodTerm`]s.
 #[derive(Clone, Debug)]
 pub struct LikelihoodID(usize);
@@ -1320,7 +1325,7 @@ impl PyLikelihoodID {
     }
 }
 
-/// A [`Manager`](`crate::Manager`) but for [`LikelihoodTerm`]s.
+/// A [`Manager`](`laddu_core::Manager`) but for [`LikelihoodTerm`]s.
 #[derive(Default, Clone)]
 pub struct LikelihoodManager {
     terms: Vec<Box<dyn LikelihoodTerm>>,
