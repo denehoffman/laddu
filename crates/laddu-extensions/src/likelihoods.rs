@@ -86,42 +86,42 @@ impl NLL {
         }
         .into()
     }
-    /// Activate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.activate(&name)?;
         self.accmc_evaluator.activate(&name)
     }
-    /// Activate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.activate_many(names)?;
         self.accmc_evaluator.activate_many(names)
     }
-    /// Activate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
+    /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
-    /// Dectivate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name.
+    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.deactivate(&name)?;
         self.accmc_evaluator.deactivate(&name)
     }
-    /// Deactivate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name.
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.deactivate_many(names)?;
         self.accmc_evaluator.deactivate_many(names)
     }
-    /// Deactivate all registered [`Amplitude`](`crate::amplitudes::Amplitude`)s.
+    /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
-    /// Isolate an [`Amplitude`](`crate::amplitudes::Amplitude`) by name (deactivate the rest).
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
         self.data_evaluator.isolate(&name)?;
         self.accmc_evaluator.isolate(&name)
     }
-    /// Isolate several [`Amplitude`](`crate::amplitudes::Amplitude`)s by name (deactivate the rest).
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest).
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.data_evaluator.isolate_many(names)?;
         self.accmc_evaluator.isolate_many(names)
@@ -131,8 +131,8 @@ impl NLL {
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
-    /// formula:
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
     ///
     /// ```math
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
@@ -172,15 +172,79 @@ impl NLL {
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
-    /// isolates the selected [`Amplitude`](`crate::amplitudes::Amplitude`)s by name, but returns
-    /// the [`NLL`] to its prior state after calculation.
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method takes the real part of the given
+    /// expression (discarding the imaginary part entirely, which does not matter if expressions
+    /// are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+    ) -> (Vec<Float>, Vec<DVector<Float>>) {
+        let (events, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
+            (
+                mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate(parameters),
+                mc_evaluator.evaluate_gradient(parameters),
+            )
+        } else {
+            (
+                self.accmc_evaluator.dataset.clone(),
+                self.accmc_evaluator.evaluate(parameters),
+                self.accmc_evaluator.evaluate_gradient(parameters),
+            )
+        };
+        let n_mc = self.accmc_evaluator.dataset.len() as Float;
+        #[cfg(feature = "rayon")]
+        {
+            (
+                result
+                    .par_iter()
+                    .zip(events.par_iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect(),
+                result_gradient
+                    .par_iter()
+                    .zip(events.par_iter())
+                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .collect(),
+            )
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            (
+                result
+                    .iter()
+                    .zip(events.iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect(),
+                result_gradient
+                    .iter()
+                    .zip(events.iter())
+                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .collect(),
+            )
+        }
+    }
+
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). Event weights are determined by the following
-    /// formula:
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
     ///
     /// ```math
     /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
@@ -238,6 +302,112 @@ impl NLL {
             Ok(res)
         }
     }
+
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
+    /// the [`NLL`] to its prior state after calculation.
+    ///
+    /// This method takes the real part of the given expression (discarding
+    /// the imaginary part entirely, which does not matter if expressions are coherent sums
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient_with<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Result<(Vec<Float>, Vec<DVector<Float>>), LadduError> {
+        if let Some(mc_evaluator) = &mc_evaluator {
+            let current_active_mc = mc_evaluator.resources.read().active.clone();
+            mc_evaluator.isolate_many(names)?;
+            let events = mc_evaluator.dataset.clone();
+            let result = mc_evaluator.evaluate(parameters);
+            let result_gradient = mc_evaluator.evaluate_gradient(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            #[cfg(not(feature = "rayon"))]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            mc_evaluator.resources.write().active = current_active_mc;
+            Ok((res, res_gradient))
+        } else {
+            let current_active_data = self.data_evaluator.resources.read().active.clone();
+            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
+            self.isolate_many(names)?;
+            let events = &self.accmc_evaluator.dataset;
+            let result = self.accmc_evaluator.evaluate(parameters);
+            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
+            let n_mc = self.accmc_evaluator.dataset.len() as Float;
+            #[cfg(feature = "rayon")]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .par_iter()
+                        .zip(events.par_iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            #[cfg(not(feature = "rayon"))]
+            let (res, res_gradient) = {
+                (
+                    result
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .collect(),
+                    result_gradient
+                        .iter()
+                        .zip(events.iter())
+                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .collect(),
+                )
+            };
+            self.data_evaluator.resources.write().active = current_active_data;
+            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            Ok((res, res_gradient))
+        }
+    }
 }
 
 impl LikelihoodTerm for NLL {
@@ -255,7 +425,7 @@ impl LikelihoodTerm for NLL {
     /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`crate::Expression::norm_sqr`). The
+    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`). The
     /// result is given by the following formula:
     ///
     /// ```math
@@ -296,7 +466,7 @@ impl LikelihoodTerm for NLL {
     /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in
-    /// [`Expression::norm_sqr`](`crate::Expression::norm_sqr`).
+    /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
@@ -1223,7 +1393,7 @@ impl PyNLL {
     }
 }
 
-/// An identifier that can be used like an [`AmplitudeID`](`crate::amplitudes::AmplitudeID`) to combine registered
+/// An identifier that can be used like an [`AmplitudeID`](`laddu_core::amplitudes::AmplitudeID`) to combine registered
 /// [`LikelihoodTerm`]s.
 #[derive(Clone, Debug)]
 pub struct LikelihoodID(usize);
@@ -1320,7 +1490,7 @@ impl PyLikelihoodID {
     }
 }
 
-/// A [`Manager`](`crate::Manager`) but for [`LikelihoodTerm`]s.
+/// A [`Manager`](`laddu_core::Manager`) but for [`LikelihoodTerm`]s.
 #[derive(Default, Clone)]
 pub struct LikelihoodManager {
     terms: Vec<Box<dyn LikelihoodTerm>>,

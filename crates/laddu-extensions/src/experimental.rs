@@ -1,4 +1,4 @@
-use laddu_core::{traits::Variable, utils::histogram, Float};
+use laddu_core::{traits::Variable, utils::histogram, DVector, Float};
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
 
@@ -109,6 +109,47 @@ impl LikelihoodTerm for BinnedGuideTerm {
 
     fn parameters(&self) -> Vec<String> {
         self.nll.parameters()
+    }
+
+    fn evaluate_gradient(&self, parameters: &[Float]) -> laddu_core::DVector<Float> {
+        let mut gradient = DVector::zeros(parameters.len());
+        let bin_width = (self.range.1 - self.range.0) / self.bins as Float;
+        for ((counts, errors), amplitudes) in self
+            .count_sets
+            .iter()
+            .zip(self.error_sets.iter())
+            .zip(self.amplitude_sets.iter())
+        {
+            let (weights, weights_gradient) = self
+                .nll
+                .project_gradient_with(parameters, amplitudes, None)
+                .unwrap();
+            let mut eval_counts = vec![0.0; self.bins];
+            let mut eval_count_gradient: Vec<DVector<Float>> =
+                vec![DVector::zeros(parameters.len()); self.bins];
+
+            for (j, &value) in self.values.iter().enumerate() {
+                if value >= self.range.0 && value < self.range.1 {
+                    let bin_idx =
+                        (((value - self.range.0) / bin_width).floor() as usize).min(self.bins - 1);
+                    eval_counts[bin_idx] += weights[j];
+                    for k in 0..parameters.len() {
+                        eval_count_gradient[bin_idx][k] += weights_gradient[j][k];
+                    }
+                }
+            }
+            for i in 0..self.bins {
+                let o_i = eval_counts[i];
+                let c_i = counts[i];
+                let e_i = errors[i];
+                let residual = o_i - c_i;
+                let residual_gradient = &eval_count_gradient[i];
+                for k in 0..parameters.len() {
+                    gradient[k] += 2.0 * residual * residual_gradient[k] / e_i.powi(2);
+                }
+            }
+        }
+        gradient
     }
 }
 
