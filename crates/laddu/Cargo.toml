@@ -1,6 +1,6 @@
 [package]
 name = "laddu"
-version = "0.2.3"
+version = "0.2.4"
 description = "Amplitude analysis made short and sweet"
 documentation = "https://docs.rs/laddu"
 edition.workspace = true
