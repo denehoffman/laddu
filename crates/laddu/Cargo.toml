@@ -24,7 +24,8 @@ typetag = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 num_cpus = { workspace = true }
-rand = { workspace = true }
+fastrand = { workspace = true }
+fastrand-contrib = { workspace = true }
 rayon = { workspace = true }
 
 [[bench]]

@@ -23,6 +23,7 @@ criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features
 dyn-clone = "1.0.17"
 factorial = "0.4.0"
 fastrand = "2.3.0"
+fastrand-contrib = "0.1.0"
 ganesh = "0.16.0"
 indexmap = { version = "2.6.0", features = ["serde"] }
 nalgebra = "0.33.2"
@@ -32,8 +33,6 @@ numpy = { version = "0.23.0", features = ["nalgebra"] }
 parquet = "53.4.0"
 parking_lot = "0.12.3"
 pyo3 = { version = "0.23.3" }
-rand = "0.8.5"
-rand_chacha = "0.3.1"
 rayon = { version = "1.10.0" }
 serde = "1.0.215"
 serde-pickle = "1.2.0"

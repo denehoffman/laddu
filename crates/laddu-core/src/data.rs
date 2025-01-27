@@ -3,8 +3,6 @@ use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::sync::Arc;
@@ -138,21 +136,27 @@ impl Dataset {
     }
 }
 
-#[cfg(feature = "rayon")]
 impl Dataset {
     /// Produces an parallelized iterator over the [`Event`]s in the [`Dataset`].
+    #[cfg(feature = "rayon")]
     pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &Event> {
         self.events.par_iter().map(|a| a.as_ref())
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
     pub fn weights(&self) -> Vec<Float> {
-        self.par_iter().map(|e| e.weight).collect()
+        #[cfg(feature = "rayon")]
+        return self.par_iter().map(|e| e.weight).collect();
+        #[cfg(not(feature = "rayon"))]
+        return self.iter().map(|e| e.weight).collect();
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
     pub fn weighted_len(&self) -> Float {
-        self.par_iter().map(|e| e.weight).sum()
+        #[cfg(feature = "rayon")]
+        return self.par_iter().map(|e| e.weight).sum();
+        #[cfg(not(feature = "rayon"))]
+        return self.iter().map(|e| e.weight).sum();
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -161,96 +165,17 @@ impl Dataset {
         if self.is_empty() {
             return Arc::new(Dataset::default());
         }
-        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut rng = fastrand::Rng::with_seed(seed as u64);
         let mut indices: Vec<usize> = (0..self.len())
-            .map(|_| rng.gen_range(0..self.len()))
+            .map(|_| rng.usize(0..self.len()))
             .collect::<Vec<usize>>();
         indices.sort();
+        #[cfg(feature = "rayon")]
         let bootstrapped_events: Vec<Arc<Event>> = indices
             .into_par_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-        })
-    }
-
-    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
-    /// returns `true`.
-    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
-    where
-        P: Fn(&Event) -> bool + Send + Sync,
-    {
-        let filtered_events = self
-            .events
-            .par_iter()
-            .filter(|e| predicate(e))
-            .cloned()
-            .collect();
-        Arc::new(Dataset {
-            events: filtered_events,
-        })
-    }
-
-    /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
-    /// given `range`.
-    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
-    where
-        V: Variable,
-    {
-        let bin_width = (range.1 - range.0) / bins as Float;
-        let bin_edges = get_bin_edges(bins, range);
-        let evaluated: Vec<(usize, &Arc<Event>)> = self
-            .events
-            .par_iter()
-            .filter_map(|event| {
-                let value = variable.value(event.as_ref());
-                if value >= range.0 && value < range.1 {
-                    let bin_index = ((value - range.0) / bin_width) as usize;
-                    let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
-        for (bin_index, event) in evaluated {
-            binned_events[bin_index].push(event.clone());
-        }
-        BinnedDataset {
-            datasets: binned_events
-                .into_par_iter()
-                .map(|events| Arc::new(Dataset { events }))
-                .collect(),
-            edges: bin_edges,
-        }
-    }
-}
-
-#[cfg(not(feature = "rayon"))]
-impl Dataset {
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    pub fn weights(&self) -> Vec<Float> {
-        self.iter().map(|e| e.weight).collect()
-    }
-
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    pub fn weighted_len(&self) -> Float {
-        self.iter().map(|e| e.weight).sum()
-    }
-
-    /// Generate a new dataset with the same length by resampling the events in the original datset
-    /// with replacement. This can be used to perform error analysis via the bootstrap method.
-    pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
-        if self.is_empty() {
-            return Arc::new(Dataset::default());
-        }
-        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
-        let mut indices: Vec<usize> = (0..self.len())
-            .map(|_| rng.gen_range(0..self.len()))
-            .collect::<Vec<usize>>();
-        indices.sort();
+        #[cfg(not(feature = "rayon"))]
         let bootstrapped_events: Vec<Arc<Event>> = indices
             .into_iter()
             .map(|idx| self.events[idx].clone())
@@ -266,6 +191,14 @@ impl Dataset {
     where
         P: Fn(&Event) -> bool + Send + Sync,
     {
+        #[cfg(feature = "rayon")]
+        let filtered_events = self
+            .events
+            .par_iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect();
+        #[cfg(not(feature = "rayon"))]
         let filtered_events = self
             .events
             .iter()
@@ -285,6 +218,22 @@ impl Dataset {
     {
         let bin_width = (range.1 - range.0) / bins as Float;
         let bin_edges = get_bin_edges(bins, range);
+        #[cfg(feature = "rayon")]
+        let evaluated: Vec<(usize, &Arc<Event>)> = self
+            .events
+            .par_iter()
+            .filter_map(|event| {
+                let value = variable.value(event.as_ref());
+                if value >= range.0 && value < range.1 {
+                    let bin_index = ((value - range.0) / bin_width) as usize;
+                    let bin_index = bin_index.min(bins - 1);
+                    Some((bin_index, event))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        #[cfg(not(feature = "rayon"))]
         let evaluated: Vec<(usize, &Arc<Event>)> = self
             .events
             .iter()
@@ -304,6 +253,12 @@ impl Dataset {
             binned_events[bin_index].push(event.clone());
         }
         BinnedDataset {
+            #[cfg(feature = "rayon")]
+            datasets: binned_events
+                .into_par_iter()
+                .map(|events| Arc::new(Dataset { events }))
+                .collect(),
+            #[cfg(not(feature = "rayon"))]
             datasets: binned_events
                 .into_iter()
                 .map(|events| Arc::new(Dataset { events }))
@@ -644,13 +599,13 @@ mod tests {
         }));
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);
 
-        let bootstrapped = dataset.bootstrap(42);
+        let bootstrapped = dataset.bootstrap(43);
         assert_eq!(bootstrapped.len(), dataset.len());
         assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
 
         // Test empty dataset bootstrap
         let empty_dataset = Dataset::default();
-        let empty_bootstrap = empty_dataset.bootstrap(42);
+        let empty_bootstrap = empty_dataset.bootstrap(43);
         assert!(empty_bootstrap.is_empty());
     }
 
