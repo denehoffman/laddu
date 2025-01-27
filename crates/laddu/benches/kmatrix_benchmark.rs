@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use fastrand_contrib::RngExt;
 use laddu::{
     amplitudes::{
         constant,
@@ -18,7 +19,6 @@ use laddu::{
     },
     Float,
 };
-use rand::{distributions::Uniform, prelude::*};
 
 use rayon::ThreadPoolBuilder;
 
@@ -154,12 +154,11 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             BenchmarkId::from_parameter(threads),
             &threads,
             |b, &_threads| {
-                let mut rng = rand::thread_rng();
-                let range = Uniform::new(-100.0, 100.0);
+                let mut rng = fastrand::Rng::new();
                 b.iter_batched(
                     || {
                         let p: Vec<Float> = (0..nll.parameters().len())
-                            .map(|_| rng.sample(range))
+                            .map(|_| rng.f64_range(-100.0..100.0))
                             .collect();
                         p
                     },

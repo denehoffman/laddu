@@ -3,8 +3,6 @@ use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::sync::Arc;
@@ -161,9 +159,9 @@ impl Dataset {
         if self.is_empty() {
             return Arc::new(Dataset::default());
         }
-        let mut rng = ChaCha8Rng::seed_from_u64(seed as u64);
+        let mut rng = fastrand::Rng::with_seed(seed as u64);
         let mut indices: Vec<usize> = (0..self.len())
-            .map(|_| rng.gen_range(0..self.len()))
+            .map(|_| rng.usize(0..self.len()))
             .collect::<Vec<usize>>();
         indices.sort();
         let bootstrapped_events: Vec<Arc<Event>> = indices

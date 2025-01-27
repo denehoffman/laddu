@@ -11,7 +11,6 @@ description = "Core of the laddu library"
 readme = "../../README.md"
 
 [dependencies]
-accurate = { workspace = true }
 arrow = { workspace = true }
 auto_ops = { workspace = true }
 bincode = { workspace = true }
@@ -30,8 +29,6 @@ pyo3 = { workspace = true, features = [
   "num-complex",
   "abi3-py37",
 ], optional = true }
-rand = { workspace = true }
-rand_chacha = { workspace = true }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true }
 serde-pickle = { workspace = true }
