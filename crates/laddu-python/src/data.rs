@@ -4,7 +4,10 @@ use laddu_core::{
     Float,
 };
 use numpy::PyArray1;
-use pyo3::{exceptions::PyIndexError, prelude::*};
+use pyo3::{
+    exceptions::{PyIndexError, PyTypeError},
+    prelude::*,
+};
 use std::sync::Arc;
 
 use crate::utils::vectors::{PyVector3, PyVector4};
@@ -111,11 +114,35 @@ impl PyDataset {
     fn __len__(&self) -> usize {
         self.0.len()
     }
-    fn __add__(&self, other: &PyDataset) -> PyDataset {
-        PyDataset(Arc::new(self.0.as_ref() + other.0.as_ref()))
+    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
+        if let Ok(other_ds) = other.extract::<PyRef<PyDataset>>() {
+            Ok(PyDataset(Arc::new(self.0.as_ref() + other_ds.0.as_ref())))
+        } else if let Ok(other_int) = other.extract::<usize>() {
+            if other_int == 0 {
+                Ok(self.clone())
+            } else {
+                Err(PyTypeError::new_err(
+                    "Addition with an integer for this type is only defined for 0",
+                ))
+            }
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for +"))
+        }
     }
-    fn __radd__(&self, other: &PyDataset) -> PyDataset {
-        other.__add__(self)
+    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
+        if let Ok(other_ds) = other.extract::<PyRef<PyDataset>>() {
+            Ok(PyDataset(Arc::new(other_ds.0.as_ref() + self.0.as_ref())))
+        } else if let Ok(other_int) = other.extract::<usize>() {
+            if other_int == 0 {
+                Ok(self.clone())
+            } else {
+                Err(PyTypeError::new_err(
+                    "Addition with an integer for this type is only defined for 0",
+                ))
+            }
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for +"))
+        }
     }
     /// Get the number of Events in the Dataset
     ///

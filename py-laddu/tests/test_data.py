@@ -65,6 +65,10 @@ def test_dataset_sum() -> None:
     dataset_sum = dataset + dataset2
     assert dataset_sum[0].weight == dataset[0].weight
     assert dataset_sum[1].weight == dataset2[0].weight
+    list_sum = sum([dataset, dataset2])
+    assert list_sum != 0  # TODO: Pray the Python devs sort this out someday
+    assert list_sum[0].weight == dataset_sum[0].weight
+    assert list_sum[1].weight == dataset_sum[1].weight
 
 
 # TODO: Dataset::filter requires free-threading or some other workaround (or maybe we make a non-parallel method)
