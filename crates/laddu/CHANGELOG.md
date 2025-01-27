@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/denehoffman/laddu/compare/laddu-v0.2.4...laddu-v0.2.5) - 2025-01-27
+
+### Fixed
+
+- move `rayon` feature bounds inside methods to clean up the code and avoid duplication
+
+### Other
+
+- update dependencies and remove `rand` and `rand_chacha`
+- *(data)* fix bootstrap tests by changing seed
+
 ## [0.2.4](https://github.com/denehoffman/laddu/compare/laddu-v0.2.3...laddu-v0.2.4) - 2025-01-26
 
 ### Added
