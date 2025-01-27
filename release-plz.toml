@@ -1,42 +1,21 @@
 [workspace]
-publish = false
-git_tag_enable = false
-git_release_enable = false
 
 [[package]]
 name = "laddu-core"
-publish = true
-git_tag_enable = true
-git_release_enable = true
 
 [[package]]
 name = "laddu-amplitudes"
-publish = true
-git_tag_enable = true
-git_release_enable = true
 
 [[package]]
 name = "laddu-extensions"
-publish = true
-git_tag_enable = true
-git_release_enable = true
 
 [[package]]
 name = "laddu"
 changelog_include = ["laddu-core", "laddu-amplitudes", "laddu-extensions"]
-publish = true
-git_tag_enable = true
-git_release_enable = true
 
 [[package]]
 name = "laddu-python"
-publish = true
-git_tag_enable = true
-git_release_enable = true
 
 [[package]]
 name = "py-laddu"
 changelog_include = ["laddu-core", "laddu-amplitudes", "laddu-extensions"]
-publish = false
-git_tag_enable = false
-git_release_enable = false
