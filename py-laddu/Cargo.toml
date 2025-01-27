@@ -9,6 +9,7 @@ description = "Python bindings for laddu"
 documentation = "https://laddu.readthedocs.io/en/stable/"
 homepage.workspace = true
 repository.workspace = true
+exclude = ["examples/*", "tests/*", "laddu/*", "docs/*", "pyproject.toml"]
 
 [lib]
 name = "laddu"
