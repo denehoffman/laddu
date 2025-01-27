@@ -116,12 +116,12 @@ def test_dataset_bootstrap() -> None:
     )
     assert dataset[0].weight != dataset[1].weight
 
-    bootstrapped = dataset.bootstrap(42)
+    bootstrapped = dataset.bootstrap(43)
     assert len(bootstrapped) == len(dataset)
     assert bootstrapped[0].weight == bootstrapped[1].weight
 
     empty_dataset = Dataset([])
-    empty_bootstrap = empty_dataset.bootstrap(42)
+    empty_bootstrap = empty_dataset.bootstrap(43)
     assert len(empty_bootstrap) == 0
 
 

@@ -599,13 +599,13 @@ mod tests {
         }));
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);
 
-        let bootstrapped = dataset.bootstrap(42);
+        let bootstrapped = dataset.bootstrap(43);
         assert_eq!(bootstrapped.len(), dataset.len());
         assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
 
         // Test empty dataset bootstrap
         let empty_dataset = Dataset::default();
-        let empty_bootstrap = empty_dataset.bootstrap(42);
+        let empty_bootstrap = empty_dataset.bootstrap(43);
         assert!(empty_bootstrap.is_empty());
     }
 
