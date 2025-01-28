@@ -1102,6 +1102,7 @@ pub mod py_ganesh {
                 .get_extract::<Float>("tol_g_abs")?
                 .unwrap_or(Float::cbrt(Float::EPSILON));
             let g_tolerance = kwargs.get_extract::<Float>("g_tolerance")?.unwrap_or(1e-5);
+            let skip_hessian = kwargs.get_extract::<bool>("skip_hessian")?.unwrap_or(false);
             let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
             let alpha = kwargs.get_extract::<Float>("alpha")?;
             let beta = kwargs.get_extract::<Float>("beta")?;
@@ -1139,12 +1140,14 @@ pub mod py_ganesh {
             }
             match method {
                 "lbfgsb" => {
-                    options = options.with_algorithm(
-                        LBFGSB::default()
-                            .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
-                            .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
-                            .with_g_tolerance(g_tolerance),
-                    )
+                    let mut lbfgsb = LBFGSB::default()
+                        .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
+                        .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
+                        .with_g_tolerance(g_tolerance);
+                    if skip_hessian {
+                        lbfgsb.with_error_mode(LBFGSBGTerminator::Skip);
+                    }
+                    options = options.with_algorithm(lbfgsb)
                 }
                 "nelder_mead" => {
                     let terminator_f = match nelder_mead_f_terminator.as_str() {
@@ -1200,6 +1203,9 @@ pub mod py_ganesh {
                     }
                     if let Some(delta) = delta {
                         nelder_mead = nelder_mead.with_delta(delta);
+                    }
+                    if skip_hessian {
+                        nelder_mead = nelder_mead.with_no_error_calculation();
                     }
                     options = options.with_algorithm(nelder_mead)
                 }

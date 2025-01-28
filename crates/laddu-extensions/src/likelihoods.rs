@@ -1264,6 +1264,9 @@ impl PyNLL {
     ///     The function terminator used by the Nelder-Mead algorithm
     /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
     ///     The positional terminator used by the Nelder-Mead algorithm
+    /// skip_hessian : bool, default = False
+    ///     Skip calculation of the Hessian matrix (and parameter errors) at the termination of the
+    ///     algorithm (use this when uncertainties are not needed/important)
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
