@@ -1078,6 +1078,8 @@ pub mod py_ganesh {
         verbose: bool,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<MinimizerOptions> {
+        use ganesh::algorithms::lbfgsb::LBFGSBErrorMode;
+
         let mut options = MinimizerOptions::default();
         let mut show_step = true;
         let mut show_x = true;
@@ -1145,7 +1147,7 @@ pub mod py_ganesh {
                         .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
                         .with_g_tolerance(g_tolerance);
                     if skip_hessian {
-                        lbfgsb.with_error_mode(LBFGSBGTerminator::Skip);
+                        lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
                     }
                     options = options.with_algorithm(lbfgsb)
                 }
