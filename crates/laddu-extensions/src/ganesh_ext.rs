@@ -1147,7 +1147,7 @@ pub mod py_ganesh {
                         .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
                         .with_g_tolerance(g_tolerance);
                     if skip_hessian {
-                        lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
+                        lbfgsb = lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
                     }
                     options = options.with_algorithm(lbfgsb)
                 }
