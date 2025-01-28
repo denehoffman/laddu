@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.5...laddu-extensions-v0.2.6) - 2025-01-28
+
+### Added
+
+- bump `ganesh`  to add "skip_hessian" minimization option to skip calculation of Hessian matrix
+
+### Fixed
+
+- use proper ownership in setting algorithm error mode
+- use correct enum in L-BFGS-B error method
+
 ## [0.2.5](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.4...laddu-extensions-v0.2.5) - 2025-01-27
 
 ### Other
