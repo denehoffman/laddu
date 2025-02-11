@@ -108,10 +108,10 @@ So far, these angles just represent particles in a generic dataset by index and 
 Next, let's come up with a model. ``laddu`` models are formed by combining individual amplitudes after they are registered with a manager. The manager keeps track of all of the free parameters and caching done when a dataset is pre-computed. ``laddu`` has the amplitudes that we need already built in. We will use a relativistic Breit-Wigner to describe the mass-dependency and a :math:`Z_{L}^{M}` amplitude described by [Mathieu]_ to fit the angular distributions with beam polarization in mind. The angular part of this model requires two coherent sums for each reflectivity, and assuming just positive reflectivity, we can write the entire model as follows:
 
 .. math::
-   I(m, \theta, \varphi, P_{\gamma}, \Phi) \propto &\left[ [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Re\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
-   &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Re\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right]^2 \\
-   + &\left[ [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Im\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
-   &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Im\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right]^2
+   I(m, \theta, \varphi, P_{\gamma}, \Phi) \propto &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Re\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
+   &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Re\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right|^2 \\
+   + &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Im\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
+   &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Im\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right|^2
 
 where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a manager and a ``Polarization`` object which grabs polarization information from the dataset using the index of the beam and recoil proton to form the production plane:
 
