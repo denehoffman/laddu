@@ -1,8 +1,12 @@
+use accurate::{sum::Klein, traits::*};
 use arrow::array::Float32Array;
 use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
+use mpi::collective::SystemOperation;
+use mpi::traits::*;
 use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::sync::Arc;
@@ -38,13 +42,11 @@ pub fn test_event() -> Event {
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a singular
 /// [`Event`] generated from [`test_event`].
 pub fn test_dataset() -> Dataset {
-    Dataset {
-        events: vec![Arc::new(test_event())],
-    }
+    Dataset::new(vec![Arc::new(test_event())])
 }
 
 /// A single event in a [`Dataset`] containing all the relevant particle information.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Event {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vector4<Float>>,
@@ -101,88 +103,256 @@ impl Index<usize> for Dataset {
     type Output = Event;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.events[index]
-    }
-}
-
-impl Deref for Dataset {
-    type Target = Vec<Arc<Event>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.events
-    }
-}
-
-impl DerefMut for Dataset {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.events
+        if let Some((world, rank, _)) = crate::get_world_rank_size() {
+            let owning_rank = self.owning_rank(index);
+            if rank == crate::ROOT_RANK {
+                world.process_at_rank(owning_rank).send(&index);
+                let mut serialized_event: Vec<u8> = Vec::new();
+                world
+                    .process_at_rank(owning_rank)
+                    .receive_into(&mut serialized_event);
+                let event: Event = bincode::deserialize(&serialized_event).unwrap();
+                Box::leak(Box::new(event))
+            } else if rank == owning_rank {
+                let mut requested_global_index: usize = 0;
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .receive_into(&mut requested_global_index);
+                let event = &self.events[self.global_to_local_index(requested_global_index)];
+                let serialized_event = bincode::serialize(&event).unwrap();
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .send(&serialized_event);
+                &self.events[0]
+            } else {
+                &self.events[0]
+            }
+        } else {
+            &self.events[index]
+        }
     }
 }
 
 impl Dataset {
+    /// Create a new [`Dataset`] from a list of [`Event`]s.
+    ///
+    /// This method is prefered for external use because it contains proper MPI construction
+    /// methods. Constructing a [`Dataset`] manually is possible, but may cause issues when
+    /// interfacing with MPI and should be avoided unless you know what you are doing.
+    pub fn new(events: Vec<Arc<Event>>) -> Self {
+        if let Some((world, rank, size)) = crate::get_world_rank_size() {
+            if rank == crate::ROOT_RANK {
+                let chunk_size = events.len() / (size as usize - 1);
+                for dest_rank in 1..size {
+                    let start = (dest_rank as usize - 1) * chunk_size;
+                    let end = if dest_rank == size - 1 {
+                        events.len()
+                    } else {
+                        start + chunk_size
+                    };
+                    let chunk = &events[start..end];
+                    let serialized = bincode::serialize(&chunk).expect("Failed to serialize");
+                    world.process_at_rank(dest_rank).send(&serialized.len());
+                    world.process_at_rank(dest_rank).send(&serialized);
+                }
+                Dataset::default()
+            } else {
+                let mut buffer_size: usize = 0;
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .receive_into(&mut buffer_size);
+                let mut serialized_buffer = vec![0; buffer_size];
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .receive_into(&mut serialized_buffer);
+                let received_events: Vec<Arc<Event>> =
+                    bincode::deserialize(&serialized_buffer).expect("Failed to deserialize");
+                Dataset {
+                    events: received_events,
+                }
+            }
+        } else {
+            Dataset { events }
+        }
+    }
+
     /// The number of [`Event`]s in the [`Dataset`].
-    pub fn len(&self) -> usize {
-        self.events.len()
+    pub fn n_events(&self) -> usize {
+        if let Some((world, rank, _)) = crate::get_world_rank_size() {
+            let mut total_count: usize = 0;
+            let local_count = self.events.len();
+            if rank == crate::ROOT_RANK {
+                world.process_at_rank(crate::ROOT_RANK).reduce_into_root(
+                    &local_count,
+                    &mut total_count,
+                    SystemOperation::sum(),
+                );
+            } else {
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .reduce_into(&local_count, SystemOperation::sum());
+            }
+            world
+                .process_at_rank(crate::ROOT_RANK)
+                .broadcast_into(&mut total_count);
+            total_count
+        } else {
+            self.events.len()
+        }
     }
 
-    /// Checks whether or not the [`Dataset`] is empty.
-    pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
+    fn chunk_size(&self) -> usize {
+        if let Some((_, _, size)) = crate::get_world_rank_size() {
+            self.events.len() / (size as usize - 1)
+        } else {
+            self.events.len()
+        }
     }
 
-    /// Produces an iterator over the [`Event`]s in the [`Dataset`].
-    pub fn iter(&self) -> impl Iterator<Item = &Event> {
-        self.events.iter().map(|a| a.as_ref())
+    fn owning_rank(&self, index: usize) -> i32 {
+        if crate::using_mpi() {
+            (index / self.chunk_size() + 1) as i32
+        } else {
+            0
+        }
+    }
+
+    fn global_to_local_index(&self, global_index: usize) -> usize {
+        global_index % self.chunk_size()
     }
 }
 
 impl Dataset {
-    /// Produces an parallelized iterator over the [`Event`]s in the [`Dataset`].
-    #[cfg(feature = "rayon")]
-    pub fn par_iter(&self) -> impl IndexedParallelIterator<Item = &Event> {
-        self.events.par_iter().map(|a| a.as_ref())
-    }
-
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
+    ///
+    /// In MPI non-root processes, this returns the list of weights contained in a subset of the
+    /// [`Dataset`] held by the process.
     pub fn weights(&self) -> Vec<Float> {
-        #[cfg(feature = "rayon")]
-        return self.par_iter().map(|e| e.weight).collect();
-        #[cfg(not(feature = "rayon"))]
-        return self.iter().map(|e| e.weight).collect();
+        if let Some(world) = crate::get_world_for_root() {
+            let mut all_weights: Vec<Float> = Vec::new();
+            for src_rank in 1..world.size() {
+                let mut buffer_size: usize = 0;
+                world
+                    .process_at_rank(src_rank)
+                    .receive_into(&mut buffer_size);
+                let mut received_weights: Vec<Float> = vec![0.0; buffer_size];
+                world
+                    .process_at_rank(src_rank)
+                    .receive_into(&mut received_weights);
+                all_weights.extend(received_weights);
+            }
+            all_weights
+        } else {
+            #[cfg(feature = "rayon")]
+            let local_weights: Vec<Float> = self.events.par_iter().map(|e| e.weight).collect();
+            #[cfg(not(feature = "rayon"))]
+            let local_weights: Vec<Float> = self.events.iter().map(|e| e.weight).collect();
+            if let Some(world) = crate::get_world() {
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .send(&local_weights.len());
+                world.process_at_rank(crate::ROOT_RANK).send(&local_weights);
+            }
+            local_weights
+        }
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    pub fn weighted_len(&self) -> Float {
-        #[cfg(feature = "rayon")]
-        return self.par_iter().map(|e| e.weight).sum();
-        #[cfg(not(feature = "rayon"))]
-        return self.iter().map(|e| e.weight).sum();
+    pub fn n_events_weighted(&self) -> Float {
+        if let Some((world, rank, _)) = crate::get_world_rank_size() {
+            let mut total_count: Float = 0.0;
+            #[cfg(feature = "rayon")]
+            let local_count_weighted = self
+                .events
+                .par_iter()
+                .map(|e| e.weight)
+                .parallel_sum_with_accumulator::<Klein<Float>>();
+            #[cfg(not(feature = "rayon"))]
+            let local_count_weighted = self.events.iter().map(|e| e.weight).sum();
+            if rank == crate::ROOT_RANK {
+                world.process_at_rank(crate::ROOT_RANK).reduce_into_root(
+                    &local_count_weighted,
+                    &mut total_count,
+                    SystemOperation::sum(),
+                );
+            } else {
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .reduce_into(&local_count_weighted, SystemOperation::sum());
+            }
+            world
+                .process_at_rank(crate::ROOT_RANK)
+                .broadcast_into(&mut total_count);
+            total_count
+        } else {
+            #[cfg(feature = "rayon")]
+            return self
+                .events
+                .par_iter()
+                .map(|e| e.weight)
+                .parallel_sum_with_accumulator::<Klein<Float>>();
+            #[cfg(not(feature = "rayon"))]
+            return self.events.iter().map(|e| e.weight).sum();
+        }
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
     /// with replacement. This can be used to perform error analysis via the bootstrap method.
     pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
-        if self.is_empty() {
+        if self.n_events() == 0 {
             return Arc::new(Dataset::default());
         }
-        let mut rng = fastrand::Rng::with_seed(seed as u64);
-        let mut indices: Vec<usize> = (0..self.len())
-            .map(|_| rng.usize(0..self.len()))
-            .collect::<Vec<usize>>();
-        indices.sort();
-        #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
-            .into_par_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
-            .into_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-        })
+        if let Some((world, rank, _)) = crate::get_world_rank_size() {
+            let mut indices: Vec<usize> = if rank == crate::ROOT_RANK {
+                let mut rng = fastrand::Rng::with_seed(seed as u64);
+                let mut unsorted_indices = (0..self.n_events())
+                    .map(|_| rng.usize(0..self.n_events()))
+                    .collect::<Vec<usize>>();
+                unsorted_indices.sort();
+                unsorted_indices
+            } else {
+                Vec::new()
+            };
+            world
+                .process_at_rank(crate::ROOT_RANK)
+                .broadcast_into(&mut indices);
+            if rank == crate::ROOT_RANK {
+                Arc::new(Dataset::default())
+            } else {
+                #[cfg(feature = "rayon")]
+                let bootstrapped_events: Vec<Arc<Event>> = indices
+                    .into_par_iter()
+                    .map(|idx| self.events[self.global_to_local_index(idx)].clone())
+                    .collect();
+                #[cfg(not(feature = "rayon"))]
+                let bootstrapped_events: Vec<Arc<Event>> = indices
+                    .into_iter()
+                    .map(|idx| self.events[self.global_to_local_index(idx)].clone())
+                    .collect();
+                Arc::new(Dataset {
+                    events: bootstrapped_events,
+                })
+            }
+        } else {
+            let mut rng = fastrand::Rng::with_seed(seed as u64);
+            let mut indices: Vec<usize> = (0..self.n_events())
+                .map(|_| rng.usize(0..self.n_events()))
+                .collect::<Vec<usize>>();
+            indices.sort();
+            #[cfg(feature = "rayon")]
+            let bootstrapped_events: Vec<Arc<Event>> = indices
+                .into_par_iter()
+                .map(|idx| self.events[idx].clone())
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let bootstrapped_events: Vec<Arc<Event>> = indices
+                .into_iter()
+                .map(|idx| self.events[idx].clone())
+                .collect();
+            Arc::new(Dataset {
+                events: bootstrapped_events,
+            })
+        }
     }
 
     /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
@@ -358,55 +528,49 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
 }
 
 /// Open a Parquet file and read the data into a [`Dataset`].
-#[cfg(feature = "rayon")]
 pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
-    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let events = if !crate::using_mpi() | crate::is_root() {
+        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+        let file = File::open(file_path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let reader = builder.build()?;
+        let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-    let events: Vec<Arc<Event>> = batches
-        .into_par_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
+        #[cfg(feature = "rayon")]
+        let events: Vec<Arc<Event>> = batches
+            .into_par_iter()
+            .flat_map(|batch| {
+                let num_rows = batch.num_rows();
+                let mut local_events = Vec::with_capacity(num_rows);
 
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
-}
+                // Process each row in the batch
+                for row in 0..num_rows {
+                    let event = batch_to_event(&batch, row);
+                    local_events.push(Arc::new(event));
+                }
+                local_events
+            })
+            .collect();
+        #[cfg(not(feature = "rayon"))]
+        let events: Vec<Arc<Event>> = batches
+            .into_iter()
+            .flat_map(|batch| {
+                let num_rows = batch.num_rows();
+                let mut local_events = Vec::with_capacity(num_rows);
 
-/// Open a Parquet file and read the data into a [`Dataset`].
-#[cfg(not(feature = "rayon"))]
-pub fn open(file_path: &str) -> Result<Arc<Dataset>, LadduError> {
-    let file_path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    let events: Vec<Arc<Event>> = batches
-        .into_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset { events }))
+                // Process each row in the batch
+                for row in 0..num_rows {
+                    let event = batch_to_event(&batch, row);
+                    local_events.push(Arc::new(event));
+                }
+                local_events
+            })
+            .collect();
+        events
+    } else {
+        Vec::default()
+    };
+    Ok(Arc::new(Dataset::new(events)))
 }
 
 /// A list of [`Dataset`]s formed by binning [`Event`]s by some [`Variable`].
@@ -445,18 +609,8 @@ impl DerefMut for BinnedDataset {
 
 impl BinnedDataset {
     /// The number of bins in the [`BinnedDataset`].
-    pub fn len(&self) -> usize {
+    pub fn n_bins(&self) -> usize {
         self.datasets.len()
-    }
-
-    /// Checks whether or not the [`BinnedDataset`] is empty.
-    pub fn is_empty(&self) -> bool {
-        self.datasets.is_empty()
-    }
-
-    /// The number of bins in the [`BinnedDataset`]. Alias of [`BinnedDataset::len()`].
-    pub fn bins(&self) -> usize {
-        self.len()
     }
 
     /// Returns a list of the bin edges that were used to form the [`BinnedDataset`].
@@ -466,7 +620,7 @@ impl BinnedDataset {
 
     /// Returns the range that was used to form the [`BinnedDataset`].
     pub fn range(&self) -> (Float, Float) {
-        (self.edges[0], self.edges[self.len()])
+        (self.edges[0], self.edges[self.n_bins()])
     }
 }
 
@@ -498,23 +652,19 @@ mod tests {
     #[test]
     fn test_dataset_size_check() {
         let mut dataset = Dataset::default();
-        assert!(dataset.is_empty());
-        assert_eq!(dataset.len(), 0);
+        assert_eq!(dataset.n_events(), 0);
         dataset.events.push(Arc::new(test_event()));
-        assert!(!dataset.is_empty());
-        assert_eq!(dataset.len(), 1);
+        assert_eq!(dataset.n_events(), 1);
     }
 
     #[test]
     fn test_dataset_sum() {
         let dataset = test_dataset();
-        let dataset2 = Dataset {
-            events: vec![Arc::new(Event {
-                p4s: test_event().p4s,
-                eps: test_event().eps,
-                weight: 0.52,
-            })],
-        };
+        let dataset2 = Dataset::new(vec![Arc::new(Event {
+            p4s: test_event().p4s,
+            eps: test_event().eps,
+            weight: 0.52,
+        })]);
         let dataset_sum = &dataset + &dataset2;
         assert_eq!(dataset_sum[0].weight, dataset[0].weight);
         assert_eq!(dataset_sum[1].weight, dataset2[0].weight);
@@ -533,7 +683,7 @@ mod tests {
         assert_eq!(weights.len(), 2);
         assert_relative_eq!(weights[0], 0.48);
         assert_relative_eq!(weights[1], 0.52);
-        assert_relative_eq!(dataset.weighted_len(), 1.0);
+        assert_relative_eq!(dataset.n_events_weighted(), 1.0);
     }
 
     #[test]
@@ -549,23 +699,24 @@ mod tests {
         }));
 
         let filtered = dataset.filter(|event| event.p4s.len() == 2);
-        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered.n_events(), 1);
         assert_eq!(filtered[0].p4s.len(), 2);
     }
 
     #[test]
     fn test_binned_dataset() {
-        let mut dataset = Dataset::default();
-        dataset.events.push(Arc::new(Event {
-            p4s: vec![vector![0.0, 0.0, 1.0].with_mass(1.0)],
-            eps: vec![],
-            weight: 1.0,
-        }));
-        dataset.events.push(Arc::new(Event {
-            p4s: vec![vector![0.0, 0.0, 2.0].with_mass(2.0)],
-            eps: vec![],
-            weight: 2.0,
-        }));
+        let dataset = Dataset::new(vec![
+            Arc::new(Event {
+                p4s: vec![vector![0.0, 0.0, 1.0].with_mass(1.0)],
+                eps: vec![],
+                weight: 1.0,
+            }),
+            Arc::new(Event {
+                p4s: vec![vector![0.0, 0.0, 2.0].with_mass(2.0)],
+                eps: vec![],
+                weight: 2.0,
+            }),
+        ]);
 
         #[derive(Clone, Serialize, Deserialize)]
         struct BeamEnergy;
@@ -579,14 +730,14 @@ mod tests {
         // Test binning by first particle energy
         let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0));
 
-        assert_eq!(binned.bins(), 2);
+        assert_eq!(binned.n_bins(), 2);
         assert_eq!(binned.edges().len(), 3);
         assert_relative_eq!(binned.edges()[0], 0.0);
         assert_relative_eq!(binned.edges()[2], 3.0);
-        assert_eq!(binned[0].len(), 1);
-        assert_relative_eq!(binned[0].weighted_len(), 1.0);
-        assert_eq!(binned[1].len(), 1);
-        assert_relative_eq!(binned[1].weighted_len(), 2.0);
+        assert_eq!(binned[0].n_events(), 1);
+        assert_relative_eq!(binned[0].n_events_weighted(), 1.0);
+        assert_eq!(binned[1].n_events(), 1);
+        assert_relative_eq!(binned[1].n_events_weighted(), 2.0);
     }
 
     #[test]
@@ -600,13 +751,13 @@ mod tests {
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);
 
         let bootstrapped = dataset.bootstrap(43);
-        assert_eq!(bootstrapped.len(), dataset.len());
+        assert_eq!(bootstrapped.n_events(), dataset.n_events());
         assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
 
         // Test empty dataset bootstrap
         let empty_dataset = Dataset::default();
         let empty_bootstrap = empty_dataset.bootstrap(43);
-        assert!(empty_bootstrap.is_empty());
+        assert_eq!(empty_bootstrap.n_events(), 0);
     }
 
     #[test]

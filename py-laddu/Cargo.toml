@@ -16,6 +16,7 @@ name = "laddu"
 crate-type = ["cdylib"]
 
 [dependencies]
+laddu-core = { workspace = true, features = ["python"] }
 laddu-amplitudes = { workspace = true, features = ["python"] }
 laddu-extensions = { workspace = true, features = ["python"] }
 laddu-python = { workspace = true }

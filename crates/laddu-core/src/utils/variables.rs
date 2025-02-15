@@ -14,6 +14,7 @@ use crate::{
     },
     Float, LadduError,
 };
+use mpi::traits::*;
 
 /// Standard methods for extracting some value out of an [`Event`].
 #[typetag::serde(tag = "type")]
@@ -24,13 +25,34 @@ pub trait Variable: DynClone + Send + Sync {
     /// [`Dataset`].
     #[cfg(feature = "rayon")]
     fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
-        dataset.par_iter().map(|e| self.value(e)).collect()
-    }
-    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
-    /// [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
-        dataset.iter().map(|e| self.value(e)).collect()
+        if let Some(world) = crate::get_world_for_root() {
+            let mut all_weights: Vec<Float> = Vec::new();
+            for src_rank in 1..world.size() {
+                let mut buffer_size: usize = 0;
+                world
+                    .process_at_rank(src_rank)
+                    .receive_into(&mut buffer_size);
+                let mut received_values: Vec<Float> = vec![0.0; buffer_size];
+                world
+                    .process_at_rank(src_rank)
+                    .receive_into(&mut received_values);
+                all_weights.extend(received_values);
+            }
+            all_weights
+        } else {
+            #[cfg(feature = "rayon")]
+            let local_values: Vec<Float> =
+                dataset.events.par_iter().map(|e| self.value(e)).collect();
+            #[cfg(not(feature = "rayon"))]
+            let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
+            if let Some(world) = crate::get_world() {
+                world
+                    .process_at_rank(crate::ROOT_RANK)
+                    .send(&local_values.len());
+                world.process_at_rank(crate::ROOT_RANK).send(&local_values);
+            }
+            local_values
+        }
     }
 }
 dyn_clone::clone_trait_object!(Variable);

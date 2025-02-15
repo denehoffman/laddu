@@ -19,6 +19,7 @@ bincode = { workspace = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
+mpi = { workspace = true }
 num_cpus = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }

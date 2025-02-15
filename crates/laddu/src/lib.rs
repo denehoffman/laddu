@@ -333,3 +333,10 @@ pub use laddu_core::{DVector, Vector3, Vector4};
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
+
+pub mod mpi {
+    pub use laddu_core::{
+        finalize_mpi, get_world, get_world_for_root, get_world_rank_size, is_root, use_mpi,
+        using_mpi, ROOT_RANK,
+    };
+}

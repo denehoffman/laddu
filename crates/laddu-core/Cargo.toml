@@ -11,6 +11,7 @@ description = "Core of the laddu library"
 readme = "../../README.md"
 
 [dependencies]
+accurate = { workspace = true }
 arrow = { workspace = true }
 auto_ops = { workspace = true }
 bincode = { workspace = true }
@@ -19,6 +20,8 @@ factorial = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
 indexmap = { workspace = true }
+lazy_static = { workspace = true }
+mpi = { workspace = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 num_cpus = { workspace = true, optional = true }

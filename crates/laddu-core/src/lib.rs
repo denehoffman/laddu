@@ -4,8 +4,169 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
 use bincode::ErrorKind;
+use lazy_static::lazy_static;
+use mpi::environment::Universe;
+use mpi::topology::SimpleCommunicator;
+use mpi::traits::Communicator;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
+
+//========== MPI Support ==========
+
+lazy_static! {
+    static ref USE_MPI: AtomicBool = AtomicBool::new(false);
+}
+
+static mut MPI_UNIVERSE: OnceLock<Option<Universe>> = OnceLock::new();
+
+/// The default root rank for MPI processes
+pub const ROOT_RANK: i32 = 0;
+
+/// Check if the current MPI process is the root process
+pub fn is_root() -> bool {
+    if let Some((_, rank, _)) = crate::get_world_rank_size() {
+        rank == ROOT_RANK
+    } else {
+        false
+    }
+}
+
+/// Access the global MPI communicator, but only for the root process
+///
+/// Returns `None` if the current process is not the root process or if MPI is not enabled.
+pub fn get_world_for_root() -> Option<SimpleCommunicator> {
+    if let Some((world, rank, _)) = crate::get_world_rank_size() {
+        if rank == ROOT_RANK {
+            Some(world)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
+/// directly
+pub fn get_world() -> Option<SimpleCommunicator> {
+    if let Some((world, _, _)) = crate::get_world_rank_size() {
+        Some(world)
+    } else {
+        None
+    }
+}
+
+fn initialize_mpi() {
+    unsafe {
+        MPI_UNIVERSE.get_or_init(|| {
+            #[cfg(feature = "rayon")]
+            let threading = mpi::Threading::Funneled;
+            #[cfg(not(feature = "rayon"))]
+            let threading = mpi::Threading::Single;
+            let (universe, _threading) = mpi::initialize_with_threading(threading).unwrap();
+            let world = universe.world();
+            if world.size() == 1 {
+                eprintln!("Warning: MPI is enabled, but only one process is available. MPI will not be used, but single-CPU parallelism may still be used if enabled.");
+                finalize_mpi();
+                USE_MPI.store(false, Ordering::SeqCst);
+                None
+            } else {
+                Some(universe)
+            }
+    });
+    }
+}
+
+/// Use the MPI backend
+///
+/// # Notes
+///
+/// You must have MPI installed for this to work, and you must call the program with
+/// `mpirun <executable>`, or bad things will happen.
+///
+/// MPI runs an identical program on each process, but gives the program an ID called its
+/// "rank". Only the results of methods on the root process (rank 0) should be
+/// considered valid, as other processes only contain portions of each dataset. To ensure
+/// you don't save or print data at other ranks, use the provided [`is_root()`]
+/// method to check if the process is the root process.
+///
+/// Once MPI is enabled, it cannot be disabled. If MPI could be toggled (which it can't),
+/// the other processes will still run, but they will be independent of the root process
+/// and will no longer communicate with it. The root process stores no data, so it would
+/// be difficult (and convoluted) to get the results which were already processed via
+/// MPI.
+///
+/// Additionally, MPI must be enabled at the beginning of a script, at least before any
+/// other `laddu` functions are called.
+///
+/// If [`use_mpi()`] is called multiple times, the subsequent calls will have no
+/// effect.
+///
+/// <div class="warning">
+///
+/// You **must** call [`finalize_mpi()`] before your program exits for MPI to terminate
+/// smoothly.
+///
+/// </div>
+///
+/// # Examples
+///
+/// ```ignore
+/// fn main() {
+///     laddu_core::use_mpi();
+///
+///     // ... your code here ...
+///
+///     laddu_core::finalize_mpi();
+/// }
+///
+/// ```
+pub fn use_mpi() {
+    USE_MPI.store(true, Ordering::SeqCst);
+    initialize_mpi();
+}
+
+/// Drop the MPI universe and finalize MPI at the end of a program
+///
+/// <div class="warning">
+///
+/// This should only be called once and should be called at the end of all `laddu`-related
+/// function calls. This must be called at the end of any program which uses MPI.
+///
+/// </div>
+pub fn finalize_mpi() {
+    if using_mpi() {
+        unsafe {
+            MPI_UNIVERSE.take();
+        }
+    }
+}
+
+/// Check if MPI backend is enabled
+pub fn using_mpi() -> bool {
+    USE_MPI.load(Ordering::SeqCst)
+}
+
+/// Get the global MPI communicator, the rank of the current process, and the total number of
+/// processes available. Returns `None` if MPI is not enabled or only has a single process
+/// available.
+pub fn get_world_rank_size() -> Option<(SimpleCommunicator, i32, i32)> {
+    unsafe {
+        if let Some(Some(universe)) = MPI_UNIVERSE.get() {
+            let world = universe.world();
+            if world.size() == 1 {
+                return None;
+            }
+            let rank = world.rank();
+            let size = world.size();
+            Some((world, rank, size))
+        } else {
+            None
+        }
+    }
+}
+
+//=================================
 
 use thiserror::Error;
 
@@ -150,6 +311,8 @@ impl From<LadduError> for PyErr {
 }
 
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::{
     fmt::Debug,
     fs::File,

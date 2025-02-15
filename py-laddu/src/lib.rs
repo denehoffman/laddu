@@ -9,6 +9,19 @@ mod laddu {
     }
 
     #[pymodule_export]
+    use laddu_python::mpi::finalize_mpi;
+    #[pymodule_export]
+    use laddu_python::mpi::get_rank;
+    #[pymodule_export]
+    use laddu_python::mpi::get_size;
+    #[pymodule_export]
+    use laddu_python::mpi::is_root;
+    #[pymodule_export]
+    use laddu_python::mpi::use_mpi;
+    #[pymodule_export]
+    use laddu_python::mpi::using_mpi;
+
+    #[pymodule_export]
     use laddu_python::utils::vectors::PyVector3;
     #[pymodule_export]
     use laddu_python::utils::vectors::PyVector4;
