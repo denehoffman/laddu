@@ -938,7 +938,7 @@ impl Function<(), LadduError> for NLL {
 pub(crate) struct LogLikelihood<'a>(&'a NLL);
 
 #[cfg(feature = "rayon")]
-impl<'a> Function<ThreadPool, LadduError> for LogLikelihood<'a> {
+impl Function<ThreadPool, LadduError> for LogLikelihood<'_> {
     fn evaluate(
         &self,
         parameters: &[Float],
@@ -956,7 +956,7 @@ impl<'a> Function<ThreadPool, LadduError> for LogLikelihood<'a> {
 }
 
 #[cfg(not(feature = "rayon"))]
-impl<'a> Function<(), LadduError> for LogLikelihood<'a> {
+impl Function<(), LadduError> for LogLikelihood<'_> {
     fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
         Function::evaluate(self.0, parameters, user_data).map(|res| -res)
     }
@@ -2078,7 +2078,7 @@ impl Function<(), LadduError> for LikelihoodEvaluator {
 
 pub(crate) struct NegativeLikelihoodEvaluator<'a>(&'a LikelihoodEvaluator);
 #[cfg(feature = "rayon")]
-impl<'a> Function<ThreadPool, LadduError> for NegativeLikelihoodEvaluator<'a> {
+impl Function<ThreadPool, LadduError> for NegativeLikelihoodEvaluator<'_> {
     fn evaluate(
         &self,
         parameters: &[Float],
@@ -2096,7 +2096,7 @@ impl<'a> Function<ThreadPool, LadduError> for NegativeLikelihoodEvaluator<'a> {
 }
 
 #[cfg(not(feature = "rayon"))]
-impl<'a> Function<(), LadduError> for NegativeLikelihoodEvaluator<'a> {
+impl Function<(), LadduError> for NegativeLikelihoodEvaluator<'_> {
     fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
         Function::evaluate(self.0, parameters, user_data).map(|res| -res)
     }
