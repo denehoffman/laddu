@@ -49,6 +49,8 @@ laddu-amplitudes = { version = "0.2.5", path = "crates/laddu-amplitudes" }
 laddu-extensions = { version = "0.2.6", path = "crates/laddu-extensions" }
 laddu-python = { version = "0.2.5", path = "crates/laddu-python" }
 
+which = { version = "=4.2.2", default-features = false }
+
 [profile.release]
 lto = "thin"
 debug = false

@@ -20,6 +20,7 @@ laddu-extensions = { workspace = true }
 
 serde = { workspace = true }
 typetag = { workspace = true }
+which = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
