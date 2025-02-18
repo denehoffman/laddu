@@ -13,6 +13,7 @@ build:
     - openmpi-bin
     - openmpi-doc
     - libopenmpi-dev
+    - clang
 
 sphinx:
   configuration: py-laddu/docs/source/conf.py
