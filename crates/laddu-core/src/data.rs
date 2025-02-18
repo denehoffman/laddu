@@ -523,47 +523,42 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
 /// Open a Parquet file and read the data into a [`Dataset`].
 pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
     // TODO: make this read in directly to MPI ranks
-    let events = if !crate::mpi::using_mpi() | crate::mpi::is_root() {
-        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-        let file = File::open(file_path)?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let reader = builder.build()?;
-        let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+    let file = File::open(file_path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
 
-        #[cfg(feature = "rayon")]
-        let events: Vec<Arc<Event>> = batches
-            .into_par_iter()
-            .flat_map(|batch| {
-                let num_rows = batch.num_rows();
-                let mut local_events = Vec::with_capacity(num_rows);
+    #[cfg(feature = "rayon")]
+    let events: Vec<Arc<Event>> = batches
+        .into_par_iter()
+        .flat_map(|batch| {
+            let num_rows = batch.num_rows();
+            let mut local_events = Vec::with_capacity(num_rows);
 
-                // Process each row in the batch
-                for row in 0..num_rows {
-                    let event = batch_to_event(&batch, row);
-                    local_events.push(Arc::new(event));
-                }
-                local_events
-            })
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let events: Vec<Arc<Event>> = batches
-            .into_iter()
-            .flat_map(|batch| {
-                let num_rows = batch.num_rows();
-                let mut local_events = Vec::with_capacity(num_rows);
+            // Process each row in the batch
+            for row in 0..num_rows {
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
+            }
+            local_events
+        })
+        .collect();
+    #[cfg(not(feature = "rayon"))]
+    let events: Vec<Arc<Event>> = batches
+        .into_iter()
+        .flat_map(|batch| {
+            let num_rows = batch.num_rows();
+            let mut local_events = Vec::with_capacity(num_rows);
 
-                // Process each row in the batch
-                for row in 0..num_rows {
-                    let event = batch_to_event(&batch, row);
-                    local_events.push(Arc::new(event));
-                }
-                local_events
-            })
-            .collect();
-        events
-    } else {
-        Vec::default()
-    };
+            // Process each row in the batch
+            for row in 0..num_rows {
+                let event = batch_to_event(&batch, row);
+                local_events.push(Arc::new(event));
+            }
+            local_events
+        })
+        .collect();
     Ok(Arc::new(Dataset::new(events)))
 }
 

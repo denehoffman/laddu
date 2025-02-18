@@ -174,7 +174,7 @@ pub mod mpi {
             let mut displs = vec![0; self.size() as usize];
             let chunk_size = buf_len / self.size() as usize;
             let surplus = buf_len % self.size() as usize;
-            for i in 0..buf_len {
+            for i in 0..self.size() as usize {
                 counts[i] = if i < surplus {
                     chunk_size + 1
                 } else {
@@ -198,7 +198,7 @@ pub mod mpi {
             let mut displs = vec![0; self.size() as usize];
             let chunk_size = unflattened_len / self.size() as usize;
             let surplus = unflattened_len % self.size() as usize;
-            for i in 0..unflattened_len {
+            for i in 0..self.size() as usize {
                 counts[i] = if i < surplus {
                     (chunk_size + 1) * internal_len
                 } else {
