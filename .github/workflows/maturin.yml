@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
@@ -63,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -156,8 +156,11 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@master
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo brew install openmpi
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -179,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
