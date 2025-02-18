@@ -10,6 +10,7 @@ pub mod data;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod utils;
 
+#[cfg(feature = "mpi")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {
     use super::*;

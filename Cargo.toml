@@ -9,7 +9,7 @@ edition = "2021"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
-rust-version = "1.70.0"
+rust-version = "1.81.1"
 
 [workspace.dependencies]
 accurate = "0.4.1"
