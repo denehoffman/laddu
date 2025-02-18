@@ -25,7 +25,8 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
-      - uses: mpi4py/setup-mpi@v1
+      - name: Install OpenMPI
+        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
       - name: Install Rust
         run: rustup update nightly
       - name: Install cargo-llvm-cov
@@ -41,7 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: mpi4py/setup-mpi@v1
+      - name: Install OpenMPI
+        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
