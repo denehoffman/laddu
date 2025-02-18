@@ -182,7 +182,6 @@ pub mod utils;
 pub mod traits {
     pub use crate::amplitudes::Amplitude;
     pub use crate::utils::variables::Variable;
-    pub use crate::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use crate::ReadWrite;
 }
 
@@ -195,13 +194,14 @@ pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
+pub use crate::utils::vectors::{Vec3, Vec4};
 pub use amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 
 // Re-exports
 pub use ganesh::{mcmc::Ensemble, Bound, Status};
-pub use nalgebra::{DVector, Vector3, Vector4};
+pub use nalgebra::DVector;
 pub use num::Complex;
 
 /// A floating-point number type (defaults to [`f64`], see `f32` feature).

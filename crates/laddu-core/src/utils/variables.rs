@@ -1,5 +1,4 @@
 use dyn_clone::DynClone;
-use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -10,7 +9,7 @@ use crate::{
     data::{Dataset, Event},
     utils::{
         enums::{Channel, Frame},
-        vectors::{FourMomentum, FourVector, ThreeVector},
+        vectors::{Vec3},
     },
     Float, LadduError,
 };
@@ -131,7 +130,7 @@ impl Variable for CosTheta {
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -143,7 +142,7 @@ impl Variable for CosTheta {
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -210,7 +209,7 @@ impl Variable for Phi {
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -222,7 +221,7 @@ impl Variable for Phi {
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),

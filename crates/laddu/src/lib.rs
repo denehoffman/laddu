@@ -292,7 +292,6 @@ pub mod utils {
 pub mod traits {
     pub use laddu_core::amplitudes::Amplitude;
     pub use laddu_core::utils::variables::Variable;
-    pub use laddu_core::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use laddu_core::ReadWrite;
     pub use laddu_extensions::likelihoods::LikelihoodTerm;
 }
@@ -324,16 +323,18 @@ pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
+pub use laddu_core::utils::vectors::{Vec3, Vec4};
 pub use laddu_core::Complex;
+pub use laddu_core::DVector;
 pub use laddu_core::Float;
 pub use laddu_core::LadduError;
 pub use laddu_core::Status;
 pub use laddu_core::PI;
-pub use laddu_core::{DVector, Vector3, Vector4};
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
 
+#[cfg(feature = "mpi")]
 pub mod mpi {
     pub use laddu_core::{
         finalize_mpi, get_world, get_world_for_root, get_world_rank_size, is_root, use_mpi,

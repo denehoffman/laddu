@@ -4,7 +4,6 @@ use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
 use mpi::collective::SystemOperation;
 use mpi::traits::*;
-use nalgebra::{vector, Vector3, Vector4};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
@@ -17,7 +16,10 @@ use rayon::prelude::*;
 
 use crate::utils::get_bin_edges;
 use crate::{
-    utils::{variables::Variable, vectors::FourMomentum},
+    utils::{
+        variables::Variable,
+        vectors::{Vec3, Vec4},
+    },
     Float, LadduError,
 };
 
@@ -28,12 +30,12 @@ pub fn test_event() -> Event {
     use crate::utils::vectors::*;
     Event {
         p4s: vec![
-            vector![0.0, 0.0, 8.747].with_mass(0.0),         // beam
-            vector![0.119, 0.374, 0.222].with_mass(1.007),   // "proton"
-            vector![-0.112, 0.293, 3.081].with_mass(0.498),  // "kaon"
-            vector![-0.007, -0.667, 5.446].with_mass(0.498), // "kaon"
+            Vec3::new(0.0, 0.0, 8.747).with_mass(0.0),         // beam
+            Vec3::new(0.119, 0.374, 0.222).with_mass(1.007),   // "proton"
+            Vec3::new(-0.112, 0.293, 3.081).with_mass(0.498),  // "kaon"
+            Vec3::new(-0.007, -0.667, 5.446).with_mass(0.498), // "kaon"
         ],
-        eps: vec![vector![0.385, 0.022, 0.000]],
+        eps: vec![Vec3::new(0.385, 0.022, 0.000)],
         weight: 0.48,
     }
 }
@@ -49,9 +51,9 @@ pub fn test_dataset() -> Dataset {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Event {
     /// A list of four-momenta for each particle.
-    pub p4s: Vec<Vector4<Float>>,
+    pub p4s: Vec<Vec4>,
     /// A list of polarization vectors for each particle.
-    pub eps: Vec<Vector3<Float>>,
+    pub eps: Vec<Vec3>,
     /// The weight given to the event.
     pub weight: Float,
 }
@@ -65,15 +67,7 @@ impl Display for Event {
         }
         writeln!(f, "  eps:")?;
         for eps_vec in &self.eps {
-            writeln!(
-                f,
-                "    [{}]",
-                eps_vec
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            )?;
+            writeln!(f, "    [{}, {}, {}]", eps_vec.x, eps_vec.y, eps_vec.z)?;
         }
         writeln!(f, "  weight:")?;
         writeln!(f, "    {}", self.weight)?;
@@ -83,12 +77,8 @@ impl Display for Event {
 
 impl Event {
     /// Return a four-momentum from the sum of four-momenta at the given indices in the [`Event`].
-    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vector4<Float> {
-        indices
-            .as_ref()
-            .iter()
-            .map(|i| self.p4s[*i])
-            .sum::<Vector4<Float>>()
+    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
+        indices.as_ref().iter().map(|i| self.p4s[*i]).sum::<Vec4>()
     }
 }
 
@@ -488,7 +478,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        p4s.push(Vector4::new(px, py, pz, e));
+        p4s.push(Vec4::new(px, py, pz, e));
     }
 
     // TODO: insert empty vectors if not provided
@@ -514,7 +504,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        eps.push(Vector3::new(x, y, z));
+        eps.push(Vec3::new(x, y, z));
     }
 
     let weight = batch
@@ -626,8 +616,6 @@ impl BinnedDataset {
 
 #[cfg(test)]
 mod tests {
-    use crate::traits::ThreeMomentum;
-
     use super::*;
     use approx::{assert_relative_eq, assert_relative_ne};
     use serde::{Deserialize, Serialize};
@@ -643,10 +631,10 @@ mod tests {
     fn test_event_p4_sum() {
         let event = test_event();
         let sum = event.get_p4_sum([2, 3]);
-        assert_relative_eq!(sum[0], event.p4s[2].px() + event.p4s[3].px());
-        assert_relative_eq!(sum[1], event.p4s[2].py() + event.p4s[3].py());
-        assert_relative_eq!(sum[2], event.p4s[2].pz() + event.p4s[3].pz());
-        assert_relative_eq!(sum[3], event.p4s[2].e() + event.p4s[3].e());
+        assert_relative_eq!(sum.px(), event.p4s[2].px() + event.p4s[3].px());
+        assert_relative_eq!(sum.py(), event.p4s[2].py() + event.p4s[3].py());
+        assert_relative_eq!(sum.pz(), event.p4s[2].pz() + event.p4s[3].pz());
+        assert_relative_eq!(sum.e(), event.p4s[2].e() + event.p4s[3].e());
     }
 
     #[test]
@@ -691,8 +679,8 @@ mod tests {
         let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: vec![
-                vector![0.0, 0.0, 5.0].with_mass(0.0),
-                vector![0.0, 0.0, 1.0].with_mass(1.0),
+                Vec3::new(0.0, 0.0, 5.0).with_mass(0.0),
+                Vec3::new(0.0, 0.0, 1.0).with_mass(1.0),
             ],
             eps: vec![],
             weight: 1.0,
@@ -707,12 +695,12 @@ mod tests {
     fn test_binned_dataset() {
         let dataset = Dataset::new(vec![
             Arc::new(Event {
-                p4s: vec![vector![0.0, 0.0, 1.0].with_mass(1.0)],
+                p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(1.0)],
                 eps: vec![],
                 weight: 1.0,
             }),
             Arc::new(Event {
-                p4s: vec![vector![0.0, 0.0, 2.0].with_mass(2.0)],
+                p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(2.0)],
                 eps: vec![],
                 weight: 2.0,
             }),

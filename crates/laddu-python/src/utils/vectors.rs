@@ -1,7 +1,4 @@
-use laddu_core::{
-    traits::{FourMomentum, FourVector, ThreeMomentum, ThreeVector},
-    Float, Vector3, Vector4,
-};
+use laddu_core::{Float, Vec3, Vec4};
 use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
@@ -17,12 +14,12 @@ use pyo3::{
 ///
 #[pyclass(name = "Vector3", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVector3(pub Vector3<Float>);
+pub struct PyVector3(pub Vec3);
 #[pymethods]
 impl PyVector3 {
     #[new]
     fn new(px: Float, py: Float, pz: Float) -> Self {
-        Self(Vector3::new(px, py, pz))
+        Self(Vec3::new(px, py, pz))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
         if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
@@ -272,7 +269,7 @@ impl PyVector3 {
     ///     A ``numpy`` array built from the components of this ``Vector3``
     ///
     fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, self.0.as_slice())
+        PyArray1::from_vec(py, self.0.into())
     }
     /// Convert an  array into a 3-vector.
     ///
@@ -296,12 +293,6 @@ impl PyVector3 {
     fn __str__(&self) -> String {
         format!("{}", self.0)
     }
-    fn __getitem__(&self, index: usize) -> PyResult<Float> {
-        self.0
-            .get(index)
-            .ok_or(PyIndexError::new_err("index out of range"))
-            .copied()
-    }
 }
 
 /// A 4-momentum vector formed from energy and Cartesian 3-momentum components.
@@ -319,12 +310,12 @@ impl PyVector3 {
 ///
 #[pyclass(name = "Vector4", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVector4(pub Vector4<Float>);
+pub struct PyVector4(pub Vec4);
 #[pymethods]
 impl PyVector4 {
     #[new]
     fn new(px: Float, py: Float, pz: Float, e: Float) -> Self {
-        Self(Vector4::new(px, py, pz, e))
+        Self(Vec4::new(px, py, pz, e))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
         if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
@@ -454,11 +445,11 @@ impl PyVector4 {
     fn e(&self) -> Float {
         self.0.e()
     }
-    /// The energy associated with this vector
+    /// The t-component of this vector
     ///
     #[getter]
-    fn w(&self) -> Float {
-        self.0.w
+    fn t(&self) -> Float {
+        self.0.t
     }
     /// The x-component of this vector
     ///
@@ -561,7 +552,7 @@ impl PyVector4 {
     ///     A ``numpy`` array built from the components of this ``Vector4``
     ///
     fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, self.0.as_slice())
+        PyArray1::from_vec(py, self.0.into())
     }
     /// Convert an array into a 4-vector.
     ///
@@ -584,11 +575,5 @@ impl PyVector4 {
     }
     fn __repr__(&self) -> String {
         self.0.to_p4_string()
-    }
-    fn __getitem__(&self, index: usize) -> PyResult<Float> {
-        self.0
-            .get(index)
-            .ok_or(PyIndexError::new_err("index out of range"))
-            .copied()
     }
 }
