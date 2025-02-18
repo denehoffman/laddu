@@ -8,6 +8,24 @@ def get_rank() -> int: ...
 def get_size() -> int: ...
 
 class MPI:
+    """
+    A context manager for MPI.
+
+    Example
+    -------
+    .. code-block:: python
+
+        import os
+        from laddu.mpi import MPI
+
+        def main():
+            ...
+
+        if __name__ == '__main__':
+            with MPI(trigger=os.environ['MPI'] == '1'):
+                main()
+    """
+
     def __init__(self, *, trigger: bool = True) -> None: ...
     def __enter__(self) -> None: ...
     def __exit__(

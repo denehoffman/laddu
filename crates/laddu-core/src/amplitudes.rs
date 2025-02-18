@@ -5,7 +5,6 @@ use std::{
 
 use auto_ops::*;
 use dyn_clone::DynClone;
-use mpi::{topology::SimpleCommunicator, traits::*};
 use nalgebra::{ComplexField, DVector};
 use num::Complex;
 
@@ -19,6 +18,12 @@ use crate::{
     resources::{Cache, Parameters, Resources},
     Float, LadduError,
 };
+
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
+
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// An enum containing either a named free parameter or a constant value.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -564,54 +569,33 @@ impl Evaluator {
         }
     }
 
+    #[cfg(feature = "mpi")]
     fn evaluate_mpi(
         &self,
         parameters: &[Float],
-        world: SimpleCommunicator,
-        rank: i32,
-        size: i32,
+        world: &SimpleCommunicator,
     ) -> Vec<Complex<Float>> {
-        let mut result: Vec<Complex<Float>> = Vec::new();
-        let mut buffer_size: usize = 0;
-        if rank == crate::ROOT_RANK {
-            for src_rank in 1..size {
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut buffer_size);
-                let mut received_results: Vec<Complex<Float>> = vec![Complex::ZERO; buffer_size];
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut received_results);
-                result.extend(received_results);
-            }
-            buffer_size = result.len();
-        } else {
-            let local_result = self.evaluate_local(parameters);
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .send(&local_result.len());
-            world.process_at_rank(crate::ROOT_RANK).send(&local_result);
+        let local_evaluation = self.evaluate_local(parameters);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
-        world
-            .process_at_rank(crate::ROOT_RANK)
-            .broadcast_into(&mut buffer_size);
-        if rank != crate::ROOT_RANK {
-            result = vec![Complex::ZERO; buffer_size];
-        }
-        world
-            .process_at_rank(crate::ROOT_RANK)
-            .broadcast_into(&mut result);
-        result
+        buffer
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
-        if let Some((world, rank, size)) = crate::get_world_rank_size() {
-            self.evaluate_mpi(parameters, world, rank, size)
-        } else {
-            self.evaluate_local(parameters)
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_mpi(parameters, &world);
+            }
         }
+        self.evaluate_local(parameters)
     }
 
     pub fn evaluate_gradient_local(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
@@ -710,52 +694,27 @@ impl Evaluator {
         }
     }
 
+    #[cfg(feature = "mpi")]
     fn evaluate_gradient_mpi(
         &self,
         parameters: &[Float],
-        world: SimpleCommunicator,
-        rank: i32,
-        size: i32,
+        world: &SimpleCommunicator,
     ) -> Vec<DVector<Complex<Float>>> {
-        let mut result_multiplexed: Vec<Complex<Float>> = Vec::new();
-        let mut buffer_size: usize = 0;
-        if rank == crate::ROOT_RANK {
-            for src_rank in 1..size {
-                let mut buffer_size: usize = 0;
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut buffer_size);
-                let mut received_result_multiplexed: Vec<Complex<Float>> =
-                    vec![Complex::ZERO; buffer_size];
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut received_result_multiplexed);
-                result_multiplexed.extend(received_result_multiplexed);
-            }
-            buffer_size = result_multiplexed.len();
-        } else {
-            let local_result = self.evaluate_gradient_local(parameters);
-            let local_result_multiplexed: Vec<Complex<Float>> = local_result
-                .iter()
-                .flat_map(|dv| dv.iter().copied())
-                .collect();
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .send(&local_result_multiplexed.len());
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .send(&local_result_multiplexed);
-        }
-        world
-            .process_at_rank(crate::ROOT_RANK)
-            .broadcast_into(&mut buffer_size);
-        if rank != crate::ROOT_RANK {
-            result_multiplexed = vec![Complex::ZERO; buffer_size];
-        }
-        world
-            .process_at_rank(crate::ROOT_RANK)
-            .broadcast_into(&mut result_multiplexed);
-        result_multiplexed
+        let flattened_local_evaluation = self
+            .evaluate_gradient_local(parameters)
+            .iter()
+            .flat_map(|g| g.data.as_vec().to_vec())
+            .collect::<Vec<Complex<Float>>>();
+        let n_events = self.dataset.n_events();
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
+        let mut flattened_result_buffer = vec![Complex::ZERO; n_events * parameters.len()];
+        let mut partitioned_flattened_result_buffer =
+            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        world.all_gather_varcount_into(
+            &flattened_local_evaluation,
+            &mut partitioned_flattened_result_buffer,
+        );
+        flattened_result_buffer
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect()
@@ -764,11 +723,13 @@ impl Evaluator {
     /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
-        if let Some((world, rank, size)) = crate::get_world_rank_size() {
-            self.evaluate_gradient_mpi(parameters, world, rank, size)
-        } else {
-            self.evaluate_gradient_local(parameters)
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_gradient_mpi(parameters, &world);
+            }
         }
+        self.evaluate_gradient_local(parameters)
     }
 }
 

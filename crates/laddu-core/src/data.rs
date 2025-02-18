@@ -2,8 +2,6 @@ use accurate::{sum::Klein, traits::*};
 use arrow::array::Float32Array;
 use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
-use mpi::collective::SystemOperation;
-use mpi::traits::*;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
@@ -13,6 +11,12 @@ use std::{fmt::Display, fs::File};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
+
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
 
 use crate::utils::get_bin_edges;
 use crate::{
@@ -89,260 +93,259 @@ pub struct Dataset {
     pub events: Vec<Arc<Event>>,
 }
 
+impl Dataset {
+    pub fn index_local(&self, index: usize) -> &Event {
+        &self.events[index]
+    }
+
+    #[cfg(feature = "mpi")]
+    fn get_rank_index(index: usize, displs: &[i32], world: &SimpleCommunicator) -> (i32, usize) {
+        for (i, &displ) in displs.iter().enumerate() {
+            if displ as usize > index {
+                return (i as i32 - 1, index - displs[i - 1] as usize);
+            }
+        }
+        (
+            world.size() - 1,
+            index - displs[world.size() as usize - 1] as usize,
+        )
+    }
+
+    #[cfg(feature = "mpi")]
+    fn partition(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Vec<Vec<Arc<Event>>> {
+        let (counts, displs) = world.get_counts_displs(events.len());
+        counts
+            .iter()
+            .zip(displs.iter())
+            .map(|(&count, &displ)| {
+                events
+                    .iter()
+                    .skip(displ as usize)
+                    .take(count as usize)
+                    .cloned()
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
+        let (_, displs) = world.get_counts_displs(self.n_events());
+        let (owning_rank, local_index) = Dataset::get_rank_index(index, &displs, world);
+        let mut serialized_event_buffer_len: usize = 0;
+        let mut serialized_event_buffer: Vec<u8> = Vec::default();
+        if world.rank() == owning_rank {
+            let event = self.index_local(local_index);
+            serialized_event_buffer = bincode::serialize(event).unwrap();
+            serialized_event_buffer_len = serialized_event_buffer.len();
+        }
+        world
+            .process_at_rank(owning_rank)
+            .broadcast_into(&mut serialized_event_buffer_len);
+        if world.rank() != owning_rank {
+            serialized_event_buffer = vec![0; serialized_event_buffer_len];
+        }
+        world
+            .process_at_rank(owning_rank)
+            .broadcast_into(&mut serialized_event_buffer);
+        let event: Event = bincode::deserialize(&serialized_event_buffer).unwrap();
+        Box::leak(Box::new(event))
+    }
+}
+
 impl Index<usize> for Dataset {
     type Output = Event;
 
     fn index(&self, index: usize) -> &Self::Output {
-        if let Some((world, rank, _)) = crate::get_world_rank_size() {
-            let owning_rank = self.owning_rank(index);
-            if rank == crate::ROOT_RANK {
-                world.process_at_rank(owning_rank).send(&index);
-                let mut serialized_event: Vec<u8> = Vec::new();
-                world
-                    .process_at_rank(owning_rank)
-                    .receive_into(&mut serialized_event);
-                let event: Event = bincode::deserialize(&serialized_event).unwrap();
-                Box::leak(Box::new(event))
-            } else if rank == owning_rank {
-                let mut requested_global_index: usize = 0;
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .receive_into(&mut requested_global_index);
-                let event = &self.events[self.global_to_local_index(requested_global_index)];
-                let serialized_event = bincode::serialize(&event).unwrap();
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .send(&serialized_event);
-                &self.events[0]
-            } else {
-                &self.events[0]
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.index_mpi(index, &world);
             }
-        } else {
-            &self.events[index]
         }
+        self.index_local(index)
     }
 }
 
 impl Dataset {
+    pub fn new_local(events: Vec<Arc<Event>>) -> Self {
+        Dataset { events }
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn new_mpi(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Self {
+        Dataset {
+            events: Dataset::partition(events, world)[world.rank() as usize].clone(),
+        }
+    }
+
     /// Create a new [`Dataset`] from a list of [`Event`]s.
     ///
     /// This method is prefered for external use because it contains proper MPI construction
     /// methods. Constructing a [`Dataset`] manually is possible, but may cause issues when
     /// interfacing with MPI and should be avoided unless you know what you are doing.
     pub fn new(events: Vec<Arc<Event>>) -> Self {
-        if let Some((world, rank, size)) = crate::get_world_rank_size() {
-            if rank == crate::ROOT_RANK {
-                let chunk_size = events.len() / (size as usize - 1);
-                for dest_rank in 1..size {
-                    let start = (dest_rank as usize - 1) * chunk_size;
-                    let end = if dest_rank == size - 1 {
-                        events.len()
-                    } else {
-                        start + chunk_size
-                    };
-                    let chunk = &events[start..end];
-                    let serialized = bincode::serialize(&chunk).expect("Failed to serialize");
-                    world.process_at_rank(dest_rank).send(&serialized.len());
-                    world.process_at_rank(dest_rank).send(&serialized);
-                }
-                Dataset::default()
-            } else {
-                let mut buffer_size: usize = 0;
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .receive_into(&mut buffer_size);
-                let mut serialized_buffer = vec![0; buffer_size];
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .receive_into(&mut serialized_buffer);
-                let received_events: Vec<Arc<Event>> =
-                    bincode::deserialize(&serialized_buffer).expect("Failed to deserialize");
-                Dataset {
-                    events: received_events,
-                }
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return Dataset::new_mpi(events, &world);
             }
-        } else {
-            Dataset { events }
         }
+        Dataset::new_local(events)
+    }
+
+    pub fn n_events_local(&self) -> usize {
+        self.events.len()
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn n_events_mpi(&self, world: &SimpleCommunicator) -> usize {
+        let mut n_events_partitioned: Vec<usize> = vec![0; world.size() as usize];
+        let n_events_local = self.n_events_local();
+        world.all_gather_into(&n_events_local, &mut n_events_partitioned);
+        n_events_partitioned.iter().sum()
     }
 
     /// The number of [`Event`]s in the [`Dataset`].
     pub fn n_events(&self) -> usize {
-        if let Some((world, rank, _)) = crate::get_world_rank_size() {
-            let mut total_count: usize = 0;
-            let local_count = self.events.len();
-            if rank == crate::ROOT_RANK {
-                world.process_at_rank(crate::ROOT_RANK).reduce_into_root(
-                    &local_count,
-                    &mut total_count,
-                    SystemOperation::sum(),
-                );
-            } else {
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .reduce_into(&local_count, SystemOperation::sum());
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.n_events_mpi(&world);
             }
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .broadcast_into(&mut total_count);
-            total_count
-        } else {
-            self.events.len()
         }
-    }
-
-    fn chunk_size(&self) -> usize {
-        if let Some((_, _, size)) = crate::get_world_rank_size() {
-            self.events.len() / (size as usize - 1)
-        } else {
-            self.events.len()
-        }
-    }
-
-    fn owning_rank(&self, index: usize) -> i32 {
-        if crate::using_mpi() {
-            (index / self.chunk_size() + 1) as i32
-        } else {
-            0
-        }
-    }
-
-    fn global_to_local_index(&self, global_index: usize) -> usize {
-        global_index % self.chunk_size()
+        self.n_events_local()
     }
 }
 
 impl Dataset {
+    pub fn weights_local(&self) -> Vec<Float> {
+        #[cfg(feature = "rayon")]
+        return self.events.par_iter().map(|e| e.weight).collect();
+        #[cfg(not(feature = "rayon"))]
+        return self.events.iter().map(|e| e.weight).collect();
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<Float> {
+        let local_weights = self.weights_local();
+        let n_events = self.n_events();
+        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
     ///
     /// In MPI non-root processes, this returns the list of weights contained in a subset of the
     /// [`Dataset`] held by the process.
     pub fn weights(&self) -> Vec<Float> {
-        if let Some(world) = crate::get_world_for_root() {
-            let mut all_weights: Vec<Float> = Vec::new();
-            for src_rank in 1..world.size() {
-                let mut buffer_size: usize = 0;
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut buffer_size);
-                let mut received_weights: Vec<Float> = vec![0.0; buffer_size];
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut received_weights);
-                all_weights.extend(received_weights);
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.weights_mpi(&world);
             }
-            all_weights
-        } else {
-            #[cfg(feature = "rayon")]
-            let local_weights: Vec<Float> = self.events.par_iter().map(|e| e.weight).collect();
-            #[cfg(not(feature = "rayon"))]
-            let local_weights: Vec<Float> = self.events.iter().map(|e| e.weight).collect();
-            if let Some(world) = crate::get_world() {
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .send(&local_weights.len());
-                world.process_at_rank(crate::ROOT_RANK).send(&local_weights);
-            }
-            local_weights
         }
+        self.weights_local()
+    }
+
+    pub fn n_events_weighted_local(&self) -> Float {
+        #[cfg(feature = "rayon")]
+        return self
+            .events
+            .par_iter()
+            .map(|e| e.weight)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        return self.events.iter().map(|e| e.weight).sum();
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> Float {
+        let mut n_events_weighted_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
+        let n_events_weighted_local = self.n_events_weighted_local();
+        world.all_gather_into(&n_events_weighted_local, &mut n_events_weighted_partitioned);
+        #[cfg(feature = "rayon")]
+        return n_events_weighted_partitioned
+            .into_par_iter()
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        return n_events_weighted_partitioned.iter().sum();
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
     pub fn n_events_weighted(&self) -> Float {
-        if let Some((world, rank, _)) = crate::get_world_rank_size() {
-            let mut total_count: Float = 0.0;
-            #[cfg(feature = "rayon")]
-            let local_count_weighted = self
-                .events
-                .par_iter()
-                .map(|e| e.weight)
-                .parallel_sum_with_accumulator::<Klein<Float>>();
-            #[cfg(not(feature = "rayon"))]
-            let local_count_weighted = self.events.iter().map(|e| e.weight).sum();
-            if rank == crate::ROOT_RANK {
-                world.process_at_rank(crate::ROOT_RANK).reduce_into_root(
-                    &local_count_weighted,
-                    &mut total_count,
-                    SystemOperation::sum(),
-                );
-            } else {
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .reduce_into(&local_count_weighted, SystemOperation::sum());
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.n_events_weighted_mpi(&world);
             }
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .broadcast_into(&mut total_count);
-            total_count
-        } else {
-            #[cfg(feature = "rayon")]
-            return self
-                .events
-                .par_iter()
-                .map(|e| e.weight)
-                .parallel_sum_with_accumulator::<Klein<Float>>();
-            #[cfg(not(feature = "rayon"))]
-            return self.events.iter().map(|e| e.weight).sum();
         }
+        self.n_events_weighted_local()
+    }
+
+    pub fn bootstrap_local(&self, seed: usize) -> Arc<Dataset> {
+        let mut rng = fastrand::Rng::with_seed(seed as u64);
+        let mut indices: Vec<usize> = (0..self.n_events())
+            .map(|_| rng.usize(0..self.n_events()))
+            .collect::<Vec<usize>>();
+        indices.sort();
+        #[cfg(feature = "rayon")]
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_par_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        #[cfg(not(feature = "rayon"))]
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn bootstrap_mpi(&self, seed: usize, world: &SimpleCommunicator) -> Arc<Dataset> {
+        let n_events = self.n_events();
+        let mut indices: Vec<usize> = vec![0; n_events];
+        if world.is_root() {
+            let mut rng = fastrand::Rng::with_seed(seed as u64);
+            indices = (0..n_events)
+                .map(|_| rng.usize(0..n_events))
+                .collect::<Vec<usize>>();
+            indices.sort();
+        }
+        world.process_at_root().broadcast_into(&mut indices);
+        #[cfg(feature = "rayon")]
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_par_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        #[cfg(not(feature = "rayon"))]
+        let bootstrapped_events: Vec<Arc<Event>> = indices
+            .into_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect();
+        Arc::new(Dataset {
+            events: bootstrapped_events,
+        })
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
     /// with replacement. This can be used to perform error analysis via the bootstrap method.
     pub fn bootstrap(&self, seed: usize) -> Arc<Dataset> {
-        if self.n_events() == 0 {
-            return Arc::new(Dataset::default());
-        }
-        if let Some((world, rank, _)) = crate::get_world_rank_size() {
-            let mut indices: Vec<usize> = if rank == crate::ROOT_RANK {
-                let mut rng = fastrand::Rng::with_seed(seed as u64);
-                let mut unsorted_indices = (0..self.n_events())
-                    .map(|_| rng.usize(0..self.n_events()))
-                    .collect::<Vec<usize>>();
-                unsorted_indices.sort();
-                unsorted_indices
-            } else {
-                Vec::new()
-            };
-            world
-                .process_at_rank(crate::ROOT_RANK)
-                .broadcast_into(&mut indices);
-            if rank == crate::ROOT_RANK {
-                Arc::new(Dataset::default())
-            } else {
-                #[cfg(feature = "rayon")]
-                let bootstrapped_events: Vec<Arc<Event>> = indices
-                    .into_par_iter()
-                    .map(|idx| self.events[self.global_to_local_index(idx)].clone())
-                    .collect();
-                #[cfg(not(feature = "rayon"))]
-                let bootstrapped_events: Vec<Arc<Event>> = indices
-                    .into_iter()
-                    .map(|idx| self.events[self.global_to_local_index(idx)].clone())
-                    .collect();
-                Arc::new(Dataset {
-                    events: bootstrapped_events,
-                })
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.bootstrap_mpi(seed, &world);
             }
-        } else {
-            let mut rng = fastrand::Rng::with_seed(seed as u64);
-            let mut indices: Vec<usize> = (0..self.n_events())
-                .map(|_| rng.usize(0..self.n_events()))
-                .collect::<Vec<usize>>();
-            indices.sort();
-            #[cfg(feature = "rayon")]
-            let bootstrapped_events: Vec<Arc<Event>> = indices
-                .into_par_iter()
-                .map(|idx| self.events[idx].clone())
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let bootstrapped_events: Vec<Arc<Event>> = indices
-                .into_iter()
-                .map(|idx| self.events[idx].clone())
-                .collect();
-            Arc::new(Dataset {
-                events: bootstrapped_events,
-            })
         }
+        self.bootstrap_local(seed)
     }
 
     /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
@@ -519,7 +522,8 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
 
 /// Open a Parquet file and read the data into a [`Dataset`].
 pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
-    let events = if !crate::using_mpi() | crate::is_root() {
+    // TODO: make this read in directly to MPI ranks
+    let events = if !crate::mpi::using_mpi() | crate::mpi::is_root() {
         let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;

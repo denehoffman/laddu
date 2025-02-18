@@ -5,53 +5,56 @@ use std::sync::Arc;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
 use crate::{
     data::{Dataset, Event},
     utils::{
         enums::{Channel, Frame},
-        vectors::{Vec3},
+        vectors::Vec3,
     },
     Float, LadduError,
 };
-use mpi::traits::*;
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// Standard methods for extracting some value out of an [`Event`].
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync {
     /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
     fn value(&self, event: &Event) -> Float;
+
+    fn value_on_local(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
+        #[cfg(feature = "rayon")]
+        let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
+        #[cfg(not(feature = "rayon"))]
+        let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
+        local_values
+    }
+
+    #[cfg(feature = "mpi")]
+    fn value_on_mpi(&self, dataset: &Arc<Dataset>, world: &SimpleCommunicator) -> Vec<Float> {
+        let local_weights = self.value_on_local(dataset);
+        let n_events = dataset.n_events();
+        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`].
-    #[cfg(feature = "rayon")]
     fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
-        if let Some(world) = crate::get_world_for_root() {
-            let mut all_weights: Vec<Float> = Vec::new();
-            for src_rank in 1..world.size() {
-                let mut buffer_size: usize = 0;
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut buffer_size);
-                let mut received_values: Vec<Float> = vec![0.0; buffer_size];
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut received_values);
-                all_weights.extend(received_values);
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.value_on_mpi(dataset, &world);
             }
-            all_weights
-        } else {
-            #[cfg(feature = "rayon")]
-            let local_values: Vec<Float> =
-                dataset.events.par_iter().map(|e| self.value(e)).collect();
-            #[cfg(not(feature = "rayon"))]
-            let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
-            if let Some(world) = crate::get_world() {
-                world
-                    .process_at_rank(crate::ROOT_RANK)
-                    .send(&local_values.len());
-                world.process_at_rank(crate::ROOT_RANK).send(&local_values);
-            }
-            local_values
         }
+        self.value_on_local(dataset)
     }
 }
 dyn_clone::clone_trait_object!(Variable);

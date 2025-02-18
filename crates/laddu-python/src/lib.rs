@@ -53,7 +53,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn use_mpi() {
-        laddu_core::use_mpi();
+        laddu_core::mpi::use_mpi();
     }
 
     /// Drop the MPI universe and finalize MPI at the end of a program
@@ -67,7 +67,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn finalize_mpi() {
-        laddu_core::finalize_mpi();
+        laddu_core::mpi::finalize_mpi();
     }
 
     /// Check if MPI is enabled
@@ -82,7 +82,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn using_mpi() -> bool {
-        laddu_core::using_mpi()
+        laddu_core::mpi::using_mpi()
     }
 
     /// Check if the current MPI process is the root process
@@ -97,7 +97,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn is_root() -> bool {
-        laddu_core::is_root()
+        laddu_core::mpi::is_root()
     }
 
     /// Get the rank of the current MPI process
@@ -110,11 +110,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn get_rank() -> Option<i32> {
-        if let Some((_, rank, _)) = laddu_core::get_world_rank_size() {
-            Some(rank)
-        } else {
-            None
-        }
+        laddu_core::mpi::get_rank()
     }
 
     /// Get the total number of MPI processes (including the root process)
@@ -127,11 +123,7 @@ pub mod mpi {
     ///
     #[pyfunction]
     pub fn get_size() -> Option<i32> {
-        if let Some((_, _, size)) = laddu_core::get_world_rank_size() {
-            Some(size)
-        } else {
-            None
-        }
+        laddu_core::mpi::get_size()
     }
 }
 

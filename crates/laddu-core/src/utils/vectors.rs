@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::Index};
+use std::fmt::Display;
 
 use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::{impl_op_ex, impl_op_ex_commutative};

@@ -4,61 +4,63 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
 use bincode::ErrorKind;
-use lazy_static::lazy_static;
-use mpi::environment::Universe;
-use mpi::topology::SimpleCommunicator;
-use mpi::traits::Communicator;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
-//========== MPI Support ==========
+#[cfg(feature = "mpi")]
+pub mod mpi {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
 
-lazy_static! {
-    static ref USE_MPI: AtomicBool = AtomicBool::new(false);
-}
+    use lazy_static::lazy_static;
+    use mpi::environment::Universe;
+    use mpi::topology::{Process, SimpleCommunicator};
+    use mpi::traits::Communicator;
 
-static mut MPI_UNIVERSE: OnceLock<Option<Universe>> = OnceLock::new();
-
-/// The default root rank for MPI processes
-pub const ROOT_RANK: i32 = 0;
-
-/// Check if the current MPI process is the root process
-pub fn is_root() -> bool {
-    if let Some((_, rank, _)) = crate::get_world_rank_size() {
-        rank == ROOT_RANK
-    } else {
-        false
+    lazy_static! {
+        static ref USE_MPI: AtomicBool = AtomicBool::new(false);
     }
-}
 
-/// Access the global MPI communicator, but only for the root process
-///
-/// Returns `None` if the current process is not the root process or if MPI is not enabled.
-pub fn get_world_for_root() -> Option<SimpleCommunicator> {
-    if let Some((world, rank, _)) = crate::get_world_rank_size() {
-        if rank == ROOT_RANK {
-            Some(world)
+    static mut MPI_UNIVERSE: OnceLock<Option<Universe>> = OnceLock::new();
+
+    /// The default root rank for MPI processes
+    pub const ROOT_RANK: i32 = 0;
+
+    /// Check if the current MPI process is the root process
+    pub fn is_root() -> bool {
+        if let Some(world) = crate::mpi::get_world() {
+            world.rank() == ROOT_RANK
         } else {
+            false
+        }
+    }
+
+    /// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
+    /// directly
+    pub fn get_world() -> Option<SimpleCommunicator> {
+        unsafe {
+            if let Some(Some(universe)) = MPI_UNIVERSE.get() {
+                let world = universe.world();
+                if world.size() == 1 {
+                    return None;
+                }
+                return Some(world);
+            }
             None
         }
-    } else {
-        None
     }
-}
 
-/// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
-/// directly
-pub fn get_world() -> Option<SimpleCommunicator> {
-    if let Some((world, _, _)) = crate::get_world_rank_size() {
-        Some(world)
-    } else {
-        None
+    pub fn get_rank() -> Option<i32> {
+        get_world().map(|w| w.rank())
     }
-}
 
-fn initialize_mpi() {
-    unsafe {
-        MPI_UNIVERSE.get_or_init(|| {
+    pub fn get_size() -> Option<i32> {
+        get_world().map(|w| w.size())
+    }
+
+    fn initialize_mpi() {
+        unsafe {
+            MPI_UNIVERSE.get_or_init(|| {
             #[cfg(feature = "rayon")]
             let threading = mpi::Threading::Funneled;
             #[cfg(not(feature = "rayon"))]
@@ -74,99 +76,144 @@ fn initialize_mpi() {
                 Some(universe)
             }
     });
-    }
-}
-
-/// Use the MPI backend
-///
-/// # Notes
-///
-/// You must have MPI installed for this to work, and you must call the program with
-/// `mpirun <executable>`, or bad things will happen.
-///
-/// MPI runs an identical program on each process, but gives the program an ID called its
-/// "rank". Only the results of methods on the root process (rank 0) should be
-/// considered valid, as other processes only contain portions of each dataset. To ensure
-/// you don't save or print data at other ranks, use the provided [`is_root()`]
-/// method to check if the process is the root process.
-///
-/// Once MPI is enabled, it cannot be disabled. If MPI could be toggled (which it can't),
-/// the other processes will still run, but they will be independent of the root process
-/// and will no longer communicate with it. The root process stores no data, so it would
-/// be difficult (and convoluted) to get the results which were already processed via
-/// MPI.
-///
-/// Additionally, MPI must be enabled at the beginning of a script, at least before any
-/// other `laddu` functions are called.
-///
-/// If [`use_mpi()`] is called multiple times, the subsequent calls will have no
-/// effect.
-///
-/// <div class="warning">
-///
-/// You **must** call [`finalize_mpi()`] before your program exits for MPI to terminate
-/// smoothly.
-///
-/// </div>
-///
-/// # Examples
-///
-/// ```ignore
-/// fn main() {
-///     laddu_core::use_mpi();
-///
-///     // ... your code here ...
-///
-///     laddu_core::finalize_mpi();
-/// }
-///
-/// ```
-pub fn use_mpi() {
-    USE_MPI.store(true, Ordering::SeqCst);
-    initialize_mpi();
-}
-
-/// Drop the MPI universe and finalize MPI at the end of a program
-///
-/// <div class="warning">
-///
-/// This should only be called once and should be called at the end of all `laddu`-related
-/// function calls. This must be called at the end of any program which uses MPI.
-///
-/// </div>
-pub fn finalize_mpi() {
-    if using_mpi() {
-        unsafe {
-            MPI_UNIVERSE.take();
         }
     }
-}
 
-/// Check if MPI backend is enabled
-pub fn using_mpi() -> bool {
-    USE_MPI.load(Ordering::SeqCst)
-}
+    /// Use the MPI backend
+    ///
+    /// # Notes
+    ///
+    /// You must have MPI installed for this to work, and you must call the program with
+    /// `mpirun <executable>`, or bad things will happen.
+    ///
+    /// MPI runs an identical program on each process, but gives the program an ID called its
+    /// "rank". Only the results of methods on the root process (rank 0) should be
+    /// considered valid, as other processes only contain portions of each dataset. To ensure
+    /// you don't save or print data at other ranks, use the provided [`is_root()`]
+    /// method to check if the process is the root process.
+    ///
+    /// Once MPI is enabled, it cannot be disabled. If MPI could be toggled (which it can't),
+    /// the other processes will still run, but they will be independent of the root process
+    /// and will no longer communicate with it. The root process stores no data, so it would
+    /// be difficult (and convoluted) to get the results which were already processed via
+    /// MPI.
+    ///
+    /// Additionally, MPI must be enabled at the beginning of a script, at least before any
+    /// other `laddu` functions are called.
+    ///
+    /// If [`use_mpi()`] is called multiple times, the subsequent calls will have no
+    /// effect.
+    ///
+    /// <div class="warning">
+    ///
+    /// You **must** call [`finalize_mpi()`] before your program exits for MPI to terminate
+    /// smoothly.
+    ///
+    /// </div>
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn main() {
+    ///     laddu_core::use_mpi();
+    ///
+    ///     // ... your code here ...
+    ///
+    ///     laddu_core::finalize_mpi();
+    /// }
+    ///
+    /// ```
+    pub fn use_mpi() {
+        USE_MPI.store(true, Ordering::SeqCst);
+        initialize_mpi();
+    }
 
-/// Get the global MPI communicator, the rank of the current process, and the total number of
-/// processes available. Returns `None` if MPI is not enabled or only has a single process
-/// available.
-pub fn get_world_rank_size() -> Option<(SimpleCommunicator, i32, i32)> {
-    unsafe {
-        if let Some(Some(universe)) = MPI_UNIVERSE.get() {
-            let world = universe.world();
-            if world.size() == 1 {
-                return None;
+    /// Drop the MPI universe and finalize MPI at the end of a program
+    ///
+    /// <div class="warning">
+    ///
+    /// This should only be called once and should be called at the end of all `laddu`-related
+    /// function calls. This must be called at the end of any program which uses MPI.
+    ///
+    /// </div>
+    pub fn finalize_mpi() {
+        if using_mpi() {
+            unsafe {
+                MPI_UNIVERSE.take();
             }
-            let rank = world.rank();
-            let size = world.size();
-            Some((world, rank, size))
-        } else {
-            None
+        }
+    }
+
+    /// Check if MPI backend is enabled
+    pub fn using_mpi() -> bool {
+        USE_MPI.load(Ordering::SeqCst)
+    }
+
+    pub trait LadduMPI {
+        fn process_at_root(&self) -> Process<'_>;
+        fn is_root(&self) -> bool;
+        fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>);
+        fn get_flattened_counts_displs(
+            &self,
+            unflattened_len: usize,
+            internal_len: usize,
+        ) -> (Vec<i32>, Vec<i32>);
+    }
+
+    impl LadduMPI for SimpleCommunicator {
+        fn process_at_root(&self) -> Process<'_> {
+            self.process_at_rank(crate::mpi::ROOT_RANK)
+        }
+
+        fn is_root(&self) -> bool {
+            self.rank() == crate::mpi::ROOT_RANK
+        }
+
+        fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>) {
+            let mut counts = vec![0; self.size() as usize];
+            let mut displs = vec![0; self.size() as usize];
+            let chunk_size = buf_len / self.size() as usize;
+            let surplus = buf_len % self.size() as usize;
+            for i in 0..buf_len {
+                counts[i] = if i < surplus {
+                    chunk_size + 1
+                } else {
+                    chunk_size
+                } as i32;
+                displs[i] = if i == 0 {
+                    0
+                } else {
+                    displs[i - 1] + counts[i - 1]
+                };
+            }
+            (counts, displs)
+        }
+
+        fn get_flattened_counts_displs(
+            &self,
+            unflattened_len: usize,
+            internal_len: usize,
+        ) -> (Vec<i32>, Vec<i32>) {
+            let mut counts = vec![0; self.size() as usize];
+            let mut displs = vec![0; self.size() as usize];
+            let chunk_size = unflattened_len / self.size() as usize;
+            let surplus = unflattened_len % self.size() as usize;
+            for i in 0..unflattened_len {
+                counts[i] = if i < surplus {
+                    (chunk_size + 1) * internal_len
+                } else {
+                    chunk_size * internal_len
+                } as i32;
+                displs[i] = if i == 0 {
+                    0
+                } else {
+                    displs[i - 1] + counts[i - 1]
+                };
+            }
+            (counts, displs)
         }
     }
 }
-
-//=================================
 
 use thiserror::Error;
 
@@ -311,8 +358,6 @@ impl From<LadduError> for PyErr {
 }
 
 use serde::{de::DeserializeOwned, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 use std::{
     fmt::Debug,
     fs::File,

@@ -18,7 +18,12 @@ use laddu_core::{
     resources::Parameters,
     Complex, DVector, Float, LadduError,
 };
-use mpi::{collective::SystemOperation, topology::SimpleCommunicator, traits::*};
+
+#[cfg(feature = "mpi")]
+use laddu_core::mpi::LadduMPI;
+
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 #[cfg(feature = "python")]
 use crate::ganesh_ext::py_ganesh::{
@@ -128,6 +133,61 @@ impl NLL {
         self.accmc_evaluator.isolate_many(names)
     }
 
+    pub fn project_local(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Vec<Float> {
+        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
+            (
+                mc_evaluator.dataset.clone(),
+                mc_evaluator.evaluate_local(parameters),
+            )
+        } else {
+            (
+                self.accmc_evaluator.dataset.clone(),
+                self.accmc_evaluator.evaluate_local(parameters),
+            )
+        };
+        let n_mc = self.accmc_evaluator.dataset.n_events();
+        #[cfg(feature = "rayon")]
+        let output: Vec<Float> = result
+            .par_iter()
+            .zip(mc_dataset.events.par_iter())
+            .map(|(l, e)| e.weight * l.re / n_mc as Float)
+            .collect();
+
+        #[cfg(not(feature = "rayon"))]
+        let output: Vec<Float> = result
+            .iter()
+            .zip(mc_dataset.events.iter())
+            .map(|(l, e)| e.weight * l.re / n_mc as Float)
+            .collect();
+        output
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn project_mpi(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> Vec<Float> {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let local_projection = self.project_local(parameters, mc_evaluator);
+        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
@@ -142,97 +202,20 @@ impl NLL {
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
     pub fn project(&self, parameters: &[Float], mc_evaluator: Option<Evaluator>) -> Vec<Float> {
-        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_local(parameters),
-            )
-        } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate_local(parameters),
-            )
-        };
-        let n_mc = self.accmc_evaluator.dataset.n_events();
-        let mut output: Vec<Float> = Vec::default();
-        if let Some((world, rank, size)) = laddu_core::get_world_rank_size() {
-            if rank == laddu_core::ROOT_RANK {
-                for src_rank in 1..size {
-                    let mut buffer_size: usize = 0;
-                    world
-                        .process_at_rank(src_rank)
-                        .receive_into(&mut buffer_size);
-                    let mut received_outputs: Vec<Float> = vec![0.0; buffer_size];
-                    world
-                        .process_at_rank(src_rank)
-                        .receive_into(&mut received_outputs);
-                    output.extend(received_outputs);
-                }
-            } else {
-                output = vec![0.0; n_mc];
-                #[cfg(feature = "rayon")]
-                let local_output: Vec<Float> = result
-                    .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-
-                #[cfg(not(feature = "rayon"))]
-                let local_output: Vec<Float> = result
-                    .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-                if let Some(world) = laddu_core::get_world() {
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output.len());
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output);
-                }
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_mpi(parameters, mc_evaluator, &world);
             }
-            world
-                .process_at_rank(laddu_core::ROOT_RANK)
-                .broadcast_into(&mut output);
-            output
-        } else {
-            #[cfg(feature = "rayon")]
-            let output: Vec<Float> = result
-                .par_iter()
-                .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                .collect();
-
-            #[cfg(not(feature = "rayon"))]
-            let output: Vec<Float> = result
-                .iter()
-                .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                .collect();
-            output
         }
+        self.project_local(parameters, mc_evaluator)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
-    /// those weights for each Monte-Carlo event. This method takes the real part of the given
-    /// expression (discarding the imaginary part entirely, which does not matter if expressions
-    /// are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
-    /// Event weights are determined by the following formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
-    /// ```
-    ///
-    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
-    /// regardless of the `mc_evaluator`.
-    pub fn project_gradient(
+    pub fn project_gradient_local(
         &self,
         parameters: &[Float],
         mc_evaluator: Option<Evaluator>,
     ) -> (Vec<Float>, Vec<DVector<Float>>) {
-        // TODO: Need to handle MPI for this, but it's complicated
         let (mc_dataset, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
@@ -279,6 +262,146 @@ impl NLL {
         }
     }
 
+    #[cfg(feature = "mpi")]
+    pub fn project_gradient_mpi(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> (Vec<Float>, Vec<DVector<Float>>) {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let (local_projection, local_gradient_projection) =
+            self.project_gradient_local(parameters, mc_evaluator);
+        let mut projection_result: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
+            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+        }
+
+        let flattened_local_gradient_projection = local_gradient_projection
+            .iter()
+            .flat_map(|g| g.data.as_vec().to_vec())
+            .collect::<Vec<Float>>();
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
+        let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
+        let mut partitioned_flattened_result_buffer =
+            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        world.all_gather_varcount_into(
+            &flattened_local_gradient_projection,
+            &mut partitioned_flattened_result_buffer,
+        );
+        let gradient_projection_result = flattened_result_buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
+            .collect();
+        (projection_result, gradient_projection_result)
+    }
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method takes the real part of the given
+    /// expression (discarding the imaginary part entirely, which does not matter if expressions
+    /// are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient(
+        &self,
+        parameters: &[Float],
+        mc_evaluator: Option<Evaluator>,
+    ) -> (Vec<Float>, Vec<DVector<Float>>) {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_gradient_mpi(parameters, mc_evaluator, &world);
+            }
+        }
+        self.project_gradient_local(parameters, mc_evaluator)
+    }
+
+    pub fn project_with_local<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Result<Vec<Float>, LadduError> {
+        if let Some(mc_evaluator) = &mc_evaluator {
+            let current_active_mc = mc_evaluator.resources.read().active.clone();
+            mc_evaluator.isolate_many(names)?;
+            let mc_dataset = mc_evaluator.dataset.clone();
+            let result = mc_evaluator.evaluate_local(parameters);
+            let n_mc = self.accmc_evaluator.dataset.n_events();
+            #[cfg(feature = "rayon")]
+            let output: Vec<Float> = result
+                .par_iter()
+                .zip(mc_dataset.events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let output: Vec<Float> = result
+                .iter()
+                .zip(mc_dataset.events.iter())
+                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .collect();
+            mc_evaluator.resources.write().active = current_active_mc;
+            Ok(output)
+        } else {
+            let current_active_data = self.data_evaluator.resources.read().active.clone();
+            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
+            self.isolate_many(names)?;
+            let mc_dataset = &self.accmc_evaluator.dataset;
+            let result = self.accmc_evaluator.evaluate_local(parameters);
+            let n_mc = self.accmc_evaluator.dataset.n_events();
+            #[cfg(feature = "rayon")]
+            let output: Vec<Float> = result
+                .par_iter()
+                .zip(mc_dataset.events.par_iter())
+                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let output: Vec<Float> = result
+                .iter()
+                .zip(mc_dataset.events.iter())
+                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .collect();
+            self.data_evaluator.resources.write().active = current_active_data;
+            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            Ok(output)
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn project_with_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> Result<Vec<Float>, LadduError> {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let local_projection = self.project_with_local(parameters, names, mc_evaluator)?;
+        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+        }
+        Ok(buffer)
+    }
+
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
@@ -302,160 +425,21 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> Result<Vec<Float>, LadduError> {
-        if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names)?;
-            let mc_dataset = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events();
-            let mut output: Vec<Float> = Vec::default();
-            if let Some((world, rank, size)) = laddu_core::get_world_rank_size() {
-                if rank == laddu_core::ROOT_RANK {
-                    for src_rank in 1..size {
-                        let mut buffer_size: usize = 0;
-                        world
-                            .process_at_rank(src_rank)
-                            .receive_into(&mut buffer_size);
-                        let mut received_outputs: Vec<Float> = vec![0.0; buffer_size];
-                        world
-                            .process_at_rank(src_rank)
-                            .receive_into(&mut received_outputs);
-                        output.extend(received_outputs);
-                    }
-                } else {
-                    output = vec![0.0; n_mc];
-                    #[cfg(feature = "rayon")]
-                    let local_output: Vec<Float> = result
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                        .collect();
-                    #[cfg(not(feature = "rayon"))]
-                    let local_output: Vec<Float> = result
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                        .collect();
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output.len());
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output);
-                }
-                mc_evaluator.resources.write().active = current_active_mc;
-                world
-                    .process_at_rank(laddu_core::ROOT_RANK)
-                    .broadcast_into(&mut output);
-                Ok(output)
-            } else {
-                #[cfg(feature = "rayon")]
-                let output: Vec<Float> = result
-                    .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-                #[cfg(not(feature = "rayon"))]
-                let output: Vec<Float> = result
-                    .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-                mc_evaluator.resources.write().active = current_active_mc;
-                Ok(output)
-            }
-        } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names)?;
-            let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events();
-            let mut output: Vec<Float> = Vec::default();
-            if let Some((world, rank, size)) = laddu_core::get_world_rank_size() {
-                if rank == laddu_core::ROOT_RANK {
-                    for src_rank in 1..size {
-                        let mut buffer_size: usize = 0;
-                        world
-                            .process_at_rank(src_rank)
-                            .receive_into(&mut buffer_size);
-                        let mut received_outputs: Vec<Float> = vec![0.0; buffer_size];
-                        world
-                            .process_at_rank(src_rank)
-                            .receive_into(&mut received_outputs);
-                        output.extend(received_outputs);
-                    }
-                } else {
-                    output = vec![0.0; n_mc];
-                    #[cfg(feature = "rayon")]
-                    let local_output: Vec<Float> = result
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                        .collect();
-                    #[cfg(not(feature = "rayon"))]
-                    let local_output: Vec<Float> = result
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                        .collect();
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output.len());
-                    world
-                        .process_at_rank(laddu_core::ROOT_RANK)
-                        .send(&local_output);
-                }
-                self.data_evaluator.resources.write().active = current_active_data;
-                self.accmc_evaluator.resources.write().active = current_active_accmc;
-                world
-                    .process_at_rank(laddu_core::ROOT_RANK)
-                    .broadcast_into(&mut output);
-                Ok(output)
-            } else {
-                #[cfg(feature = "rayon")]
-                let output: Vec<Float> = result
-                    .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-                #[cfg(not(feature = "rayon"))]
-                let output: Vec<Float> = result
-                    .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc as Float)
-                    .collect();
-                self.data_evaluator.resources.write().active = current_active_data;
-                self.accmc_evaluator.resources.write().active = current_active_accmc;
-                Ok(output)
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_with_mpi(parameters, names, mc_evaluator, &world);
             }
         }
+        self.project_with_local(parameters, names, mc_evaluator)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
-    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
-    /// the [`NLL`] to its prior state after calculation.
-    ///
-    /// This method takes the real part of the given expression (discarding
-    /// the imaginary part entirely, which does not matter if expressions are coherent sums
-    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
-    /// Event weights are determined by the following formula:
-    ///
-    /// ```math
-    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
-    /// ```
-    ///
-    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
-    /// regardless of the `mc_evaluator`.
-    pub fn project_gradient_with<T: AsRef<str>>(
+    pub fn project_gradient_with_local<T: AsRef<str>>(
         &self,
         parameters: &[Float],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> Result<(Vec<Float>, Vec<DVector<Float>>), LadduError> {
-        // TODO: Need to handle MPI for this, but it's complicated
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many(names)?;
@@ -539,6 +523,78 @@ impl NLL {
         }
     }
 
+    #[cfg(feature = "mpi")]
+    pub fn project_gradient_with_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> Result<(Vec<Float>, Vec<DVector<Float>>), LadduError> {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let (local_projection, local_gradient_projection) =
+            self.project_gradient_with_local(parameters, names, mc_evaluator)?;
+        let mut projection_result: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
+            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+        }
+
+        let flattened_local_gradient_projection = local_gradient_projection
+            .iter()
+            .flat_map(|g| g.data.as_vec().to_vec())
+            .collect::<Vec<Float>>();
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
+        let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
+        let mut partitioned_flattened_result_buffer =
+            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        world.all_gather_varcount_into(
+            &flattened_local_gradient_projection,
+            &mut partitioned_flattened_result_buffer,
+        );
+        let gradient_projection_result = flattened_result_buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
+            .collect();
+        Ok((projection_result, gradient_projection_result))
+    }
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
+    /// the [`NLL`] to its prior state after calculation.
+    ///
+    /// This method takes the real part of the given expression (discarding
+    /// the imaginary part entirely, which does not matter if expressions are coherent sums
+    /// wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
+    /// Event weights are determined by the following formula:
+    ///
+    /// ```math
+    /// \text{weight}(\vec{p}; e) = \text{weight}(e) \mathcal{L}(e) / N_{\text{MC}}
+    /// ```
+    ///
+    /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
+    /// regardless of the `mc_evaluator`.
+    pub fn project_gradient_with<T: AsRef<str>>(
+        &self,
+        parameters: &[Float],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> Result<(Vec<Float>, Vec<DVector<Float>>), LadduError> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_gradient_with_mpi(parameters, names, mc_evaluator, &world);
+            }
+        }
+        self.project_gradient_with_local(parameters, names, mc_evaluator)
+    }
+
     fn evaluate_local(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate_local(parameters);
         let mc_result = self.accmc_evaluator.evaluate_local(parameters);
@@ -570,35 +626,12 @@ impl NLL {
         -2.0 * (data_term - mc_term / n_mc)
     }
 
-    fn evaluate_mpi(
-        &self,
-        parameters: &[Float],
-        world: SimpleCommunicator,
-        rank: i32,
-        size: i32,
-    ) -> Float {
-        let mut result: Float = 0.0;
-        if rank == laddu_core::ROOT_RANK {
-            // NOTE: this ensures these functions are called across all ranks, and the black_box
-            // ensures this does not get optimized out by the compiler.
-            std::hint::black_box(self.accmc_evaluator.dataset.n_events());
-            let mut local_result: Float = 0.0;
-            for src_rank in 1..size {
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut local_result);
-                result += local_result;
-            }
-        } else {
-            let local_result = self.evaluate_local(parameters);
-            world
-                .process_at_rank(laddu_core::ROOT_RANK)
-                .send(&local_result);
-        }
-        world
-            .process_at_rank(laddu_core::ROOT_RANK)
-            .broadcast_into(&mut result);
-        result
+    #[cfg(feature = "mpi")]
+    fn evaluate_mpi(&self, parameters: &[Float], world: &SimpleCommunicator) -> Float {
+        let local_evaluation = self.evaluate_local(parameters);
+        let mut buffer: Vec<Float> = vec![0.0; world.size() as usize];
+        world.all_gather_into(&local_evaluation, &mut buffer);
+        buffer.iter().sum()
     }
 
     fn evaluate_gradient_local(&self, parameters: &[Float]) -> DVector<Float> {
@@ -811,41 +844,24 @@ impl NLL {
             .sum();
         -2.0 * (data_term - mc_term / n_mc)
     }
+
+    #[cfg(feature = "mpi")]
     fn evaluate_gradient_mpi(
         &self,
         parameters: &[Float],
-        world: SimpleCommunicator,
-        rank: i32,
-        size: i32,
+        world: &SimpleCommunicator,
     ) -> DVector<Float> {
-        let mut result: DVector<Float> = DVector::zeros(parameters.len());
-        let mut result_vec: Vec<Float> = vec![0.0; parameters.len()];
-        if rank == laddu_core::ROOT_RANK {
-            // NOTE: this ensures these functions are called across all ranks, and the black_box
-            // ensures this does not get optimized out by the compiler.
-            std::hint::black_box(self.accmc_evaluator.dataset.n_events());
-            let mut local_result: Vec<Float> = vec![0.0; parameters.len()];
-            for src_rank in 1..size {
-                world
-                    .process_at_rank(src_rank)
-                    .receive_into(&mut local_result);
-                result += DVector::from_column_slice(&local_result);
-            }
-            result_vec = result.data.as_vec().clone();
-        } else {
-            let local_result = self
-                .evaluate_gradient_local(parameters)
-                .data
-                .as_vec()
-                .clone();
-            world
-                .process_at_rank(laddu_core::ROOT_RANK)
-                .send(&local_result);
-        }
-        world
-            .process_at_rank(laddu_core::ROOT_RANK)
-            .broadcast_into(&mut result_vec);
-        DVector::from_vec(result_vec)
+        let local_evaluation_vec = self
+            .evaluate_gradient_local(parameters)
+            .data
+            .as_vec()
+            .to_vec();
+        let mut flattened_result_buffer = vec![0.0; world.size() as usize * parameters.len()];
+        world.all_gather_into(&local_evaluation_vec, &mut flattened_result_buffer);
+        flattened_result_buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
+            .sum::<DVector<Float>>()
     }
 }
 
@@ -872,11 +888,13 @@ impl LikelihoodTerm for NLL {
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
     fn evaluate(&self, parameters: &[Float]) -> Float {
-        if let Some((world, rank, size)) = laddu_core::get_world_rank_size() {
-            self.evaluate_mpi(parameters, world, rank, size)
-        } else {
-            self.evaluate_local(parameters)
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.evaluate_mpi(parameters, &world);
+            }
         }
+        self.evaluate_local(parameters)
     }
 
     /// Evaluate the gradient of the stored [`Model`] over the events in the [`Dataset`]
@@ -885,11 +903,13 @@ impl LikelihoodTerm for NLL {
     /// does not matter if expressions are coherent sums wrapped in
     /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
-        if let Some((world, rank, size)) = laddu_core::get_world_rank_size() {
-            self.evaluate_gradient_mpi(parameters, world, rank, size)
-        } else {
-            self.evaluate_gradient_local(parameters)
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.evaluate_gradient_mpi(parameters, &world);
+            }
         }
+        self.evaluate_gradient_local(parameters)
     }
 }
 
@@ -900,24 +920,14 @@ impl Function<ThreadPool, LadduError> for NLL {
         parameters: &[Float],
         thread_pool: &mut ThreadPool,
     ) -> Result<Float, LadduError> {
-        Ok(thread_pool.install(|| {
-            if laddu_core::is_root() {}
-            let output = LikelihoodTerm::evaluate(self, parameters);
-            if laddu_core::is_root() {}
-            output
-        }))
+        Ok(thread_pool.install(|| LikelihoodTerm::evaluate(self, parameters)))
     }
     fn gradient(
         &self,
         parameters: &[Float],
         thread_pool: &mut ThreadPool,
     ) -> Result<DVector<Float>, LadduError> {
-        Ok(thread_pool.install(|| {
-            if laddu_core::is_root() {}
-            let output = LikelihoodTerm::evaluate_gradient(self, parameters);
-            if laddu_core::is_root() {}
-            output
-        }))
+        Ok(thread_pool.install(|| LikelihoodTerm::evaluate_gradient(self, parameters)))
     }
 }
 

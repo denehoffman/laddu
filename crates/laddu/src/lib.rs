@@ -337,8 +337,7 @@ pub use typetag;
 
 #[cfg(feature = "mpi")]
 pub mod mpi {
-    pub use laddu_core::{
-        finalize_mpi, get_world, get_world_for_root, get_world_rank_size, is_root, use_mpi,
-        using_mpi, ROOT_RANK,
+    pub use laddu_core::mpi::{
+        finalize_mpi, get_rank, get_size, get_world, is_root, use_mpi, using_mpi, ROOT_RANK,
     };
 }

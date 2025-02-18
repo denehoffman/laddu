@@ -41,3 +41,4 @@ python = [
   "laddu-amplitudes/python",
   "laddu-extensions/python",
 ]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
