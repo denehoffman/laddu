@@ -63,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev pkg-config
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev
+        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev pkg-config
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -130,7 +130,7 @@ jobs:
         id: set-up-homebrew
         uses: Homebrew/actions/setup-homebrew@master
       - name: Install OpenMPI
-        run: sudo brew install openmpi
+        run: env HOMEBREW_NO_AUTO_UPDATE=1 brew install openmpi
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
