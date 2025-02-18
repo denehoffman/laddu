@@ -114,36 +114,6 @@ jobs:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
 
-  windows:
-    needs: test
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: windows-latest
-            target: x64
-          # - runner: windows-latest
-          #  target: x86
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-          architecture: ${{ matrix.platform.target }}
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --out dist -m py-laddu/Cargo.toml
-          sccache: "true"
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-windows-${{ matrix.platform.target }}
-          path: dist
-
   macos:
     needs: test
     runs-on: ${{ matrix.platform.runner }}
