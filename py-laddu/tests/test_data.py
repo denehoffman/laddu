@@ -27,11 +27,11 @@ def test_event_creation() -> None:
 
 def test_event_p4_sum() -> None:
     event = make_test_event()
-    sum = event.get_p4_sum([2, 3])
-    assert sum[0] == event.p4s[2].px + event.p4s[3].px
-    assert sum[1] == event.p4s[2].py + event.p4s[3].py
-    assert sum[2] == event.p4s[2].pz + event.p4s[3].pz
-    assert sum[3] == event.p4s[2].e + event.p4s[3].e
+    p4_sum = event.get_p4_sum([2, 3])
+    assert p4_sum.px == event.p4s[2].px + event.p4s[3].px
+    assert p4_sum.py == event.p4s[2].py + event.p4s[3].py
+    assert p4_sum.pz == event.p4s[2].pz + event.p4s[3].pz
+    assert p4_sum.e == event.p4s[2].e + event.p4s[3].e
 
 
 def test_dataset_size_check() -> None:
@@ -56,7 +56,7 @@ def test_dataset_weights() -> None:
     assert len(weights) == 2
     assert weights[0] == 0.48
     assert weights[1] == 0.52
-    assert dataset.weighted_len() == 1.0
+    assert dataset.n_events_weighted == 1.0
 
 
 def test_dataset_sum() -> None:
@@ -93,14 +93,14 @@ def test_binned_dataset() -> None:
     mass = Mass([0])
     binned = dataset.bin_by(mass, 2, (0.0, 3.0))
 
-    assert binned.bins == 2
+    assert binned.n_bins == 2
     assert len(binned.edges) == 3
     assert binned.edges[0] == 0.0
     assert binned.edges[2] == 3.0
     assert len(binned[0]) == 1
-    assert binned[0].weighted_len() == 1.0
+    assert binned[0].n_events_weighted == 1.0
     assert len(binned[1]) == 1
-    assert binned[1].weighted_len() == 2.0
+    assert binned[1].n_events_weighted == 2.0
 
 
 def test_dataset_bootstrap() -> None:
