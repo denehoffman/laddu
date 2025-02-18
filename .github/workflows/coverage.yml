@@ -1,22 +1,22 @@
 name: Coverage
 
-on: 
+on:
   pull_request:
     paths:
-      - '**.rs'
-      - '**.py'
-      - '.github/workflows/coverage.yml'
+      - "**.rs"
+      - "**.py"
+      - ".github/workflows/coverage.yml"
   push:
     branches:
       - main
     paths:
-      - '**.rs'
-      - '**.py'
-      - '.github/workflows/coverage.yml'
+      - "**.rs"
+      - "**.py"
+      - ".github/workflows/coverage.yml"
   workflow_call:
-      secrets:
-        codecov_token:
-          required: true
+    secrets:
+      codecov_token:
+        required: true
   workflow_dispatch:
 jobs:
   coverage-rust:
@@ -25,12 +25,13 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
+      - uses: mpi4py/setup-mpi@v1
       - name: Install Rust
         run: rustup update nightly
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate Rust code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --exclude py-laddu
+        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --exclude py-laddu -F rayon
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -40,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: mpi4py/setup-mpi@v1
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
