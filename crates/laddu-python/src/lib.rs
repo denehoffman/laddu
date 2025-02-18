@@ -1,3 +1,4 @@
+#![warn(clippy::perf, clippy::style)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -33,19 +34,7 @@ pub mod mpi {
     ///
     /// Additionally, MPI must be enabled at the beginning of a script, at least before any
     /// other ``laddu`` functions are called. For this reason, it is suggested that you use the
-    /// context manager ``laddu.mpi.MPI`` to ensure the MPI backend is used properly:
-    ///
-    /// .. code-block:: python
-    ///
-    ///     import os
-    ///     from laddu.mpi import MPI
-    ///
-    ///     def main():
-    ///         ...
-    ///
-    ///     if __name__ == '__main__':
-    ///         with MPI(trigger=os.environ['MPI'] == '1'):
-    ///             main()
+    /// context manager ``laddu.mpi.MPI`` to ensure the MPI backend is used properly.
     ///
     /// If ``laddu.mpi.use_mpi()`` is called multiple times, the subsequent calls will have no
     /// effect.

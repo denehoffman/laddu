@@ -271,6 +271,7 @@
 //!
 //! ### Others
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
+#![warn(clippy::perf, clippy::style, missing_docs)]
 
 /// Methods for loading and manipulating [`Event`]-based data.
 pub mod data {

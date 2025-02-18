@@ -1,9 +1,6 @@
 use laddu_core::{Float, Vec3, Vec4};
 use numpy::PyArray1;
-use pyo3::{
-    exceptions::{PyIndexError, PyTypeError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 /// A 3-momentum vector formed from Cartesian components.
 ///
@@ -412,7 +409,7 @@ impl PyVector4 {
     ///
     #[getter]
     fn vec3(&self) -> PyVector3 {
-        PyVector3(self.0.vec3().into())
+        PyVector3(self.0.vec3())
     }
     /// Boost the given 4-momentum according to a boost velocity.
     ///
@@ -492,7 +489,7 @@ impl PyVector4 {
     ///
     #[getter]
     fn momentum(&self) -> PyVector3 {
-        PyVector3(self.0.momentum().into())
+        PyVector3(self.0.momentum())
     }
     /// The relativistic gamma factor
     ///

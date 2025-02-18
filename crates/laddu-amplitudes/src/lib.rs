@@ -1,3 +1,4 @@
+#![warn(clippy::perf, clippy::style, missing_docs)]
 /// The Breit-Wigner amplitude.
 pub mod breit_wigner;
 pub use breit_wigner::BreitWigner;
