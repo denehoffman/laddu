@@ -14,7 +14,7 @@ rust-version = "1.70.0"
 [workspace.dependencies]
 accurate = "0.4.1"
 approx = "0.5.1"
-arrow = "53.4.0"
+arrow = "54.2.0"
 auto_ops = "0.3.0"
 bincode = "1.3.3"
 criterion = { version = "2.7.2", package = "codspeed-criterion-compat", features = [
@@ -32,7 +32,7 @@ nalgebra = "0.33.2"
 num = "0.4.3"
 num_cpus = { version = "1.16.0" }
 numpy = { version = "0.23.0", features = ["nalgebra"] }
-parquet = "53.4.0"
+parquet = "54.2.0"
 parking_lot = "0.12.3"
 pyo3 = { version = "0.23.3" }
 rayon = { version = "1.10.0" }
