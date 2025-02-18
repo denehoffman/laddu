@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 laddu-core = { workspace = true, features = ["python", "mpi"] }
 laddu-amplitudes = { workspace = true, features = ["python"] }
 laddu-extensions = { workspace = true, features = ["python", "mpi"] }
-laddu-python = { workspace = true }
+laddu-python = { workspace = true, features = ["mpi"] }
 
 pyo3 = { workspace = true, features = [
   "num-complex",
