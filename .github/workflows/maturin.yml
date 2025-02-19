@@ -75,8 +75,8 @@ jobs:
           sccache: "true"
           manylinux: manylinux2014
           before-script-linux: |
-            sudo yum update
-            sudo yum install -y mpich mpich-devel clang
+            yum update
+            yum install -y mpich mpich-devel clang
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -110,8 +110,8 @@ jobs:
           sccache: "true"
           manylinux: musllinux_1_2
           before-script-linux: |
-            sudo apk update
-            sudo apk add openmpi clang19
+            apk update
+            apk add openmpi clang19
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
