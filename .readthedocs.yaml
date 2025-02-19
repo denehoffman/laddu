@@ -10,9 +10,7 @@ build:
     rust: "latest"
   apt_packages:
     - build-essential
-    - openmpi-bin
-    - openmpi-doc
-    - libopenmpi-dev
+    - pkg-config
     - clang
     - mpich
     - libmpich-dev

@@ -24,7 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev clang mpich libmpich-dev
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config clang mpich libmpich-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
@@ -63,7 +65,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev clang mpich libmpich-dev
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config clang mpich libmpich-dev
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -97,7 +101,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev clang mpich libmpich-dev
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config clang mpich libmpich-dev
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -152,7 +158,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y build-essential openmpi-bin openmpi-doc libopenmpi-dev clang mpich libmpich-dev
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config clang mpich libmpich-dev
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
