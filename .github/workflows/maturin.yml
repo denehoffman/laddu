@@ -26,7 +26,7 @@ jobs:
       - name: Install OpenMPI
         run: |
           sudo apt update
-          sudo apt install -y clang mpich libmpich-dev
+          sudo apt install -y clang libopenmpi-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
@@ -75,8 +75,8 @@ jobs:
           sccache: "true"
           manylinux: manylinux2014
           before-script-linux: |
-            apt update
-            apt install -y clang mpich libmpich-dev
+            yum update
+            yum install -y clang openmpi-devel
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -111,7 +111,7 @@ jobs:
           manylinux: musllinux_1_2
           before-script-linux: |
             apt update
-            apt install -y clang mpich libmpich-dev
+            apt install -y build-essential clang libopenmpi-dev gcc-multilib
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
