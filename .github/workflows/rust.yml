@@ -15,7 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential pkg-config clang mpich libmpich-dev
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: Run checks

@@ -77,7 +77,8 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --out dist -m py-laddu/Cargo.toml
           sccache: "true"
-          manylinux: auto
+          manylinux: manylinux2014
+          before-script-linux: .github/scripts/install_mpi_manylinux2014.sh
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -114,6 +115,7 @@ jobs:
           args: --out dist -m py-laddu/Cargo.toml
           sccache: "true"
           manylinux: musllinux_1_2
+          before-script-linux: .github/scripts/install_mpi_musllinux_1_2.sh
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
