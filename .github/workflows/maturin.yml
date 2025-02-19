@@ -44,110 +44,116 @@ jobs:
       - name: Run tests
         run: .venv/bin/pytest
 
-  linux:
+  build-wheels:
     needs: test
     runs-on: ${{ matrix.platform.runner }}
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - runner: ubuntu-latest
             target: x86_64
+            name: linux
+            mpi-install-cmd: |
+              yum update
+              yum install -y clang openmpi-devel
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: x86
+            name: linux
+            mpi-install-cmd: |
+              yum update
+              yum install -y clang openmpi-devel
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: aarch64
+            name: linux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: armv7
+            name: linux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: s390x
+            name: linux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: ppc64le
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --out dist -m py-laddu/Cargo.toml
-          sccache: "true"
-          manylinux: manylinux2014
-          before-script-linux: |
-            yum update
-            yum install -y clang openmpi-devel
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-linux-${{ matrix.platform.target }}
-          path: dist
-
-  musllinux:
-    needs: test
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
+            name: linux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: manylinux2014
           - runner: ubuntu-latest
             target: x86_64
+            name: musllinux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: musllinux_1_2
           - runner: ubuntu-latest
             target: x86
+            name: musllinux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: musllinux_1_2
           - runner: ubuntu-latest
             target: aarch64
+            name: musllinux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: musllinux_1_2
           - runner: ubuntu-latest
             target: armv7
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          args: --out dist -m py-laddu/Cargo.toml
-          sccache: "true"
-          manylinux: musllinux_1_2
-          before-script-linux: |
-            apt update
-            apt install -y build-essential clang libopenmpi-dev gcc-multilib
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-musllinux-${{ matrix.platform.target }}
-          path: dist
-
-  macos:
-    needs: test
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
+            name: musllinux
+            mpi-install-cmd: |
+              apt update
+              apt install -y build-essential clang libopenmpi-dev
+            manylinux: musllinux_1_2
           - runner: macos-13
             target: x86_64
+            name: macos
+            mpi-install-cmd: echo "MPI installed with brew"
+            manylinux: auto
           - runner: macos-latest
             target: aarch64
+            name: macos
+            mpi-install-cmd: echo "MPI installed with brew"
+            manylinux: auto
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Homebrew
-        id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@master
-      - name: Install OpenMPI
-        run: env HOMEBREW_NO_AUTO_UPDATE=1 brew install openmpi
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Install Homebrew
+        if: ${{ matrix.platform.name }} == 'macos'
+        uses: Homebrew/actions/setup-homebrew@master
+      - name: Install OpenMPI
+        if: ${{ matrix.platform.name }} == 'macos'
+        run: env HOMEBREW_NO_AUTO_UPDATE=1 brew install openmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --out dist -m py-laddu/Cargo.toml
           sccache: "true"
+          manylinux: ${{ matrix.platform.manylinux }}
+          before-script-linux: ${{ matrix.platform.mpi-install-cmd }}
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-macos-${{ matrix.platform.target }}
+          name: wheels-${{ matrix.platform.name }}-${{ matrix.platform.target }}
           path: dist
 
   sdist:
@@ -174,7 +180,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     # if: "startsWith(github.ref, 'refs/tags/')"
-    needs: [linux, musllinux, macos, sdist]
+    needs: [build-wheels, sdist]
     steps:
       - uses: actions/download-artifact@v4
       - name: Publish to PyPI

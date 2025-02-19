@@ -17,7 +17,7 @@ jobs:
       - name: Install OpenMPI
         run: |
           sudo apt update
-          sudo apt install -y clang mpich libmpich-dev
+          sudo apt install -y clang libopenmpi-dev
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: Run checks
