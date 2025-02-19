@@ -1,2 +1,2 @@
-apk update
-apk add openmpi clang19
+sudo apk update
+sudo apk add openmpi clang19

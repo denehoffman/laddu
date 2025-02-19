@@ -1,2 +1,2 @@
-yum update
-yum install -y mpich mpich-devel clang
+sudo yum update
+sudo yum install -y mpich mpich-devel clang
