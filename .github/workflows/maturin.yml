@@ -110,8 +110,8 @@ jobs:
           sccache: "true"
           manylinux: musllinux_1_2
           before-script-linux: |
-            apk update
-            apk add openmpi clang19
+            apt update
+            apt install -y clang mpich libmpich-dev
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
