@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/*", "py-laddu"]
 default-members = ["crates/*"]
 
@@ -9,7 +9,7 @@ edition = "2021"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
-rust-version = "1.70.0"
+rust-version = "1.84.0"
 
 [workspace.dependencies]
 accurate = "0.4.1"
@@ -48,8 +48,6 @@ laddu-core = { version = "0.2.5", path = "crates/laddu-core" }
 laddu-amplitudes = { version = "0.2.5", path = "crates/laddu-amplitudes" }
 laddu-extensions = { version = "0.2.6", path = "crates/laddu-extensions" }
 laddu-python = { version = "0.2.5", path = "crates/laddu-python" }
-
-which = { version = "=4.2.2", default-features = false }
 
 [profile.release]
 lto = "thin"
