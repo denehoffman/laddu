@@ -1,5 +1,8 @@
 use pyo3::prelude::*;
 
+#[cfg(not(feature = "mpi"))]
+use pyo3::exceptions::PyModuleNotFoundError;
+
 #[pymodule]
 mod laddu {
     use super::*;
@@ -8,18 +11,68 @@ mod laddu {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::finalize_mpi;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn finalize_mpi() -> PyResult<()> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::get_rank;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn get_rank() -> PyResult<usize> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::get_size;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn get_size() -> PyResult<usize> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::is_root;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn is_root() -> PyResult<bool> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::use_mpi;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    #[pyo3(signature = (*, trigger=true))]
+    #[allow(unused_variables)]
+    fn use_mpi(trigger: bool) -> PyResult<()> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
+    #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::using_mpi;
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn using_mpi() -> PyResult<bool> {
+        Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support!",
+        ))
+    }
 
     #[pymodule_export]
     use laddu_python::utils::vectors::PyVector3;
