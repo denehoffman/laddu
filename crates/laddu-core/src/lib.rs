@@ -61,12 +61,14 @@ pub mod mpi {
     /// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
     /// directly
     pub fn get_world() -> Option<SimpleCommunicator> {
-        if let Some(universe) = &*MPI_UNIVERSE.get().unwrap().read() {
-            let world = universe.world();
-            if world.size() == 1 {
-                return None;
+        if let Some(universe_lock) = MPI_UNIVERSE.get() {
+            if let Some(universe) = &*universe_lock.read() {
+                let world = universe.world();
+                if world.size() == 1 {
+                    return None;
+                }
+                return Some(world);
             }
-            return Some(world);
         }
         None
     }
