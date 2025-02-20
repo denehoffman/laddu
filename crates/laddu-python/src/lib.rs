@@ -53,8 +53,9 @@ pub mod mpi {
     /// laddu.mpi.finalize_mpi
     ///
     #[pyfunction]
-    pub fn use_mpi() {
-        laddu_core::mpi::use_mpi();
+    #[pyo3(signature = (*, trigger=true))]
+    pub fn use_mpi(trigger: bool) {
+        laddu_core::mpi::use_mpi(trigger);
     }
 
     /// Drop the MPI universe and finalize MPI at the end of a program
