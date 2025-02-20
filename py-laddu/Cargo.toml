@@ -16,13 +16,17 @@ name = "laddu"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu-core = { workspace = true, features = ["python", "mpi"] }
+laddu-core = { workspace = true, features = ["python"] }
 laddu-amplitudes = { workspace = true, features = ["python"] }
-laddu-extensions = { workspace = true, features = ["python", "mpi"] }
-laddu-python = { workspace = true, features = ["mpi"] }
+laddu-extensions = { workspace = true, features = ["python"] }
+laddu-python = { workspace = true }
 
 pyo3 = { workspace = true, features = [
   "num-complex",
   "abi3-py37",
   "extension-module",
 ] }
+
+[features]
+default = ["mpi"]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "laddu-python/mpi"]
