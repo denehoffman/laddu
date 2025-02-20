@@ -26,15 +26,15 @@ class MPI:
 
     Examples
     --------
-    >>> import os
-    >>> from laddu.mpi import MPI
-    >>>
-    >>> def main():
-    >>>     ...
-    >>>
-    >>> if __name__ == '__main__':
-    >>>     with MPI(trigger=os.environ['MPI'] == '1'):
-    >>>         main()
+    import os
+    from laddu.mpi import MPI
+
+    def main():
+        ...
+
+    if __name__ == '__main__':
+        with MPI(trigger=os.environ['MPI'] == '1'):
+            main()
 
     This code will use MPI if and only if the environment variable "MPI" is set to "1", and it will properly finalize MPI when the context manager exits.
 
@@ -44,8 +44,7 @@ class MPI:
         self._trigger = trigger
 
     def __enter__(self) -> None:
-        if self._trigger:
-            use_mpi()
+        use_mpi(trigger=self._trigger)
 
     def __exit__(
         self,
@@ -53,8 +52,7 @@ class MPI:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if self._trigger:
-            finalize_mpi()
+        finalize_mpi()
 
 
 __all__ = [

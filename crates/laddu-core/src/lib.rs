@@ -16,12 +16,13 @@ pub mod mpi {
     use mpi::environment::Universe;
     use mpi::topology::{Process, SimpleCommunicator};
     use mpi::traits::Communicator;
+    use parking_lot::RwLock;
 
     lazy_static! {
         static ref USE_MPI: AtomicBool = AtomicBool::new(false);
     }
 
-    static mut MPI_UNIVERSE: OnceLock<Option<Universe>> = OnceLock::new();
+    static MPI_UNIVERSE: OnceLock<RwLock<Option<Universe>>> = OnceLock::new();
 
     /// The default root rank for MPI processes
     pub const ROOT_RANK: i32 = 0;
@@ -38,45 +39,24 @@ pub mod mpi {
     /// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
     /// directly
     pub fn get_world() -> Option<SimpleCommunicator> {
-        unsafe {
-            if let Some(Some(universe)) = MPI_UNIVERSE.get() {
-                let world = universe.world();
-                if world.size() == 1 {
-                    return None;
-                }
-                return Some(world);
+        if let Some(universe) = &*MPI_UNIVERSE.get().unwrap().read() {
+            let world = universe.world();
+            if world.size() == 1 {
+                return None;
             }
-            None
+            return Some(world);
         }
+        None
     }
 
+    /// Get the rank of the current process
     pub fn get_rank() -> Option<i32> {
         get_world().map(|w| w.rank())
     }
 
+    /// Get number of available processes/ranks
     pub fn get_size() -> Option<i32> {
         get_world().map(|w| w.size())
-    }
-
-    fn initialize_mpi() {
-        unsafe {
-            MPI_UNIVERSE.get_or_init(|| {
-            #[cfg(feature = "rayon")]
-            let threading = mpi::Threading::Funneled;
-            #[cfg(not(feature = "rayon"))]
-            let threading = mpi::Threading::Single;
-            let (universe, _threading) = mpi::initialize_with_threading(threading).unwrap();
-            let world = universe.world();
-            if world.size() == 1 {
-                eprintln!("Warning: MPI is enabled, but only one process is available. MPI will not be used, but single-CPU parallelism may still be used if enabled.");
-                finalize_mpi();
-                USE_MPI.store(false, Ordering::SeqCst);
-                None
-            } else {
-                Some(universe)
-            }
-    });
-        }
     }
 
     /// Use the MPI backend
@@ -123,12 +103,31 @@ pub mod mpi {
     /// }
     ///
     /// ```
-    pub fn use_mpi() {
-        USE_MPI.store(true, Ordering::SeqCst);
-        initialize_mpi();
+    pub fn use_mpi(trigger: bool) {
+        if trigger {
+            USE_MPI.store(true, Ordering::SeqCst);
+            MPI_UNIVERSE.get_or_init(|| {
+                #[cfg(feature = "rayon")]
+                let threading = mpi::Threading::Funneled;
+                #[cfg(not(feature = "rayon"))]
+                let threading = mpi::Threading::Single;
+                let (universe, _threading) = mpi::initialize_with_threading(threading).unwrap();
+                let world = universe.world();
+                if world.size() == 1 {
+                    eprintln!("Warning: MPI is enabled, but only one process is available. MPI will not be used, but single-CPU parallelism may still be used if enabled.");
+                    finalize_mpi();
+                    USE_MPI.store(false, Ordering::SeqCst);
+                    RwLock::new(None)
+                } else {
+                    RwLock::new(Some(universe))
+                }
+            });
+        }
     }
 
     /// Drop the MPI universe and finalize MPI at the end of a program
+    ///
+    /// This function will do nothing if MPI is not initialized.
     ///
     /// <div class="warning">
     ///
@@ -138,9 +137,8 @@ pub mod mpi {
     /// </div>
     pub fn finalize_mpi() {
         if using_mpi() {
-            unsafe {
-                MPI_UNIVERSE.take();
-            }
+            let mut universe = MPI_UNIVERSE.get().unwrap().write();
+            *universe = None;
         }
     }
 
