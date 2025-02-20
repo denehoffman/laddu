@@ -9,7 +9,7 @@ homepage.workspace = true
 keywords = ["PWA", "amplitude", "particle", "physics", "modeling"]
 categories = ["science", "mathematics"]
 license.workspace = true
-readme = "../../README.md"
+readme = "README.md"
 repository.workspace = true
 rust-version.workspace = true
 
@@ -20,7 +20,6 @@ laddu-extensions = { workspace = true }
 
 serde = { workspace = true }
 typetag = { workspace = true }
-which = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -43,3 +42,6 @@ python = [
   "laddu-extensions/python",
 ]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

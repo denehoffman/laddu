@@ -55,8 +55,6 @@ pub fn constant(value: Float) -> ParameterLike {
 /// out the calculation. [`Amplitude`]-implementors are required to implement [`Clone`] and can
 /// optionally implement a [`precompute`](Amplitude::precompute) method to calculate and
 /// cache values which do not depend on free parameters.
-///
-/// See [`BreitWigner`](breit_wigner::BreitWigner), [`Ylm`](ylm::Ylm), and [`Zlm`](zlm::Zlm) for examples which use all of these features.
 #[typetag::serde(tag = "type")]
 pub trait Amplitude: DynClone + Send + Sync {
     /// This method should be used to tell the [`Resources`] manager about all of
@@ -508,6 +506,13 @@ impl Evaluator {
         self.resources.write().isolate_many(names)
     }
 
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
     pub fn evaluate_local(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
@@ -569,6 +574,13 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
     #[cfg(feature = "mpi")]
     fn evaluate_mpi(
         &self,
@@ -598,6 +610,13 @@ impl Evaluator {
         self.evaluate_local(parameters)
     }
 
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
     pub fn evaluate_gradient_local(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
@@ -694,6 +713,13 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
     #[cfg(feature = "mpi")]
     fn evaluate_gradient_mpi(
         &self,

@@ -7,6 +7,28 @@ use bincode::ErrorKind;
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
+/// MPI backend for `laddu`
+///
+/// Message Passing Interface (MPI) is a protocol which enables communication between multiple
+/// CPUs in a high-performance computing environment. While [`rayon`] can parallelize tasks on a
+/// single CPU, MPI can also parallelize tasks on multiple CPUs by running independent
+/// processes on all CPUs at once (tasks) which are assigned ids (ranks) which tell each
+/// process what to do and where to send results. This backend coordinates processes which would
+/// typically be parallelized over the events in a [`Dataset`](`crate::data::Dataset`).
+///
+/// To use this backend, the library must be built with the `mpi` feature, which requires an
+/// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
+/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// ```ignore
+/// fn main() {
+///     laddu_core::mpi::use_mpi(true);
+///     // laddu analysis code here
+///     laddu_core::mpi::finalize_mpi();
+/// }
+/// ```
+///
+/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
 #[cfg(feature = "mpi")]
 pub mod mpi {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -147,10 +169,20 @@ pub mod mpi {
         USE_MPI.load(Ordering::SeqCst)
     }
 
+    /// A trait including some useful auxiliary methods for MPI
     pub trait LadduMPI {
+        /// Get the process at the root rank
         fn process_at_root(&self) -> Process<'_>;
+        /// Check if the current rank is the root rank
         fn is_root(&self) -> bool;
+        /// Get the counts/displacements for partitioning a buffer of length
+        /// `buf_len`
         fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>);
+        /// Get the counts/displacements for partitioning a nested buffer (like
+        /// a [`Vec<Vec<T>>`]). If the internal vectors all have the same length
+        /// `internal_len` and there are `unflattened_len` elements in the
+        /// outer vector, then this will give the correct counts/displacements for a
+        /// flattened version of the nested buffer.
         fn get_flattened_counts_displs(
             &self,
             unflattened_len: usize,

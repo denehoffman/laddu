@@ -133,6 +133,14 @@ impl NLL {
         self.accmc_evaluator.isolate_many(names)
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
     pub fn project_local(
         &self,
         parameters: &[Float],
@@ -166,6 +174,14 @@ impl NLL {
         output
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
+    /// Monte-Carlo event (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
     #[cfg(feature = "mpi")]
     pub fn project_mpi(
         &self,
@@ -211,6 +227,14 @@ impl NLL {
         self.project_local(parameters, mc_evaluator)
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
     pub fn project_gradient_local(
         &self,
         parameters: &[Float],
@@ -262,6 +286,14 @@ impl NLL {
         }
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
     #[cfg(feature = "mpi")]
     pub fn project_gradient_mpi(
         &self,
@@ -328,6 +360,15 @@ impl NLL {
         self.project_gradient_local(parameters, mc_evaluator)
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
     pub fn project_with_local<T: AsRef<str>>(
         &self,
         parameters: &[Float],
@@ -379,6 +420,15 @@ impl NLL {
         }
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
     #[cfg(feature = "mpi")]
     pub fn project_with_mpi<T: AsRef<str>>(
         &self,
@@ -403,8 +453,7 @@ impl NLL {
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
-    /// those weights for each Monte-Carlo event. This method differs from the standard
+    /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation.
     ///
@@ -434,6 +483,16 @@ impl NLL {
         self.project_with_local(parameters, names, mc_evaluator)
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
     pub fn project_gradient_with_local<T: AsRef<str>>(
         &self,
         parameters: &[Float],
@@ -523,6 +582,16 @@ impl NLL {
         }
     }
 
+    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each Monte-Carlo event. This method differs from the standard
+    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
     #[cfg(feature = "mpi")]
     pub fn project_gradient_with_mpi<T: AsRef<str>>(
         &self,
@@ -564,8 +633,9 @@ impl NLL {
         Ok((projection_result, gradient_projection_result))
     }
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters to obtain weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project`] in that it first
+    /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
+    /// those weights for each
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project_gradient`] in that it first
     /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
     /// the [`NLL`] to its prior state after calculation.
     ///
@@ -1012,7 +1082,7 @@ impl NLL {
         }
         Ok(m.status)
     }
-    /// Perform Markov Chain Monte Carlo sampling on this [`NLL`]. By default, this uses the [`ESS`] sampler.
+    /// Perform Markov Chain Monte Carlo sampling on this [`NLL`]. By default, this uses the [`ESS`](`ganesh::algorithms::mcmc::ESS`) sampler.
     pub fn mcmc<T: AsRef<[DVector<Float>]>>(
         &self,
         p0: T,

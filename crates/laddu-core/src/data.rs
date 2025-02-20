@@ -94,6 +94,19 @@ pub struct Dataset {
 }
 
 impl Dataset {
+    /// Get a reference to the [`Event`] at the given index in the [`Dataset`] (non-MPI
+    /// version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
+    /// as if it were any other [`Vec`]:
+    ///
+    /// ```ignore
+    /// let ds: Dataset = Dataset::new(events);
+    /// let event_0 = ds[0];
+    /// ```
     pub fn index_local(&self, index: usize) -> &Event {
         &self.events[index]
     }
@@ -128,6 +141,19 @@ impl Dataset {
             .collect()
     }
 
+    /// Get a reference to the [`Event`] at the given index in the [`Dataset`]
+    /// (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
+    /// as if it were any other [`Vec`]:
+    ///
+    /// ```ignore
+    /// let ds: Dataset = Dataset::new(events);
+    /// let event_0 = ds[0];
+    /// ```
     #[cfg(feature = "mpi")]
     pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
         let (_, displs) = world.get_counts_displs(self.n_events());
@@ -168,10 +194,22 @@ impl Index<usize> for Dataset {
 }
 
 impl Dataset {
+    /// Create a new [`Dataset`] from a list of [`Event`]s (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
     pub fn new_local(events: Vec<Arc<Event>>) -> Self {
         Dataset { events }
     }
 
+    /// Create a new [`Dataset`] from a list of [`Event`]s (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
     #[cfg(feature = "mpi")]
     pub fn new_mpi(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Self {
         Dataset {
@@ -194,10 +232,22 @@ impl Dataset {
         Dataset::new_local(events)
     }
 
+    /// The number of [`Event`]s in the [`Dataset`] (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     pub fn n_events_local(&self) -> usize {
         self.events.len()
     }
 
+    /// The number of [`Event`]s in the [`Dataset`] (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     #[cfg(feature = "mpi")]
     pub fn n_events_mpi(&self, world: &SimpleCommunicator) -> usize {
         let mut n_events_partitioned: Vec<usize> = vec![0; world.size() as usize];
@@ -219,6 +269,12 @@ impl Dataset {
 }
 
 impl Dataset {
+    /// Extract a list of weights over each [`Event`] in the [`Dataset`] (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     pub fn weights_local(&self) -> Vec<Float> {
         #[cfg(feature = "rayon")]
         return self.events.par_iter().map(|e| e.weight).collect();
@@ -226,6 +282,12 @@ impl Dataset {
         return self.events.iter().map(|e| e.weight).collect();
     }
 
+    /// Extract a list of weights over each [`Event`] in the [`Dataset`] (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     #[cfg(feature = "mpi")]
     pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<Float> {
         let local_weights = self.weights_local();
@@ -240,9 +302,6 @@ impl Dataset {
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    ///
-    /// In MPI non-root processes, this returns the list of weights contained in a subset of the
-    /// [`Dataset`] held by the process.
     pub fn weights(&self) -> Vec<Float> {
         #[cfg(feature = "mpi")]
         {
@@ -253,6 +312,12 @@ impl Dataset {
         self.weights_local()
     }
 
+    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`] (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     pub fn n_events_weighted_local(&self) -> Float {
         #[cfg(feature = "rayon")]
         return self
@@ -263,7 +328,12 @@ impl Dataset {
         #[cfg(not(feature = "rayon"))]
         return self.events.iter().map(|e| e.weight).sum();
     }
-
+    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`] (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     #[cfg(feature = "mpi")]
     pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> Float {
         let mut n_events_weighted_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
@@ -288,6 +358,13 @@ impl Dataset {
         self.n_events_weighted_local()
     }
 
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method. (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::bootstrap`] instead.
     pub fn bootstrap_local(&self, seed: usize) -> Arc<Dataset> {
         let mut rng = fastrand::Rng::with_seed(seed as u64);
         let mut indices: Vec<usize> = (0..self.n_events())
@@ -309,6 +386,13 @@ impl Dataset {
         })
     }
 
+    /// Generate a new dataset with the same length by resampling the events in the original datset
+    /// with replacement. This can be used to perform error analysis via the bootstrap method. (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::bootstrap`] instead.
     #[cfg(feature = "mpi")]
     pub fn bootstrap_mpi(&self, seed: usize, world: &SimpleCommunicator) -> Arc<Dataset> {
         let n_events = self.n_events();

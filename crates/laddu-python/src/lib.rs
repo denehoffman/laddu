@@ -16,6 +16,12 @@ pub mod mpi {
     use super::*;
     /// Use the Message Passing Interface (MPI) to run on a distributed system
     ///
+    /// Parameters
+    /// ----------
+    /// trigger: bool, default=True
+    ///     An optional parameter which allows MPI to only be used under some boolean
+    ///     condition.
+    ///
     /// Notes
     /// -----
     /// You must have MPI installed for this to work, and you must call the program with

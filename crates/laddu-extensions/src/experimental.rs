@@ -13,7 +13,8 @@ use pyo3::prelude::*;
 /// the fit to a provided set of datapoints representing the true values in each bin.
 ///
 /// This is intended to be used as follows. Suppose we perform a binned fit to a simple amplitude
-/// which is not parameterized over the binning variable. We then form a new [`Model`] which *is*
+/// which is not parameterized over the binning variable. We then form a new
+/// [`Model`](`laddu_core::Model`) which *is*
 /// parameterized over said variable, and we wish to perform an unbinned fit. If we can isolate
 /// terms which are not interfering, we could imagine fitting the unbinned data with a cost
 /// function that minimizes the distance to the result from the binned fit. From there, it is up to

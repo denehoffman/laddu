@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Amplitudes for the laddu library"
+readme = "README.md"
 
 [dependencies]
 laddu-core = { workspace = true }
@@ -32,3 +33,6 @@ python = ["laddu-python", "pyo3"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
 f32 = ["laddu-core/f32", "laddu-python/f32"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

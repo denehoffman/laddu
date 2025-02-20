@@ -24,6 +24,13 @@ pub trait Variable: DynClone + Send + Sync {
     /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
     fn value(&self, event: &Event) -> Float;
 
+    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// [`Dataset`] (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     fn value_on_local(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
         #[cfg(feature = "rayon")]
         let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
@@ -32,6 +39,13 @@ pub trait Variable: DynClone + Send + Sync {
         local_values
     }
 
+    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// [`Dataset`] (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     #[cfg(feature = "mpi")]
     fn value_on_mpi(&self, dataset: &Arc<Dataset>, world: &SimpleCommunicator) -> Vec<Float> {
         let local_weights = self.value_on_local(dataset);

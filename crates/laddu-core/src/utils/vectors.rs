@@ -7,10 +7,14 @@ use nalgebra::{Vector3, Vector4};
 use crate::Float;
 use serde::{Deserialize, Serialize};
 
+/// A vector with three components
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec3 {
+    /// The x-component of the vector
     pub x: Float,
+    /// The y-component of the vector
     pub y: Float,
+    /// The z-component of the vector
     pub z: Float,
 }
 
@@ -94,15 +98,19 @@ impl From<Vec3> for [Float; 3] {
     }
 }
 
+impl Default for Vec3 {
+    fn default() -> Self {
+        Vec3::zero()
+    }
+}
+
 impl Vec3 {
+    /// Create a new 3-vector from its components
     pub fn new(x: Float, y: Float, z: Float) -> Self {
         Vec3 { x, y, z }
     }
 
-    pub fn into_vec(&self) -> Vec<Float> {
-        vec![self.x, self.y, self.z]
-    }
-
+    /// Create a zero vector
     pub const fn zero() -> Self {
         Vec3 {
             x: 0.0,
@@ -111,6 +119,7 @@ impl Vec3 {
         }
     }
 
+    /// Create a unit vector pointing in the x-direction
     pub const fn x() -> Self {
         Vec3 {
             x: 1.0,
@@ -119,6 +128,7 @@ impl Vec3 {
         }
     }
 
+    /// Create a unit vector pointing in the y-direction
     pub const fn y() -> Self {
         Vec3 {
             x: 0.0,
@@ -127,6 +137,7 @@ impl Vec3 {
         }
     }
 
+    /// Create a unit vector pointing in the z-direction
     pub const fn z() -> Self {
         Vec3 {
             x: 0.0,
@@ -135,31 +146,38 @@ impl Vec3 {
         }
     }
 
+    /// Momentum in the x-direction
     pub fn px(&self) -> Float {
         self.x
     }
 
+    /// Momentum in the y-direction
     pub fn py(&self) -> Float {
         self.y
     }
 
+    /// Momentum in the z-direction
     pub fn pz(&self) -> Float {
         self.z
     }
 
+    /// Create a [`Vec4`] with this vector as the 3-momentum and the given mass
     pub fn with_mass(&self, mass: Float) -> Vec4 {
         let e = Float::sqrt(mass.powi(2) + self.mag2());
         Vec4::new(self.px(), self.py(), self.pz(), e)
     }
 
+    /// Create a [`Vec4`] with this vector as the 3-momentum and the given energy
     pub fn with_energy(&self, energy: Float) -> Vec4 {
         Vec4::new(self.px(), self.py(), self.pz(), energy)
     }
 
+    /// Compute the dot product of this [`Vec3`] and another
     pub fn dot(&self, other: &Vec3) -> Float {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    /// Compute the cross product of this [`Vec3`] and another
     pub fn cross(&self, other: &Vec3) -> Vec3 {
         Vec3::new(
             self.y * other.z - other.y * self.z,
@@ -168,26 +186,32 @@ impl Vec3 {
         )
     }
 
+    /// The magnitude of the vector
     pub fn mag(&self) -> Float {
         Float::sqrt(self.mag2())
     }
 
+    /// The squared magnitude of the vector
     pub fn mag2(&self) -> Float {
         self.dot(self)
     }
 
+    /// The cosine of the polar angle $`\theta`$
     pub fn costheta(&self) -> Float {
         self.z / self.mag()
     }
 
+    /// The polar angle $`\theta`$
     pub fn theta(&self) -> Float {
         Float::acos(self.costheta())
     }
 
+    /// The azimuthal angle $`\phi`$
     pub fn phi(&self) -> Float {
         Float::atan2(self.y, self.x)
     }
 
+    /// Create a unit vector in the same direction as this [`Vec3`]
     pub fn unit(&self) -> Vec3 {
         let mag = self.mag();
         Vec3::new(self.x / mag, self.y / mag, self.z / mag)
@@ -213,11 +237,16 @@ impl_op_ex_commutative!(-|a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x - b, a.y 
 impl_op_ex_commutative!(*|a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x * b, a.y * b, a.z * b) });
 impl_op_ex!(/ |a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x / b, a.y / b, a.z / b) });
 
+/// A vector with four components (a Lorentz vector)
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec4 {
+    /// The x-component of the vector
     pub x: Float,
+    /// The y-component of the vector
     pub y: Float,
+    /// The z-component of the vector
     pub z: Float,
+    /// The t-component of the vector
     pub t: Float,
 }
 
@@ -310,44 +339,54 @@ impl From<Vec4> for [Float; 4] {
 }
 
 impl Vec4 {
+    /// Create a new 4-vector from its components
     pub fn new(x: Float, y: Float, z: Float, t: Float) -> Self {
         Vec4 { x, y, z, t }
     }
 
+    /// Momentum in the x-direction
     pub fn px(&self) -> Float {
         self.x
     }
 
+    /// Momentum in the y-direction
     pub fn py(&self) -> Float {
         self.y
     }
 
+    /// Momentum in the z-direction
     pub fn pz(&self) -> Float {
         self.z
     }
 
+    /// The energy of the 4-vector
     pub fn e(&self) -> Float {
         self.t
     }
 
+    /// The 3-momentum
     pub fn momentum(&self) -> Vec3 {
         self.vec3()
     }
 
+    /// The $`\gamma`$ factor $`\frac{1}{\sqrt{1 - \beta^2}}`$.
     pub fn gamma(&self) -> Float {
         let beta = self.beta();
         let b2 = beta.dot(&beta);
         1.0 / Float::sqrt(1.0 - b2)
     }
 
+    /// The $`\vec{\beta}`$ vector $`\frac{\vec{p}}{E}`$.
     pub fn beta(&self) -> Vec3 {
         self.momentum() / self.e()
     }
 
+    /// The invariant mass corresponding to this 4-momentum
     pub fn m(&self) -> Float {
         self.mag()
     }
 
+    /// The squared invariant mass corresponding to this 4-momentum
     pub fn m2(&self) -> Float {
         self.mag2()
     }
@@ -364,14 +403,17 @@ impl Vec4 {
         )
     }
 
+    /// The magnitude of the vector (with $`---+`$ signature).
     pub fn mag(&self) -> Float {
         Float::sqrt(self.mag2())
     }
 
+    /// The squared magnitude of the vector (with $`---+`$ signature).
     pub fn mag2(&self) -> Float {
         self.t * self.t - (self.x * self.x + self.y * self.y + self.z * self.z)
     }
 
+    /// Gives the vector boosted along a $`\vec{\beta}`$ vector.
     pub fn boost(&self, beta: &Vec3) -> Self {
         let b2 = beta.dot(beta);
         let gamma = 1.0 / Float::sqrt(1.0 - b2);
@@ -379,6 +421,7 @@ impl Vec4 {
         Vec4::new(p3.x, p3.y, p3.z, gamma * (self.t + beta.dot(&self.vec3())))
     }
 
+    /// The 3-vector contained in this 4-vector
     pub fn vec3(&self) -> Vec3 {
         Vec3 {
             x: self.x,

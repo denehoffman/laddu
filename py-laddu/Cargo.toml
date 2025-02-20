@@ -30,3 +30,6 @@ pyo3 = { workspace = true, features = [
 [features]
 default = ["mpi"]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "laddu-python/mpi"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

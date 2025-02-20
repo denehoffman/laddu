@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Core of the laddu library"
-readme = "../../README.md"
+readme = "README.md"
 
 [dependencies]
 accurate = { workspace = true }
