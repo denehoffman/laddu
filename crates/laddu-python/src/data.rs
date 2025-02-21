@@ -107,12 +107,12 @@ pub struct PyDataset(pub Arc<Dataset>);
 impl PyDataset {
     #[new]
     fn new(events: Vec<PyEvent>) -> Self {
-        Self(Arc::new(Dataset {
-            events: events.into_iter().map(|event| event.0).collect(),
-        }))
+        Self(Arc::new(Dataset::new(
+            events.into_iter().map(|event| event.0).collect(),
+        )))
     }
     fn __len__(&self) -> usize {
-        self.0.len()
+        self.0.n_events()
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
         if let Ok(other_ds) = other.extract::<PyRef<PyDataset>>() {
@@ -151,8 +151,9 @@ impl PyDataset {
     /// n_events : int
     ///     The number of Events
     ///
-    fn len(&self) -> usize {
-        self.0.len()
+    #[getter]
+    fn n_events(&self) -> usize {
+        self.0.n_events()
     }
     /// Get the weighted number of Events in the Dataset
     ///
@@ -161,8 +162,9 @@ impl PyDataset {
     /// n_events : float
     ///     The sum of all Event weights
     ///
-    fn weighted_len(&self) -> Float {
-        self.0.weighted_len()
+    #[getter]
+    fn n_events_weighted(&self) -> Float {
+        self.0.n_events_weighted()
     }
     /// The weights associated with the Dataset
     ///
@@ -190,11 +192,8 @@ impl PyDataset {
             .map(|rust_event| PyEvent(rust_event.clone()))
             .collect()
     }
-    fn __getitem__(&self, index: usize) -> PyResult<PyEvent> {
-        self.0
-            .get(index)
-            .ok_or(PyIndexError::new_err("index out of range"))
-            .map(|rust_event| PyEvent(rust_event.clone()))
+    fn __getitem__(&self, index: usize) -> PyEvent {
+        PyEvent(Arc::new(self.0[index].clone()))
     }
     /// Separates a Dataset into histogram bins by a Variable value
     ///
@@ -269,22 +268,13 @@ pub struct PyBinnedDataset(BinnedDataset);
 #[pymethods]
 impl PyBinnedDataset {
     fn __len__(&self) -> usize {
-        self.0.len()
-    }
-    /// Get the number of bins in the BinnedDataset
-    ///
-    /// Returns
-    /// -------
-    /// n : int
-    ///     The number of bins
-    fn len(&self) -> usize {
-        self.0.len()
+        self.0.n_bins()
     }
     /// The number of bins in the BinnedDataset
     ///
     #[getter]
-    fn bins(&self) -> usize {
-        self.0.bins()
+    fn n_bins(&self) -> usize {
+        self.0.n_bins()
     }
     /// The minimum and maximum values of the binning Variable used to create this BinnedDataset
     ///

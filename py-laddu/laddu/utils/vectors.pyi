@@ -32,6 +32,9 @@ class Vector3:
     theta: float
     phi: float
     unit: Vector3
+    x: float
+    y: float
+    z: float
     px: float
     py: float
     pz: float
@@ -73,12 +76,15 @@ class Vector3:
     def from_array(array: Sequence) -> Vector3: ...
     def with_mass(self, mass: float) -> Vector4: ...
     def with_energy(self, mass: float) -> Vector4: ...
-    def __getitem__(self, index: int) -> float: ...
 
 class Vector4:
     mag: float
     mag2: float
     vec3: Vector3
+    t: float
+    x: float
+    y: float
+    z: float
     e: float
     px: float
     py: float
@@ -97,4 +103,3 @@ class Vector4:
     def to_numpy(self) -> npt.NDArray[np.float64]: ...
     @staticmethod
     def from_array(array: Sequence) -> Vector4: ...
-    def __getitem__(self, index: int) -> float: ...

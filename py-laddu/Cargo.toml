@@ -16,6 +16,7 @@ name = "laddu"
 crate-type = ["cdylib"]
 
 [dependencies]
+laddu-core = { workspace = true, features = ["python"] }
 laddu-amplitudes = { workspace = true, features = ["python"] }
 laddu-extensions = { workspace = true, features = ["python"] }
 laddu-python = { workspace = true }
@@ -25,3 +26,10 @@ pyo3 = { workspace = true, features = [
   "abi3-py37",
   "extension-module",
 ] }
+
+[features]
+default = ["mpi"]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "laddu-python/mpi"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

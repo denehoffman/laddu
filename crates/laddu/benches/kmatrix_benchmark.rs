@@ -145,7 +145,11 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let model = manager.model(&expr);
     let nll = NLL::new(&model, &ds_data, &ds_mc);
     let mut group = c.benchmark_group("K-Matrix NLL Performance");
-    for threads in 1..=num_cpus::get() {
+    let n_threads: Vec<usize> = (0..)
+        .map(|x| 1 << x)
+        .take_while(|&p| p <= num_cpus::get())
+        .collect();
+    for threads in n_threads {
         let pool = ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()

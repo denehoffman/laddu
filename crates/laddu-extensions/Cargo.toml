@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Extensions to the laddu library"
+readme = "README.md"
 
 [dependencies]
 laddu-core = { workspace = true }
@@ -19,6 +20,7 @@ bincode = { workspace = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
+mpi = { workspace = true, optional = true }
 num_cpus = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -37,3 +39,7 @@ laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]
 num_cpus = ["dep:num_cpus"]
 f32 = ["ganesh/f32", "laddu-core/f32"]
+mpi = ["dep:mpi", "laddu-core/mpi"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

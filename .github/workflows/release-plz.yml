@@ -21,6 +21,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install OpenMPI
+        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz

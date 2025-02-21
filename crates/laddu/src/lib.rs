@@ -13,6 +13,7 @@
 //!   - [Writing a New Amplitude](#writing-a-new-amplitude)
 //!   - [Calculating a Likelihood](#calculating-a-likelihood)
 //! - [Data Format](#data-format)
+//! - [MPI Support](#mpi-support)
 //! - [Future Plans](#future-plans)
 //! - [Alternatives](#alternatives)
 //!
@@ -253,8 +254,14 @@
 //!
 //! To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
 //!
+//! # MPI Support
+//!
+//! The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager.
+//!
+//! To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable).
+//!
 //! # Future Plans
-//! * MPI and GPU integration (these are incredibly difficult to do right now, but it's something I'm looking into).
+//! * GPU integration (this is incredibly difficult to do right now, but it's something I'm looking into).
 //! * As always, more tests and documentation.
 //!
 //! # Alternatives
@@ -271,6 +278,7 @@
 //!
 //! ### Others
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
+#![warn(clippy::perf, clippy::style, missing_docs)]
 
 /// Methods for loading and manipulating [`Event`]-based data.
 pub mod data {
@@ -292,7 +300,6 @@ pub mod utils {
 pub mod traits {
     pub use laddu_core::amplitudes::Amplitude;
     pub use laddu_core::utils::variables::Variable;
-    pub use laddu_core::utils::vectors::{FourMomentum, FourVector, ThreeMomentum, ThreeVector};
     pub use laddu_core::ReadWrite;
     pub use laddu_extensions::likelihoods::LikelihoodTerm;
 }
@@ -324,12 +331,42 @@ pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
+pub use laddu_core::utils::vectors::{Vec3, Vec4};
 pub use laddu_core::Complex;
+pub use laddu_core::DVector;
 pub use laddu_core::Float;
 pub use laddu_core::LadduError;
 pub use laddu_core::Status;
 pub use laddu_core::PI;
-pub use laddu_core::{DVector, Vector3, Vector4};
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
+
+/// MPI backend for `laddu`
+///
+/// Message Passing Interface (MPI) is a protocol which enables communication between multiple
+/// CPUs in a high-performance computing environment. While [`rayon`] can parallelize tasks on a
+/// single CPU, MPI can also parallelize tasks on multiple CPUs by running independent
+/// processes on all CPUs at once (tasks) which are assigned ids (ranks) which tell each
+/// process what to do and where to send results. This backend coordinates processes which would
+/// typically be parallelized over the events in a [`Dataset`].
+///
+/// To use this backend, the library must be built with the `mpi` feature, which requires an
+/// existing implementation of MPI like OpenMPI or MPICH. All processing code should be
+/// sandwiched between calls to [`use_mpi`] and [`finalize_mpi`]:
+/// ```ignore
+/// fn main() {
+///     laddu_core::mpi::use_mpi(true);
+///     // laddu analysis code here
+///     laddu_core::mpi::finalize_mpi();
+/// }
+/// ```
+///
+/// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
+/// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
+#[cfg(feature = "mpi")]
+pub mod mpi {
+    pub use laddu_core::mpi::{
+        finalize_mpi, get_rank, get_size, get_world, is_root, use_mpi, using_mpi, ROOT_RANK,
+    };
+}

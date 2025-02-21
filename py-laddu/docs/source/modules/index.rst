@@ -11,3 +11,4 @@ This is the main API documentation for ``laddu``.
    laddu/extensions
    laddu/utils/index
    laddu/experimental
+   laddu/mpi

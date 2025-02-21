@@ -8,9 +8,11 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Core of the laddu library"
-readme = "../../README.md"
+readme = "README.md"
 
 [dependencies]
+accurate = { workspace = true }
+approx = { workspace = true }
 arrow = { workspace = true }
 auto_ops = { workspace = true }
 bincode = { workspace = true }
@@ -19,6 +21,8 @@ factorial = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
 indexmap = { workspace = true }
+lazy_static = { workspace = true }
+mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 num_cpus = { workspace = true, optional = true }
@@ -38,7 +42,6 @@ thiserror = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
-approx = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]
@@ -53,6 +56,7 @@ python = ["pyo3", "num_cpus", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]
 num_cpus = ["dep:num_cpus"]
+mpi = ["dep:mpi"]
 
 
 [package.metadata.docs.rs]

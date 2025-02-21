@@ -1,36 +1,74 @@
 use dyn_clone::DynClone;
-use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
 use crate::{
     data::{Dataset, Event},
     utils::{
         enums::{Channel, Frame},
-        vectors::{FourMomentum, FourVector, ThreeVector},
+        vectors::Vec3,
     },
     Float, LadduError,
 };
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// Standard methods for extracting some value out of an [`Event`].
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync {
     /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
     fn value(&self, event: &Event) -> Float;
+
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
-    /// [`Dataset`].
-    #[cfg(feature = "rayon")]
-    fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
-        dataset.par_iter().map(|e| self.value(e)).collect()
+    /// [`Dataset`] (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
+    fn value_on_local(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
+        #[cfg(feature = "rayon")]
+        let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
+        #[cfg(not(feature = "rayon"))]
+        let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
+        local_values
     }
+
+    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// [`Dataset`] (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
+    #[cfg(feature = "mpi")]
+    fn value_on_mpi(&self, dataset: &Arc<Dataset>, world: &SimpleCommunicator) -> Vec<Float> {
+        let local_weights = self.value_on_local(dataset);
+        let n_events = dataset.n_events();
+        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
     fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
-        dataset.iter().map(|e| self.value(e)).collect()
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.value_on_mpi(dataset, &world);
+            }
+        }
+        self.value_on_local(dataset)
     }
 }
 dyn_clone::clone_trait_object!(Variable);
@@ -109,7 +147,7 @@ impl Variable for CosTheta {
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -121,7 +159,7 @@ impl Variable for CosTheta {
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -188,7 +226,7 @@ impl Variable for Phi {
                 let z = -recoil_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),
@@ -200,7 +238,7 @@ impl Variable for Phi {
                 let z = beam_res.vec3().unit();
                 let y = beam.vec3().cross(&-recoil.vec3()).unit();
                 let x = y.cross(&z);
-                let angles = Vector3::new(
+                let angles = Vec3::new(
                     daughter_res.vec3().dot(&x),
                     daughter_res.vec3().dot(&y),
                     daughter_res.vec3().dot(&z),

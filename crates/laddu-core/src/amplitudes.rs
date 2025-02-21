@@ -19,6 +19,12 @@ use crate::{
     Float, LadduError,
 };
 
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
+
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
+
 /// An enum containing either a named free parameter or a constant value.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub enum ParameterLike {
@@ -49,8 +55,6 @@ pub fn constant(value: Float) -> ParameterLike {
 /// out the calculation. [`Amplitude`]-implementors are required to implement [`Clone`] and can
 /// optionally implement a [`precompute`](Amplitude::precompute) method to calculate and
 /// cache values which do not depend on free parameters.
-///
-/// See [`BreitWigner`](breit_wigner::BreitWigner), [`Ylm`](ylm::Ylm), and [`Zlm`](zlm::Zlm) for examples which use all of these features.
 #[typetag::serde(tag = "type")]
 pub trait Amplitude: DynClone + Send + Sync {
     /// This method should be used to tell the [`Resources`] manager about all of
@@ -433,7 +437,7 @@ impl Model {
     /// information over the [`Event`]s in the [`Dataset`].
     pub fn load(&self, dataset: &Arc<Dataset>) -> Evaluator {
         let loaded_resources = Arc::new(RwLock::new(self.manager.resources.clone()));
-        loaded_resources.write().reserve_cache(dataset.len());
+        loaded_resources.write().reserve_cache(dataset.n_events());
         for amplitude in &self.manager.amplitudes {
             amplitude.precompute_all(dataset, &mut loaded_resources.write());
         }
@@ -501,167 +505,257 @@ impl Evaluator {
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
         self.resources.write().isolate_many(names)
     }
+
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters.
-    #[cfg(feature = "rayon")]
-    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+    /// [`Evaluator`] with the given values for free parameters (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
+    pub fn evaluate_local(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_values_vec: Vec<AmplitudeValues> = self
-            .dataset
-            .events
-            .par_iter()
-            .zip(resources.caches.par_iter())
-            .map(|(event, cache)| {
-                AmplitudeValues(
+        #[cfg(feature = "rayon")]
+        {
+            let amplitude_values_vec: Vec<AmplitudeValues> = self
+                .dataset
+                .events
+                .par_iter()
+                .zip(resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            amplitude_values_vec
+                .par_iter()
+                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let amplitude_values_vec: Vec<AmplitudeValues> = self
+                .dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .map(|(event, cache)| {
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            amplitude_values_vec
+                .iter()
+                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+                .collect()
+        }
+    }
+
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
+    #[cfg(feature = "mpi")]
+    fn evaluate_mpi(
+        &self,
+        parameters: &[Float],
+        world: &SimpleCommunicator,
+    ) -> Vec<Complex<Float>> {
+        let local_evaluation = self.evaluate_local(parameters);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
+    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters.
+    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_mpi(parameters, &world);
+            }
+        }
+        self.evaluate_local(parameters)
+    }
+
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (non-MPI version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
+    pub fn evaluate_gradient_local(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        #[cfg(feature = "rayon")]
+        {
+            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+                .dataset
+                .events
+                .par_iter()
+                .zip(resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
                     self.amplitudes
                         .iter()
                         .zip(resources.active.iter())
-                        .map(|(amp, active)| {
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
                             if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex::new(0.0, 0.0)
+                                amp.compute_gradient(&parameters, event, cache, grad)
                             }
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-        amplitude_values_vec
-            .par_iter()
-            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
-            .collect()
-    }
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters.
-    #[cfg(not(feature = "rayon"))]
-    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_values_vec: Vec<AmplitudeValues> = self
-            .dataset
-            .events
-            .iter()
-            .zip(resources.caches.iter())
-            .map(|(event, cache)| {
-                AmplitudeValues(
+                        });
+                    (
+                        AmplitudeValues(
+                            self.amplitudes
+                                .iter()
+                                .zip(resources.active.iter())
+                                .map(|(amp, active)| {
+                                    if *active {
+                                        amp.compute(&parameters, event, cache)
+                                    } else {
+                                        Complex::new(0.0, 0.0)
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        GradientValues(gradient_values),
+                    )
+                })
+                .collect();
+            amplitude_values_and_gradient_vec
+                .par_iter()
+                .map(|(amplitude_values, gradient_values)| {
+                    self.expression
+                        .evaluate_gradient(amplitude_values, gradient_values)
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+                .dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
                     self.amplitudes
                         .iter()
                         .zip(resources.active.iter())
-                        .map(|(amp, active)| {
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
                             if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex::new(0.0, 0.0)
+                                amp.compute_gradient(&parameters, event, cache, grad)
                             }
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-        amplitude_values_vec
+                        });
+                    (
+                        AmplitudeValues(
+                            self.amplitudes
+                                .iter()
+                                .zip(resources.active.iter())
+                                .map(|(amp, active)| {
+                                    if *active {
+                                        amp.compute(&parameters, event, cache)
+                                    } else {
+                                        Complex::new(0.0, 0.0)
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        GradientValues(gradient_values),
+                    )
+                })
+                .collect();
+
+            amplitude_values_and_gradient_vec
+                .iter()
+                .map(|(amplitude_values, gradient_values)| {
+                    self.expression
+                        .evaluate_gradient(amplitude_values, gradient_values)
+                })
+                .collect()
+        }
+    }
+
+    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
+    ///
+    /// # Notes
+    ///
+    /// This method is not intended to be called in analyses but rather in writing methods
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
+    #[cfg(feature = "mpi")]
+    fn evaluate_gradient_mpi(
+        &self,
+        parameters: &[Float],
+        world: &SimpleCommunicator,
+    ) -> Vec<DVector<Complex<Float>>> {
+        let flattened_local_evaluation = self
+            .evaluate_gradient_local(parameters)
             .iter()
-            .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+            .flat_map(|g| g.data.as_vec().to_vec())
+            .collect::<Vec<Complex<Float>>>();
+        let n_events = self.dataset.n_events();
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
+        let mut flattened_result_buffer = vec![Complex::ZERO; n_events * parameters.len()];
+        let mut partitioned_flattened_result_buffer =
+            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        world.all_gather_varcount_into(
+            &flattened_local_evaluation,
+            &mut partitioned_flattened_result_buffer,
+        );
+        flattened_result_buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
             .collect()
     }
+
     /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    #[cfg(feature = "rayon")]
     pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-            .dataset
-            .events
-            .par_iter()
-            .zip(resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                self.amplitudes
-                    .iter()
-                    .zip(resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(gradient_values),
-                )
-            })
-            .collect();
-        amplitude_values_and_gradient_vec
-            .par_iter()
-            .map(|(amplitude_values, gradient_values)| {
-                self.expression
-                    .evaluate_gradient(amplitude_values, gradient_values)
-            })
-            .collect()
-    }
-    /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters.
-    #[cfg(not(feature = "rayon"))]
-    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-            .dataset
-            .events
-            .iter()
-            .zip(resources.caches.iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                self.amplitudes
-                    .iter()
-                    .zip(resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(gradient_values),
-                )
-            })
-            .collect();
-        amplitude_values_and_gradient_vec
-            .iter()
-            .map(|(amplitude_values, gradient_values)| {
-                self.expression
-                    .evaluate_gradient(amplitude_values, gradient_values)
-            })
-            .collect()
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_gradient_mpi(parameters, &world);
+            }
+        }
+        self.evaluate_gradient_local(parameters)
     }
 }
 

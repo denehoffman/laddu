@@ -10,6 +10,7 @@ categories = ["science", "mathematics"]
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "README.md"
 
 [dependencies]
 laddu-core = { workspace = true, features = ["python"] }
@@ -31,8 +32,12 @@ typetag = { workspace = true }
 default = ["rayon"]
 rayon = ["dep:rayon"]
 f32 = ["ganesh/f32", "laddu-core/f32"]
+mpi = ["laddu-core/mpi"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(coverage,coverage_nightly)',
 ] }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "./docs-header.html"]

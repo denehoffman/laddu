@@ -1,5 +1,5 @@
 experimental
-===========
+============
 
 .. automodule:: laddu.experimental
    :members:

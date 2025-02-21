@@ -326,6 +326,7 @@ impl MCMCOptions {
     }
 }
 
+/// Python bindings for the [`ganesh`] crate
 #[cfg(feature = "python")]
 pub mod py_ganesh {
     use super::*;
@@ -356,6 +357,7 @@ pub mod py_ganesh {
         types::{PyBytes, PyDict, PyList, PyTuple},
     };
 
+    /// A user implementation of [`Observer`](`crate::ganesh::Observer`) from Python
     #[pyclass]
     #[pyo3(name = "Observer")]
     pub struct PyObserver(Py<PyAny>);
@@ -363,11 +365,12 @@ pub mod py_ganesh {
     #[pymethods]
     impl PyObserver {
         #[new]
-        pub fn new(observer: Py<PyAny>) -> Self {
+        fn new(observer: Py<PyAny>) -> Self {
             Self(observer)
         }
     }
 
+    /// A user implementation of [`MCMCObserver`](`crate::ganesh::MCMCObserver`) from Python
     #[pyclass]
     #[pyo3(name = "MCMCObserver")]
     pub struct PyMCMCObserver(Py<PyAny>);
@@ -375,7 +378,7 @@ pub mod py_ganesh {
     #[pymethods]
     impl PyMCMCObserver {
         #[new]
-        pub fn new(observer: Py<PyAny>) -> Self {
+        fn new(observer: Py<PyAny>) -> Self {
             Self(observer)
         }
     }

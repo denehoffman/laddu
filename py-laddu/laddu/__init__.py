@@ -1,5 +1,5 @@
 import laddu.laddu as _laddu
-from laddu import amplitudes, convert, data, experimental, extensions, utils
+from laddu import amplitudes, convert, data, experimental, extensions, mpi, utils
 from laddu.amplitudes import Manager, Model, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
@@ -17,7 +17,6 @@ from laddu.extensions import (
     Status,
     integrated_autocorrelation_times,
 )
-from laddu.laddu import Vector3, Vector4
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -28,6 +27,7 @@ from laddu.utils.variables import (
     Polarization,
     PolMagnitude,
 )
+from laddu.utils.vectors import Vector3, Vector4
 
 __doc__ = _laddu.__doc__
 __version__ = _laddu.version()
@@ -70,6 +70,7 @@ __all__ = [
     'experimental',
     'extensions',
     'integrated_autocorrelation_times',
+    'mpi',
     'open',
     'open_amptools',
     'parameter',
