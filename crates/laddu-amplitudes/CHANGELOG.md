@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.2.5...laddu-amplitudes-v0.2.6) - 2025-02-21
+## [0.3.0](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.2.5...laddu-amplitudes-v0.3.0) - 2025-02-21
 
 ### Other
 
