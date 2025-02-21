@@ -26,15 +26,17 @@ class MPI:
 
     Examples
     --------
-    import os
-    from laddu.mpi import MPI
+    .. code-block:: python
 
-    def main():
-        ...
+        import os
+        from laddu.mpi import MPI
 
-    if __name__ == '__main__':
-        with MPI(trigger=os.environ['MPI'] == '1'):
-            main()
+        def main():
+            ...
+
+        if __name__ == '__main__':
+            with MPI(trigger=os.environ['MPI'] == '1'):
+                main()
 
     This code will use MPI if and only if the environment variable "MPI" is set to "1", and it will properly finalize MPI when the context manager exits.
 
