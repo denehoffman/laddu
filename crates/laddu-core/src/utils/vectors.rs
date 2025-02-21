@@ -459,7 +459,7 @@ impl std::iter::Sum<Vec4> for Vec4 {
 
 #[cfg(test)]
 mod tests {
-    use approx::assert_relative_eq;
+    use approx::{assert_abs_diff_eq, assert_relative_eq};
     use nalgebra::{Vector3, Vector4};
 
     use super::*;
@@ -538,9 +538,13 @@ mod tests {
         let vectors = [Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0)];
         let sum: Vec3 = vectors.iter().sum();
         assert_eq!(sum, Vec3::new(5.0, 7.0, 9.0));
+        let sum: Vec3 = vectors.into_iter().sum();
+        assert_eq!(sum, Vec3::new(5.0, 7.0, 9.0));
 
         let vectors = [Vec4::new(1.0, 2.0, 3.0, 4.0), Vec4::new(4.0, 5.0, 6.0, 7.0)];
         let sum: Vec4 = vectors.iter().sum();
+        assert_eq!(sum, Vec4::new(5.0, 7.0, 9.0, 11.0));
+        let sum: Vec4 = vectors.into_iter().sum();
         assert_eq!(sum, Vec4::new(5.0, 7.0, 9.0, 11.0));
     }
 
@@ -579,6 +583,18 @@ mod tests {
             format!("{}", p.to_p4_string()),
             "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
         );
+        assert_relative_eq!(Vec3::x().x, 1.0);
+        assert_relative_eq!(Vec3::x().y, 0.0);
+        assert_relative_eq!(Vec3::x().z, 0.0);
+        assert_relative_eq!(Vec3::y().x, 0.0);
+        assert_relative_eq!(Vec3::y().y, 1.0);
+        assert_relative_eq!(Vec3::y().z, 0.0);
+        assert_relative_eq!(Vec3::z().x, 0.0);
+        assert_relative_eq!(Vec3::z().y, 0.0);
+        assert_relative_eq!(Vec3::z().z, 1.0);
+        assert_relative_eq!(Vec3::default().x, 0.0);
+        assert_relative_eq!(Vec3::default().y, 0.0);
+        assert_relative_eq!(Vec3::default().z, 0.0);
     }
 
     #[test]
@@ -607,6 +623,18 @@ mod tests {
     }
 
     #[test]
+    fn test_vec_equality() {
+        let p = Vec3::new(1.1, 2.2, 3.3);
+        let p2 = Vec3::new(1.1 * 2.0, 2.2 * 2.0, 3.3 * 2.0);
+        assert_abs_diff_eq!(p * 2.0, p2);
+        assert_relative_eq!(p * 2.0, p2);
+        let p = Vec4::new(1.1, 2.2, 3.3, 10.0);
+        let p2 = Vec4::new(1.1 * 2.0, 2.2 * 2.0, 3.3 * 2.0, 10.0);
+        assert_abs_diff_eq!(p * 2.0, p2);
+        assert_relative_eq!(p * 2.0, p2);
+    }
+
+    #[test]
     fn test_boost_com() {
         let p = Vec4::new(3.0, 4.0, 5.0, 10.0);
         let zero = p.boost(&-p.beta()).momentum();
@@ -615,6 +643,10 @@ mod tests {
 
     #[test]
     fn test_boost() {
+        let p0 = Vec4::new(0.0, 0.0, 0.0, 1.0);
+        assert_relative_eq!(p0.gamma(), 1.0);
+        let p0 = Vec4::new(Float::sqrt(3.0) / 2.0, 0.0, 0.0, 1.0);
+        assert_relative_eq!(p0.gamma(), 2.0);
         let p1 = Vec4::new(3.0, 4.0, 5.0, 10.0);
         let p2 = Vec4::new(3.4, 2.3, 1.2, 9.0);
         let p1_boosted = p1.boost(&-p2.beta());
