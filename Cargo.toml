@@ -1,5 +1,5 @@
 [workspace]
-resolver = "3"
+resolver = "2"
 members = ["crates/*", "py-laddu"]
 default-members = ["crates/*"]
 
@@ -9,7 +9,7 @@ edition = "2021"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
-rust-version = "1.84.0"
+rust-version = "1.82.0"
 
 [workspace.dependencies]
 accurate = "0.4.1"
