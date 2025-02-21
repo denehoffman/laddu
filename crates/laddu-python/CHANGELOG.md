@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.2.5...laddu-python-v0.3.0) - 2025-02-21
+
+### Added
+
+- update MPI code to use root-node-agnostic methods
+- first pass implementation of MPI interface
+
+### Fixed
+
+- forgot to update the `laddu-python` `use_mpi` function to have a trigger arg
+- add feature flag to `laddu-python` and update MSRV for `mpisys` compatibility
+
+### Other
+
+- update all documentation to include MPI modules
+- add some clippy lints and clean up some unused imports and redundant code
+- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+
 ## [0.2.5](https://github.com/denehoffman/laddu/compare/laddu-python-v0.2.4...laddu-python-v0.2.5) - 2025-01-28
 
 ### Other
