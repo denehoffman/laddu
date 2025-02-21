@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/denehoffman/laddu/compare/py-laddu-v0.2.6...py-laddu-v0.2.7) - 2025-02-21
+
+### Added
+
+- make `mpi` a feature in `py-laddu` to allow people to build the python package without it
+- update MPI code to use root-node-agnostic methods
+- first pass implementation of MPI interface
+- switch the MPI implementation to use safe Rust via a RwLock
+
+### Fixed
+
+- add non-MPI failing functions for MPI calls on non-MPI python builds
+- add mpi feature for laddu-python to py-laddu
+- calling get_world before use_mpi causes errors
+- correct the open method and counts/displs methods
+
+### Other
+
+- update all documentation to include MPI modules
+- add mpich to builds
+- *(vectors)* complete tests for vectors module
+- *(vectors)* add more vector test coverage
+- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+- add some clippy lints and clean up some unused imports and redundant code
+- *(ganesh_ext)* documenting a few missed functions
+- use elided lifetimes
+
 ## [0.2.6](https://github.com/denehoffman/laddu/compare/py-laddu-v0.2.5...py-laddu-v0.2.6) - 2025-01-28
 
 ### Added

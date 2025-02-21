@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/denehoffman/laddu/compare/laddu-v0.2.6...laddu-v0.2.7) - 2025-02-21
+
+### Added
+
+- update MPI code to use root-node-agnostic methods
+- first pass implementation of MPI interface
+- switch the MPI implementation to use safe Rust via a RwLock
+
+### Fixed
+
+- add sentry dependency for which to force the version, not sure what the best fix really is, but this should work for now
+- calling get_world before use_mpi causes errors
+- correct the open method and counts/displs methods
+
+### Other
+
+- update all documentation to include MPI modules
+- add some clippy lints and clean up some unused imports and redundant code
+- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+- update benchmark to only run on powers of 2 threads
+- *(vectors)* complete tests for vectors module
+- *(vectors)* add more vector test coverage
+- *(ganesh_ext)* documenting a few missed functions
+- use elided lifetimes
+
 ## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-v0.2.5...laddu-v0.2.6) - 2025-01-28
 
 ### Added

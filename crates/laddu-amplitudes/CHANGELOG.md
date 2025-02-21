@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.2.5...laddu-amplitudes-v0.2.6) - 2025-02-21
+
+### Other
+
+- update all documentation to include MPI modules
+- add some clippy lints and clean up some unused imports and redundant code
+
 ## [0.2.5](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.2.4...laddu-amplitudes-v0.2.5) - 2025-01-28
 
 ### Other

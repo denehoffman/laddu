@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.6...laddu-extensions-v0.3.0) - 2025-02-21
+
+### Added
+
+- update MPI code to use root-node-agnostic methods
+- first pass implementation of MPI interface
+
+### Other
+
+- *(ganesh_ext)* documenting a few missed functions
+- update all documentation to include MPI modules
+- add some clippy lints and clean up some unused imports and redundant code
+- use elided lifetimes
+
 ## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.2.5...laddu-extensions-v0.2.6) - 2025-01-28
 
 ### Added
