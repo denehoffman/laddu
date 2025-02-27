@@ -13,7 +13,7 @@ binned_accmc_ds = accmc_ds.bin_by(res_mass, bins, mass_range)
 
 manager = ld.Manager()
 angles = ld.Angles(0, [1], [2], [2, 3])
-polarization = ld.Polarization(0, [1])
+polarization = ld.Polarization(0, [1], 0)
 
 z00p = manager.register(ld.Zlm('Z00+', 0, 0, '+', angles, polarization))
 z22p = manager.register(ld.Zlm('Z22+', 2, 2, '+', angles, polarization))

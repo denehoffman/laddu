@@ -39,7 +39,7 @@ pub fn test_event() -> Event {
             Vec3::new(-0.112, 0.293, 3.081).with_mass(0.498),  // "kaon"
             Vec3::new(-0.007, -0.667, 5.446).with_mass(0.498), // "kaon"
         ],
-        eps: vec![Vec3::new(0.385, 0.022, 0.000)],
+        aux: vec![Vec3::new(0.385, 0.022, 0.000)],
         weight: 0.48,
     }
 }
@@ -56,8 +56,8 @@ pub fn test_dataset() -> Dataset {
 pub struct Event {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vec4>,
-    /// A list of polarization vectors for each particle.
-    pub eps: Vec<Vec3>,
+    /// A list of auxiliary vectors which can be used to store data like particle polarization.
+    pub aux: Vec<Vec3>,
     /// The weight given to the event.
     pub weight: Float,
 }
@@ -70,7 +70,7 @@ impl Display for Event {
             writeln!(f, "    {}", p4.to_p4_string())?;
         }
         writeln!(f, "  eps:")?;
-        for eps_vec in &self.eps {
+        for eps_vec in &self.aux {
             writeln!(f, "    [{}, {}, {}]", eps_vec.x, eps_vec.y, eps_vec.z)?;
         }
         writeln!(f, "  weight:")?;
@@ -601,7 +601,11 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
         .unwrap()
         .value(row) as Float;
 
-    Event { p4s, eps, weight }
+    Event {
+        p4s,
+        aux: eps,
+        weight,
+    }
 }
 
 /// Open a Parquet file and read the data into a [`Dataset`].
@@ -706,7 +710,7 @@ mod tests {
     fn test_event_creation() {
         let event = test_event();
         assert_eq!(event.p4s.len(), 4);
-        assert_eq!(event.eps.len(), 1);
+        assert_eq!(event.aux.len(), 1);
         assert_relative_eq!(event.weight, 0.48)
     }
 
@@ -733,7 +737,7 @@ mod tests {
         let dataset = test_dataset();
         let dataset2 = Dataset::new(vec![Arc::new(Event {
             p4s: test_event().p4s,
-            eps: test_event().eps,
+            aux: test_event().aux,
             weight: 0.52,
         })]);
         let dataset_sum = &dataset + &dataset2;
@@ -747,7 +751,7 @@ mod tests {
         dataset.events.push(Arc::new(test_event()));
         dataset.events.push(Arc::new(Event {
             p4s: test_event().p4s,
-            eps: test_event().eps,
+            aux: test_event().aux,
             weight: 0.52,
         }));
         let weights = dataset.weights();
@@ -765,7 +769,7 @@ mod tests {
                 Vec3::new(0.0, 0.0, 5.0).with_mass(0.0),
                 Vec3::new(0.0, 0.0, 1.0).with_mass(1.0),
             ],
-            eps: vec![],
+            aux: vec![],
             weight: 1.0,
         }));
 
@@ -779,12 +783,12 @@ mod tests {
         let dataset = Dataset::new(vec![
             Arc::new(Event {
                 p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(1.0)],
-                eps: vec![],
+                aux: vec![],
                 weight: 1.0,
             }),
             Arc::new(Event {
                 p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(2.0)],
-                eps: vec![],
+                aux: vec![],
                 weight: 2.0,
             }),
         ]);
@@ -816,7 +820,7 @@ mod tests {
         let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: test_event().p4s.clone(),
-            eps: test_event().eps.clone(),
+            aux: test_event().aux.clone(),
             weight: 1.0,
         }));
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);

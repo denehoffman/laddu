@@ -38,7 +38,7 @@ impl PyEvent {
     fn new(p4s: Vec<PyVector4>, eps: Vec<PyVector3>, weight: Float) -> Self {
         Self(Arc::new(Event {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
-            eps: eps.into_iter().map(|arr| arr.0).collect(),
+            aux: eps.into_iter().map(|arr| arr.0).collect(),
             weight,
         }))
     }
@@ -57,7 +57,7 @@ impl PyEvent {
     #[getter]
     fn get_eps(&self) -> Vec<PyVector3> {
         self.0
-            .eps
+            .aux
             .iter()
             .map(|eps_vec| PyVector3(*eps_vec))
             .collect()

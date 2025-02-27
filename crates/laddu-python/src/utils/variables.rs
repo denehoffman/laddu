@@ -367,6 +367,8 @@ impl PyAngles {
 /// recoil : list of int
 ///     Indices of particles which are combined to form the recoiling particle (particles which
 ///     are not `beam` or part of the `resonance`)
+/// beam_polarization : int
+///     The index of the auxiliary vector in storing the `beam` particle's polarization
 ///
 #[pyclass(name = "PolAngle", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -375,8 +377,8 @@ pub struct PyPolAngle(pub PolAngle);
 #[pymethods]
 impl PyPolAngle {
     #[new]
-    fn new(beam: usize, recoil: Vec<usize>) -> Self {
-        Self(PolAngle::new(beam, &recoil))
+    fn new(beam: usize, recoil: Vec<usize>, beam_polarization: usize) -> Self {
+        Self(PolAngle::new(beam, &recoil, beam_polarization))
     }
     /// The value of this Variable for the given Event
     ///
@@ -417,8 +419,8 @@ impl PyPolAngle {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
+/// beam_polarization : int
+///     The index of the auxiliary vector in storing the `beam` particle's polarization
 ///
 /// See Also
 /// --------
@@ -431,8 +433,8 @@ pub struct PyPolMagnitude(pub PolMagnitude);
 #[pymethods]
 impl PyPolMagnitude {
     #[new]
-    fn new(beam: usize) -> Self {
-        Self(PolMagnitude::new(beam))
+    fn new(beam_polarization: usize) -> Self {
+        Self(PolMagnitude::new(beam_polarization))
     }
     /// The value of this Variable for the given Event
     ///
@@ -478,6 +480,8 @@ impl PyPolMagnitude {
 /// recoil : list of int
 ///     Indices of particles which are combined to form the recoiling particle (particles which
 ///     are not `beam` or part of the `resonance`)
+/// beam_polarization : int
+///     The index of the auxiliary vector in storing the `beam` particle's polarization
 ///
 /// See Also
 /// --------
@@ -490,8 +494,8 @@ pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
     #[new]
-    fn new(beam: usize, recoil: Vec<usize>) -> Self {
-        PyPolarization(Polarization::new(beam, &recoil))
+    fn new(beam: usize, recoil: Vec<usize>, beam_polarization: usize) -> Self {
+        PyPolarization(Polarization::new(beam, &recoil, beam_polarization))
     }
     /// The Variable representing the magnitude of the polarization vector
     ///
