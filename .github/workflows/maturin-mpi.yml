@@ -44,7 +44,7 @@ jobs:
         run: |
           set -e
           sudo apt-get update
-          sudo apt-get install -y libmpich-dev pkg-config llvm-dev libclang-dev
+          sudo apt-get install -y libmpich-dev pkg-config llvm-dev libclang-dev build-essential
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
