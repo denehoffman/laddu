@@ -10,10 +10,27 @@ pub mod data;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod utils;
 
-#[cfg(feature = "mpi")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {
+    #[cfg(not(feature = "mpi"))]
+    use pyo3::exceptions::PyModuleNotFoundError;
+
     use super::*;
+    /// Check if ``laddu`` was compiled with MPI support (returns ``True`` if it was).
+    ///
+    /// Since ``laddu-mpi`` has the same namespace as ``laddu`` (they both are imported with
+    /// ``import laddu``), this method can be used to check if MPI capabilities are available
+    /// without actually running any MPI code. While functions in the ``laddu.mpi`` module will
+    /// raise an ``ModuleNotFoundError`` if MPI is not supported, its sometimes convenient to have
+    /// a simple boolean check rather than a try-catch block, and this method provides that.
+    ///
+    #[pyfunction]
+    pub fn is_mpi_available() -> bool {
+        #[cfg(feature = "mpi")]
+        return true;
+        #[cfg(not(feature = "mpi"))]
+        return false;
+    }
     /// Use the Message Passing Interface (MPI) to run on a distributed system
     ///
     /// Parameters
@@ -60,8 +77,16 @@ pub mod mpi {
     ///
     #[pyfunction]
     #[pyo3(signature = (*, trigger=true))]
-    pub fn use_mpi(trigger: bool) {
-        laddu_core::mpi::use_mpi(trigger);
+    pub fn use_mpi(trigger: bool) -> PyResult<()> {
+        #[cfg(feature = "mpi")]
+        {
+            laddu_core::mpi::use_mpi(trigger);
+            Ok(())
+        }
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 
     /// Drop the MPI universe and finalize MPI at the end of a program
@@ -74,8 +99,16 @@ pub mod mpi {
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn finalize_mpi() {
-        laddu_core::mpi::finalize_mpi();
+    pub fn finalize_mpi() -> PyResult<()> {
+        #[cfg(feature = "mpi")]
+        {
+            laddu_core::mpi::finalize_mpi();
+            Ok(())
+        }
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 
     /// Check if MPI is enabled
@@ -89,8 +122,13 @@ pub mod mpi {
     /// laddu.mpi.is_root
     ///
     #[pyfunction]
-    pub fn using_mpi() -> bool {
-        laddu_core::mpi::using_mpi()
+    pub fn using_mpi() -> PyResult<bool> {
+        #[cfg(feature = "mpi")]
+        return Ok(laddu_core::mpi::using_mpi());
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 
     /// Check if the current MPI process is the root process
@@ -104,8 +142,13 @@ pub mod mpi {
     /// laddu.mpi.using_mpi
     ///
     #[pyfunction]
-    pub fn is_root() -> bool {
-        laddu_core::mpi::is_root()
+    pub fn is_root() -> PyResult<bool> {
+        #[cfg(feature = "mpi")]
+        return Ok(laddu_core::mpi::is_root());
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 
     /// Get the rank of the current MPI process
@@ -117,8 +160,13 @@ pub mod mpi {
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_rank() -> Option<i32> {
-        laddu_core::mpi::get_rank()
+    pub fn get_rank() -> PyResult<Option<i32>> {
+        #[cfg(feature = "mpi")]
+        return Ok(laddu_core::mpi::get_rank());
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 
     /// Get the total number of MPI processes (including the root process)
@@ -130,8 +178,13 @@ pub mod mpi {
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_size() -> Option<i32> {
-        laddu_core::mpi::get_size()
+    pub fn get_size() -> PyResult<Option<i32>> {
+        #[cfg(feature = "mpi")]
+        return Ok(laddu_core::mpi::get_size());
+        #[cfg(not(feature = "mpi"))]
+        return Err(PyModuleNotFoundError::new_err(
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
+        ));
     }
 }
 
