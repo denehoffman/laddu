@@ -46,38 +46,38 @@ def test_mass_multiple_particles() -> None:
 
 def test_costheta_helicity() -> None:
     event = make_test_event()
-    costheta = CosTheta(0, [1], [2], [2, 3], "Helicity")
+    costheta = CosTheta(0, [1], [2], [2, 3], 'Helicity')
     assert pytest.approx(costheta.value(event)) == -0.4611175
 
 
 def test_phi_helicity() -> None:
     event = make_test_event()
-    phi = Phi(0, [1], [2], [2, 3], "Helicity")
+    phi = Phi(0, [1], [2], [2, 3], 'Helicity')
     assert pytest.approx(phi.value(event)) == -2.6574625
 
 
 def test_costheta_gottfried_jackson() -> None:
     event = make_test_event()
-    costheta = CosTheta(0, [1], [2], [2, 3], "Gottfried-Jackson")
+    costheta = CosTheta(0, [1], [2], [2, 3], 'Gottfried-Jackson')
     assert pytest.approx(costheta.value(event)) == 0.09198832
 
 
 def test_phi_gottfried_jackson() -> None:
     event = make_test_event()
-    phi = Phi(0, [1], [2], [2, 3], "Gottfried-Jackson")
+    phi = Phi(0, [1], [2], [2, 3], 'Gottfried-Jackson')
     assert pytest.approx(phi.value(event)) == -2.7139131
 
 
 def test_angles() -> None:
     event = make_test_event()
-    angles = Angles(0, [1], [2], [2, 3], "Helicity")
+    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
     assert pytest.approx(angles.costheta.value(event)) == -0.4611175
     assert pytest.approx(angles.phi.value(event)) == -2.6574625
 
 
 def test_pol_angle() -> None:
     event = make_test_event()
-    pol_angle = PolAngle(0, [1])
+    pol_angle = PolAngle(0, [1], 0)
     assert pytest.approx(pol_angle.value(event)) == 1.9359298
 
 
@@ -89,19 +89,19 @@ def test_pol_magnitude() -> None:
 
 def test_polarization() -> None:
     event = make_test_event()
-    polarization = Polarization(0, [1])
+    polarization = Polarization(0, [1], 0)
     assert pytest.approx(polarization.pol_angle.value(event)) == 1.9359298
     assert pytest.approx(polarization.pol_magnitude.value(event)) == 0.3856280
 
 
 def test_mandelstam() -> None:
     event = make_test_event()
-    s = Mandelstam([0], [], [2, 3], [1], "s")
-    t = Mandelstam([0], [], [2, 3], [1], "t")
-    u = Mandelstam([0], [], [2, 3], [1], "u")
-    sp = Mandelstam([], [0], [1], [2, 3], "s")
-    tp = Mandelstam([], [0], [1], [2, 3], "t")
-    up = Mandelstam([], [0], [1], [2, 3], "u")
+    s = Mandelstam([0], [], [2, 3], [1], 's')
+    t = Mandelstam([0], [], [2, 3], [1], 't')
+    u = Mandelstam([0], [], [2, 3], [1], 'u')
+    sp = Mandelstam([], [0], [1], [2, 3], 's')
+    tp = Mandelstam([], [0], [1], [2, 3], 't')
+    up = Mandelstam([], [0], [1], [2, 3], 'u')
     assert pytest.approx(s.value(event)) == 18.504011
     assert pytest.approx(s.value(event)) == pytest.approx(sp.value(event))
     assert pytest.approx(t.value(event)) == -0.1922285
