@@ -11,7 +11,8 @@ import laddu
 project = 'laddu'
 copyright = '2024, Nathaniel Dene Hoffman'
 author = 'Nathaniel Dene Hoffman'
-release = laddu.__version__
+# release = laddu.__version__
+release = '0.3.0'
 version = release
 
 # -- General configuration ---------------------------------------------------
