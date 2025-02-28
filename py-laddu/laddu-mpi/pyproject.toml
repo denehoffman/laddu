@@ -24,7 +24,7 @@ dependencies = [
 Documentation = "https://laddu.readthedocs.io/en/stable/"
 
 [project.scripts]
-amptools-to-laddu = "laddu_mpi:convert.run"
+amptools-to-laddu = "laddu:convert.run"
 
 [project.optional-dependencies]
 tests = ["pytest"]
