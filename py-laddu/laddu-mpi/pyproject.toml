@@ -34,10 +34,10 @@ docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
 bindings = "pyo3"
 strip = true
 profile = "dist-release"
-sdist-include = ['../Cargo.lock']
+sdist-include = ['../../Cargo.lock']
 manifest-path = "../Cargo.toml"
 features = ["mpi"]
-python-source = "../laddu-src"
+python-source = "../laddu-src/laddu"
 
 [tool.ruff]
 target-version = "py37"
