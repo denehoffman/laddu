@@ -27,7 +27,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_mc = open("benches/bench.parquet").unwrap();
 
     let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-    let polarization = Polarization::new(0, [1]);
+    let polarization = Polarization::new(0, [1], 0);
     let resonance_mass = Mass::new([2, 3]);
     let mut manager = Manager::default();
     let z00p = manager

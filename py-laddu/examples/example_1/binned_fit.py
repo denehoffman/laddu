@@ -1,3 +1,9 @@
+import pickle
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
 import laddu as ld
 
 res_mass = ld.Mass([2, 3])
@@ -13,7 +19,7 @@ binned_accmc_ds = accmc_ds.bin_by(res_mass, bins, mass_range)
 
 manager = ld.Manager()
 angles = ld.Angles(0, [1], [2], [2, 3])
-polarization = ld.Polarization(0, [1])
+polarization = ld.Polarization(0, [1], 0)
 
 z00p = manager.register(ld.Zlm('Z00+', 0, 0, '+', angles, polarization))
 z22p = manager.register(ld.Zlm('Z22+', 2, 2, '+', angles, polarization))
@@ -33,16 +39,12 @@ binned_statuses = []
 for nll in nlls:
     binned_statuses.append(nll.minimize([100.0, 100.0, 100.0]))
 
-import pickle
-from pathlib import Path
-
-pickle.dump(
-    binned_statuses, Path('binned_statuses.pkl').open('wb')
-)  # 'wb' for *binary* writing mode
+# 'wb' for *binary* writing mode
+with Path('binned_statuses.pkl').open('wb') as output_path:
+    pickle.dump(binned_statuses, output_path)
 # We can load this up later with
 # binned_statuses = pickle.load(Path("binned_statuses.pkl").open("rb"))
 
-import numpy as np
 
 # sorted_accmc_ds = sum([ds for ds in binned_accmc_ds])
 # assert sorted_accmc_ds != 0  # this line is for type-checkers only!
@@ -77,7 +79,6 @@ for ibin in range(bins):
         nlls[ibin].project_with(binned_statuses[ibin].x, ['D2+', 'Z22+']).sum()
     )
 
-import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots(ncols=2, sharey=True)
 

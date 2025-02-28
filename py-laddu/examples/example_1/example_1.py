@@ -8,13 +8,14 @@ Options:
 -b <nboot>   Number of bootstrapped fits to perform for each fit [default: 20]
 """
 
+from __future__ import annotations
+
 import os
 import pickle
 import sys
 from pathlib import Path
 from time import perf_counter
 
-import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
 import uncertainties.umath as unp
@@ -24,8 +25,10 @@ from rich import print as pprint
 from rich.table import Table
 from uncertainties import ufloat
 
+import laddu as ld
 
-def main(bins: int, niters: int, nboot: int):
+
+def main(bins: int, niters: int, nboot: int) -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_file = str(script_dir / 'data_1.parquet')
     accmc_file = str(script_dir / 'accmc_1.parquet')
@@ -319,7 +322,7 @@ def fit_binned(
     logger.info('Starting Binned Fit')
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
-    polarization = ld.Polarization(0, [1])
+    polarization = ld.Polarization(0, [1], 0)
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -433,7 +436,7 @@ def fit_binned(
             }
         )
     output = {'fits': bin_outputs, 'nbins': bins, 'range': (1.0, 2.0)}
-    with open('example_1_binned_fit.pkl', 'wb') as out_file:
+    with Path('example_1_binned_fit.pkl').open('wb') as out_file:
         pickle.dump(output, out_file)
 
     return (
@@ -470,7 +473,7 @@ def fit_unbinned(
     logger.info('Starting Unbinned Fit')
     res_mass = ld.Mass([2, 3])
     angles = ld.Angles(0, [1], [2], [2, 3])
-    polarization = ld.Polarization(0, [1])
+    polarization = ld.Polarization(0, [1], 0)
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm('Z00+', 0, 0, '+', angles, polarization))
     z22p = manager.register(ld.Zlm('Z22+', 2, 2, '+', angles, polarization))
@@ -551,7 +554,7 @@ def fit_unbinned(
         boot_statuses.append(boot_nll.minimize(best_status.x))
 
     output = {'model': model, 'best': best_status, 'bootstraps': boot_statuses}
-    with open('example_1_unbinned_fit.pkl', 'wb') as out_file:
+    with Path('example_1_unbinned_fit.pkl').open('wb') as out_file:
         pickle.dump(output, out_file)
 
     return (

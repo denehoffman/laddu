@@ -179,7 +179,7 @@ mod tests {
     fn test_zlm_evaluation() {
         let mut manager = Manager::default();
         let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-        let polarization = Polarization::new(0, [1]);
+        let polarization = Polarization::new(0, [1], 0);
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -198,7 +198,7 @@ mod tests {
     fn test_zlm_gradient() {
         let mut manager = Manager::default();
         let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-        let polarization = Polarization::new(0, [1]);
+        let polarization = Polarization::new(0, [1], 0);
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 

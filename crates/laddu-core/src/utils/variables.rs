@@ -288,15 +288,17 @@ impl Angles {
 pub struct PolAngle {
     beam: usize,
     recoil: Vec<usize>,
+    beam_polarization: usize,
 }
 impl PolAngle {
     /// Constructs the polarization angle given the four-momentum indices for each specified
     /// particle. Fields which can take lists of more than one index will add the relevant
     /// four-momenta to make a new particle from the constituents.
-    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
+    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T, beam_polarization: usize) -> Self {
         Self {
             beam,
             recoil: recoil.as_ref().into(),
+            beam_polarization,
         }
     }
 }
@@ -307,8 +309,10 @@ impl Variable for PolAngle {
         let recoil = event.get_p4_sum(&self.recoil);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
         Float::atan2(
-            y.dot(&event.eps[self.beam]),
-            beam.vec3().unit().dot(&event.eps[self.beam].cross(&y)),
+            y.dot(&event.aux[self.beam_polarization]),
+            beam.vec3()
+                .unit()
+                .dot(&event.aux[self.beam_polarization].cross(&y)),
         )
     }
 }
@@ -316,19 +320,19 @@ impl Variable for PolAngle {
 /// A struct defining the polarization magnitude for a beam relative to the production plane.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PolMagnitude {
-    beam: usize,
+    beam_polarization: usize,
 }
 
 impl PolMagnitude {
     /// Constructs the polarization magnitude given the four-momentum index for the beam.
-    pub fn new(beam: usize) -> Self {
-        Self { beam }
+    pub fn new(beam_polarization: usize) -> Self {
+        Self { beam_polarization }
     }
 }
 #[typetag::serde]
 impl Variable for PolMagnitude {
     fn value(&self, event: &Event) -> Float {
-        event.eps[self.beam].mag()
+        event.aux[self.beam_polarization].mag()
     }
 }
 
@@ -345,10 +349,10 @@ impl Polarization {
     /// Constructs the polarization angle and magnitude given the four-momentum indices for
     /// the beam and target (recoil) particle. Fields which can take lists of more than one index will add
     /// the relevant four-momenta to make a new particle from the constituents.
-    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T) -> Self {
+    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T, beam_polarization: usize) -> Self {
         Self {
-            pol_magnitude: PolMagnitude::new(beam),
-            pol_angle: PolAngle::new(beam, recoil),
+            pol_magnitude: PolMagnitude::new(beam_polarization),
+            pol_angle: PolAngle::new(beam, recoil, beam_polarization),
         }
     }
 }
@@ -554,7 +558,7 @@ mod tests {
     #[test]
     fn test_pol_angle() {
         let event = test_event();
-        let pol_angle = PolAngle::new(0, vec![1]);
+        let pol_angle = PolAngle::new(0, vec![1], 0);
         assert_relative_eq!(
             pol_angle.value(&event),
             1.93592989,
@@ -576,7 +580,7 @@ mod tests {
     #[test]
     fn test_polarization() {
         let event = test_event();
-        let polarization = Polarization::new(0, vec![1]);
+        let polarization = Polarization::new(0, vec![1], 0);
         assert_relative_eq!(
             polarization.pol_angle.value(&event),
             1.93592989,

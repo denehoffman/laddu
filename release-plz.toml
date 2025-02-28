@@ -19,3 +19,12 @@ name = "laddu-python"
 [[package]]
 name = "py-laddu"
 changelog_include = ["laddu-core", "laddu-amplitudes", "laddu-extensions"]
+
+[[package]]
+name = "py-laddu-mpi"
+changelog_include = [
+  "laddu-core",
+  "laddu-amplitudes",
+  "laddu-extensions",
+  "py-laddu",
+]

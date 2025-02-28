@@ -34,7 +34,7 @@ docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
 bindings = "pyo3"
 strip = true
 profile = "dist-release"
-sdist-include = ['Cargo.lock']
+sdist-include = ['../Cargo.lock']
 
 [tool.ruff]
 target-version = "py37"

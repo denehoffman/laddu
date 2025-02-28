@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import os
-from pathlib import Path
-import numpy as np
-import laddu as ld
-
 import pickle
+from pathlib import Path
 
-from loguru import logger
 import matplotlib.pyplot as plt
+import numpy as np
 from corner import corner
+from loguru import logger
+
+import laddu as ld
 
 
 # This custom observer differs from the one provided by `laddu`. Rather than tracing the
@@ -18,7 +20,14 @@ from corner import corner
 # positions in the fit space which are very separate in the parameter space. It also
 # demonstrates how to write and use a custom observer.
 class CustomAutocorrelationObserver(ld.MCMCObserver):
-    def __init__(self, nll: ld.NLL, ncheck=20, dact=0.05, nact=20, discard=0.5):
+    def __init__(
+        self,
+        nll: ld.NLL,
+        ncheck: int = 20,
+        dact: float = 0.05,
+        nact: int = 20,
+        discard: float = 0.5,
+    ) -> None:
         self.nll = nll
         self.ncheck = ncheck
         self.dact = dact
@@ -81,7 +90,7 @@ class CustomAutocorrelationObserver(ld.MCMCObserver):
         return (ensemble, False)
 
 
-def main():
+def main() -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_file = str(script_dir / 'data_1.parquet')
     accmc_file = str(script_dir / 'accmc_1.parquet')
@@ -116,7 +125,7 @@ def main():
     purple = '#984EA3'
     black = '#000000'
 
-    with open('example_1_binned_fit.pkl', 'rb') as binned_fit_file:
+    with Path('example_1_binned_fit.pkl').open('rb') as binned_fit_file:
         binned_fits = pickle.load(binned_fit_file)
 
     bins = binned_fits['nbins']
@@ -200,7 +209,7 @@ def main():
             excess_steps = n_steps_burned - requested_steps  # 110
             thin = 1 if excess_steps < 0 else n_steps_burned // requested_steps
             flat_chain = ensemble.get_flat_chain(burn=int(tau * 3), thin=thin)
-            with open(f'bin_{ibin}_mcmc.pkl', 'wb') as bin_out_file:
+            with Path(f'bin_{ibin}_mcmc.pkl').open('wb') as bin_out_file:
                 pickle.dump(bin_out, bin_out_file)
 
         chain = ensemble.get_chain(burn=int(tau * 10), thin=thin).transpose(1, 0, 2)

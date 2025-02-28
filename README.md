@@ -302,9 +302,9 @@ The data format for `laddu` is a bit different from some of the alternatives lik
 | `p4_0_Px` | `Float32` | Beam Momentum (x-component) |
 | `p4_0_Py` | `Float32` | Beam Momentum (y-component) |
 | `p4_0_Pz` | `Float32` | Beam Momentum (z-component) |
-| `eps_0_x` | `Float32` | Beam Polarization (x-component) |
-| `eps_0_y` | `Float32` | Beam Polarization (y-component) |
-| `eps_0_z` | `Float32` | Beam Polarization (z-component) |
+| `aux_0_x` | `Float32` | Beam Polarization (x-component) |
+| `aux_0_y` | `Float32` | Beam Polarization (y-component) |
+| `aux_0_z` | `Float32` | Beam Polarization (z-component) |
 | `p4_1_E` | `Float32` | Recoil Proton Energy |
 | `p4_1_Px` | `Float32` | Recoil Proton Momentum (x-component) |
 | `p4_1_Py` | `Float32` | Recoil Proton Momentum (y-component) |

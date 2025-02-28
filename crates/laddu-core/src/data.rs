@@ -27,6 +27,9 @@ use crate::{
     Float, LadduError,
 };
 
+const P4_PREFIX: &str = "p4_";
+const AUX_PREFIX: &str = "aux_";
+
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
 /// $`\gamma p \to K_S^0 K_S^0 p`$ with a polarized photon beam.
@@ -39,7 +42,7 @@ pub fn test_event() -> Event {
             Vec3::new(-0.112, 0.293, 3.081).with_mass(0.498),  // "kaon"
             Vec3::new(-0.007, -0.667, 5.446).with_mass(0.498), // "kaon"
         ],
-        eps: vec![Vec3::new(0.385, 0.022, 0.000)],
+        aux: vec![Vec3::new(0.385, 0.022, 0.000)],
         weight: 0.48,
     }
 }
@@ -56,8 +59,8 @@ pub fn test_dataset() -> Dataset {
 pub struct Event {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vec4>,
-    /// A list of polarization vectors for each particle.
-    pub eps: Vec<Vec3>,
+    /// A list of auxiliary vectors which can be used to store data like particle polarization.
+    pub aux: Vec<Vec3>,
     /// The weight given to the event.
     pub weight: Float,
 }
@@ -70,7 +73,7 @@ impl Display for Event {
             writeln!(f, "    {}", p4.to_p4_string())?;
         }
         writeln!(f, "  eps:")?;
-        for eps_vec in &self.eps {
+        for eps_vec in &self.aux {
             writeln!(f, "    [{}, {}, {}]", eps_vec.x, eps_vec.y, eps_vec.z)?;
         }
         writeln!(f, "  weight:")?;
@@ -519,47 +522,47 @@ impl_op_ex!(+ |a: &Dataset, b: &Dataset| ->  Dataset { Dataset { events: a.event
 
 fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     let mut p4s = Vec::new();
-    let mut eps = Vec::new();
+    let mut aux = Vec::new();
 
     let p4_count = batch
         .schema()
         .fields()
         .iter()
-        .filter(|field| field.name().starts_with("p4_"))
+        .filter(|field| field.name().starts_with(P4_PREFIX))
         .count()
         / 4;
-    let eps_count = batch
+    let aux_count = batch
         .schema()
         .fields()
         .iter()
-        .filter(|field| field.name().starts_with("eps_"))
+        .filter(|field| field.name().starts_with(AUX_PREFIX))
         .count()
         / 3;
 
     for i in 0..p4_count {
         let e = batch
-            .column_by_name(&format!("p4_{}_E", i))
+            .column_by_name(&format!("{}{}_E", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let px = batch
-            .column_by_name(&format!("p4_{}_Px", i))
+            .column_by_name(&format!("{}{}_Px", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let py = batch
-            .column_by_name(&format!("p4_{}_Py", i))
+            .column_by_name(&format!("{}{}_Py", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let pz = batch
-            .column_by_name(&format!("p4_{}_Pz", i))
+            .column_by_name(&format!("{}{}_Pz", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
@@ -569,29 +572,29 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     }
 
     // TODO: insert empty vectors if not provided
-    for i in 0..eps_count {
+    for i in 0..aux_count {
         let x = batch
-            .column_by_name(&format!("eps_{}_x", i))
+            .column_by_name(&format!("{}{}_x", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let y = batch
-            .column_by_name(&format!("eps_{}_y", i))
+            .column_by_name(&format!("{}{}_y", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let z = batch
-            .column_by_name(&format!("eps_{}_z", i))
+            .column_by_name(&format!("{}{}_z", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        eps.push(Vec3::new(x, y, z));
+        aux.push(Vec3::new(x, y, z));
     }
 
     let weight = batch
@@ -601,7 +604,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
         .unwrap()
         .value(row) as Float;
 
-    Event { p4s, eps, weight }
+    Event { p4s, aux, weight }
 }
 
 /// Open a Parquet file and read the data into a [`Dataset`].
@@ -706,7 +709,7 @@ mod tests {
     fn test_event_creation() {
         let event = test_event();
         assert_eq!(event.p4s.len(), 4);
-        assert_eq!(event.eps.len(), 1);
+        assert_eq!(event.aux.len(), 1);
         assert_relative_eq!(event.weight, 0.48)
     }
 
@@ -733,7 +736,7 @@ mod tests {
         let dataset = test_dataset();
         let dataset2 = Dataset::new(vec![Arc::new(Event {
             p4s: test_event().p4s,
-            eps: test_event().eps,
+            aux: test_event().aux,
             weight: 0.52,
         })]);
         let dataset_sum = &dataset + &dataset2;
@@ -747,7 +750,7 @@ mod tests {
         dataset.events.push(Arc::new(test_event()));
         dataset.events.push(Arc::new(Event {
             p4s: test_event().p4s,
-            eps: test_event().eps,
+            aux: test_event().aux,
             weight: 0.52,
         }));
         let weights = dataset.weights();
@@ -765,7 +768,7 @@ mod tests {
                 Vec3::new(0.0, 0.0, 5.0).with_mass(0.0),
                 Vec3::new(0.0, 0.0, 1.0).with_mass(1.0),
             ],
-            eps: vec![],
+            aux: vec![],
             weight: 1.0,
         }));
 
@@ -779,12 +782,12 @@ mod tests {
         let dataset = Dataset::new(vec![
             Arc::new(Event {
                 p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(1.0)],
-                eps: vec![],
+                aux: vec![],
                 weight: 1.0,
             }),
             Arc::new(Event {
                 p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(2.0)],
-                eps: vec![],
+                aux: vec![],
                 weight: 2.0,
             }),
         ]);
@@ -816,7 +819,7 @@ mod tests {
         let mut dataset = test_dataset();
         dataset.events.push(Arc::new(Event {
             p4s: test_event().p4s.clone(),
-            eps: test_event().eps.clone(),
+            aux: test_event().aux.clone(),
             weight: 1.0,
         }));
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);
