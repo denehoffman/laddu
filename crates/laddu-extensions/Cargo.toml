@@ -1,6 +1,6 @@
 [package]
 name = "laddu-extensions"
-version = "0.3.1"
+version = "0.4.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
