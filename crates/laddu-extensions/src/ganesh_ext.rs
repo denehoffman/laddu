@@ -812,8 +812,13 @@ pub mod py_ganesh {
     /// c : float, default = 7.0
     ///     The size of the window used in the autowindowing algorithm by [Sokal]_
     ///
+    ///
+    /// .. rubric:: References
+    ///
     /// .. [Karamanis] Karamanis, M., & Beutler, F. (2020). Ensemble slice sampling: Parallel, black-box and gradient-free inference for correlated & multimodal distributions. arXiv Preprint arXiv: 2002. 06212.
+    ///
     /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In C. DeWitt-Morette, P. Cartier, & A. Folacci (Eds.), Functional Integration: Basics and Applications (pp. 131–192). doi:10.1007/978-1-4899-0319-8_6
+    ///
     #[pyfunction(name = "integrated_autocorrelation_times")]
     #[pyo3(signature = (x, *, c=7.0))]
     pub fn py_integrated_autocorrelation_times(
