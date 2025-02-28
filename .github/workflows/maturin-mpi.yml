@@ -141,6 +141,7 @@ jobs:
           echo MSMPI_INC="C:\Program Files (x86)\Microsoft SDKs\MPI\Include\" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo MSMPI_LIB32="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x86\" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo MSMPI_LIB64="C:\Program Files (x86)\Microsoft SDKs\MPI\Lib\x64\" | Out-File -FilePath $env:GITHUB_ENV -Append
+          dir "C:\Program Files (x86)\Microsoft SDKs\MPI\Include\"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
