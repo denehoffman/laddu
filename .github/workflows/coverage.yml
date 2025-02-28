@@ -54,7 +54,7 @@ jobs:
         with:
           working-directory: "py-laddu/laddu-std"
           command: develop
-          args: --uv -m py-laddu/Cargo.toml
+          args: --uv
       - name: Install pytest
         run: uv pip install pytest pytest-cov
       - name: Generate Python code coverage
