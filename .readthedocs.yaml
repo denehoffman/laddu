@@ -8,11 +8,6 @@ build:
   tools:
     python: "3.12"
     rust: "latest"
-  apt_packages:
-    - build-essential
-    - pkg-config
-    - clang
-    - libopenmpi-dev
 
 sphinx:
   configuration: py-laddu/docs/source/conf.py
@@ -23,6 +18,6 @@ formats:
 python:
   install:
     - method: pip
-      path: py-laddu
+      path: py-laddu/laddu-std
       extra_requirements:
         - docs
