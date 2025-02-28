@@ -36,7 +36,6 @@ strip = true
 profile = "dist-release"
 sdist-include = ['../../Cargo.lock']
 manifest-path = "../Cargo.toml"
-python-source = ".."
 
 [tool.ruff]
 target-version = "py37"
