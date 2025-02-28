@@ -66,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.platform.target }}
-          path: dist
+          path: py-laddu-mpi/dist
 
   # musllinux:
   #   runs-on: ${{ matrix.platform.runner }}
@@ -112,7 +112,7 @@ jobs:
   #       uses: actions/upload-artifact@v4
   #       with:
   #         name: wheels-musllinux-${{ matrix.platform.target }}
-  #         path: dist
+  #         path: py-laddu-mpi/dist
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -148,7 +148,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.platform.target }}
-          path: dist
+          path: py-laddu-mpi/dist
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -183,7 +183,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.platform.target }}
-          path: dist
+          path: py-laddu-mpi/dist
 
   sdist:
     runs-on: ubuntu-22.04
@@ -199,7 +199,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
-          path: dist
+          path: py-laddu-mpi/dist
 
   release:
     name: Release
