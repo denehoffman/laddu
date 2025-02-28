@@ -42,8 +42,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install OpenMPI
-        run: sudo apt install -y clang mpich libmpich-dev
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
@@ -54,6 +52,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: "py-laddu/laddu-std"
           command: develop
           args: --uv -m py-laddu/Cargo.toml
       - name: Install pytest
