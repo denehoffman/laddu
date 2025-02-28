@@ -23,7 +23,7 @@ def make_test_dataset() -> Dataset:
 def test_zlm_evaluation() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
-    polarization = Polarization(0, [1])
+    polarization = Polarization(0, [1], 0)
     amp = Zlm("zlm", 1, 1, "+", angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -37,7 +37,7 @@ def test_zlm_evaluation() -> None:
 def test_zlm_gradient() -> None:
     manager = Manager()
     angles = Angles(0, [1], [2], [2, 3], "Helicity")
-    polarization = Polarization(0, [1])
+    polarization = Polarization(0, [1], 0)
     amp = Zlm("zlm", 1, 1, "+", angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
