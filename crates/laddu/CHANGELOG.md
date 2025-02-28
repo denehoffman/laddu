@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/denehoffman/laddu/compare/laddu-v0.3.0...laddu-v0.3.1) - 2025-02-28
+
+### Added
+
+- redefine eps->aux in `Event` definition
+
+### Other
+
+- finalize conversion of eps->aux in data formatting
+- fix citation formatting
+
 ## [0.3.0](https://github.com/denehoffman/laddu/compare/laddu-v0.2.6...laddu-v0.3.0) - 2025-02-21
 
 ### Added
@@ -25,18 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - update all documentation to include MPI modules
 - add some clippy lints and clean up some unused imports and redundant code
-- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+- _(vectors)_ use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
 - update benchmark to only run on powers of 2 threads
-- *(vectors)* complete tests for vectors module
-- *(vectors)* add more vector test coverage
-- *(ganesh_ext)* documenting a few missed functions
+- _(vectors)_ complete tests for vectors module
+- _(vectors)_ add more vector test coverage
+- _(ganesh_ext)_ documenting a few missed functions
 - use elided lifetimes
 
 ## [0.2.6](https://github.com/denehoffman/laddu/compare/laddu-v0.2.5...laddu-v0.2.6) - 2025-01-28
 
 ### Added
 
-- bump `ganesh`  to add "skip_hessian" minimization option to skip calculation of Hessian matrix
+- bump `ganesh` to add "skip_hessian" minimization option to skip calculation of Hessian matrix
 
 ### Fixed
 
@@ -56,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - update dependencies and remove `rand` and `rand_chacha`
-- *(data)* fix bootstrap tests by changing seed
+- _(data)_ fix bootstrap tests by changing seed
 
 ## [0.2.4](https://github.com/denehoffman/laddu/compare/laddu-v0.2.3...laddu-v0.2.4) - 2025-01-26
 
