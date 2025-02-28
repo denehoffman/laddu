@@ -37,7 +37,7 @@ profile = "dist-release"
 sdist-include = ['../../Cargo.lock']
 manifest-path = "../Cargo.toml"
 features = ["mpi"]
-python-source = "../laddu-src/laddu"
+python-source = "../laddu"
 
 [tool.ruff]
 target-version = "py37"
