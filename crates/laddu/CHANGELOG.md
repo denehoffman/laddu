@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/denehoffman/laddu/compare/laddu-v0.3.0...laddu-v0.3.1) - 2025-02-28
+
+### Added
+
+- redefine eps->aux in `Event` definition
+
+### Other
+
+- finalize conversion of eps->aux in data formatting
+- fix citation formatting
+
 ## [0.3.0](https://github.com/denehoffman/laddu/compare/laddu-v0.2.6...laddu-v0.3.0) - 2025-02-21
 
 ### Added

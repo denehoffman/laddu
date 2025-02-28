@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.3.0...py-laddu-v0.3.1) - 2025-02-28
+
+### Added
+
+- split `laddu` python package into two, with and without MPI support
+- redefine eps->aux in `Event` definition
+
+### Fixed
+
+- reorganize package structure
+
+### Other
+
+- move all MPI code to `laddu-python` to make sure MPI docs build properly
+- finalize conversion of eps->aux in data formatting
+- fix citation formatting
+
 ## [0.3.0](https://github.com/denehoffman/laddu/compare/py-laddu-v0.2.6...py-laddu-v0.3.0) - 2025-02-21
 
 ### Added
