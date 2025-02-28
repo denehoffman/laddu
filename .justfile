@@ -1,11 +1,11 @@
 default:
   just --list
 
-[working-directory: 'py-laddu/laddu-std']
+[working-directory: 'py-laddu']
 develop:
   CARGO_INCREMENTAL=true maturin develop --uv
 
-[working-directory: 'py-laddu/laddu-mpi']
+[working-directory: 'py-laddu-mpi']
 develop-mpi:
   CARGO_INCREMENTAL=true maturin develop --uv
 

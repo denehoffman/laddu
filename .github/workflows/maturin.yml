@@ -45,7 +45,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: "py-laddu/laddu-std"
+          working-directory: "py-laddu"
           target: ${{ matrix.platform.target }}
           args: --release --out dist --zig
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -53,7 +53,7 @@ jobs:
       # - name: Build free-threaded wheels
       #   uses: PyO3/maturin-action@v1
       #   with:
-      #     working-directory: "py-laddu/laddu-std"
+      #     working-directory: "py-laddu"
       #     target: ${{ matrix.platform.target }}
       #     args: --release --out dist --zig -i python3.13t
       #     sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -85,7 +85,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: "py-laddu/laddu-std"
+          working-directory: "py-laddu"
           target: ${{ matrix.platform.target }}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -93,7 +93,7 @@ jobs:
       # - name: Build free-threaded wheels
       #   uses: PyO3/maturin-action@v1
       #   with:
-      #     working-directory: "py-laddu/laddu-std"
+      #     working-directory: "py-laddu"
       #     target: ${{ matrix.platform.target }}
       #     args: --release --out dist -i python3.13t
       #     sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -122,14 +122,14 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: "py-laddu/laddu-std"
+          working-directory: "py-laddu"
           target: ${{ matrix.platform.target }}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # - name: Build free-threaded wheels
       #   uses: PyO3/maturin-action@v1
       #   with:
-      #     working-directory: "py-laddu/laddu-std"
+      #     working-directory: "py-laddu"
       #     target: ${{ matrix.platform.target }}
       #     args: --release --out dist -i python3.13t
       #     sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -156,14 +156,14 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: "py-laddu/laddu-std"
+          working-directory: "py-laddu"
           target: ${{ matrix.platform.target }}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # - name: Build free-threaded wheels
       #   uses: PyO3/maturin-action@v1
       #   with:
-      #     working-directory: "py-laddu/laddu-std"
+      #     working-directory: "py-laddu"
       #     target: ${{ matrix.platform.target }}
       #     args: --release --out dist -i python3.13t
       #     sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -180,7 +180,7 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: "py-laddu/laddu-std"
+          working-directory: "py-laddu"
           command: sdist
           args: --out dist
       - name: Upload sdist

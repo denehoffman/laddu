@@ -18,6 +18,6 @@ formats:
 python:
   install:
     - method: pip
-      path: py-laddu/laddu-std
+      path: py-laddu
       extra_requirements:
         - docs

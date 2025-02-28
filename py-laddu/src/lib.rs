@@ -11,6 +11,33 @@ mod laddu {
         env!("CARGO_PKG_VERSION").to_string()
     }
 
+    /// Check if ``laddu`` was compiled with MPI support (returns ``True`` if it was).
+    ///
+    /// Since ``laddu-mpi`` has the same namespace as ``laddu`` (they both are imported with
+    /// ``import laddu``), this method can be used to check if MPI capabilities are available
+    /// without actually running any MPI code. While functions in the ``laddu.mpi`` module will
+    /// raise an ``ModuleNotFoundError`` if MPI is not supported, its sometimes convenient to have
+    /// a simple boolean check rather than a try-catch block, and this method provides that.
+    ///
+    #[cfg(feature = "mpi")]
+    #[pyfunction]
+    fn is_mpi_available() -> bool {
+        true
+    }
+    /// Check if ``laddu`` was compiled with MPI support (returns ``True`` if it was).
+    ///
+    /// Since ``laddu-mpi`` has the same namespace as ``laddu`` (they both are imported with
+    /// ``import laddu``), this method can be used to check if MPI capabilities are available
+    /// without actually running any MPI code. While functions in the ``laddu.mpi`` module will
+    /// raise an ``ModuleNotFoundError`` if MPI is not supported, its sometimes convenient to have
+    /// a simple boolean check rather than a try-catch block, and this method provides that.
+    ///
+    #[cfg(not(feature = "mpi"))]
+    #[pyfunction]
+    fn is_mpi_available() -> bool {
+        false
+    }
+
     #[cfg(feature = "mpi")]
     #[pymodule_export]
     use laddu_python::mpi::finalize_mpi;

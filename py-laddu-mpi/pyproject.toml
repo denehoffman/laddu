@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "laddu"
+name = "laddu-mpi"
 requires-python = ">=3.7"
 classifiers = [
   "Programming Language :: Rust",
@@ -34,8 +34,8 @@ docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
 bindings = "pyo3"
 strip = true
 profile = "dist-release"
-sdist-include = ['../../Cargo.lock']
-manifest-path = "../Cargo.toml"
+sdist-include = ['../Cargo.lock']
+features = ["mpi"]
 
 [tool.ruff]
 target-version = "py37"
@@ -135,8 +135,8 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.coverage.run]
-source = ["laddu-src"]
-omit = ["../tests/*", "../docs/*"]
+source = ["laddu"]
+omit = ["tests/*", "docs/*"]
 branch = true
 
 [tool.coverage.report]
