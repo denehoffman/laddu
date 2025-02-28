@@ -3,7 +3,7 @@
 #
 #    maturin generate-ci -m py-laddu/Cargo.toml -v --zig github
 #
-name: CI
+name: CI-MPI
 
 on:
   push:
