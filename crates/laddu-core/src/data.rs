@@ -27,6 +27,9 @@ use crate::{
     Float, LadduError,
 };
 
+const P4_PREFIX: &str = "p4_";
+const AUX_PREFIX: &str = "aux_";
+
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
 /// $`\gamma p \to K_S^0 K_S^0 p`$ with a polarized photon beam.
@@ -519,47 +522,47 @@ impl_op_ex!(+ |a: &Dataset, b: &Dataset| ->  Dataset { Dataset { events: a.event
 
 fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     let mut p4s = Vec::new();
-    let mut eps = Vec::new();
+    let mut aux = Vec::new();
 
     let p4_count = batch
         .schema()
         .fields()
         .iter()
-        .filter(|field| field.name().starts_with("p4_"))
+        .filter(|field| field.name().starts_with(P4_PREFIX))
         .count()
         / 4;
-    let eps_count = batch
+    let aux_count = batch
         .schema()
         .fields()
         .iter()
-        .filter(|field| field.name().starts_with("eps_"))
+        .filter(|field| field.name().starts_with(AUX_PREFIX))
         .count()
         / 3;
 
     for i in 0..p4_count {
         let e = batch
-            .column_by_name(&format!("p4_{}_E", i))
+            .column_by_name(&format!("{}{}_E", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let px = batch
-            .column_by_name(&format!("p4_{}_Px", i))
+            .column_by_name(&format!("{}{}_Px", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let py = batch
-            .column_by_name(&format!("p4_{}_Py", i))
+            .column_by_name(&format!("{}{}_Py", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let pz = batch
-            .column_by_name(&format!("p4_{}_Pz", i))
+            .column_by_name(&format!("{}{}_Pz", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
@@ -569,29 +572,29 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
     }
 
     // TODO: insert empty vectors if not provided
-    for i in 0..eps_count {
+    for i in 0..aux_count {
         let x = batch
-            .column_by_name(&format!("eps_{}_x", i))
+            .column_by_name(&format!("{}{}_x", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let y = batch
-            .column_by_name(&format!("eps_{}_y", i))
+            .column_by_name(&format!("{}{}_y", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
         let z = batch
-            .column_by_name(&format!("eps_{}_z", i))
+            .column_by_name(&format!("{}{}_z", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
             .value(row) as Float;
-        eps.push(Vec3::new(x, y, z));
+        aux.push(Vec3::new(x, y, z));
     }
 
     let weight = batch
@@ -601,11 +604,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
         .unwrap()
         .value(row) as Float;
 
-    Event {
-        p4s,
-        aux: eps,
-        weight,
-    }
+    Event { p4s, aux, weight }
 }
 
 /// Open a Parquet file and read the data into a [`Dataset`].

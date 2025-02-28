@@ -8,7 +8,7 @@ Options:
     --pol-angle <angle>          The polarization angle in degrees (only used if --pol-in-beam is not used)
     --pol-magnitude <magnitude>  The polarization magnitude (only used if --pol-in-beam is not used)
     -n <num-entries>             Truncate the file to the first n entries for testing.
-"""  # noqa: D205, D400
+"""
 
 from __future__ import annotations
 
@@ -85,9 +85,7 @@ def read_root_file(
         p4_beam[:, 1] = 0  # Set Py to 0
         p4_beam[:, 2] = E_beam  # Set Pz = E for beam
     elif pol_angle_rad is not None and pol_magnitude is not None:
-        logger.info(
-            f'Using input polarization angle ({pol_angle_rad}) and magnitude ({pol_magnitude}).'
-        )
+        logger.info(f'Using input polarization angle ({pol_angle_rad}) and magnitude ({pol_magnitude}).')
         eps_x = pol_magnitude * np.cos(pol_angle_rad) * np.ones_like(E_beam)
         eps_y = pol_magnitude * np.sin(pol_angle_rad) * np.ones_like(E_beam)
         eps_z = np.zeros_like(E_beam)
@@ -103,9 +101,7 @@ def read_root_file(
     return p4s.astype(np.float32), eps.astype(np.float32), weight
 
 
-def save_as_parquet(
-    p4s: npt.NDArray, eps: npt.NDArray, weight: npt.NDArray, output_path: Path | str
-) -> None:
+def save_as_parquet(p4s: npt.NDArray, eps: npt.NDArray, weight: npt.NDArray, output_path: Path | str) -> None:
     """Save the processed data into Parquet format."""
     logger.info('Saving data to Parquet format.')
 
@@ -120,9 +116,9 @@ def save_as_parquet(
 
     n_eps = eps.shape[1]
     for i in range(n_eps):
-        columns[f'eps_{i}_x'] = eps[:, i, 0]
-        columns[f'eps_{i}_y'] = eps[:, i, 1]
-        columns[f'eps_{i}_z'] = eps[:, i, 2]
+        columns[f'aux_{i}_x'] = eps[:, i, 0]
+        columns[f'aux_{i}_y'] = eps[:, i, 1]
+        columns[f'aux_{i}_z'] = eps[:, i, 2]
 
     # Add weights
     columns['weight'] = weight
