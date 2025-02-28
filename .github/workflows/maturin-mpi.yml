@@ -138,9 +138,9 @@ jobs:
           curl -O "https://download.microsoft.com/download/a/5/2/a5207ca5-1203-491a-8fb8-906fd68ae623/msmpisetup.exe"
           ./msmpisetup.exe -unattend -full
           echo "Installed MS-MPI Redist!"
-          echo MSMPI_INC="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Include\\" | Out-File -FilePath -Append -Encoding utf8 $env:GITHUB_ENV
-          echo MSMPI_LIB32="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x86\\" | Out-File -FilePath -Append -Encoding utf8 $env:GITHUB_ENV
-          echo MSMPI_LIB64="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x64\\" | Out-File -FilePath -Append -Encoding utf8 $env:GITHUB_ENV
+          echo MSMPI_INC="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Include\\" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo MSMPI_LIB32="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x86\\" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo MSMPI_LIB64="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x64\\" | Out-File -FilePath $env:GITHUB_ENV -Append
           env
           Get-Content $env:GITHUB_ENV
       - name: Build wheels
