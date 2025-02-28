@@ -18,7 +18,7 @@ mod laddu {
     #[pyfunction]
     fn finalize_mpi() -> PyResult<()> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
     #[cfg(feature = "mpi")]
@@ -28,7 +28,7 @@ mod laddu {
     #[pyfunction]
     fn get_rank() -> PyResult<usize> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
     #[cfg(feature = "mpi")]
@@ -38,7 +38,7 @@ mod laddu {
     #[pyfunction]
     fn get_size() -> PyResult<usize> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
     #[cfg(feature = "mpi")]
@@ -48,7 +48,7 @@ mod laddu {
     #[pyfunction]
     fn is_root() -> PyResult<bool> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
     #[cfg(feature = "mpi")]
@@ -60,7 +60,7 @@ mod laddu {
     #[allow(unused_variables)]
     fn use_mpi(trigger: bool) -> PyResult<()> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
     #[cfg(feature = "mpi")]
@@ -70,7 +70,7 @@ mod laddu {
     #[pyfunction]
     fn using_mpi() -> PyResult<bool> {
         Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support!",
+            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
         ))
     }
 

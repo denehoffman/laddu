@@ -1,8 +1,13 @@
 default:
   just --list
 
+[working-directory: 'py-laddu/laddu']
 develop:
-  CARGO_INCREMENTAL=true maturin develop --uv -m py-laddu/Cargo.toml
+  CARGO_INCREMENTAL=true maturin develop --uv
+
+[working-directory: 'py-laddu/laddu-mpi']
+develop-mpi:
+  CARGO_INCREMENTAL=true maturin develop --uv
 
 builddocs:
   CARGO_INCREMENTAL=true maturin build -m py-laddu/Cargo.toml
