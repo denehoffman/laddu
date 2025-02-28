@@ -85,6 +85,11 @@ jobs:
   #     - uses: actions/setup-python@v5
   #       with:
   #         python-version: 3.x
+  #     - name: Install MPI
+  #       run: |
+  #         set -e
+  #         sudo apt-get update
+  #         sudo apt-get install -y libmpich-dev pkg-config llvm-dev libclang-dev build-essential
   #     - name: Build wheels
   #       uses: PyO3/maturin-action@v1
   #       with:
@@ -122,6 +127,21 @@ jobs:
         with:
           python-version: 3.x
           architecture: ${{ matrix.platform.target }}
+      - name: Install MPI
+        run: |
+          choco install llvm --version 16.0.6 --allow-downgrade -y
+          echo "Installing MS-MPI SDK..."
+          curl -O "https://download.microsoft.com/download/a/5/2/a5207ca5-1203-491a-8fb8-906fd68ae623/msmpisdk.msi"
+          msiexec.exe //i msmpisdk.msi //quiet //qn //log ./install.log
+          echo "Installed MS-MPI SDK!"
+          echo "Installing MS-MPI Redist..."
+          curl -O "https://download.microsoft.com/download/a/5/2/a5207ca5-1203-491a-8fb8-906fd68ae623/msmpisetup.exe"
+          ./msmpisetup.exe -unattend -full
+          echo "Installed MS-MPI Redist!"
+          echo MSMPI_INC="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Include\\" | tee -a $GITHUB_ENV
+          echo MSMPI_LIB32="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x86\\" | tee -a $GITHUB_ENV
+          echo MSMPI_LIB64="C:\\Program Files (x86)\\Microsoft SDKs\\MPI\\Lib\\x64\\" | tee -a $GITHUB_ENV
+          env
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
