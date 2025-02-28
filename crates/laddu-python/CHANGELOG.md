@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.3.0...laddu-python-v0.3.1) - 2025-02-28
+3# [0.4.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.3.0...laddu-python-v0.3.1) - 2025-02-28
 
 ### Added
 
@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - update all documentation to include MPI modules
 - add some clippy lints and clean up some unused imports and redundant code
-- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+- _(vectors)_ use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
 
 ## [0.2.5](https://github.com/denehoffman/laddu/compare/laddu-python-v0.2.4...laddu-python-v0.2.5) - 2025-01-28
 

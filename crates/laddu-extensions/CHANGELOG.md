@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.3.0...laddu-extensions-v0.3.1) - 2025-02-28
+## [0.4.0](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.3.0...laddu-extensions-v0.3.1) - 2025-02-28
 
 ### Other
 
@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- *(ganesh_ext)* documenting a few missed functions
+- _(ganesh_ext)_ documenting a few missed functions
 - update all documentation to include MPI modules
 - add some clippy lints and clean up some unused imports and redundant code
 - use elided lifetimes
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- bump `ganesh`  to add "skip_hessian" minimization option to skip calculation of Hessian matrix
+- bump `ganesh` to add "skip_hessian" minimization option to skip calculation of Hessian matrix
 
 ### Fixed
 

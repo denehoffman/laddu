@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.3.0...py-laddu-v0.3.1) - 2025-02-28
+## [0.4.0](https://github.com/denehoffman/laddu/compare/py-laddu-v0.3.0...py-laddu-v0.3.1) - 2025-02-28
 
 ### Added
 
@@ -44,18 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - update all documentation to include MPI modules
 - add mpich to builds
-- *(vectors)* complete tests for vectors module
-- *(vectors)* add more vector test coverage
-- *(vectors)* use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
+- _(vectors)_ complete tests for vectors module
+- _(vectors)_ add more vector test coverage
+- _(vectors)_ use custom type for 3/4-vectors rather than trait impl for nalgebra Vectors
 - add some clippy lints and clean up some unused imports and redundant code
-- *(ganesh_ext)* documenting a few missed functions
+- _(ganesh_ext)_ documenting a few missed functions
 - use elided lifetimes
 
 ## [0.2.6](https://github.com/denehoffman/laddu/compare/py-laddu-v0.2.5...py-laddu-v0.2.6) - 2025-01-28
 
 ### Added
 
-- bump `ganesh`  to add "skip_hessian" minimization option to skip calculation of Hessian matrix
+- bump `ganesh` to add "skip_hessian" minimization option to skip calculation of Hessian matrix
 
 ### Fixed
 
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- *(data)* fix bootstrap tests by changing seed
+- _(data)_ fix bootstrap tests by changing seed
 - update dependencies and remove `rand` and `rand_chacha`
 
 ## [0.2.4](https://github.com/denehoffman/laddu/releases/tag/py-laddu-v0.2.4) - 2025-01-26
@@ -92,11 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - bump py-laddu version
-- *(py-laddu)* release v0.2.3
+- _(py-laddu)_ release v0.2.3
 - manually update py-laddu version
 - omit tests and docs in python coverage
 - correct path of extensions module
-- *(py-laddu)* release v0.2.0
+- _(py-laddu)_ release v0.2.0
 - release all crates manually
 - release-plz does not like the way I've set up the workspace. I've looked at conda/rattler for some inspiration, but I might need to manually publish each crate once to get the ball rolling
 - add rust version to py-laddu
@@ -120,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - manually update py-laddu version
 - omit tests and docs in python coverage
 - correct path of extensions module
-- *(py-laddu)* release v0.2.0
+- _(py-laddu)_ release v0.2.0
 - release all crates manually
 - release-plz does not like the way I've set up the workspace. I've looked at conda/rattler for some inspiration, but I might need to manually publish each crate once to get the ball rolling
 - add rust version to py-laddu
@@ -138,10 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - bump version
-- *(py-laddu)* release v0.2.1
+- _(py-laddu)_ release v0.2.1
 - force version bump
 - fix python docs to use "extensions" rather than "likelihoods"
-- *(py-laddu)* release v0.2.0
+- _(py-laddu)_ release v0.2.0
 - release all crates manually
 - release-plz does not like the way I've set up the workspace. I've looked at conda/rattler for some inspiration, but I might need to manually publish each crate once to get the ball rolling
 - add rust version to py-laddu
@@ -160,7 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - force version bump
 - fix python docs to use "extensions" rather than "likelihoods"
-- *(py-laddu)* release v0.2.0
+- _(py-laddu)_ release v0.2.0
 - release all crates manually
 - release-plz does not like the way I've set up the workspace. I've looked at conda/rattler for some inspiration, but I might need to manually publish each crate once to get the ball rolling
 - add rust version to py-laddu
