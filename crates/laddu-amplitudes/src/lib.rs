@@ -25,3 +25,7 @@ pub use ylm::Ylm;
 /// A polarized spherical harmonic amplitude.
 pub mod zlm;
 pub use zlm::Zlm;
+
+/// A phase space factor for `$a+b\to c+d$` with `$c\to 1+2$`.
+pub mod phase_space;
+pub use phase_space::PhaseSpaceFactor;

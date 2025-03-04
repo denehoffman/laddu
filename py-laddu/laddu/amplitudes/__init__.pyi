@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import breit_wigner, common, kmatrix, ylm, zlm
+from laddu.amplitudes import breit_wigner, common, kmatrix, phase_space, ylm, zlm
 from laddu.data import Dataset
 
 class ParameterLike: ...
@@ -76,6 +76,7 @@ __all__ = [
     'constant',
     'kmatrix',
     'parameter',
+    'phase_space',
     'ylm',
     'zlm',
 ]

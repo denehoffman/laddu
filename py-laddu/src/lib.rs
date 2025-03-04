@@ -97,6 +97,9 @@ mod laddu {
     use laddu_amplitudes::zlm::py_zlm;
 
     #[pymodule_export]
+    use laddu_amplitudes::phase_space::py_phase_space_factor;
+
+    #[pymodule_export]
     use laddu_amplitudes::kmatrix::py_kopf_kmatrix_a0;
     #[pymodule_export]
     use laddu_amplitudes::kmatrix::py_kopf_kmatrix_a2;

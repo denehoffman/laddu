@@ -1,4 +1,12 @@
-from laddu.amplitudes import breit_wigner, common, kmatrix, piecewise, ylm, zlm
+from laddu.amplitudes import (
+    breit_wigner,
+    common,
+    kmatrix,
+    phase_space,
+    piecewise,
+    ylm,
+    zlm,
+)
 from laddu.laddu import (
     Amplitude,
     AmplitudeID,
@@ -24,6 +32,7 @@ __all__ = [
     'constant',
     'kmatrix',
     'parameter',
+    'phase_space',
     'piecewise',
     'ylm',
     'zlm',

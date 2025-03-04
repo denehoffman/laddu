@@ -3,6 +3,7 @@ from laddu import amplitudes, convert, data, experimental, extensions, mpi, util
 from laddu.amplitudes import Manager, Model, constant, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from laddu.amplitudes.phase_space import PhaseSpaceFactor
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import Zlm
 from laddu.convert import convert_from_amptools
@@ -50,6 +51,7 @@ __all__ = [
     'Mass',
     'Model',
     'Observer',
+    'PhaseSpaceFactor',
     'Phi',
     'PolAngle',
     'PolMagnitude',
