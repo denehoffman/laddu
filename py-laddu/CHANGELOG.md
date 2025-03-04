@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.4.0...py-laddu-v0.4.1) - 2025-03-04
+
+### Added
+
+- add `PhaseSpaceFactor` amplitude
+
 ## [0.4.0](https://github.com/denehoffman/laddu/compare/py-laddu-v0.3.0...py-laddu-v0.3.1) - 2025-02-28
 
 ### Added
