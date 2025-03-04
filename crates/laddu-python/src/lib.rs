@@ -76,6 +76,7 @@ pub mod mpi {
     /// laddu.mpi.finalize_mpi
     ///
     #[pyfunction]
+    #[allow(unused_variables)]
     #[pyo3(signature = (*, trigger=true))]
     pub fn use_mpi(trigger: bool) -> PyResult<()> {
         #[cfg(feature = "mpi")]
