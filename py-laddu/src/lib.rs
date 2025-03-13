@@ -55,6 +55,14 @@ mod laddu {
     use laddu_python::data::PyEvent;
 
     #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_one;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_product;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_sum;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_zero;
+    #[pymodule_export]
     use laddu_python::amplitudes::py_constant;
     #[pymodule_export]
     use laddu_python::amplitudes::py_parameter;

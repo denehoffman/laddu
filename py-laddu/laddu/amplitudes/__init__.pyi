@@ -1,13 +1,34 @@
+from collections.abc import Sequence
+
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import breit_wigner, common, kmatrix, phase_space, ylm, zlm
+from laddu.amplitudes import (
+    breit_wigner,
+    common,
+    kmatrix,
+    phase_space,
+    ylm,
+    zlm,
+)
 from laddu.data import Dataset
 
 class ParameterLike: ...
 
-def parameter(name: str) -> ParameterLike: ...
+def AmplitudeOne() -> Expression: ...
+def AmplitudeZero() -> Expression: ...
+def amplitude_sum(
+    amplitudes: Sequence[AmplitudeID | Expression]
+    | Sequence[AmplitudeID]
+    | Sequence[Expression],
+) -> Expression: ...
+def amplitude_product(
+    amplitudes: Sequence[AmplitudeID | Expression]
+    | Sequence[AmplitudeID]
+    | Sequence[Expression],
+) -> Expression: ...
 def constant(value: float) -> ParameterLike: ...
+def parameter(name: str) -> ParameterLike: ...
 
 class AmplitudeID:
     def real(self) -> Expression: ...
@@ -66,11 +87,14 @@ class Evaluator:
 __all__ = [
     'Amplitude',
     'AmplitudeID',
+    'AmplitudeOne',
+    'AmplitudeZero',
     'Evaluator',
     'Expression',
     'Manager',
     'Model',
     'ParameterLike',
+    'amplitude_sum',
     'breit_wigner',
     'common',
     'constant',

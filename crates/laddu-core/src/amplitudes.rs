@@ -218,6 +218,8 @@ pub enum Expression {
     #[default]
     /// A expression equal to zero.
     Zero,
+    /// A expression equal to one.
+    One,
     /// A registered [`Amplitude`] referenced by an [`AmplitudeID`].
     Amp(AmplitudeID),
     /// The sum of two [`Expression`]s.
@@ -289,6 +291,7 @@ impl Expression {
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
             Expression::Zero => Complex::ZERO,
+            Expression::One => Complex::ONE,
         }
     }
     /// Evaluate the gradient of an [`Expression`] over a single event using calculated [`AmplitudeValues`]
@@ -325,7 +328,7 @@ impl Expression {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
             }
-            Expression::Zero => DVector::zeros(0),
+            Expression::Zero | Expression::One => DVector::zeros(0),
         }
     }
     /// Takes the real part of the given [`Expression`].
@@ -357,10 +360,11 @@ impl Expression {
             Self::Imag(_) => "Im".to_string(),
             Self::NormSqr(_) => "NormSqr".to_string(),
             Self::Zero => "0".to_string(),
+            Self::One => "1".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match self {
-            Self::Amp(_) | Self::Zero => {}
+            Self::Amp(_) | Self::Zero | Self::One => {}
             Self::Add(a, b) | Self::Mul(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();

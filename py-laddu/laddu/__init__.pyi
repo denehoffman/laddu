@@ -1,5 +1,14 @@
 from laddu import amplitudes, convert, data, experimental, extensions, mpi, utils
-from laddu.amplitudes import Manager, Model, constant, parameter
+from laddu.amplitudes import (
+    AmplitudeOne,
+    AmplitudeZero,
+    Manager,
+    Model,
+    amplitude_product,
+    amplitude_sum,
+    constant,
+    parameter,
+)
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
@@ -37,6 +46,8 @@ __version__: str
 
 __all__ = [
     'NLL',
+    'AmplitudeOne',
+    'AmplitudeZero',
     'Angles',
     'AutocorrelationObserver',
     'BinnedDataset',
@@ -68,6 +79,8 @@ __all__ = [
     'Ylm',
     'Zlm',
     '__version__',
+    'amplitude_product',
+    'amplitude_sum',
     'amplitudes',
     'constant',
     'convert',

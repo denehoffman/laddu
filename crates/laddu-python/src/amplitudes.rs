@@ -33,6 +33,42 @@ pub struct PyAmplitudeID(AmplitudeID);
 #[derive(Clone)]
 pub struct PyExpression(Expression);
 
+/// A convenience method to sum sequences of Amplitudes
+///
+#[pyfunction(name = "amplitude_sum")]
+pub fn py_amplitude_sum(terms: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+    let mut summation = PyExpression(Expression::Zero);
+    for term in terms.try_iter()? {
+        summation = summation.__add__(&term?)?;
+    }
+    Ok(summation)
+}
+
+/// A convenience method to multiply sequences of Amplitudes
+///
+#[pyfunction(name = "amplitude_product")]
+pub fn py_amplitude_product(terms: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+    let mut product = PyExpression(Expression::One);
+    for term in terms.try_iter()? {
+        product = product.__mul__(&term?)?;
+    }
+    Ok(product)
+}
+
+/// A convenience class representing a zero-valued Expression
+///
+#[pyfunction(name = "AmplitudeZero")]
+pub fn py_amplitude_zero() -> PyExpression {
+    PyExpression(Expression::Zero)
+}
+
+/// A convenience class representing a unit-valued Expression
+///
+#[pyfunction(name = "AmplitudeOne")]
+pub fn py_amplitude_one() -> PyExpression {
+    PyExpression(Expression::One)
+}
+
 #[pymethods]
 impl PyAmplitudeID {
     /// The real part of a complex Amplitude
