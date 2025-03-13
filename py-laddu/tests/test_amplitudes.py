@@ -10,6 +10,7 @@ from laddu import (
     constant,
     parameter,
 )
+from laddu.amplitudes import AmplitudeOne, AmplitudeZero, amplitude_product, amplitude_sum
 
 
 def make_test_event() -> Event:
@@ -150,15 +151,94 @@ def test_amplitude_activation() -> None:
 
 def test_gradient() -> None:
     manager = Manager()
-    amp = Scalar('parametric', parameter('test_param'))
-    aid = manager.register(amp)
+    amp1 = ComplexScalar(
+        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+    )
+    amp2 = ComplexScalar(
+        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+    )
+    aid1 = manager.register(amp1)
+    aid2 = manager.register(amp2)
     dataset = make_test_dataset()
-    expr = aid.norm_sqr()
+    params = [2.0, 3.0, 4.0, 5.0]
+
+    expr = aid1 * aid2
     model = manager.model(expr)
     evaluator = model.load(dataset)
-    params = [2.0]
+
     gradient = evaluator.evaluate_gradient(params)
-    # For |f(x)|^2 where f(x) = x, the derivative should be 2x
+
+    assert gradient[0][0].real == 4.0
+    assert gradient[0][0].imag == 5.0
+    assert gradient[0][1].real == -5.0
+    assert gradient[0][1].imag == 4.0
+    assert gradient[0][2].real == 2.0
+    assert gradient[0][2].imag == 3.0
+    assert gradient[0][3].real == -3.0
+    assert gradient[0][3].imag == 2.0
+
+    expr = (aid1 * aid2).real()
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 4.0
+    assert gradient[0][0].imag == 0.0
+    assert gradient[0][1].real == -5.0
+    assert gradient[0][1].imag == 0.0
+    assert gradient[0][2].real == 2.0
+    assert gradient[0][2].imag == 0.0
+    assert gradient[0][3].real == -3.0
+    assert gradient[0][3].imag == 0.0
+
+    expr = (aid1 * aid2).imag()
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 5.0
+    assert gradient[0][0].imag == 0.0
+    assert gradient[0][1].real == 4.0
+    assert gradient[0][1].imag == 0.0
+    assert gradient[0][2].real == 3.0
+    assert gradient[0][2].imag == 0.0
+    assert gradient[0][3].real == 2.0
+    assert gradient[0][3].imag == 0.0
+
+    expr = (aid1 * aid2).norm_sqr()
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 164.0
+    assert gradient[0][0].imag == 0.0
+    assert gradient[0][1].real == 246.0
+    assert gradient[0][1].imag == 0.0
+    assert gradient[0][2].real == 104.0
+    assert gradient[0][2].imag == 0.0
+    assert gradient[0][3].real == 130.0
+    assert gradient[0][3].imag == 0.0
+
+
+def test_zeros_and_ones() -> None:
+    manager = Manager()
+    amp = ComplexScalar('parametric', parameter('test_param_re'), constant(2.0))
+    aid = manager.register(amp)
+    dataset = make_test_dataset()
+    expr = (aid * AmplitudeOne() + AmplitudeZero()).norm_sqr()
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    params = [2.0]
+    value = evaluator.evaluate(params)
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert value[0].real == 8.0
+    assert value[0].imag == 0.0
+
     assert gradient[0][0].real == 4.0
     assert gradient[0][0].imag == 0.0
 
@@ -180,9 +260,11 @@ def test_duplicate_amplitude_registration() -> None:
     manager = Manager()
     amp1 = ComplexScalar('same_name', constant(1.0), constant(0.0))
     amp2 = ComplexScalar('same_name', constant(2.0), constant(0.0))
-    manager.register(amp1)
+    _ = manager.register(amp1)
     with pytest.raises(ValueError):
-        manager.register(amp2)
+        _ = manager.register(amp2)
+
+
 def test_tree_printing() -> None:
     manager = Manager()
     amp1 = ComplexScalar(
@@ -217,3 +299,87 @@ def test_tree_printing() -> None:
       └─ parametric_2(id=1)
 """
     )
+
+
+def test_amplitude_summation() -> None:
+    manager = Manager()
+    terms = [manager.register(Scalar(f'{i}', constant(i))) for i in range(1, 5)]
+    dataset = make_test_dataset()
+    params = []
+
+    expr = amplitude_sum([])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 0.0 + 0.0j
+
+    expr = amplitude_sum(terms)
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 2.0 + 3.0 + 4.0 + 0.0j
+
+    expr = amplitude_sum([terms[0]])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 0.0j
+
+    expr = amplitude_sum([terms[0], amplitude_sum(terms[1:])])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 2.0 + 3.0 + 4.0 + 0.0j
+
+    expr = amplitude_sum([amplitude_sum(terms[1:]), terms[0]])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 2.0 + 3.0 + 4.0 + 0.0j
+
+
+def test_amplitude_product() -> None:
+    manager = Manager()
+    terms = [manager.register(Scalar(f'{i}', constant(i))) for i in range(1, 5)]
+    dataset = make_test_dataset()
+    params = []
+
+    expr = amplitude_product([])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 0.0j
+
+    expr = amplitude_product(terms)
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 * 2.0 * 3.0 * 4.0 + 0.0j
+
+    expr = amplitude_product([terms[0]])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 + 0.0j
+
+    expr = amplitude_product([terms[0], amplitude_product(terms[1:])])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 * 2.0 * 3.0 * 4.0 + 0.0j
+
+    expr = amplitude_product([amplitude_product(terms[1:]), terms[0]])
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    value = evaluator.evaluate(params)
+    assert value[0] == 1.0 * 2.0 * 3.0 * 4.0 + 0.0j

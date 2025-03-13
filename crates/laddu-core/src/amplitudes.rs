@@ -984,20 +984,81 @@ mod tests {
     #[test]
     fn test_gradient() {
         let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
+        let amp1 = ComplexScalar::new(
+            "parametric_1",
+            parameter("test_param_re_1"),
+            parameter("test_param_im_1"),
+        );
+        let amp2 = ComplexScalar::new(
+            "parametric_2",
+            parameter("test_param_re_2"),
+            parameter("test_param_im_2"),
+        );
 
-        let aid = manager.register(amp).unwrap();
+        let aid1 = manager.register(amp1).unwrap();
+        let aid2 = manager.register(amp2).unwrap();
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr();
+        let params = vec![2.0, 3.0, 4.0, 5.0];
+
+        let expr = &aid1 * &aid2;
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
 
-        let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);
 
-        // For |f(x)|^2 where f(x) = x+2i, the derivative should be 2x
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, 5.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, 4.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, 3.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, 2.0);
+
+        let expr = (&aid1 * &aid2).real();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
+
+        let expr = (&aid1 * &aid2).imag();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 5.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 4.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 3.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 2.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
+
+        let expr = (&aid1 * &aid2).norm_sqr();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 164.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 246.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 104.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 130.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
     }
 
     #[test]
