@@ -43,8 +43,9 @@ from laddu.utils.variables import (
 )
 from laddu.utils.vectors import Vector3, Vector4
 
-__doc__ = _laddu.__doc__
-__version__ = _laddu.version()
+__doc__: str = _laddu.__doc__
+__version__: str = _laddu.version()
+
 
 __all__ = [
     'NLL',
