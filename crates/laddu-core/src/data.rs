@@ -805,6 +805,7 @@ mod tests {
                 event.p4s[0].e()
             }
         }
+        assert_eq!(BeamEnergy.to_string(), "BeamEnergy");
 
         // Test binning by first particle energy
         let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0));

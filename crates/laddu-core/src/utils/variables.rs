@@ -104,7 +104,7 @@ impl Mass {
 }
 impl Display for Mass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Mass({})", indices_to_string(&self.0))
+        write!(f, "Mass(constituents=[{}])", indices_to_string(&self.0))
     }
 }
 #[typetag::serde]
@@ -128,7 +128,7 @@ impl Display for CosTheta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "CosTheta(beam={}, recoil=({}), daughter=({}), resonance=({}), frame={})",
+            "CosTheta(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
             self.beam,
             indices_to_string(&self.recoil),
             indices_to_string(&self.daughter),
@@ -220,7 +220,7 @@ impl Display for Phi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Phi(beam={}, recoil=({}), daughter=({}), resonance=({}), frame={})",
+            "Phi(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
             self.beam,
             indices_to_string(&self.recoil),
             indices_to_string(&self.daughter),
@@ -311,7 +311,7 @@ impl Display for Angles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Angles(beam={}, recoil=({}), daughter=({}), resonance=({}), frame={})",
+            "Angles(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
             self.costheta.beam,
             indices_to_string(&self.costheta.recoil),
             indices_to_string(&self.costheta.daughter),
@@ -356,7 +356,7 @@ impl Display for PolAngle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PolAngle(beam={}, recoil=({}), beam_polarization={})",
+            "PolAngle(beam={}, recoil=[{}], beam_polarization={})",
             self.beam,
             indices_to_string(&self.recoil),
             self.beam_polarization,
@@ -429,7 +429,7 @@ impl Display for Polarization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Polarization(beam={}, recoil=({}), beam_polarization={})",
+            "Polarization(beam={}, recoil=[{}], beam_polarization={})",
             self.pol_angle.beam,
             indices_to_string(&self.pol_angle.recoil),
             self.pol_angle.beam_polarization,
@@ -471,7 +471,7 @@ impl Display for Mandelstam {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Mandelstam(p1=({}), p2=({}), p3=({}), p4=({}), channel={})",
+            "Mandelstam(p1=[{}], p2=[{}], p3=[{}], p4=[{}], channel={})",
             indices_to_string(&self.p1),
             indices_to_string(&self.p2),
             indices_to_string(&self.p3),
@@ -600,6 +600,12 @@ mod tests {
     }
 
     #[test]
+    fn test_mass_display() {
+        let mass = Mass::new([2, 3]);
+        assert_eq!(mass.to_string(), "Mass(constituents=[2, 3])");
+    }
+
+    #[test]
     fn test_costheta_helicity() {
         let event = test_event();
         let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
@@ -611,6 +617,15 @@ mod tests {
     }
 
     #[test]
+    fn test_costheta_display() {
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            costheta.to_string(),
+            "CosTheta(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+        );
+    }
+
+    #[test]
     fn test_phi_helicity() {
         let event = test_event();
         let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
@@ -618,6 +633,15 @@ mod tests {
             phi.value(&event),
             -2.65746258,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_phi_display() {
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            phi.to_string(),
+            "Phi(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
         );
     }
 
@@ -660,6 +684,15 @@ mod tests {
     }
 
     #[test]
+    fn test_angles_display() {
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            angles.to_string(),
+            "Angles(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+        );
+    }
+
+    #[test]
     fn test_pol_angle() {
         let event = test_event();
         let pol_angle = PolAngle::new(0, vec![1], 0);
@@ -671,6 +704,15 @@ mod tests {
     }
 
     #[test]
+    fn test_pol_angle_display() {
+        let pol_angle = PolAngle::new(0, vec![1], 0);
+        assert_eq!(
+            pol_angle.to_string(),
+            "PolAngle(beam=0, recoil=[1], beam_polarization=0)"
+        );
+    }
+
+    #[test]
     fn test_pol_magnitude() {
         let event = test_event();
         let pol_magnitude = PolMagnitude::new(0);
@@ -678,6 +720,15 @@ mod tests {
             pol_magnitude.value(&event),
             0.38562805,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_pol_magnitude_display() {
+        let pol_magnitude = PolMagnitude::new(0);
+        assert_eq!(
+            pol_magnitude.to_string(),
+            "PolMagnitude(beam_polarization=0)"
         );
     }
 
@@ -694,6 +745,15 @@ mod tests {
             polarization.pol_magnitude.value(&event),
             0.38562805,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_polarization_display() {
+        let polarization = Polarization::new(0, vec![1], 0);
+        assert_eq!(
+            polarization.to_string(),
+            "Polarization(beam=0, recoil=[1], beam_polarization=0)"
         );
     }
 
@@ -734,6 +794,15 @@ mod tests {
         );
         // Note: not very accurate, but considering the values in test_event only go to about 3
         // decimal places, this is probably okay
+    }
+
+    #[test]
+    fn test_mandelstam_display() {
+        let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
+        assert_eq!(
+            s.to_string(),
+            "Mandelstam(p1=[0], p2=[], p3=[2, 3], p4=[1], channel=s)"
+        );
     }
 
     #[test]
