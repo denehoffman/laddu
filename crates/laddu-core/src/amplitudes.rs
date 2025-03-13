@@ -202,7 +202,7 @@ pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
 impl Display for AmplitudeID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({})", self.0, self.1)
+        write!(f, "{}(id={})", self.0, self.1)
     }
 }
 
@@ -353,7 +353,7 @@ impl Expression {
         parent_suffix: &str,
     ) -> std::fmt::Result {
         let display_string = match self {
-            Self::Amp(aid) => aid.0.clone(),
+            Self::Amp(aid) => aid.to_string(),
             Self::Add(_, _) => "+".to_string(),
             Self::Mul(_, _) => "*".to_string(),
             Self::Real(_) => "Re".to_string(),
@@ -1045,5 +1045,44 @@ mod tests {
         let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0));
         manager.register(amp1).unwrap();
         assert!(manager.register(amp2).is_err());
+    }
+
+    #[test]
+    fn test_tree_printing() {
+        let mut manager = Manager::default();
+        let amp1 = ComplexScalar::new(
+            "parametric_1",
+            parameter("test_param_re_1"),
+            parameter("test_param_im_1"),
+        );
+        let amp2 = ComplexScalar::new(
+            "parametric_2",
+            parameter("test_param_re_2"),
+            parameter("test_param_im_2"),
+        );
+        let aid1 = manager.register(amp1).unwrap();
+        let aid2 = manager.register(amp2).unwrap();
+        let expr = &aid1.real()
+            + &aid2.imag()
+            + Expression::One * Expression::Zero
+            + (&aid1 * &aid2).norm_sqr();
+        assert_eq!(
+            expr.to_string(),
+            "+
+├─ +
+│  ├─ +
+│  │  ├─ Re
+│  │  │  └─ parametric_1(id=0)
+│  │  └─ Im
+│  │     └─ parametric_2(id=1)
+│  └─ *
+│     ├─ 1
+│     └─ 0
+└─ NormSqr
+   └─ *
+      ├─ parametric_1(id=0)
+      └─ parametric_2(id=1)
+"
+        );
     }
 }
