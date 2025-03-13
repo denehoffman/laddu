@@ -2104,24 +2104,91 @@ pub struct PyLikelihoodExpression(LikelihoodExpression);
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
-pub fn py_likelihood_sum(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-    let mut summation = PyLikelihoodExpression(LikelihoodExpression::Zero);
-    for term in terms.try_iter()? {
-        summation = summation.__add__(&term?)?;
+pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
+    if terms.is_empty() {
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::Zero));
     }
-    Ok(summation)
+    if terms.len() == 1 {
+        let term = &terms[0];
+        if let Ok(expression) = term.extract::<PyLikelihoodExpression>() {
+            return Ok(expression);
+        }
+        if let Ok(py_amplitude_id) = term.extract::<PyLikelihoodID>() {
+            return Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
+                py_amplitude_id.0,
+            )));
+        }
+        return Err(PyTypeError::new_err(
+            "Item is neither a PyLikelihoodExpression nor a PyLikelihoodID",
+        ));
+    }
+    let mut iter = terms.iter();
+    let Some(first_term) = iter.next() else {
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::Zero));
+    };
+    if let Ok(first_expression) = first_term.extract::<PyLikelihoodExpression>() {
+        let mut summation = first_expression.clone();
+        for term in iter {
+            summation = summation.__add__(term)?;
+        }
+        return Ok(summation);
+    }
+    if let Ok(first_likelihood_id) = first_term.extract::<PyLikelihoodID>() {
+        let mut summation =
+            PyLikelihoodExpression(LikelihoodExpression::Term(first_likelihood_id.0));
+        for term in iter {
+            summation = summation.__add__(term)?;
+        }
+        return Ok(summation);
+    }
+    Err(PyTypeError::new_err(
+        "Elements must be PyLikelihoodExpression or PyLikelihoodID",
+    ))
 }
 
 /// A convenience method to multiply sequences of LikelihoodExpressions
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
-pub fn py_likelihood_product(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-    let mut product = PyLikelihoodExpression(LikelihoodExpression::One);
-    for term in terms.try_iter()? {
-        product = product.__mul__(&term?)?;
+pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
+    if terms.is_empty() {
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::One));
     }
-    Ok(product)
+    if terms.len() == 1 {
+        let term = &terms[0];
+        if let Ok(expression) = term.extract::<PyLikelihoodExpression>() {
+            return Ok(expression);
+        }
+        if let Ok(py_amplitude_id) = term.extract::<PyLikelihoodID>() {
+            return Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
+                py_amplitude_id.0,
+            )));
+        }
+        return Err(PyTypeError::new_err(
+            "Item is neither a PyLikelihoodExpression nor a PyLikelihoodID",
+        ));
+    }
+    let mut iter = terms.iter();
+    let Some(first_term) = iter.next() else {
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::One));
+    };
+    if let Ok(first_expression) = first_term.extract::<PyLikelihoodExpression>() {
+        let mut product = first_expression.clone();
+        for term in iter {
+            product = product.__mul__(term)?;
+        }
+        return Ok(product);
+    }
+    if let Ok(first_likelihood_id) = first_term.extract::<PyLikelihoodID>() {
+        let mut product = PyLikelihoodExpression(LikelihoodExpression::Term(first_likelihood_id.0));
+        for term in iter {
+            product = product.__mul__(term)?;
+        }
+        return Ok(product);
+    }
+    Err(PyTypeError::new_err(
+        "Elements must be PyLikelihoodExpression or PyLikelihoodID",
+    ))
 }
 
 /// A convenience class representing a zero-valued LikelihoodExpression
