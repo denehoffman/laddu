@@ -792,8 +792,13 @@ mod tests {
             }),
         ]);
 
-        #[derive(Clone, Serialize, Deserialize)]
+        #[derive(Clone, Serialize, Deserialize, Debug)]
         struct BeamEnergy;
+        impl Display for BeamEnergy {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "BeamEnergy")
+            }
+        }
         #[typetag::serde]
         impl Variable for BeamEnergy {
             fn value(&self, event: &Event) -> Float {
