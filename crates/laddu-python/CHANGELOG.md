@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/denehoffman/laddu/compare/laddu-python-v0.4.1...laddu-python-v0.4.2) - 2025-03-13
+
+### Added
+
+- add unit-valued `Expression` and define convenience methods for summing and multiplying lists of `Amplitude`s
+- add `Debug` and `Display` to every `Variable` (and require them for new ones)
+
+### Fixed
+
+- improve summation and product methods to only return a Zero or One if the list is empty
+
 ## [0.4.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.4.0...laddu-python-v0.4.1) - 2025-03-04
 
 ### Fixed

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.4.0...laddu-core-v0.5.0) - 2025-03-13
+
+### Added
+
+- display the AmplitudeID's name and ID together
+- add unit-valued `Expression` and define convenience methods for summing and multiplying lists of `Amplitude`s
+- add `Debug` and `Display` to every `Variable` (and require them for new ones)
+
+### Fixed
+
+- update GradientValues in non-default feature branches
+- correct gradients of zero and one by adding the number of parameters into `GradientValues`
+
+### Other
+
+- *(amplitudes)* expand gradient test to cover more complex cases and add tests for zeros, ones, sums and products
+- *(amplitudes)* add test for printing expressions
+- *(variables)* add tests for `Variable` Display impls
+- *(data)* fix tests by implementing Debug/Display for testing variable
+- ignore excessive precision warnings
+
 ## [0.4.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.3.0...laddu-core-v0.4.0) - 2025-02-28
 
 ### Added
