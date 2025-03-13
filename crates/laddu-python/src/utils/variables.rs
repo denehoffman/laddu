@@ -10,7 +10,10 @@ use laddu_core::{
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {
@@ -26,6 +29,31 @@ pub enum PyVariable {
     PolMagnitude(PyPolMagnitude),
     #[pyo3(transparent)]
     Mandelstam(PyMandelstam),
+}
+
+impl Debug for PyVariable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mass(v) => write!(f, "{:?}", v.0),
+            Self::CosTheta(v) => write!(f, "{:?}", v.0),
+            Self::Phi(v) => write!(f, "{:?}", v.0),
+            Self::PolAngle(v) => write!(f, "{:?}", v.0),
+            Self::PolMagnitude(v) => write!(f, "{:?}", v.0),
+            Self::Mandelstam(v) => write!(f, "{:?}", v.0),
+        }
+    }
+}
+impl Display for PyVariable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mass(v) => write!(f, "{}", v.0),
+            Self::CosTheta(v) => write!(f, "{}", v.0),
+            Self::Phi(v) => write!(f, "{}", v.0),
+            Self::PolAngle(v) => write!(f, "{}", v.0),
+            Self::PolMagnitude(v) => write!(f, "{}", v.0),
+            Self::Mandelstam(v) => write!(f, "{}", v.0),
+        }
+    }
 }
 
 /// The invariant mass of an arbitrary combination of constituent particles in an Event
@@ -81,6 +109,12 @@ impl PyMass {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
@@ -179,6 +213,12 @@ impl PyCosTheta {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
@@ -279,6 +319,12 @@ impl PyPhi {
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
 }
 
 /// A Variable used to define both spherical decay angles in the given frame
@@ -353,6 +399,12 @@ impl PyAngles {
     fn phi(&self) -> PyPhi {
         PyPhi(self.0.phi.clone())
     }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
 }
 
 /// The polar angle of the given polarization vector with respect to the production plane
@@ -410,6 +462,12 @@ impl PyPolAngle {
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
 }
 
 /// The magnitude of the given particle's polarization vector
@@ -466,6 +524,12 @@ impl PyPolMagnitude {
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
 }
 
 /// A Variable used to define both the polarization angle and magnitude of the given particle``
@@ -516,6 +580,12 @@ impl PyPolarization {
     #[getter]
     fn pol_angle(&self) -> PyPolAngle {
         PyPolAngle(self.0.pol_angle.clone())
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
@@ -602,6 +672,12 @@ impl PyMandelstam {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
