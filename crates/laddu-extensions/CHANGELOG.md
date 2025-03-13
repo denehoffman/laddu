@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.4.1...laddu-extensions-v0.5.0) - 2025-03-13
+
+### Added
+
+- add the ability to name likelihood terms and convenience methods for null and unit likelihood terms, sums, and products
+
+### Fixed
+
+- update GradientValues in non-default feature branches (missed one)
+- update GradientValues in non-default feature branches
+- correct gradients of zero and one by adding the number of parameters into `GradientValues`
+- improve summation and product methods to only return a Zero or One if the list is empty
+- change `LikelihoodTerm` naming to happen at registration time
+- add python feature gate to likelihood-related methods
+
+### Other
+
+- *(likelihoods)* fix typo in `NLL` documentation
+
 ## [0.4.1](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.4.0...laddu-extensions-v0.4.1) - 2025-03-04
 
 ### Other
