@@ -702,7 +702,7 @@ impl Evaluator {
                                 })
                                 .collect(),
                         ),
-                        GradientValues(gradient_values),
+                        GradientValues(parameters.len(), gradient_values),
                     )
                 })
                 .collect();
