@@ -78,7 +78,7 @@ pub struct PyLikelihoodTerm(pub Box<dyn LikelihoodTerm>);
 pub struct NLL {
     /// The internal [`Evaluator`] for data
     pub data_evaluator: Evaluator,
-    /// The interanl [`Evaluator`] for accepted Monte Carlo
+    /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
 }
 
