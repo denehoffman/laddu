@@ -746,7 +746,7 @@ impl NLL {
                             })
                             .collect(),
                     ),
-                    GradientValues(gradient_values),
+                    GradientValues(parameters.len(), gradient_values),
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -798,7 +798,7 @@ impl NLL {
                             })
                             .collect(),
                     ),
-                    GradientValues(gradient_values),
+                    GradientValues(parameters.len(), gradient_values),
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
