@@ -2,6 +2,7 @@
 //!
 //! This is an internal crate used by `laddu`.
 #![warn(clippy::perf, clippy::style, missing_docs)]
+#![allow(clippy::excessive_precision)]
 
 use bincode::ErrorKind;
 #[cfg(feature = "python")]
