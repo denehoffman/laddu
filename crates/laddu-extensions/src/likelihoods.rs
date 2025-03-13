@@ -80,6 +80,8 @@ pub struct NLL {
     pub data_evaluator: Evaluator,
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
+    /// The (optional) name for this term
+    pub name: Option<String>,
 }
 
 impl NLL {
@@ -89,6 +91,22 @@ impl NLL {
         Self {
             data_evaluator: model.load(ds_data),
             accmc_evaluator: model.load(ds_accmc),
+            name: None,
+        }
+        .into()
+    }
+    /// Construct a named [`NLL`] from a [`Model`] and two [`Dataset`]s (data and Monte Carlo). This is the equivalent of the [`Model::load`] method,
+    /// but for two [`Dataset`]s and a different method of evaluation.
+    pub fn new_named<T: AsRef<str>>(
+        name: T,
+        model: &Model,
+        ds_data: &Arc<Dataset>,
+        ds_accmc: &Arc<Dataset>,
+    ) -> Box<Self> {
+        Self {
+            data_evaluator: model.load(ds_data),
+            accmc_evaluator: model.load(ds_accmc),
+            name: Some(name.as_ref().to_string()),
         }
         .into()
     }
@@ -1138,9 +1156,23 @@ pub struct PyNLL(pub Box<NLL>);
 #[pymethods]
 impl PyNLL {
     #[new]
-    #[pyo3(signature = (model, ds_data, ds_accmc))]
-    fn new(model: &PyModel, ds_data: &PyDataset, ds_accmc: &PyDataset) -> Self {
-        Self(NLL::new(&model.0, &ds_data.0, &ds_accmc.0))
+    #[pyo3(signature = (model, ds_data, ds_accmc, *, name = None))]
+    fn new(
+        model: &PyModel,
+        ds_data: &PyDataset,
+        ds_accmc: &PyDataset,
+        name: Option<String>,
+    ) -> Self {
+        if let Some(term_name) = name {
+            Self(NLL::new_named(
+                &term_name,
+                &model.0,
+                &ds_data.0,
+                &ds_accmc.0,
+            ))
+        } else {
+            Self(NLL::new(&model.0, &ds_data.0, &ds_accmc.0))
+        }
     }
     /// The underlying signal dataset used in calculating the NLL
     ///
@@ -1740,6 +1772,7 @@ impl PyLikelihoodID {
             if int == 0 {
                 Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
                     self.0.clone(),
+                    None,
                 )))
             } else {
                 Err(PyTypeError::new_err(
@@ -1761,6 +1794,7 @@ impl PyLikelihoodID {
             if int == 0 {
                 Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
                     self.0.clone(),
+                    None,
                 )))
             } else {
                 Err(PyTypeError::new_err(
@@ -1929,10 +1963,15 @@ struct LikelihoodValues(Vec<Float>);
 struct LikelihoodGradients(Vec<DVector<Float>>);
 
 /// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum LikelihoodExpression {
+    /// A expression equal to zero.
+    #[default]
+    Zero,
+    /// A expression equal to one.
+    One,
     /// A registered [`LikelihoodTerm`] referenced by an [`LikelihoodID`].
-    Term(LikelihoodID),
+    Term(LikelihoodID, Option<String>),
     /// The sum of two [`LikelihoodExpression`]s.
     Add(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
     /// The product of two [`LikelihoodExpression`]s.
@@ -1954,7 +1993,9 @@ impl Display for LikelihoodExpression {
 impl LikelihoodExpression {
     fn evaluate(&self, likelihood_values: &LikelihoodValues) -> Float {
         match self {
-            LikelihoodExpression::Term(lid) => likelihood_values.0[lid.0],
+            LikelihoodExpression::Zero => 0.0,
+            LikelihoodExpression::One => 1.0,
+            LikelihoodExpression::Term(lid, _) => likelihood_values.0[lid.0],
             LikelihoodExpression::Add(a, b) => {
                 a.evaluate(likelihood_values) + b.evaluate(likelihood_values)
             }
@@ -1969,7 +2010,9 @@ impl LikelihoodExpression {
         likelihood_gradients: &LikelihoodGradients,
     ) -> DVector<Float> {
         match self {
-            LikelihoodExpression::Term(lid) => likelihood_gradients.0[lid.0].clone(),
+            LikelihoodExpression::Zero => DVector::zeros(0),
+            LikelihoodExpression::One => DVector::zeros(0),
+            LikelihoodExpression::Term(lid, _) => likelihood_gradients.0[lid.0].clone(),
             LikelihoodExpression::Add(a, b) => {
                 a.evaluate_gradient(likelihood_values, likelihood_gradients)
                     + b.evaluate_gradient(likelihood_values, likelihood_gradients)
@@ -1991,14 +2034,21 @@ impl LikelihoodExpression {
         parent_suffix: &str,
     ) -> std::fmt::Result {
         let display_string = match self {
-            // TODO: maybe come up with a way to name likelihood terms?
-            Self::Term(lid) => format!("{}", lid.0),
+            Self::Zero => "0".to_string(),
+            Self::One => "1".to_string(),
+            Self::Term(lid, name) => {
+                if let Some(term_name) = name {
+                    format!("{}({})", term_name, lid.0)
+                } else {
+                    format!("{}", lid.0)
+                }
+            }
             Self::Add(_, _) => "+".to_string(),
             Self::Mul(_, _) => "*".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match self {
-            Self::Term(_) => {}
+            Self::Term(_, _) | Self::Zero | Self::One => {}
             Self::Add(a, b) | Self::Mul(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
@@ -2021,21 +2071,21 @@ impl_op_ex!(
         LikelihoodExpression::Mul(Box::new(a.clone()), Box::new(b.clone()))
     }
 );
-impl_op_ex_commutative!(+ |a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(b.clone()))});
+impl_op_ex_commutative!(+ |a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone(), None)), Box::new(b.clone()))});
 impl_op_ex_commutative!(
     *|a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression {
         LikelihoodExpression::Mul(
-            Box::new(LikelihoodExpression::Term(a.clone())),
+            Box::new(LikelihoodExpression::Term(a.clone(), None)),
             Box::new(b.clone()),
         )
     }
 );
-impl_op_ex!(+ |a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(LikelihoodExpression::Term(b.clone())))});
+impl_op_ex!(+ |a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone(), None)), Box::new(LikelihoodExpression::Term(b.clone(), None)))});
 impl_op_ex!(
     *|a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression {
         LikelihoodExpression::Mul(
-            Box::new(LikelihoodExpression::Term(a.clone())),
-            Box::new(LikelihoodExpression::Term(b.clone())),
+            Box::new(LikelihoodExpression::Term(a.clone(), None)),
+            Box::new(LikelihoodExpression::Term(b.clone(), None)),
         )
     }
 );
@@ -2046,6 +2096,42 @@ impl_op_ex!(
 #[pyclass(name = "LikelihoodExpression", module = "laddu")]
 #[derive(Clone)]
 pub struct PyLikelihoodExpression(LikelihoodExpression);
+
+/// A convenience method to sum sequences of LikelihoodExpressions
+///
+#[pyfunction(name = "likelihood_sum")]
+pub fn py_likelihood_sum(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
+    let mut summation = PyLikelihoodExpression(LikelihoodExpression::Zero);
+    for term in terms.try_iter()? {
+        summation = summation.__add__(&term?)?;
+    }
+    Ok(summation)
+}
+
+/// A convenience method to multiply sequences of LikelihoodExpressions
+///
+#[pyfunction(name = "likelihood_product")]
+pub fn py_likelihood_product(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
+    let mut product = PyLikelihoodExpression(LikelihoodExpression::One);
+    for term in terms.try_iter()? {
+        product = product.__mul__(&term?)?;
+    }
+    Ok(product)
+}
+
+/// A convenience class representing a zero-valued LikelihoodExpression
+///
+#[pyfunction(name = "LikelihoodZero")]
+pub fn py_likelihood_zero() -> PyLikelihoodExpression {
+    PyLikelihoodExpression(LikelihoodExpression::Zero)
+}
+
+/// A convenience class representing a unit-valued LikelihoodExpression
+///
+#[pyfunction(name = "LikelihoodOne")]
+pub fn py_likelihood_one() -> PyLikelihoodExpression {
+    PyLikelihoodExpression(LikelihoodExpression::One)
+}
 
 #[cfg(feature = "python")]
 #[pymethods]

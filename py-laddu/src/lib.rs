@@ -113,7 +113,15 @@ mod laddu {
     use laddu_amplitudes::kmatrix::py_kopf_kmatrix_rho;
 
     #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_one;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_product;
+    #[pymodule_export]
     use laddu_extensions::likelihoods::py_likelihood_scalar;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_sum;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_zero;
     #[pymodule_export]
     use laddu_extensions::likelihoods::PyLikelihoodEvaluator;
     #[pymodule_export]
