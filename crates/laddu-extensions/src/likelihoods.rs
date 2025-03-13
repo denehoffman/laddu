@@ -2099,6 +2099,7 @@ pub struct PyLikelihoodExpression(LikelihoodExpression);
 
 /// A convenience method to sum sequences of LikelihoodExpressions
 ///
+#[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
     let mut summation = PyLikelihoodExpression(LikelihoodExpression::Zero);
@@ -2110,6 +2111,7 @@ pub fn py_likelihood_sum(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpre
 
 /// A convenience method to multiply sequences of LikelihoodExpressions
 ///
+#[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
     let mut product = PyLikelihoodExpression(LikelihoodExpression::One);
@@ -2121,6 +2123,7 @@ pub fn py_likelihood_product(terms: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodE
 
 /// A convenience class representing a zero-valued LikelihoodExpression
 ///
+#[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodZero")]
 pub fn py_likelihood_zero() -> PyLikelihoodExpression {
     PyLikelihoodExpression(LikelihoodExpression::Zero)
@@ -2128,6 +2131,7 @@ pub fn py_likelihood_zero() -> PyLikelihoodExpression {
 
 /// A convenience class representing a unit-valued LikelihoodExpression
 ///
+#[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodOne")]
 pub fn py_likelihood_one() -> PyLikelihoodExpression {
     PyLikelihoodExpression(LikelihoodExpression::One)
