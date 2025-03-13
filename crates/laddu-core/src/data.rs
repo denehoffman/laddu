@@ -792,14 +792,20 @@ mod tests {
             }),
         ]);
 
-        #[derive(Clone, Serialize, Deserialize)]
+        #[derive(Clone, Serialize, Deserialize, Debug)]
         struct BeamEnergy;
+        impl Display for BeamEnergy {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "BeamEnergy")
+            }
+        }
         #[typetag::serde]
         impl Variable for BeamEnergy {
             fn value(&self, event: &Event) -> Float {
                 event.p4s[0].e()
             }
         }
+        assert_eq!(BeamEnergy.to_string(), "BeamEnergy");
 
         // Test binning by first particle energy
         let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0));

@@ -55,6 +55,14 @@ mod laddu {
     use laddu_python::data::PyEvent;
 
     #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_one;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_product;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_sum;
+    #[pymodule_export]
+    use laddu_python::amplitudes::py_amplitude_zero;
+    #[pymodule_export]
     use laddu_python::amplitudes::py_constant;
     #[pymodule_export]
     use laddu_python::amplitudes::py_parameter;
@@ -113,7 +121,15 @@ mod laddu {
     use laddu_amplitudes::kmatrix::py_kopf_kmatrix_rho;
 
     #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_one;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_product;
+    #[pymodule_export]
     use laddu_extensions::likelihoods::py_likelihood_scalar;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_sum;
+    #[pymodule_export]
+    use laddu_extensions::likelihoods::py_likelihood_zero;
     #[pymodule_export]
     use laddu_extensions::likelihoods::PyLikelihoodEvaluator;
     #[pymodule_export]

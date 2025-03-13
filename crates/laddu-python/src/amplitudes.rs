@@ -33,6 +33,104 @@ pub struct PyAmplitudeID(AmplitudeID);
 #[derive(Clone)]
 pub struct PyExpression(Expression);
 
+/// A convenience method to sum sequences of Amplitudes
+///
+#[pyfunction(name = "amplitude_sum")]
+pub fn py_amplitude_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
+    if terms.is_empty() {
+        return Ok(PyExpression(Expression::Zero));
+    }
+    if terms.len() == 1 {
+        let term = &terms[0];
+        if let Ok(expression) = term.extract::<PyExpression>() {
+            return Ok(expression);
+        }
+        if let Ok(py_amplitude_id) = term.extract::<PyAmplitudeID>() {
+            return Ok(PyExpression(Expression::Amp(py_amplitude_id.0)));
+        }
+        return Err(PyTypeError::new_err(
+            "Item is neither a PyExpression nor a PyAmplitudeID",
+        ));
+    }
+    let mut iter = terms.iter();
+    let Some(first_term) = iter.next() else {
+        return Ok(PyExpression(Expression::Zero));
+    };
+    if let Ok(first_expression) = first_term.extract::<PyExpression>() {
+        let mut summation = first_expression.clone();
+        for term in iter {
+            summation = summation.__add__(term)?;
+        }
+        return Ok(summation);
+    }
+    if let Ok(first_amplitude_id) = first_term.extract::<PyAmplitudeID>() {
+        let mut summation = PyExpression(Expression::Amp(first_amplitude_id.0));
+        for term in iter {
+            summation = summation.__add__(term)?;
+        }
+        return Ok(summation);
+    }
+    Err(PyTypeError::new_err(
+        "Elements must be PyExpression or PyAmplitudeID",
+    ))
+}
+
+/// A convenience method to multiply sequences of Amplitudes
+///
+#[pyfunction(name = "amplitude_product")]
+pub fn py_amplitude_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
+    if terms.is_empty() {
+        return Ok(PyExpression(Expression::One));
+    }
+    if terms.len() == 1 {
+        let term = &terms[0];
+        if let Ok(expression) = term.extract::<PyExpression>() {
+            return Ok(expression);
+        }
+        if let Ok(py_amplitude_id) = term.extract::<PyAmplitudeID>() {
+            return Ok(PyExpression(Expression::Amp(py_amplitude_id.0)));
+        }
+        return Err(PyTypeError::new_err(
+            "Item is neither a PyExpression nor a PyAmplitudeID",
+        ));
+    }
+    let mut iter = terms.iter();
+    let Some(first_term) = iter.next() else {
+        return Ok(PyExpression(Expression::One));
+    };
+    if let Ok(first_expression) = first_term.extract::<PyExpression>() {
+        let mut product = first_expression.clone();
+        for term in iter {
+            product = product.__mul__(term)?;
+        }
+        return Ok(product);
+    }
+    if let Ok(first_amplitude_id) = first_term.extract::<PyAmplitudeID>() {
+        let mut product = PyExpression(Expression::Amp(first_amplitude_id.0));
+        for term in iter {
+            product = product.__mul__(term)?;
+        }
+        return Ok(product);
+    }
+    Err(PyTypeError::new_err(
+        "Elements must be PyExpression or PyAmplitudeID",
+    ))
+}
+
+/// A convenience class representing a zero-valued Expression
+///
+#[pyfunction(name = "AmplitudeZero")]
+pub fn py_amplitude_zero() -> PyExpression {
+    PyExpression(Expression::Zero)
+}
+
+/// A convenience class representing a unit-valued Expression
+///
+#[pyfunction(name = "AmplitudeOne")]
+pub fn py_amplitude_one() -> PyExpression {
+    PyExpression(Expression::One)
+}
+
 #[pymethods]
 impl PyAmplitudeID {
     /// The real part of a complex Amplitude

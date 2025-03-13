@@ -16,6 +16,19 @@ class MCMCObserver(metaclass=ABCMeta):
     @abstractmethod
     def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]: ...
 
+def likelihood_sum(
+    likelihoods: Sequence[LikelihoodID | LikelihoodExpression]
+    | Sequence[LikelihoodID]
+    | Sequence[LikelihoodExpression],
+) -> LikelihoodExpression: ...
+def likelihood_product(
+    likelihoods: Sequence[LikelihoodID | LikelihoodExpression]
+    | Sequence[LikelihoodID]
+    | Sequence[LikelihoodExpression],
+) -> LikelihoodExpression: ...
+def LikelihoodOne() -> LikelihoodExpression: ...
+def LikelihoodZero() -> LikelihoodExpression: ...
+
 class LikelihoodID:
     def __add__(
         self, other: LikelihoodID | LikelihoodExpression | int
@@ -48,7 +61,9 @@ class LikelihoodTerm: ...
 
 class LikelihoodManager:
     def __init__(self) -> None: ...
-    def register(self, likelihood_term: LikelihoodTerm) -> LikelihoodID: ...
+    def register(
+        self, likelihood_term: LikelihoodTerm, *, name: str | None = None
+    ) -> LikelihoodID: ...
     def load(
         self, likelihood_expression: LikelihoodExpression
     ) -> LikelihoodEvaluator: ...
@@ -223,8 +238,12 @@ __all__ = [
     'LikelihoodExpression',
     'LikelihoodID',
     'LikelihoodManager',
+    'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodTerm',
+    'LikelihoodZero',
     'Status',
     'integrated_autocorrelation_times',
+    'likelihood_product',
+    'likelihood_sum',
 ]

@@ -1,5 +1,14 @@
 from laddu import amplitudes, convert, data, experimental, extensions, mpi, utils
-from laddu.amplitudes import Manager, Model, constant, parameter
+from laddu.amplitudes import (
+    AmplitudeOne,
+    AmplitudeZero,
+    Manager,
+    Model,
+    amplitude_product,
+    amplitude_sum,
+    constant,
+    parameter,
+)
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
@@ -12,10 +21,14 @@ from laddu.extensions import (
     AutocorrelationObserver,
     Ensemble,
     LikelihoodManager,
+    LikelihoodOne,
+    LikelihoodZero,
     MCMCObserver,
     Observer,
     Status,
     integrated_autocorrelation_times,
+    likelihood_product,
+    likelihood_sum,
 )
 from laddu.utils.variables import (
     Angles,
@@ -33,6 +46,8 @@ __version__: str
 
 __all__ = [
     'NLL',
+    'AmplitudeOne',
+    'AmplitudeZero',
     'Angles',
     'AutocorrelationObserver',
     'BinnedDataset',
@@ -43,6 +58,8 @@ __all__ = [
     'Ensemble',
     'Event',
     'LikelihoodManager',
+    'LikelihoodOne',
+    'LikelihoodZero',
     'MCMCObserver',
     'Manager',
     'Mandelstam',
@@ -62,6 +79,8 @@ __all__ = [
     'Ylm',
     'Zlm',
     '__version__',
+    'amplitude_product',
+    'amplitude_sum',
     'amplitudes',
     'constant',
     'convert',
@@ -70,6 +89,8 @@ __all__ = [
     'experimental',
     'extensions',
     'integrated_autocorrelation_times',
+    'likelihood_product',
+    'likelihood_sum',
     'mpi',
     'open',
     'open_amptools',

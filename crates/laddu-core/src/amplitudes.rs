@@ -193,7 +193,7 @@ pub struct AmplitudeValues(pub Vec<Complex<Float>>);
 
 /// A helper struct that contains the gradient of each amplitude for a particular event
 #[derive(Debug)]
-pub struct GradientValues(pub Vec<DVector<Complex<Float>>>);
+pub struct GradientValues(pub usize, pub Vec<DVector<Complex<Float>>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
@@ -202,7 +202,7 @@ pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
 impl Display for AmplitudeID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}(id={})", self.0, self.1)
     }
 }
 
@@ -218,6 +218,8 @@ pub enum Expression {
     #[default]
     /// A expression equal to zero.
     Zero,
+    /// A expression equal to one.
+    One,
     /// A registered [`Amplitude`] referenced by an [`AmplitudeID`].
     Amp(AmplitudeID),
     /// The sum of two [`Expression`]s.
@@ -289,6 +291,7 @@ impl Expression {
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
             Expression::Zero => Complex::ZERO,
+            Expression::One => Complex::ONE,
         }
     }
     /// Evaluate the gradient of an [`Expression`] over a single event using calculated [`AmplitudeValues`]
@@ -301,7 +304,7 @@ impl Expression {
         gradient_values: &GradientValues,
     ) -> DVector<Complex<Float>> {
         match self {
-            Expression::Amp(aid) => gradient_values.0[aid.1].clone(),
+            Expression::Amp(aid) => gradient_values.1[aid.1].clone(),
             Expression::Add(a, b) => {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     + b.evaluate_gradient(amplitude_values, gradient_values)
@@ -325,7 +328,7 @@ impl Expression {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
             }
-            Expression::Zero => DVector::zeros(0),
+            Expression::Zero | Expression::One => DVector::zeros(gradient_values.0),
         }
     }
     /// Takes the real part of the given [`Expression`].
@@ -350,17 +353,18 @@ impl Expression {
         parent_suffix: &str,
     ) -> std::fmt::Result {
         let display_string = match self {
-            Self::Amp(aid) => aid.0.clone(),
+            Self::Amp(aid) => aid.to_string(),
             Self::Add(_, _) => "+".to_string(),
             Self::Mul(_, _) => "*".to_string(),
             Self::Real(_) => "Re".to_string(),
             Self::Imag(_) => "Im".to_string(),
             Self::NormSqr(_) => "NormSqr".to_string(),
             Self::Zero => "0".to_string(),
+            Self::One => "1".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match self {
-            Self::Amp(_) | Self::Zero => {}
+            Self::Amp(_) | Self::Zero | Self::One => {}
             Self::Add(a, b) | Self::Mul(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
@@ -653,7 +657,7 @@ impl Evaluator {
                                 })
                                 .collect(),
                         ),
-                        GradientValues(gradient_values),
+                        GradientValues(parameters.len(), gradient_values),
                     )
                 })
                 .collect();
@@ -698,7 +702,7 @@ impl Evaluator {
                                 })
                                 .collect(),
                         ),
-                        GradientValues(gradient_values),
+                        GradientValues(parameters.len(), gradient_values),
                     )
                 })
                 .collect();
@@ -980,18 +984,102 @@ mod tests {
     #[test]
     fn test_gradient() {
         let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
+        let amp1 = ComplexScalar::new(
+            "parametric_1",
+            parameter("test_param_re_1"),
+            parameter("test_param_im_1"),
+        );
+        let amp2 = ComplexScalar::new(
+            "parametric_2",
+            parameter("test_param_re_2"),
+            parameter("test_param_im_2"),
+        );
 
+        let aid1 = manager.register(amp1).unwrap();
+        let aid2 = manager.register(amp2).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let params = vec![2.0, 3.0, 4.0, 5.0];
+
+        let expr = &aid1 * &aid2;
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, 5.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, 4.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, 3.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, 2.0);
+
+        let expr = (&aid1 * &aid2).real();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
+
+        let expr = (&aid1 * &aid2).imag();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 5.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 4.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 3.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 2.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
+
+        let expr = (&aid1 * &aid2).norm_sqr();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 164.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 246.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+        assert_relative_eq!(gradient[0][2].re, 104.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 130.0);
+        assert_relative_eq!(gradient[0][3].im, 0.0);
+    }
+
+    #[test]
+    fn test_zeros_and_ones() {
+        let mut manager = Manager::default();
+        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
         let aid = manager.register(amp).unwrap();
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr();
+        let expr = (aid * Expression::One + Expression::Zero).norm_sqr();
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
 
         let params = vec![2.0];
+        let value = evaluator.evaluate(&params);
         let gradient = evaluator.evaluate_gradient(&params);
 
-        // For |f(x)|^2 where f(x) = x, the derivative should be 2x
+        // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the value should be x^2 + 4
+        assert_relative_eq!(value[0].re, 8.0);
+        assert_relative_eq!(value[0].im, 0.0);
+
+        // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
     }
@@ -1018,5 +1106,44 @@ mod tests {
         let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0));
         manager.register(amp1).unwrap();
         assert!(manager.register(amp2).is_err());
+    }
+
+    #[test]
+    fn test_tree_printing() {
+        let mut manager = Manager::default();
+        let amp1 = ComplexScalar::new(
+            "parametric_1",
+            parameter("test_param_re_1"),
+            parameter("test_param_im_1"),
+        );
+        let amp2 = ComplexScalar::new(
+            "parametric_2",
+            parameter("test_param_re_2"),
+            parameter("test_param_im_2"),
+        );
+        let aid1 = manager.register(amp1).unwrap();
+        let aid2 = manager.register(amp2).unwrap();
+        let expr = &aid1.real()
+            + &aid2.imag()
+            + Expression::One * Expression::Zero
+            + (&aid1 * &aid2).norm_sqr();
+        assert_eq!(
+            expr.to_string(),
+            "+
+├─ +
+│  ├─ +
+│  │  ├─ Re
+│  │  │  └─ parametric_1(id=0)
+│  │  └─ Im
+│  │     └─ parametric_2(id=1)
+│  └─ *
+│     ├─ 1
+│     └─ 0
+└─ NormSqr
+   └─ *
+      ├─ parametric_1(id=0)
+      └─ parametric_2(id=1)
+"
+        );
     }
 }

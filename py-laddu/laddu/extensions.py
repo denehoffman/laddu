@@ -11,10 +11,14 @@ from laddu.laddu import (
     LikelihoodExpression,
     LikelihoodID,
     LikelihoodManager,
+    LikelihoodOne,
     LikelihoodScalar,
     LikelihoodTerm,
+    LikelihoodZero,
     Status,
     integrated_autocorrelation_times,
+    likelihood_product,
+    likelihood_sum,
 )
 
 
@@ -39,10 +43,14 @@ __all__ = [
     'LikelihoodExpression',
     'LikelihoodID',
     'LikelihoodManager',
+    'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodTerm',
+    'LikelihoodZero',
     'MCMCObserver',
     'Observer',
     'Status',
     'integrated_autocorrelation_times',
+    'likelihood_product',
+    'likelihood_sum',
 ]

@@ -1,6 +1,9 @@
 use dyn_clone::DynClone;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -20,7 +23,7 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// Standard methods for extracting some value out of an [`Event`].
 #[typetag::serde(tag = "type")]
-pub trait Variable: DynClone + Send + Sync {
+pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
     fn value(&self, event: &Event) -> Float;
 
@@ -73,6 +76,21 @@ pub trait Variable: DynClone + Send + Sync {
 }
 dyn_clone::clone_trait_object!(Variable);
 
+fn sort_indices<T: AsRef<[usize]>>(indices: T) -> Vec<usize> {
+    let mut indices = indices.as_ref().to_vec();
+    indices.sort();
+    indices
+}
+
+fn indices_to_string<T: AsRef<[usize]>>(indices: T) -> String {
+    indices
+        .as_ref()
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// A struct for obtaining the mass of a particle by indexing the four-momenta of an event, adding
 /// together multiple four-momenta if more than one index is given.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,7 +99,12 @@ impl Mass {
     /// Create a new [`Mass`] from the sum of the four-momenta at the given indices in the
     /// [`Event`]'s `p4s` field.
     pub fn new<T: AsRef<[usize]>>(constituents: T) -> Self {
-        Self(constituents.as_ref().into())
+        Self(sort_indices(constituents))
+    }
+}
+impl Display for Mass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Mass(constituents=[{}])", indices_to_string(&self.0))
     }
 }
 #[typetag::serde]
@@ -100,6 +123,19 @@ pub struct CosTheta {
     daughter: Vec<usize>,
     resonance: Vec<usize>,
     frame: Frame,
+}
+impl Display for CosTheta {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "CosTheta(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
+            self.beam,
+            indices_to_string(&self.recoil),
+            indices_to_string(&self.daughter),
+            indices_to_string(&self.resonance),
+            self.frame
+        )
+    }
 }
 impl CosTheta {
     /// Construct the angle given the four-momentum indices for each specified particle. Fields
@@ -180,6 +216,19 @@ pub struct Phi {
     resonance: Vec<usize>,
     frame: Frame,
 }
+impl Display for Phi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Phi(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
+            self.beam,
+            indices_to_string(&self.recoil),
+            indices_to_string(&self.daughter),
+            indices_to_string(&self.resonance),
+            self.frame
+        )
+    }
+}
 impl Phi {
     /// Construct the angle given the four-momentum indices for each specified particle. Fields
     /// which can take lists of more than one index will add the relevant four-momenta to make a
@@ -258,6 +307,19 @@ pub struct Angles {
     pub phi: Phi,
 }
 
+impl Display for Angles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Angles(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
+            self.costheta.beam,
+            indices_to_string(&self.costheta.recoil),
+            indices_to_string(&self.costheta.daughter),
+            indices_to_string(&self.costheta.resonance),
+            self.costheta.frame
+        )
+    }
+}
 impl Angles {
     /// Construct the angles given the four-momentum indices for each specified particle. Fields
     /// which can take lists of more than one index will add the relevant four-momenta to make a
@@ -289,6 +351,17 @@ pub struct PolAngle {
     beam: usize,
     recoil: Vec<usize>,
     beam_polarization: usize,
+}
+impl Display for PolAngle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PolAngle(beam={}, recoil=[{}], beam_polarization={})",
+            self.beam,
+            indices_to_string(&self.recoil),
+            self.beam_polarization,
+        )
+    }
 }
 impl PolAngle {
     /// Constructs the polarization angle given the four-momentum indices for each specified
@@ -322,7 +395,15 @@ impl Variable for PolAngle {
 pub struct PolMagnitude {
     beam_polarization: usize,
 }
-
+impl Display for PolMagnitude {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PolMagnitude(beam_polarization={})",
+            self.beam_polarization,
+        )
+    }
+}
 impl PolMagnitude {
     /// Constructs the polarization magnitude given the four-momentum index for the beam.
     pub fn new(beam_polarization: usize) -> Self {
@@ -344,7 +425,17 @@ pub struct Polarization {
     /// See [`PolAngle`].
     pub pol_angle: PolAngle,
 }
-
+impl Display for Polarization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Polarization(beam={}, recoil=[{}], beam_polarization={})",
+            self.pol_angle.beam,
+            indices_to_string(&self.pol_angle.recoil),
+            self.pol_angle.beam_polarization,
+        )
+    }
+}
 impl Polarization {
     /// Constructs the polarization angle and magnitude given the four-momentum indices for
     /// the beam and target (recoil) particle. Fields which can take lists of more than one index will add
@@ -375,6 +466,19 @@ pub struct Mandelstam {
     p4: Vec<usize>,
     missing: Option<u8>,
     channel: Channel,
+}
+impl Display for Mandelstam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Mandelstam(p1=[{}], p2=[{}], p3=[{}], p4=[{}], channel={})",
+            indices_to_string(&self.p1),
+            indices_to_string(&self.p2),
+            indices_to_string(&self.p3),
+            indices_to_string(&self.p4),
+            self.channel,
+        )
+    }
 }
 impl Mandelstam {
     /// Constructs the Mandelstam variable for the given `channel` and particles.
@@ -496,6 +600,12 @@ mod tests {
     }
 
     #[test]
+    fn test_mass_display() {
+        let mass = Mass::new([2, 3]);
+        assert_eq!(mass.to_string(), "Mass(constituents=[2, 3])");
+    }
+
+    #[test]
     fn test_costheta_helicity() {
         let event = test_event();
         let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
@@ -507,6 +617,15 @@ mod tests {
     }
 
     #[test]
+    fn test_costheta_display() {
+        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            costheta.to_string(),
+            "CosTheta(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+        );
+    }
+
+    #[test]
     fn test_phi_helicity() {
         let event = test_event();
         let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
@@ -514,6 +633,15 @@ mod tests {
             phi.value(&event),
             -2.65746258,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_phi_display() {
+        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            phi.to_string(),
+            "Phi(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
         );
     }
 
@@ -556,6 +684,15 @@ mod tests {
     }
 
     #[test]
+    fn test_angles_display() {
+        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        assert_eq!(
+            angles.to_string(),
+            "Angles(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+        );
+    }
+
+    #[test]
     fn test_pol_angle() {
         let event = test_event();
         let pol_angle = PolAngle::new(0, vec![1], 0);
@@ -567,6 +704,15 @@ mod tests {
     }
 
     #[test]
+    fn test_pol_angle_display() {
+        let pol_angle = PolAngle::new(0, vec![1], 0);
+        assert_eq!(
+            pol_angle.to_string(),
+            "PolAngle(beam=0, recoil=[1], beam_polarization=0)"
+        );
+    }
+
+    #[test]
     fn test_pol_magnitude() {
         let event = test_event();
         let pol_magnitude = PolMagnitude::new(0);
@@ -574,6 +720,15 @@ mod tests {
             pol_magnitude.value(&event),
             0.38562805,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_pol_magnitude_display() {
+        let pol_magnitude = PolMagnitude::new(0);
+        assert_eq!(
+            pol_magnitude.to_string(),
+            "PolMagnitude(beam_polarization=0)"
         );
     }
 
@@ -590,6 +745,15 @@ mod tests {
             polarization.pol_magnitude.value(&event),
             0.38562805,
             epsilon = Float::EPSILON.sqrt()
+        );
+    }
+
+    #[test]
+    fn test_polarization_display() {
+        let polarization = Polarization::new(0, vec![1], 0);
+        assert_eq!(
+            polarization.to_string(),
+            "Polarization(beam=0, recoil=[1], beam_polarization=0)"
         );
     }
 
@@ -630,6 +794,15 @@ mod tests {
         );
         // Note: not very accurate, but considering the values in test_event only go to about 3
         // decimal places, this is probably okay
+    }
+
+    #[test]
+    fn test_mandelstam_display() {
+        let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
+        assert_eq!(
+            s.to_string(),
+            "Mandelstam(p1=[0], p2=[], p3=[2, 3], p4=[1], channel=s)"
+        );
     }
 
     #[test]
