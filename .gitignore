@@ -193,3 +193,5 @@ src/main.rs
 *.perf.*
 perf.*
 *.pkl
+
+.bacon-locations
