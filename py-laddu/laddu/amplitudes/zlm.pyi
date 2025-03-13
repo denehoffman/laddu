@@ -48,3 +48,12 @@ def Zlm(
     angles: Angles,
     polarization: Polarization,
 ) -> Amplitude: ...
+@overload
+def Zlm(
+    name: str,
+    l: int,
+    m: int,
+    r: str,
+    angles: Angles,
+    polarization: Polarization,
+) -> Amplitude: ...
