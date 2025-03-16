@@ -927,7 +927,10 @@ pub mod py_ganesh {
                     .0
                     .bind(py)
                     .call_method("callback", (step, PyStatus(status.clone())), None)
-                    .unwrap();
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -962,7 +965,10 @@ pub mod py_ganesh {
                     .0
                     .bind(py)
                     .call_method("callback", (step, PyStatus(status.clone())), None)
-                    .unwrap();
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -995,7 +1001,10 @@ pub mod py_ganesh {
                     .0
                     .bind(py)
                     .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
-                    .unwrap();
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -1031,7 +1040,10 @@ pub mod py_ganesh {
                     .0
                     .bind(py)
                     .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
-                    .unwrap();
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
