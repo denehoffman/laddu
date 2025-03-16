@@ -924,14 +924,13 @@ pub mod py_ganesh {
         fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
             let (new_status, result) = Python::with_gil(|py| {
                 let res = self
-                .0
-                .bind(py)
-                .call_method(
-                    "callback",
-                    (step, PyStatus(status.clone())),
-                    None,
-                )
-                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PyStatus(status.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -963,14 +962,13 @@ pub mod py_ganesh {
         ) -> bool {
             let (new_status, result) = Python::with_gil(|py| {
                 let res = self
-                .0
-                .bind(py)
-                .call_method(
-                    "callback",
-                    (step, PyStatus(status.clone())),
-                    None,
-                )
-                .expect("Observer does not have a \"callback(step: int, status: laddu.Status) -> tuple[laddu.Status, bool]\" method!");
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PyStatus(status.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -1000,14 +998,13 @@ pub mod py_ganesh {
         fn callback(&mut self, step: usize, ensemble: &mut Ensemble, _user_data: &mut ()) -> bool {
             let (new_ensemble, result) = Python::with_gil(|py| {
                 let res = self
-                .0
-                .bind(py)
-                .call_method(
-                    "callback",
-                    (step, PyEnsemble(ensemble.clone())),
-                    None,
-                )
-                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
@@ -1040,14 +1037,13 @@ pub mod py_ganesh {
         ) -> bool {
             let (new_ensemble, result) = Python::with_gil(|py| {
                 let res = self
-                .0
-                .bind(py)
-                .call_method(
-                    "callback",
-                    (step, PyEnsemble(ensemble.clone())),
-                    None,
-                )
-                .expect("MCMCObserver does not have a \"callback(step: int, status: laddu.Ensemble) -> tuple[laddu.Ensemble, bool]\" method!");
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
                 let res_tuple = res
                     .downcast::<PyTuple>()
                     .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
