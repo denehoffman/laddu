@@ -11,14 +11,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version", "license", "description", "readme"]
-dependencies = [
-  "numpy",
-  "docopt-ng",
-  "loguru",
-  "pandas",
-  "uproot",
-  "fastparquet",
-]
+dependencies = ["numpy", "docopt-ng", "pyarrow", "uproot", "fastparquet"]
 
 [project.urls]
 Documentation = "https://laddu.readthedocs.io/en/stable/"
