@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 import pyarrow as pa
-
+import pyarrow.parquet as pq
 import uproot
 from docopt import docopt
 
@@ -65,7 +65,7 @@ def read_root_file(
         list(tree['Pz_FinalState'].array(library='np', entry_stop=num_entries))
     )
 
-    p4_beam = (np.stack([Px_beam, Py_beam, Pz_beam, E_beam], axis=-1),)
+    p4_beam = np.stack([Px_beam, Py_beam, Pz_beam, E_beam], axis=-1)
     p4_final = np.stack([Px_final, Py_final, Pz_final, E_final], axis=-1)
 
     if 'EPS' in tree:
@@ -76,9 +76,9 @@ def read_root_file(
         eps = eps[:, np.newaxis, :]
     elif pol_in_beam:
         eps = np.stack([Px_beam, Py_beam, Pz_beam], axis=-1)[:, np.newaxis]
-        p4_beam[:, 0] = 0  # Set Px to 0 # pyright: ignore[reportIndexIssue]
-        p4_beam[:, 1] = 0  # Set Py to 0 # pyright: ignore[reportIndexIssue]
-        p4_beam[:, 2] = E_beam  # Set Pz = E for beam # pyright: ignore[reportIndexIssue]
+        p4_beam[:, 0] = 0  # Set Px to 0
+        p4_beam[:, 1] = 0  # Set Py to 0
+        p4_beam[:, 2] = E_beam  # Set Pz = E for beam
     elif pol_angle_rad is not None and pol_magnitude is not None:
         eps_x = pol_magnitude * np.cos(pol_angle_rad) * np.ones_like(E_beam)
         eps_y = pol_magnitude * np.sin(pol_angle_rad) * np.ones_like(E_beam)
@@ -87,7 +87,7 @@ def read_root_file(
     else:
         eps = np.zeros((len(E_beam), 1, 3), dtype=np.float32)  # Default to 0
 
-    p4s = np.concatenate([p4_beam[:, np.newaxis, :], p4_final], axis=1)  # pyright: ignore[reportCallIssue, reportArgumentType]
+    p4s = np.concatenate([p4_beam[:, np.newaxis, :], p4_final], axis=1)
 
     return p4s.astype(np.float32), eps.astype(np.float32), weight
 
@@ -115,7 +115,7 @@ def save_as_parquet(
     columns['weight'] = weight
 
     data = pa.table(columns)
-    pa.write_table(data, str(output_path))
+    pq.write_table(data, str(output_path))
 
 
 def convert_from_amptools(
