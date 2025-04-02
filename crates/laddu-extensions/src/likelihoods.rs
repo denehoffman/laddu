@@ -1209,7 +1209,7 @@ impl PyNLL {
         }
         Ok(())
     }
-    /// Activates all Amplitudes in the JNLL
+    /// Activates all Amplitudes in the NLL
     ///
     fn activate_all(&self) {
         self.0.activate_all();
