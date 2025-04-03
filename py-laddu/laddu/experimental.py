@@ -1,3 +1,3 @@
-from laddu.laddu import BinnedGuideTerm
+from laddu.laddu import BinnedGuideTerm, Regularizer
 
-__all__ = ['BinnedGuideTerm']
+__all__ = ['BinnedGuideTerm', 'Regularizer']
