@@ -1328,8 +1328,9 @@ pub mod py_ganesh {
                 Arc<RwLock<dyn ganesh::observers::MCMCObserver<ThreadPool>>>,
             > = Vec::default();
             #[cfg(not(feature = "rayon"))]
-            let mut observers: Vec<Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<()>>>> =
-                Vec::default();
+            let mut observers: Vec<
+                Arc<RwLock<dyn ganesh::observers::MCMCObserver<()>>>,
+            > = Vec::default();
             if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
                 if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
                     for item in observer_list.iter() {
