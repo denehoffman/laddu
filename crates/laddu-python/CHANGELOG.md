@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.5.0...laddu-python-v0.5.1) - 2025-04-04
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.4.2](https://github.com/denehoffman/laddu/compare/laddu-python-v0.4.1...laddu-python-v0.4.2) - 2025-03-13
 
 ### Added
