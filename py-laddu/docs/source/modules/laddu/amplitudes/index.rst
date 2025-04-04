@@ -14,5 +14,6 @@ amplitudes
    piecewise
    ylm
    zlm
+   phase_space
    breit_wigner
    kmatrix

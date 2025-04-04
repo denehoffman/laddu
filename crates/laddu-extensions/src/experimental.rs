@@ -324,7 +324,7 @@ impl LikelihoodTerm for Regularizer<2> {
 ///
 /// This can be interpreted as a prior of the form
 ///
-/// .. math:: f(\vec{x}) = \frac{p\lambda^{1/p}}{2\Gamma(1/p)}e^{-\frac{\lambda|\vec{x}|^p}}
+/// .. math:: f(\vec{x}) = \frac{p\lambda^{1/p}}{2\Gamma(1/p)}e^{-\lambda|\vec{x}|^p}
 ///
 /// which becomes a Laplace distribution for :math:`p=1` and a Gaussian for :math:`p=2`. These are commonly
 /// interpreted as :math:`\ell_p` regularizers for linear regression models, with :math:`p=1` and :math:`p=2`

@@ -134,8 +134,6 @@ impl Amplitude for PhaseSpaceFactor {
 /// -----
 /// This amplitude is described in Equation A4 of [Mathieu]_
 ///
-/// .. [Mathieu] Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in :math:`\eta\pi^0` photoproduction at GlueX. Physical Review D, 100(5). `doi:10.1103/physrevd.100.054017 <https://doi.org/10.1103/PhysRevD.100.054017>`_
-///
 #[cfg(feature = "python")]
 #[pyfunction(name = "PhaseSpaceFactor")]
 pub fn py_phase_space_factor(
