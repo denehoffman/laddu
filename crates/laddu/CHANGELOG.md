@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/denehoffman/laddu/compare/laddu-v0.5.1...laddu-v0.5.2) - 2025-04-04
+
+### Added
+
+- add experimental Regularizer likelihood term
+- update ganesh, numpy, and pyo3
+
+### Fixed
+
+- more fixes for newest ganesh version
+- missed a changed path in some ganesh code hidden behind a feature gate
+
+### Other
+
+- fix some citations and equations, and add phase_space to the API listing
+- Merge pull request #65 from denehoffman/quality-of-life
+
 ## [0.5.1](https://github.com/denehoffman/laddu/compare/laddu-v0.5.0...laddu-v0.5.1) - 2025-03-16
 
 ### Fixed

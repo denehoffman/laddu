@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/denehoffman/laddu/compare/laddu-core-v0.5.0...laddu-core-v0.5.1) - 2025-04-04
+
+### Fixed
+
+- more fixes for newest ganesh version
+
 ## [0.5.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.4.0...laddu-core-v0.5.0) - 2025-03-13
 
 ### Added
