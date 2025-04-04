@@ -1,3 +1,5 @@
+from typing import Literal
+
 import numpy.typing as npt
 
 from laddu.extensions import NLL, LikelihoodTerm
@@ -12,5 +14,11 @@ def BinnedGuideTerm(
     count_sets: list[list[float]] | list[npt.NDArray],
     error_sets: list[list[float]] | list[npt.NDArray] | None,
 ) -> LikelihoodTerm: ...
+def Regularizer(
+    parameters: list[str],
+    lda: float,
+    p: Literal[1, 2],
+    weights: npt.NDArray | None = None,
+) -> LikelihoodTerm: ...
 
-__all__ = ['BinnedGuideTerm']
+__all__ = ['BinnedGuideTerm', 'Regularizer']

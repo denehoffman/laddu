@@ -1,3 +1,4 @@
+use laddu_core::LadduError;
 use laddu_core::{traits::Variable, utils::histogram, DVector, Float};
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
@@ -6,6 +7,8 @@ use crate::{likelihoods::LikelihoodTerm, NLL};
 use crate::likelihoods::{PyLikelihoodTerm, PyNLL};
 #[cfg(feature = "python")]
 use laddu_python::utils::variables::PyVariable;
+#[cfg(feature = "python")]
+use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
@@ -202,4 +205,185 @@ pub fn py_binned_guide_term(
         &count_sets,
         error_sets.as_deref(),
     )))
+}
+
+/// A weighted regularization term.
+///
+/// This can be interpreted as a prior of the form
+///
+/// ```math
+/// f(\vec{x}) = \frac{p\lambda^{1/p}}{2\Gamma(1/p)}e^{-\frac{\lambda|\vec{x}|^p}}
+/// ```
+/// which becomes a Laplace distribution for $`p=1`$ and a Gaussian for $`p=2`$. These are commonly
+/// interpreted as $`\ell_p`$ regularizers for linear regression models, with $`p=1`$ and $`p=2`$
+/// corresponding to LASSO and ridge regression, respectively. When used in nonlinear regression,
+/// these should be interpeted as the prior listed above when used in maximum a posteriori (MAP)
+/// estimation. Explicitly, when the logarithm is taken, this term becomes
+///
+/// ```math
+/// \lambda \left(\sum_{j} w_j |x_j|^p\right)^{1/p}
+/// ```
+/// plus some additional constant terms which do not depend on free parameters.
+///
+/// Weights can be specified to vary the influence of each parameter used in the regularization.
+/// These weights are typically assigned by first fitting without a regularization term to obtain
+/// parameter values $`\vec{\beta}`$, choosing a value $`\gamma>0`$, and setting the weights to
+/// $`\vec{w} = 1/|\vec{\beta}|^\gamma`$ according to a paper by Zou[^1].
+///
+/// [^1]: [Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties. In Journal of the American Statistical Association (Vol. 101, Issue 476, pp. 1418–1429). Informa UK Limited.](https://doi.org/10.1198/016214506000000735)
+#[derive(Clone)]
+pub struct Regularizer<const P: usize> {
+    parameters: Vec<String>,
+    lambda: Float,
+    weights: Vec<Float>,
+}
+
+impl<const P: usize> Regularizer<P> {
+    /// Create a new [`Regularizer`] term from a list of parameter names, a nonnegative
+    /// regularization parameter $`\lambda`$, and an optional list of weights which scale the
+    /// influence of each parameter in the regularization term. If not set, the weights will
+    /// default to unity.
+    ///
+    /// # Errors
+    ///
+    /// This method will return a [`LadduError`] if the number of parameters and weights are not equal.
+    pub fn new<T, U, F>(
+        parameters: T,
+        lambda: Float,
+        weights: Option<F>,
+    ) -> Result<Box<Self>, LadduError>
+    where
+        T: IntoIterator<Item = U>,
+        U: AsRef<str>,
+        F: AsRef<[Float]>,
+    {
+        let parameters: Vec<String> = parameters
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .collect();
+        let weights: Vec<Float> = weights
+            .as_ref()
+            .map_or(vec![1.0; parameters.len()].as_ref(), AsRef::as_ref)
+            .to_vec();
+        if parameters.len() != weights.len() {
+            return Err(LadduError::Custom(
+                "The number of parameters and weights must be equal".into(),
+            ));
+        }
+        Ok(Self {
+            parameters: parameters.clone(),
+            lambda,
+            weights,
+        }
+        .into())
+    }
+}
+
+impl LikelihoodTerm for Regularizer<1> {
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        self.lambda * parameters.iter().map(|p| p.abs()).sum::<Float>()
+    }
+
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        DVector::from_vec(
+            parameters
+                .iter()
+                .zip(self.weights.iter())
+                .map(|(p, w)| w * p.signum())
+                .collect(),
+        )
+        .scale(self.lambda)
+    }
+
+    fn parameters(&self) -> Vec<String> {
+        self.parameters.clone()
+    }
+}
+
+impl LikelihoodTerm for Regularizer<2> {
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<Float>().sqrt()
+    }
+
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        let denom = parameters
+            .iter()
+            .zip(self.weights.iter())
+            .map(|(p, w)| w * p.powi(2))
+            .sum::<Float>()
+            .sqrt();
+        DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom)
+    }
+
+    fn parameters(&self) -> Vec<String> {
+        self.parameters.clone()
+    }
+}
+
+/// An weighted :math:`\ell_p` regularization term which acts as a maximum a posteriori (MAP) prior.
+///
+/// This can be interpreted as a prior of the form
+///
+/// .. math:: f(\vec{x}) = \frac{p\lambda^{1/p}}{2\Gamma(1/p)}e^{-\lambda|\vec{x}|^p}
+///
+/// which becomes a Laplace distribution for :math:`p=1` and a Gaussian for :math:`p=2`. These are commonly
+/// interpreted as :math:`\ell_p` regularizers for linear regression models, with :math:`p=1` and :math:`p=2`
+/// corresponding to LASSO and ridge regression, respectively. When used in nonlinear regression,
+/// these should be interpeted as the prior listed above when used in maximum a posteriori (MAP)
+/// estimation. Explicitly, when the logarithm is taken, this term becomes
+///
+/// .. math:: \lambda \left(\sum_{j} w_j |x_j|^p\right)^{1/p}
+///
+/// plus some additional constant terms which do not depend on free parameters.
+///
+/// Weights can be specified to vary the influence of each parameter used in the regularization.
+/// These weights are typically assigned by first fitting without a regularization term to obtain
+/// parameter values :math:`\vec{\beta}`, choosing a value :math:`\gamma>0`, and setting the weights to
+/// :math:`\vec{w} = 1/|\vec{\beta}|^\gamma` according to [Zou]_.
+///
+/// .. [Zou] Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties. In Journal of the American Statistical Association (Vol. 101, Issue 476, pp. 1418–1429). Informa UK Limited. doi:10.1198/016214506000000735
+///
+/// Parameters
+/// ----------
+/// parameters : list of str
+///     The names of the parameters to regularize
+/// lda : float
+///     The regularization parameter :math:`\lambda`
+/// p : {1, 2}
+///     The degree of the norm :math:`\ell_p`
+/// weights : list of float, optional
+///     Weights to apply in the regularization to each parameter
+///
+/// Raises
+/// ------
+/// ValueError
+///     If :math:`p` is not 1 or 2
+/// Exception
+///     If the number of parameters and weights is not equal
+///
+/// Returns
+/// -------
+/// LikelihoodTerm
+///
+#[cfg(feature = "python")]
+#[pyfunction(name = "Regularizer", signature = (parameters, lda, p=1, weights=None))]
+pub fn py_regularizer(
+    parameters: Vec<String>,
+    lda: Float,
+    p: usize,
+    weights: Option<Vec<Float>>,
+) -> PyResult<PyLikelihoodTerm> {
+    if p == 1 {
+        Ok(PyLikelihoodTerm(Regularizer::<1>::new(
+            parameters, lda, weights,
+        )?))
+    } else if p == 2 {
+        Ok(PyLikelihoodTerm(Regularizer::<2>::new(
+            parameters, lda, weights,
+        )?))
+    } else {
+        Err(PyValueError::new_err(
+            "'Regularizer' only supports p = 1 or 2",
+        ))
+    }
 }

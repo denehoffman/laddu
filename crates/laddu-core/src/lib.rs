@@ -280,7 +280,7 @@ pub use amplitudes::{
 };
 
 // Re-exports
-pub use ganesh::{mcmc::Ensemble, Bound, Status};
+pub use ganesh::{Bound, Ensemble, Status};
 pub use nalgebra::DVector;
 pub use num::Complex;
 

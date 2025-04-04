@@ -3,9 +3,9 @@ use std::sync::Arc;
 use fastrand::Rng;
 use ganesh::{
     algorithms::LBFGSB,
-    mcmc::{aies::WeightedAIESMove, ess::WeightedESSMove, MCMCAlgorithm, MCMCObserver, AIES, ESS},
-    observers::{DebugMCMCObserver, DebugObserver},
-    Algorithm, Observer, Status,
+    observers::{DebugMCMCObserver, DebugObserver, MCMCObserver, Observer},
+    samplers::{aies::WeightedAIESMove, ess::WeightedESSMove, AIES, ESS},
+    Algorithm, MCMCAlgorithm, Status,
 };
 use laddu_core::{Ensemble, LadduError};
 use parking_lot::RwLock;
@@ -340,12 +340,10 @@ pub mod py_ganesh {
             nelder_mead::{NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod},
             NelderMead, LBFGSB,
         },
-        mcmc::{
-            aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
-            AIESMove, ESSMove, MCMCObserver, AIES, ESS,
-        },
-        observers::AutocorrelationObserver,
-        Observer, Status,
+        integrated_autocorrelation_times,
+        observers::{AutocorrelationObserver, MCMCObserver, Observer},
+        samplers::{aies::WeightedAIESMove, ess::WeightedESSMove, AIESMove, ESSMove, AIES, ESS},
+        Status,
     };
     use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
     use laddu_python::GetStrExtractObj;
@@ -1092,22 +1090,22 @@ pub mod py_ganesh {
             show_step = kwargs.get_extract::<bool>("show_step")?.unwrap_or(true);
             show_x = kwargs.get_extract::<bool>("show_x")?.unwrap_or(true);
             show_fx = kwargs.get_extract::<bool>("show_fx")?.unwrap_or(true);
-            let tol_x_rel = kwargs
-                .get_extract::<Float>("tol_x_rel")?
+            let eps_x_rel = kwargs
+                .get_extract::<Float>("eps_x_rel")?
                 .unwrap_or(Float::EPSILON);
-            let tol_x_abs = kwargs
-                .get_extract::<Float>("tol_x_abs")?
+            let eps_x_abs = kwargs
+                .get_extract::<Float>("eps_x_abs")?
                 .unwrap_or(Float::EPSILON);
-            let tol_f_rel = kwargs
-                .get_extract::<Float>("tol_f_rel")?
+            let eps_f_rel = kwargs
+                .get_extract::<Float>("eps_f_rel")?
                 .unwrap_or(Float::EPSILON);
-            let tol_f_abs = kwargs
-                .get_extract::<Float>("tol_f_abs")?
+            let eps_f_abs = kwargs
+                .get_extract::<Float>("eps_f_abs")?
                 .unwrap_or(Float::EPSILON);
-            let tol_g_abs = kwargs
-                .get_extract::<Float>("tol_g_abs")?
+            let eps_g_abs = kwargs
+                .get_extract::<Float>("eps_g_abs")?
                 .unwrap_or(Float::cbrt(Float::EPSILON));
-            let g_tolerance = kwargs.get_extract::<Float>("g_tolerance")?.unwrap_or(1e-5);
+            let tol_g_abs = kwargs.get_extract::<Float>("tol_g_abs")?.unwrap_or(1e-5);
             let skip_hessian = kwargs.get_extract::<bool>("skip_hessian")?.unwrap_or(false);
             let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
             let alpha = kwargs.get_extract::<Float>("alpha")?;
@@ -1144,22 +1142,24 @@ pub mod py_ganesh {
             for observer in observers {
                 options = options.with_observer(observer);
             }
-            match method {
+            match method.to_lowercase().as_str() {
                 "lbfgsb" => {
                     let mut lbfgsb = LBFGSB::default()
-                        .with_terminator_f(LBFGSBFTerminator { tol_f_abs })
-                        .with_terminator_g(LBFGSBGTerminator { tol_g_abs })
-                        .with_g_tolerance(g_tolerance);
+                        .with_terminator_f(LBFGSBFTerminator)
+                        .with_terminator_g(LBFGSBGTerminator)
+                        .with_eps_f_abs(eps_f_abs)
+                        .with_eps_g_abs(eps_g_abs)
+                        .with_tol_g_abs(tol_g_abs);
                     if skip_hessian {
                         lbfgsb = lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
                     }
                     options = options.with_algorithm(lbfgsb)
                 }
                 "nelder_mead" => {
-                    let terminator_f = match nelder_mead_f_terminator.as_str() {
-                        "amoeba" => NelderMeadFTerminator::Amoeba { tol_f_rel },
-                        "absolute" => NelderMeadFTerminator::Absolute { tol_f_abs },
-                        "stddev" => NelderMeadFTerminator::StdDev { tol_f_abs },
+                    let terminator_f = match nelder_mead_f_terminator.to_lowercase().as_str() {
+                        "amoeba" => NelderMeadFTerminator::Amoeba,
+                        "absolute" => NelderMeadFTerminator::Absolute,
+                        "stddev" => NelderMeadFTerminator::StdDev,
                         "none" => NelderMeadFTerminator::None,
                         _ => {
                             return Err(PyValueError::new_err(format!(
@@ -1168,11 +1168,11 @@ pub mod py_ganesh {
                             )))
                         }
                     };
-                    let terminator_x = match nelder_mead_x_terminator.as_str() {
-                        "diameter" => NelderMeadXTerminator::Diameter { tol_x_abs },
-                        "higham" => NelderMeadXTerminator::Higham { tol_x_rel },
-                        "rowan" => NelderMeadXTerminator::Rowan { tol_x_rel },
-                        "singer" => NelderMeadXTerminator::Singer { tol_x_rel },
+                    let terminator_x = match nelder_mead_x_terminator.to_lowercase().as_str() {
+                        "diameter" => NelderMeadXTerminator::Diameter,
+                        "higham" => NelderMeadXTerminator::Higham,
+                        "rowan" => NelderMeadXTerminator::Rowan,
+                        "singer" => NelderMeadXTerminator::Singer,
                         "none" => NelderMeadXTerminator::None,
                         _ => {
                             return Err(PyValueError::new_err(format!(
@@ -1181,19 +1181,24 @@ pub mod py_ganesh {
                             )))
                         }
                     };
-                    let simplex_expansion_method = match simplex_expansion_method.as_str() {
-                        "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
-                        "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
-                        _ => {
-                            return Err(PyValueError::new_err(format!(
-                                "Invalid \"simplex_expansion_method\": \"{}\"",
-                                simplex_expansion_method
-                            )))
-                        }
-                    };
+                    let simplex_expansion_method =
+                        match simplex_expansion_method.to_lowercase().as_str() {
+                            "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
+                            "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid \"simplex_expansion_method\": \"{}\"",
+                                    simplex_expansion_method
+                                )))
+                            }
+                        };
                     let mut nelder_mead = NelderMead::default()
                         .with_terminator_f(terminator_f)
                         .with_terminator_x(terminator_x)
+                        .with_eps_x_rel(eps_x_rel)
+                        .with_eps_x_abs(eps_x_abs)
+                        .with_eps_f_rel(eps_f_rel)
+                        .with_eps_f_abs(eps_f_abs)
                         .with_expansion_method(simplex_expansion_method);
                     if adaptive {
                         nelder_mead = nelder_mead.with_adaptive(n_parameters);
@@ -1320,11 +1325,12 @@ pub mod py_ganesh {
                 .unwrap_or_else(num_cpus::get);
             #[cfg(feature = "rayon")]
             let mut observers: Vec<
-                Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<ThreadPool>>>,
+                Arc<RwLock<dyn ganesh::observers::MCMCObserver<ThreadPool>>>,
             > = Vec::default();
             #[cfg(not(feature = "rayon"))]
-            let mut observers: Vec<Arc<RwLock<dyn ganesh::mcmc::MCMCObserver<()>>>> =
-                Vec::default();
+            let mut observers: Vec<
+                Arc<RwLock<dyn ganesh::observers::MCMCObserver<()>>>,
+            > = Vec::default();
             if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
                 if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
                     for item in observer_list.iter() {

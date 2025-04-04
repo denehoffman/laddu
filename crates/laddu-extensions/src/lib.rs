@@ -19,7 +19,7 @@ pub mod ganesh_ext;
 /// Extended maximum likelihood cost functions with support for additive terms
 pub mod likelihoods;
 
-pub use ganesh::{mcmc::Ensemble, Status};
+pub use ganesh::{Ensemble, Status};
 pub use ganesh_ext::{MCMCOptions, MinimizerOptions};
 pub use likelihoods::{
     LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodScalar,

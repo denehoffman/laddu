@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportMissingTypeStubs=false, reportAttributeAccessIssue=false, reportUnknownArgumentType=false
 """
 Usage:
     amptools-to-laddu <input_file> <output_file> [--tree <treename>] [--pol-in-beam | --pol-angle <angle> --pol-magnitude <magnitude>] [-n <num-entries>]
@@ -8,7 +9,7 @@ Options:
     --pol-angle <angle>          The polarization angle in degrees (only used if --pol-in-beam is not used)
     --pol-magnitude <magnitude>  The polarization magnitude (only used if --pol-in-beam is not used)
     -n <num-entries>             Truncate the file to the first n entries for testing.
-"""
+"""  # noqa: D205, D400
 
 from __future__ import annotations
 
@@ -16,10 +17,10 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import uproot
 from docopt import docopt
-from loguru import logger
 
 
 def read_root_file(
@@ -30,82 +31,73 @@ def read_root_file(
     pol_angle_rad: float | None = None,
     pol_magnitude: float | None = None,
     num_entries: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.float32]]:
     input_path = Path(input_path)
-    """Read ROOT file and extract data with optional polarization from the beam."""
-    logger.info(f'Reading ROOT file: {input_path}')
-    tfile = uproot.open(input_path)
-    tree = tfile[tree_name]
-    logger.info(f'Using tree: {tree_name}')
-    # Read necessary branches
-    E_beam = tree['E_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
-    Px_beam = tree['Px_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
-    Py_beam = tree['Py_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
-    Pz_beam = tree['Pz_Beam'].array(library='np', entry_stop=num_entries)  # pyright: ignore
+    tree = uproot.open(f'{input_path}:{tree_name}')  #
+    E_beam: npt.NDArray[np.float32] = tree['E_Beam'].array(
+        library='np', entry_stop=num_entries
+    )
+    Px_beam: npt.NDArray[np.float32] = tree['Px_Beam'].array(
+        library='np', entry_stop=num_entries
+    )
+    Py_beam: npt.NDArray[np.float32] = tree['Py_Beam'].array(
+        library='np', entry_stop=num_entries
+    )
+    Pz_beam: npt.NDArray[np.float32] = tree['Pz_Beam'].array(
+        library='np', entry_stop=num_entries
+    )
     weight = (
-        tree['Weight'].array(library='np', entry_stop=num_entries)  # pyright: ignore
+        tree['Weight'].array(library='np', entry_stop=num_entries)
         if 'Weight' in tree
         else np.ones_like(E_beam)
     )
 
-    # Final state particles
-    E_final = np.array(
-        list(tree['E_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    E_final: npt.NDArray[np.float32] = np.array(
+        list(tree['E_FinalState'].array(library='np', entry_stop=num_entries))
     )
-    Px_final = np.array(
-        list(tree['Px_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    Px_final: npt.NDArray[np.float32] = np.array(
+        list(tree['Px_FinalState'].array(library='np', entry_stop=num_entries))
     )
-    Py_final = np.array(
-        list(tree['Py_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    Py_final: npt.NDArray[np.float32] = np.array(
+        list(tree['Py_FinalState'].array(library='np', entry_stop=num_entries))
     )
-    Pz_final = np.array(
-        list(tree['Pz_FinalState'].array(library='np', entry_stop=num_entries))  # pyright: ignore
+    Pz_final: npt.NDArray[np.float32] = np.array(
+        list(tree['Pz_FinalState'].array(library='np', entry_stop=num_entries))
     )
 
-    # Handle beam four-vector: (nevents, 4)
     p4_beam = np.stack([Px_beam, Py_beam, Pz_beam, E_beam], axis=-1)
-
-    # Handle final state four-vectors: (nevents, nparticles, 4)
     p4_final = np.stack([Px_final, Py_final, Pz_final, E_final], axis=-1)
 
-    # Check if EPS branch exists and update eps if needed
     if 'EPS' in tree:
-        logger.info('EPS branch found. Using it for eps values.')
-        eps = tree['EPS'].array(library='np', entry_stop=num_entries)  # pyright: ignore
+        eps = tree['EPS'].array(library='np', entry_stop=num_entries)
         eps = eps[:, np.newaxis, :]
     if 'eps' in tree:
-        logger.info('eps branch found. Using it for eps values.')
-        eps = tree['eps'].array(library='np', entry_stop=num_entries)  # pyright: ignore
+        eps = tree['eps'].array(library='np', entry_stop=num_entries)
         eps = eps[:, np.newaxis, :]
     elif pol_in_beam:
-        logger.info("Using beam's momentum for polarization (eps).")
         eps = np.stack([Px_beam, Py_beam, Pz_beam], axis=-1)[:, np.newaxis]
-        # Reset beam momentum
         p4_beam[:, 0] = 0  # Set Px to 0
         p4_beam[:, 1] = 0  # Set Py to 0
         p4_beam[:, 2] = E_beam  # Set Pz = E for beam
     elif pol_angle_rad is not None and pol_magnitude is not None:
-        logger.info(f'Using input polarization angle ({pol_angle_rad}) and magnitude ({pol_magnitude}).')
         eps_x = pol_magnitude * np.cos(pol_angle_rad) * np.ones_like(E_beam)
         eps_y = pol_magnitude * np.sin(pol_angle_rad) * np.ones_like(E_beam)
         eps_z = np.zeros_like(E_beam)
         eps = np.stack([eps_x, eps_y, eps_z], axis=-1)[:, np.newaxis]
     else:
-        logger.info('Using default or provided eps values.')
         eps = np.zeros((len(E_beam), 1, 3), dtype=np.float32)  # Default to 0
 
-    # Concatenate the beam and final state particles: (nevents, nparticles+1, 4)
-    logger.info('Concatenating beam and final state particles.')
     p4s = np.concatenate([p4_beam[:, np.newaxis, :], p4_final], axis=1)
 
     return p4s.astype(np.float32), eps.astype(np.float32), weight
 
 
-def save_as_parquet(p4s: npt.NDArray, eps: npt.NDArray, weight: npt.NDArray, output_path: Path | str) -> None:
-    """Save the processed data into Parquet format."""
-    logger.info('Saving data to Parquet format.')
-
-    # Flatten the p4s and eps into individual columns
+def save_as_parquet(
+    p4s: npt.NDArray[np.float32],
+    eps: npt.NDArray[np.float32],
+    weight: npt.NDArray[np.float32],
+    output_path: Path | str,
+) -> None:
     columns = {}
     n_particles = p4s.shape[1]
     for i in range(n_particles):
@@ -120,14 +112,10 @@ def save_as_parquet(p4s: npt.NDArray, eps: npt.NDArray, weight: npt.NDArray, out
         columns[f'aux_{i}_y'] = eps[:, i, 1]
         columns[f'aux_{i}_z'] = eps[:, i, 2]
 
-    # Add weights
     columns['weight'] = weight
 
-    # Create a DataFrame and save as Parquet
-    data = pd.DataFrame(columns)
-    output_path = str(output_path)
-    data.to_parquet(output_path, index=False)
-    logger.info(f'File saved: {output_path}')
+    data = pa.table(columns)
+    pq.write_table(data, str(output_path))
 
 
 def convert_from_amptools(
@@ -170,8 +158,3 @@ def run() -> None:
         pol_magnitude=pol_magnitude,
         num_entries=num_entries,
     )
-
-    df_read = pd.read_parquet(output_file)
-    print('Output Parquet File (head):')
-    print(df_read.head())
-    print(f'Total Entries: {len(df_read)}')

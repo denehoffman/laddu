@@ -24,17 +24,18 @@ dyn-clone = "1.0.17"
 factorial = "0.4.0"
 fastrand = "2.3.0"
 fastrand-contrib = "0.1.0"
-ganesh = "0.17.0"
+ganesh = "0.19.0"
 indexmap = { version = "2.6.0", features = ["serde"] }
 lazy_static = "1.4.0"
 mpi = { version = "0.8.0", features = ["complex"] }
 nalgebra = "0.33.2"
 num = "0.4.3"
 num_cpus = { version = "1.16.0" }
-numpy = { version = "0.23.0", features = ["nalgebra"] }
+numpy = { version = "0.24.0", features = ["nalgebra"] }
+num-traits = "0.2.19"
 parquet = "54.2.0"
 parking_lot = "0.12.3"
-pyo3 = { version = "0.23.3" }
+pyo3 = { version = "0.24.0" }
 rayon = { version = "1.10.0" }
 serde = "1.0.215"
 serde-pickle = "1.2.0"

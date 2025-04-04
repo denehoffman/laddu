@@ -8,10 +8,7 @@ use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
-use ganesh::{
-    mcmc::{ESSMove, Ensemble},
-    Function, Minimizer, Sampler, Status,
-};
+use ganesh::{samplers::ESSMove, Ensemble, Function, Minimizer, Sampler, Status};
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
@@ -1060,8 +1057,10 @@ impl NLL {
     ) -> Result<Status, LadduError> {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new(options.algorithm, self.parameters().len())
-            .with_bounds(bounds)
             .with_max_steps(options.max_steps);
+        if let Some(bounds) = bounds {
+            m = m.with_bounds(bounds);
+        }
         for observer in options.observers {
             m = m.with_observer(observer);
         }
@@ -1209,7 +1208,7 @@ impl PyNLL {
         }
         Ok(())
     }
-    /// Activates all Amplitudes in the JNLL
+    /// Activates all Amplitudes in the NLL
     ///
     fn activate_all(&self) {
         self.0.activate_all();
@@ -2445,8 +2444,10 @@ impl LikelihoodEvaluator {
     ) -> Result<Status, LadduError> {
         let options = options.unwrap_or_default();
         let mut m = Minimizer::new(options.algorithm, self.parameters().len())
-            .with_bounds(bounds)
             .with_max_steps(options.max_steps);
+        if let Some(bounds) = bounds {
+            m = m.with_bounds(bounds);
+        }
         for observer in options.observers {
             m = m.with_observer(observer)
         }

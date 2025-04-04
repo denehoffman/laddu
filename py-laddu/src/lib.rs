@@ -160,4 +160,6 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_extensions::experimental::py_binned_guide_term;
+    #[pymodule_export]
+    use laddu_extensions::experimental::py_regularizer;
 }
