@@ -341,12 +341,13 @@ pub mod py_ganesh {
             nelder_mead::{NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod},
             NelderMead, LBFGSB,
         },
-        observers::{AutocorrelationObserver, MCMCObserver, Observer},
+        observers::{AutocorrelationObserver, MCMCObserver, Observer, SwarmObserver},
         samplers::{
             aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
             AIESMove, ESSMove, AIES, ESS,
         },
-        Status,
+        swarms::Particle,
+        Point, Status, Swarm,
     };
     use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
     use laddu_python::GetStrExtractObj;
@@ -358,7 +359,7 @@ pub mod py_ganesh {
         types::{PyBytes, PyDict, PyList, PyTuple},
     };
 
-    /// A user implementation of [`Observer`](`crate::ganesh::Observer`) from Python
+    /// A user implementation of [`Observer`](`crate::ganesh::observers::Observer`) from Python
     #[pyclass]
     #[pyo3(name = "Observer")]
     pub struct PyObserver(Py<PyAny>);
@@ -371,13 +372,26 @@ pub mod py_ganesh {
         }
     }
 
-    /// A user implementation of [`MCMCObserver`](`crate::ganesh::MCMCObserver`) from Python
+    /// A user implementation of [`MCMCObserver`](`crate::ganesh::observers::MCMCObserver`) from Python
     #[pyclass]
     #[pyo3(name = "MCMCObserver")]
     pub struct PyMCMCObserver(Py<PyAny>);
 
     #[pymethods]
     impl PyMCMCObserver {
+        #[new]
+        fn new(observer: Py<PyAny>) -> Self {
+            Self(observer)
+        }
+    }
+
+    /// A user implementation of [`SwarmObserver`](`crate::ganesh::observers::SwarmObserver`) from Python
+    #[pyclass]
+    #[pyo3(name = "SwarmObserver")]
+    pub struct PySwarmObserver(Py<PyAny>);
+
+    #[pymethods]
+    impl PySwarmObserver {
         #[new]
         fn new(observer: Py<PyAny>) -> Self {
             Self(observer)
@@ -569,7 +583,7 @@ pub mod py_ganesh {
         /// Parameters
         /// ----------
         /// path : str
-        ///     The path of the existing fit file
+        ///     The path of the file
         ///
         /// Returns
         /// -------
@@ -725,7 +739,7 @@ pub mod py_ganesh {
         /// Parameters
         /// ----------
         /// path : str
-        ///     The path of the new file (overwrites if the file exists!)
+        ///     The path of the file (overwrites if the file exists!)
         ///
         /// Raises
         /// ------
@@ -741,7 +755,7 @@ pub mod py_ganesh {
         /// Parameters
         /// ----------
         /// path : str
-        ///     The path of the existing fit file
+        ///     The path of the file
         ///
         /// Returns
         /// -------
@@ -800,6 +814,313 @@ pub mod py_ganesh {
                     .get_integrated_autocorrelation_times(c, burn, thin)
                     .as_slice(),
             )
+        }
+    }
+
+    #[pyclass(name = "Point", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyPoint(pub Point);
+    #[pymethods]
+    impl PyPoint {
+        /// The position of the point in parameter space
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice(py, self.0.get_x().as_slice())
+        }
+        /// The evaluation of the point
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
+        #[getter]
+        fn fx(&self) -> Float {
+            self.0.get_fx()
+        }
+        /// Save the Point to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        /// Load a Point from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the file
+        ///
+        /// Returns
+        /// -------
+        /// Point
+        ///     The Point contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        #[staticmethod]
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(PyPoint(Point::load_from(path)?))
+        }
+        #[new]
+        fn new() -> Self {
+            PyPoint(Point::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = PyPoint(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            Ok(())
+        }
+    }
+
+    #[pyclass(name = "Particle", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyParticle(pub Particle);
+    #[pymethods]
+    impl PyParticle {
+        #[getter]
+        fn position(&self) -> PyPoint {
+            PyPoint(self.0.position.clone())
+        }
+        #[getter]
+        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            PyArray1::from_slice(py, self.0.velocity.as_slice())
+        }
+        #[getter]
+        fn best(&self) -> PyPoint {
+            PyPoint(self.0.best.clone())
+        }
+        /// Save the Particle to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        /// Load a Particle from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the file
+        ///
+        /// Returns
+        /// -------
+        /// Particle
+        ///     The Particle contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        #[staticmethod]
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(PyParticle(Particle::load_from(path)?))
+        }
+        #[new]
+        fn new() -> Self {
+            PyParticle(Particle::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = PyParticle(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            Ok(())
+        }
+    }
+
+    /// A particle swarm used in particle-swarm-optimization-like algorithms
+    ///
+    #[pyclass(name = "Swarm", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySwarm(pub Swarm);
+    #[pymethods]
+    impl PySwarm {
+        /// The dimension of the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
+        #[getter]
+        fn dimension(&self) -> usize {
+            self.0.dimension
+        }
+        /// A list of the particles in the swarm
+        ///
+        /// Returns
+        /// -------
+        /// list of laddu.Particle
+        ///
+        #[getter]
+        fn particles(&self) -> Vec<PyParticle> {
+            self.0
+                .particles
+                .iter()
+                .map(|p| PyParticle(p.clone()))
+                .collect()
+        }
+        /// The global best position found by the Swarm
+        ///
+        /// Returns
+        /// -------
+        /// laddu.Point
+        #[getter]
+        fn gbest(&self) -> PyPoint {
+            PyPoint(self.0.gbest.clone())
+        }
+        /// A status message from the optimizer at the end of the algorithm
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
+        #[getter]
+        fn message(&self) -> String {
+            self.0.message.clone()
+        }
+        /// The state of the optimizer's convergence conditions
+        ///
+        /// Returns
+        /// -------
+        /// bool
+        ///
+        #[getter]
+        fn converged(&self) -> bool {
+            self.0.converged
+        }
+        /// Parameter bounds which were applied to the swarm algorithm
+        ///
+        /// Returns
+        /// -------
+        /// list of Bound or None
+        ///
+        #[getter]
+        fn bounds(&self) -> Option<Vec<PyBound>> {
+            self.0
+                .bounds
+                .clone()
+                .map(|bounds| bounds.iter().map(|bound| PyBound(*bound)).collect())
+        }
+        fn __str__(&self) -> String {
+            self.0.to_string()
+        }
+        fn __repr__(&self) -> String {
+            format!("Swarm({} particles)", self.0.particles.len())
+        }
+        /// Save the Swarm to a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the file (overwrites if the file exists!)
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to write the file
+        ///
+        fn save_as(&self, path: &str) -> PyResult<()> {
+            self.0.save_as(path)?;
+            Ok(())
+        }
+        /// Load a Swarm from a file
+        ///
+        /// Parameters
+        /// ----------
+        /// path : str
+        ///     The path of the existing fit file
+        ///
+        /// Returns
+        /// -------
+        /// Swarm
+        ///     The fit result contained in the file
+        ///
+        /// Raises
+        /// ------
+        /// IOError
+        ///     If anything fails when trying to read the file
+        ///
+        #[staticmethod]
+        fn load_from(path: &str) -> PyResult<Self> {
+            Ok(PySwarm(Swarm::load_from(path)?))
+        }
+        #[new]
+        fn new() -> Self {
+            PySwarm(Swarm::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                serialize(&self.0)
+                    .map_err(LadduError::SerdeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = PySwarm(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            Ok(())
+        }
+        /// Converts a Swarm into a Python dictionary
+        ///
+        /// Returns
+        /// -------
+        /// dict
+        ///
+        /// Raises
+        /// ------
+        /// Exception
+        ///     If there was a problem creating the resulting ``numpy`` array
+        ///
+        fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+            let dict = PyDict::new(py);
+            dict.set_item("dimension", self.dimension())?;
+            dict.set_item("particles", self.particles())?;
+            dict.set_item("gbest", self.gbest())?;
+            dict.set_item("message", self.message())?;
+            dict.set_item("converged", self.converged())?;
+            dict.set_item("bounds", self.bounds())?;
+            Ok(dict)
         }
     }
 
@@ -1008,10 +1329,10 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!");
                 let new_status = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
                     .extract::<PyEnsemble>()
                     .expect(
                         "The first item returned from \"callback\" must be a \"laddu.Ensemble\"!",
@@ -1019,7 +1340,7 @@ pub mod py_ganesh {
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_status, result)
@@ -1047,10 +1368,10 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!");
                 let new_status = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
                     .extract::<PyEnsemble>()
                     .expect(
                         "The first item returned from \"callback\" must be a \"laddu.Ensemble\"!",
@@ -1058,7 +1379,7 @@ pub mod py_ganesh {
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_status, result)
@@ -1071,6 +1392,81 @@ pub mod py_ganesh {
     impl FromPyObject<'_> for PyMCMCObserver {
         fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
             Ok(PyMCMCObserver(ob.clone().into()))
+        }
+    }
+
+    impl SwarmObserver<()> for PySwarmObserver {
+        fn callback(&mut self, step: usize, swarm: &mut Swarm, _user_data: &mut ()) -> bool {
+            let (new_swarm, result) = Python::with_gil(|py| {
+                let res = self
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PySwarm(swarm.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
+                let res_tuple = res
+                    .downcast::<PyTuple>()
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!");
+                let new_swarm = res_tuple
+                    .get_item(0)
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .extract::<PySwarm>()
+                    .expect("The first item returned from \"callback\" must be a \"laddu.Swarm\"!")
+                    .0;
+                let result = res_tuple
+                    .get_item(1)
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .extract::<bool>()
+                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
+                (new_swarm, result)
+            });
+            *swarm = new_swarm;
+            result
+        }
+    }
+
+    #[cfg(feature = "rayon")]
+    impl SwarmObserver<ThreadPool> for PySwarmObserver {
+        fn callback(
+            &mut self,
+            step: usize,
+            swarm: &mut Swarm,
+            _thread_pool: &mut ThreadPool,
+        ) -> bool {
+            let (new_swarm, result) = Python::with_gil(|py| {
+                let res = self
+                    .0
+                    .bind(py)
+                    .call_method("callback", (step, PySwarm(swarm.clone())), None)
+                    .unwrap_or_else(|err| {
+                        err.print(py);
+                        panic!("Python error encountered!");
+                    });
+                let res_tuple = res
+                    .downcast::<PyTuple>()
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!");
+                let new_warm = res_tuple
+                    .get_item(0)
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .extract::<PySwarm>()
+                    .expect("The first item returned from \"callback\" must be a \"laddu.Swarm\"!")
+                    .0;
+                let result = res_tuple
+                    .get_item(1)
+                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .extract::<bool>()
+                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
+                (new_warm, result)
+            });
+            *swarm = new_swarm;
+            result
+        }
+    }
+    impl FromPyObject<'_> for PySwarmObserver {
+        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(PySwarmObserver(ob.clone().into()))
         }
     }
 

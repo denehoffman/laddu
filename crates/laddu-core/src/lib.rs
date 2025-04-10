@@ -5,6 +5,8 @@
 #![allow(clippy::excessive_precision)]
 
 use bincode::ErrorKind;
+use ganesh::swarms::Particle;
+use ganesh::{Point, Swarm};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -432,6 +434,21 @@ impl ReadWrite for Status {
 impl ReadWrite for Ensemble {
     fn create_null() -> Self {
         Ensemble::new(Vec::default())
+    }
+}
+impl ReadWrite for Point {
+    fn create_null() -> Self {
+        Point::default()
+    }
+}
+impl ReadWrite for Particle {
+    fn create_null() -> Self {
+        Particle::default()
+    }
+}
+impl ReadWrite for Swarm {
+    fn create_null() -> Self {
+        Swarm::default()
     }
 }
 impl ReadWrite for Model {
