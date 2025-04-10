@@ -5,7 +5,8 @@ use ganesh::{
     algorithms::LBFGSB,
     observers::{DebugMCMCObserver, DebugObserver, MCMCObserver, Observer},
     samplers::{aies::WeightedAIESMove, ess::WeightedESSMove, AIES, ESS},
-    Algorithm, MCMCAlgorithm, Status,
+    traits::{Algorithm, MCMCAlgorithm},
+    Status,
 };
 use laddu_core::{Ensemble, LadduError};
 use parking_lot::RwLock;
@@ -26,9 +27,9 @@ impl VerboseObserver {
 /// A set of options that are used when minimizations are performed.
 pub struct MinimizerOptions {
     #[cfg(feature = "rayon")]
-    pub(crate) algorithm: Box<dyn ganesh::Algorithm<ThreadPool, LadduError>>,
+    pub(crate) algorithm: Box<dyn Algorithm<ThreadPool, LadduError>>,
     #[cfg(not(feature = "rayon"))]
-    pub(crate) algorithm: Box<dyn ganesh::Algorithm<(), LadduError>>,
+    pub(crate) algorithm: Box<dyn Algorithm<(), LadduError>>,
     #[cfg(feature = "rayon")]
     pub(crate) observers: Vec<Arc<RwLock<dyn Observer<ThreadPool>>>>,
     #[cfg(not(feature = "rayon"))]
@@ -340,9 +341,11 @@ pub mod py_ganesh {
             nelder_mead::{NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod},
             NelderMead, LBFGSB,
         },
-        integrated_autocorrelation_times,
         observers::{AutocorrelationObserver, MCMCObserver, Observer},
-        samplers::{aies::WeightedAIESMove, ess::WeightedESSMove, AIESMove, ESSMove, AIES, ESS},
+        samplers::{
+            aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
+            AIESMove, ESSMove, AIES, ESS,
+        },
         Status,
     };
     use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
@@ -1264,16 +1267,42 @@ pub mod py_ganesh {
                 if let Ok(ess_move_list) = ess_move_list_arg.downcast::<PyList>() {
                     for item in ess_move_list.iter() {
                         let item_tuple = item.downcast::<PyTuple>()?;
-                        let move_name = item_tuple.get_item(0)?.extract::<String>()?;
                         let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
-                        match move_name.to_lowercase().as_ref() {
-                            "differential" => ess_moves.push(ESSMove::differential(move_weight)),
-                            "gaussian" => ess_moves.push(ESSMove::gaussian(move_weight)),
-                            _ => {
-                                return Err(PyValueError::new_err(format!(
-                                    "Unknown ESS move type: {}",
-                                    move_name
-                                )))
+                        if let Ok(move_name) = item_tuple.get_item(0)?.extract::<String>() {
+                            match move_name.to_lowercase().as_ref() {
+                                "differential" => {
+                                    ess_moves.push(ESSMove::differential(move_weight))
+                                }
+                                "gaussian" => ess_moves.push(ESSMove::gaussian(move_weight)),
+                                "global" => {
+                                    ess_moves.push(ESSMove::global(move_weight, None, None, None))
+                                }
+                                _ => {
+                                    return Err(PyValueError::new_err(format!(
+                                        "Unknown ESS move type: {}",
+                                        move_name
+                                    )))
+                                }
+                            }
+                        } else if let Ok(move_spec) = item_tuple.get_item(0)?.downcast::<PyTuple>()
+                        {
+                            let move_name = move_spec.get_item(0)?.extract::<String>()?;
+                            if move_name.to_lowercase() == "global" {
+                                let move_dict =
+                                    move_spec.get_item(1)?.extract::<Bound<'_, PyDict>>()?;
+                                let scale = move_dict.get_extract("scale")?;
+                                let rescale_cov = move_dict.get_extract("rescale_cov")?;
+                                let n_components = move_dict.get_extract("n_components")?;
+                                ess_moves.push(ESSMove::global(
+                                    move_weight,
+                                    scale,
+                                    rescale_cov,
+                                    n_components,
+                                ));
+                            } else {
+                                return Err(PyValueError::new_err(
+                                    "Only the 'global' move has hyperparameters",
+                                ));
                             }
                         }
                     }
@@ -1287,8 +1316,8 @@ pub mod py_ganesh {
                 if let Ok(aies_move_list) = aies_move_list_arg.downcast::<PyList>() {
                     for item in aies_move_list.iter() {
                         let item_tuple = item.downcast::<PyTuple>()?;
+                        let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
                         if let Ok(move_name) = item_tuple.get_item(0)?.extract::<String>() {
-                            let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
                             match move_name.to_lowercase().as_ref() {
                                 "stretch" => aies_moves.push(AIESMove::stretch(move_weight)),
                                 "walk" => aies_moves.push(AIESMove::walk(move_weight)),
@@ -1302,7 +1331,6 @@ pub mod py_ganesh {
                         } else if let Ok(move_spec) = item_tuple.get_item(0)?.downcast::<PyTuple>()
                         {
                             let move_name = move_spec.get_item(0)?.extract::<String>()?;
-                            let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
                             if move_name.to_lowercase() == "stretch" {
                                 let a = move_spec.get_item(1)?.extract::<Float>()?;
                                 aies_moves.push((AIESMove::Stretch { a }, move_weight))

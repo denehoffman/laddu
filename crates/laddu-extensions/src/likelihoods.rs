@@ -1669,7 +1669,18 @@ impl PyNLL {
     /// used relative to the others in the list.
     ///
     /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
-    /// "gaussian", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+    /// "gaussian", and "global", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+    ///
+    /// For ESS, the "global" move can also be given with a dict containing some hyperparameters.
+    /// The dict should have the following keys (with default values given here): ``scale=1.0``,
+    /// the scale factor to apply to the multinormal distribution for jumps within the same
+    /// cluster, ``rescale_cov=0.001``, the rescaling factor which the covariance matrices are
+    /// multiplied by in jumps between different clusters (higher values promote jumping), and
+    /// ``n_components=5``, the maximum number of components to use in the mixture model (this
+    /// should be greater than or equal to the estimated number of modes in a multimodal distribution).
+    /// For example, a valid global move might look like ``(("global", {"scale": 1.3, "n_components":
+    /// 10}), 0.2), where the final ``0.2`` is the usage weight. Omitted values will use their
+    /// defaults.
     ///
     /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
     /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
@@ -2769,7 +2780,18 @@ impl PyLikelihoodEvaluator {
     /// used relative to the others in the list.
     ///
     /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
-    /// "gaussian", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+    /// "gaussian", and "global", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
+    ///
+    /// For ESS, the "global" move can also be given with a dict containing some hyperparameters.
+    /// The dict should have the following keys (with default values given here): ``scale=1.0``,
+    /// the scale factor to apply to the multinormal distribution for jumps within the same
+    /// cluster, ``rescale_cov=0.001``, the rescaling factor which the covariance matrices are
+    /// multiplied by in jumps between different clusters (higher values promote jumping), and
+    /// ``n_components=5``, the maximum number of components to use in the mixture model (this
+    /// should be greater than or equal to the estimated number of modes in a multimodal distribution).
+    /// For example, a valid global move might look like ``(("global", {"scale": 1.3, "n_components":
+    /// 10}), 0.2), where the final ``0.2`` is the usage weight. Omitted values will use their
+    /// defaults.
     ///
     /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
     /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
