@@ -284,7 +284,7 @@ impl MCMCOptions {
     }
     /// Set the [`MCMCAlgorithm`] to be used in the minimization.
     #[cfg(not(feature = "rayon"))]
-    pub fn from_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+    pub fn from_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(algorithm: A) -> Self {
         Self {
             algorithm: Box::new(algorithm),
             observers: Default::default(),
@@ -410,7 +410,7 @@ impl SwarmOptions {
     }
     /// Set the [`SwarmAlgorithm`] to be used in the minimization.
     #[cfg(not(feature = "rayon"))]
-    pub fn from_algorithm<A: SwarmAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+    pub fn from_algorithm<A: SwarmAlgorithm<(), LadduError> + 'static>(algorithm: A) -> Self {
         Self {
             algorithm: Box::new(algorithm),
             observers: Default::default(),
