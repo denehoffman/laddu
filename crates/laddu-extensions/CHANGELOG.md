@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.5.2...laddu-extensions-v0.6.0) - 2025-04-11
+
+### Added
+
+- change swarm repr if the swarm is uninitialized to not confuse people
+- bump MSRV (for bincode) and bump all dependency versions
+- add Swarm methods to Python API and update other algorithm initialization methods
+- restructure the minimizer/mcmc methods to no longer take kwargs
+- add python versions of Point, Particle, SwarmObserver, and Swarm from ganesh
+- update `ganesh` version and add Global move to ESS
+
+### Fixed
+
+- remove  from the rayon-free  calls for  and
+- corrected typo where the `VerboseMCMCObserver` implemented `SwarmObserver<()>` rather than the `VerboseSwarmObserver`
+- move some imports under the python feature flag
+
+### Other
+
+- complete compatibility with newest version of bincode, remove unused dependencies and features across all crates
+- add a todo
+
 ## [0.5.2](https://github.com/denehoffman/laddu/compare/laddu-extensions-v0.5.1...laddu-extensions-v0.5.2) - 2025-04-04
 
 ### Added
