@@ -1917,7 +1917,11 @@ pub mod py_ganesh {
             self.0.to_string()
         }
         fn __repr__(&self) -> String {
-            format!("Swarm({} particles)", self.0.particles.len())
+            if self.0.particles.is_empty() {
+                "Swarm(uninitialized)".to_string()
+            } else {
+                format!("Swarm({} particles)", self.0.particles.len())
+            }
         }
         /// Save the Swarm to a file
         ///
