@@ -163,9 +163,10 @@ impl Dataset {
         let (owning_rank, local_index) = Dataset::get_rank_index(index, &displs, world);
         let mut serialized_event_buffer_len: usize = 0;
         let mut serialized_event_buffer: Vec<u8> = Vec::default();
+        let config = bincode::config::standard();
         if world.rank() == owning_rank {
             let event = self.index_local(local_index);
-            serialized_event_buffer = bincode::serialize(event).unwrap();
+            serialized_event_buffer = bincode::serde::encode_to_vec(event, config).unwrap();
             serialized_event_buffer_len = serialized_event_buffer.len();
         }
         world
@@ -177,7 +178,8 @@ impl Dataset {
         world
             .process_at_rank(owning_rank)
             .broadcast_into(&mut serialized_event_buffer);
-        let event: Event = bincode::deserialize(&serialized_event_buffer).unwrap();
+        let (event, _): (Event, usize) =
+            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
         Box::leak(Box::new(event))
     }
 }

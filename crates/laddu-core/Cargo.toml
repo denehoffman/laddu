@@ -25,7 +25,6 @@ lazy_static = { workspace = true }
 mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
-num_cpus = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 parquet = { workspace = true }
 parking_lot = { workspace = true }
@@ -52,10 +51,9 @@ harness = false
 default = ["rayon"]
 rayon = ["dep:rayon"]
 f32 = ["ganesh/f32"]
-python = ["pyo3", "num_cpus", "numpy"]
+python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]
-num_cpus = ["dep:num_cpus"]
 mpi = ["dep:mpi"]
 
 

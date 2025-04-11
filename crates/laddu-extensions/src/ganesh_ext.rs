@@ -455,7 +455,6 @@ pub mod py_ganesh {
     use super::*;
     use std::sync::Arc;
 
-    use bincode::{deserialize, serialize};
     use fastrand::Rng;
     use ganesh::{
         algorithms::{
@@ -1402,13 +1401,17 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                serialize(&self.0)
-                    .map_err(LadduError::SerdeError)?
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyStatus(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            *self = PyStatus(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
             Ok(())
         }
         /// Converts a Status into a Python dictionary
@@ -1574,13 +1577,17 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                serialize(&self.0)
-                    .map_err(LadduError::SerdeError)?
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyEnsemble(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            *self = PyEnsemble(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
             Ok(())
         }
         /// Calculate the integrated autocorrelation time for each parameter according to
@@ -1684,13 +1691,17 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                serialize(&self.0)
-                    .map_err(LadduError::SerdeError)?
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyPoint(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            *self = PyPoint(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
             Ok(())
         }
     }
@@ -1776,13 +1787,17 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                serialize(&self.0)
-                    .map_err(LadduError::SerdeError)?
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyParticle(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            *self = PyParticle(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
             Ok(())
         }
     }
@@ -1944,13 +1959,17 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                serialize(&self.0)
-                    .map_err(LadduError::SerdeError)?
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PySwarm(deserialize(state.as_bytes()).map_err(LadduError::SerdeError)?);
+            *self = PySwarm(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
             Ok(())
         }
         /// Converts a Swarm into a Python dictionary
@@ -2068,7 +2087,7 @@ pub mod py_ganesh {
     ///
     #[pyclass(name = "TrackingSwarmObserver")]
     #[derive(Clone)]
-    pub struct PyTrackingSwarmObserver(TrackingSwarmObserver);
+    pub struct PyTrackingSwarmObserver(Arc<RwLock<TrackingSwarmObserver>>);
     #[pymethods]
     impl PyTrackingSwarmObserver {
         /// The history of the swarm
@@ -2083,9 +2102,10 @@ pub mod py_ganesh {
         #[getter]
         fn history(&self) -> Vec<Vec<PyParticle>> {
             self.0
+                .read()
                 .history
                 .iter()
-                .map(|s| s.iter().map(|p| PyParticle(p.clone)).collect())
+                .map(|s| s.iter().map(|p| PyParticle(p.clone())).collect())
                 .collect()
         }
         /// The history of the best swarm position
@@ -2097,6 +2117,7 @@ pub mod py_ganesh {
         #[getter]
         fn best_history(&self) -> Vec<PyPoint> {
             self.0
+                .read()
                 .best_history
                 .iter()
                 .map(|p| PyPoint(p.clone()))

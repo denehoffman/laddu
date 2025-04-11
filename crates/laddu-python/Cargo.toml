@@ -15,23 +15,17 @@ readme = "README.md"
 [dependencies]
 laddu-core = { workspace = true, features = ["python"] }
 
-accurate = { workspace = true }
 bincode = { workspace = true }
-fastrand = { workspace = true }
-ganesh = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }
-parking_lot = { workspace = true }
 pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true }
-shellexpand = { workspace = true }
 typetag = { workspace = true }
 
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-f32 = ["ganesh/f32", "laddu-core/f32"]
 mpi = ["laddu-core/mpi"]
 
 [lints.rust]

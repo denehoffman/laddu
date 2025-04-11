@@ -16,7 +16,7 @@ accurate = "0.4.1"
 approx = "0.5.1"
 arrow = "55.0.0"
 auto_ops = "0.3.0"
-bincode = "2.0.1"
+bincode = { version = "2.0.1", features = ["serde"] }
 criterion = { version = "2.10.1", package = "codspeed-criterion-compat", features = [
   "html_reports",
 ] }

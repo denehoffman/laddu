@@ -8,7 +8,9 @@ use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
-use ganesh::{Ensemble, Function, Minimizer, Sampler, Status, Swarm, SwarmMinimizer};
+use ganesh::{
+    traits::AbortSignal, Ensemble, Function, Minimizer, Sampler, Status, Swarm, SwarmMinimizer,
+};
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
@@ -1070,11 +1072,17 @@ impl NLL {
                     .num_threads(options.threads)
                     .build()
                     .map_err(LadduError::from)?,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.minimize(self, p0, &mut ())?;
+            m.minimize(
+                self,
+                p0,
+                &mut (),
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.status)
     }
@@ -1101,11 +1109,17 @@ impl NLL {
                     .build()
                     .map_err(LadduError::from)?,
                 n_steps,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.sample(&func, &mut (), n_steps)?;
+            m.sample(
+                &func,
+                &mut (),
+                n_steps,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.ensemble)
     }
@@ -1129,11 +1143,16 @@ impl NLL {
                     .num_threads(options.threads)
                     .build()
                     .map_err(LadduError::from)?,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.minimize(self, &mut ())?;
+            m.minimize(
+                self,
+                &mut (),
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.swarm)
     }
@@ -2493,11 +2512,17 @@ impl LikelihoodEvaluator {
                     .num_threads(options.threads)
                     .build()
                     .map_err(LadduError::from)?,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.minimize(self, p0, &mut ())?;
+            m.minimize(
+                self,
+                p0,
+                &mut (),
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.status)
     }
@@ -2529,11 +2554,17 @@ impl LikelihoodEvaluator {
                     .build()
                     .map_err(LadduError::from)?,
                 n_steps,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.sample(&func, &mut (), n_steps)?;
+            m.sample(
+                &func,
+                &mut (),
+                n_steps,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.ensemble)
     }
@@ -2561,11 +2592,16 @@ impl LikelihoodEvaluator {
                     .num_threads(options.threads)
                     .build()
                     .map_err(LadduError::from)?,
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
             )?;
         }
         #[cfg(not(feature = "rayon"))]
         {
-            m.minimize(self, &mut ())?;
+            m.minimize(
+                self,
+                &mut (),
+                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
+            )?;
         }
         Ok(m.swarm)
     }
