@@ -24,7 +24,8 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 #[cfg(feature = "python")]
 use crate::ganesh_ext::py_ganesh::{
-    py_parse_mcmc_options, py_parse_minimizer_options, PyEnsemble, PyStatus,
+    py_parse_mcmc_options, py_parse_minimizer_options, py_parse_swarm_options, PyEnsemble,
+    PyStatus, PySwarm,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -38,10 +39,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
 #[cfg(feature = "rayon")]
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
-use crate::ganesh_ext::{
-    py_ganesh::{py_parse_swarm_options, PySwarm},
-    MCMCOptions, MinimizerOptions, SwarmOptions,
-};
+use crate::ganesh_ext::{MCMCOptions, MinimizerOptions, SwarmOptions};
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
