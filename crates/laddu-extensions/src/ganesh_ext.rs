@@ -338,7 +338,7 @@ impl SwarmObserver<ThreadPool> for VerboseSwarmObserver {
     }
 }
 
-impl SwarmObserver<()> for VerboseMCMCObserver {
+impl SwarmObserver<()> for VerboseSwarmObserver {
     fn callback(&mut self, step: usize, _swarm: &mut Swarm, _user_data: &mut ()) -> bool {
         println!("Step: {}", step);
         false
