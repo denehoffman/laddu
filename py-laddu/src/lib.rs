@@ -9,179 +9,54 @@ mod laddu {
     }
 
     #[pymodule_export]
-    use laddu_python::mpi::finalize_mpi;
-    #[pymodule_export]
-    use laddu_python::mpi::get_rank;
-    #[pymodule_export]
-    use laddu_python::mpi::get_size;
-    #[pymodule_export]
-    use laddu_python::mpi::is_mpi_available;
-    #[pymodule_export]
-    use laddu_python::mpi::is_root;
-    #[pymodule_export]
-    use laddu_python::mpi::use_mpi;
-    #[pymodule_export]
-    use laddu_python::mpi::using_mpi;
+    use laddu_python::{
+        amplitudes::{
+            py_amplitude_one, py_amplitude_product, py_amplitude_sum, py_amplitude_zero,
+            py_constant, py_parameter, PyAmplitude, PyAmplitudeID, PyEvaluator, PyExpression,
+            PyManager, PyModel, PyParameterLike,
+        },
+        data::{py_open, PyBinnedDataset, PyDataset, PyEvent},
+        mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
+        utils::{
+            variables::{
+                PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
+                PyPolarization,
+            },
+            vectors::{PyVector3, PyVector4},
+        },
+    };
 
     #[pymodule_export]
-    use laddu_python::utils::vectors::PyVector3;
-    #[pymodule_export]
-    use laddu_python::utils::vectors::PyVector4;
+    use laddu_amplitudes::{
+        breit_wigner::py_breit_wigner,
+        common::{py_complex_scalar, py_polar_complex_scalar, py_scalar},
+        kmatrix::{
+            py_kopf_kmatrix_a0, py_kopf_kmatrix_a2, py_kopf_kmatrix_f0, py_kopf_kmatrix_f2,
+            py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho,
+        },
+        phase_space::py_phase_space_factor,
+        piecewise::{
+            py_piecewise_complex_scalar, py_piecewise_polar_complex_scalar, py_piecewise_scalar,
+        },
+        ylm::py_ylm,
+        zlm::py_zlm,
+    };
 
     #[pymodule_export]
-    use laddu_python::utils::variables::PyAngles;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyCosTheta;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyMandelstam;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyMass;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyPhi;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyPolAngle;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyPolMagnitude;
-    #[pymodule_export]
-    use laddu_python::utils::variables::PyPolarization;
+    use laddu_extensions::{
+        ganesh_ext::py_ganesh::{
+            py_integrated_autocorrelation_times, PyAIES, PyAIESMove, PyAutocorrelationObserver,
+            PyBound, PyESS, PyESSMove, PyEnsemble, PyLBFGSB, PyMCMCObserver, PyNelderMead,
+            PyObserver, PyPSO, PyStatus, PySwarm, PySwarmObserver, PySwarmPositionInitializer,
+            PySwarmVelocityInitializer,
+        },
+        likelihoods::{
+            py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,
+            py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyLikelihoodID,
+            PyLikelihoodManager, PyLikelihoodTerm, PyNLL,
+        },
+    };
 
     #[pymodule_export]
-    use laddu_python::data::py_open;
-    #[pymodule_export]
-    use laddu_python::data::PyBinnedDataset;
-    #[pymodule_export]
-    use laddu_python::data::PyDataset;
-    #[pymodule_export]
-    use laddu_python::data::PyEvent;
-
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_amplitude_one;
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_amplitude_product;
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_amplitude_sum;
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_amplitude_zero;
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_constant;
-    #[pymodule_export]
-    use laddu_python::amplitudes::py_parameter;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyAmplitude;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyAmplitudeID;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyEvaluator;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyExpression;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyManager;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyModel;
-    #[pymodule_export]
-    use laddu_python::amplitudes::PyParameterLike;
-
-    #[pymodule_export]
-    use laddu_amplitudes::common::py_complex_scalar;
-    #[pymodule_export]
-    use laddu_amplitudes::common::py_polar_complex_scalar;
-    #[pymodule_export]
-    use laddu_amplitudes::common::py_scalar;
-
-    #[pymodule_export]
-    use laddu_amplitudes::piecewise::py_piecewise_complex_scalar;
-    #[pymodule_export]
-    use laddu_amplitudes::piecewise::py_piecewise_polar_complex_scalar;
-    #[pymodule_export]
-    use laddu_amplitudes::piecewise::py_piecewise_scalar;
-
-    #[pymodule_export]
-    use laddu_amplitudes::breit_wigner::py_breit_wigner;
-
-    #[pymodule_export]
-    use laddu_amplitudes::ylm::py_ylm;
-
-    #[pymodule_export]
-    use laddu_amplitudes::zlm::py_zlm;
-
-    #[pymodule_export]
-    use laddu_amplitudes::phase_space::py_phase_space_factor;
-
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_a0;
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_a2;
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_f0;
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_f2;
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_pi1;
-    #[pymodule_export]
-    use laddu_amplitudes::kmatrix::py_kopf_kmatrix_rho;
-
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::py_likelihood_one;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::py_likelihood_product;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::py_likelihood_scalar;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::py_likelihood_sum;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::py_likelihood_zero;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyLikelihoodEvaluator;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyLikelihoodExpression;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyLikelihoodID;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyLikelihoodManager;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyLikelihoodTerm;
-    #[pymodule_export]
-    use laddu_extensions::likelihoods::PyNLL;
-
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::py_integrated_autocorrelation_times;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyAIES;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyAIESMove;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyAutocorrelationObserver;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyBound;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyESS;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyESSMove;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyEnsemble;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyLBFGSB;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyMCMCObserver;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyNelderMead;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyObserver;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyPSO;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PyStatus;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PySwarm;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmObserver;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmPositionInitializer;
-    #[pymodule_export]
-    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmVelocityInitializer;
-
-    #[pymodule_export]
-    use laddu_extensions::experimental::py_binned_guide_term;
-    #[pymodule_export]
-    use laddu_extensions::experimental::py_regularizer;
+    use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
 }
