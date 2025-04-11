@@ -4,7 +4,8 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 #![allow(clippy::excessive_precision)]
 
-use bincode::ErrorKind;
+use ganesh::swarms::{Particle, SwarmPositionInitializer};
+use ganesh::{Point, Swarm};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -337,9 +338,12 @@ pub enum LadduError {
         /// The name of the object it failed to parse into
         object: String,
     },
-    /// An error returned by the Rust de(serializer)
-    #[error("(De)Serialization error: {0}")]
-    SerdeError(#[from] Box<ErrorKind>),
+    /// An error returned by the Rust encoder
+    #[error("Encoder error: {0}")]
+    EncodeError(#[from] bincode::error::EncodeError),
+    /// An error returned by the Rust decoder
+    #[error("Decoder error: {0}")]
+    DecodeError(#[from] bincode::error::DecodeError),
     /// An error returned by the Python pickle (de)serializer
     #[error("Pickle conversion error: {0}")]
     PickleError(#[from] serde_pickle::Error),
@@ -379,7 +383,8 @@ impl From<LadduError> for PyErr {
             LadduError::ParquetError(_)
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
-            | LadduError::SerdeError(_)
+            | LadduError::EncodeError(_)
+            | LadduError::DecodeError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
             #[cfg(feature = "rayon")]
@@ -432,6 +437,24 @@ impl ReadWrite for Status {
 impl ReadWrite for Ensemble {
     fn create_null() -> Self {
         Ensemble::new(Vec::default())
+    }
+}
+impl ReadWrite for Point {
+    fn create_null() -> Self {
+        Point::default()
+    }
+}
+impl ReadWrite for Particle {
+    fn create_null() -> Self {
+        Particle::default()
+    }
+}
+impl ReadWrite for Swarm {
+    fn create_null() -> Self {
+        Swarm::new(SwarmPositionInitializer::Zero {
+            n_particles: 0,
+            n_dimensions: 0,
+        })
     }
 }
 impl ReadWrite for Model {

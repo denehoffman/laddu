@@ -99,6 +99,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
         {
             let weights = self.nll.project_with(parameters, amplitudes, None).unwrap();
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
+            // TODO: handle entries where e == 0
             let chisqr: Float = eval_hist
                 .counts
                 .iter()
