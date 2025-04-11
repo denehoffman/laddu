@@ -8,7 +8,7 @@ use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
-use ganesh::{samplers::ESSMove, Ensemble, Function, Minimizer, Sampler, Status};
+use ganesh::{Ensemble, Function, Minimizer, Sampler, Status};
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
@@ -34,11 +34,7 @@ use laddu_python::{
 #[cfg(feature = "python")]
 use numpy::PyArray1;
 #[cfg(feature = "python")]
-use pyo3::{
-    exceptions::PyTypeError,
-    prelude::*,
-    types::{PyDict, PyList},
-};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
 #[cfg(feature = "rayon")]
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
@@ -1089,10 +1085,7 @@ impl NLL {
         options: Option<MCMCOptions>,
         rng: Rng,
     ) -> Result<Ensemble, LadduError> {
-        let options = options.unwrap_or(MCMCOptions::new_ess(
-            [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
-            rng,
-        ));
+        let options = options.unwrap_or(MCMCOptions::default_with_rng(rng));
         let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
         for observer in options.observers {
             m = m.with_observer(observer);
@@ -1522,8 +1515,10 @@ impl PyNLL {
     ///     The initial parameters at the start of optimization
     /// bounds : list of tuple of float, optional
     ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'nelder_mead'}
-    ///     The minimization algorithm to use (see additional parameters for fine-tuning)
+    /// method : {LBFGSB, NelderMead}, optional
+    ///     The minimization algorithm to use (defaults to LBFGSB)
+    /// observers : Observer or list of Observers, optional
+    ///     Callback functions which are applied after every algorithm step
     /// max_steps : int, default=4000
     ///     The maximum number of algorithm steps to perform
     /// debug : bool, default=False
@@ -1536,41 +1531,6 @@ impl PyNLL {
     ///     Include current best position in verbose output
     /// show_fx : bool, default=True
     ///     Include current best NLL in verbose output
-    /// observers : Observer or list of Observers
-    ///     Callback functions which are applied after every algorithm step
-    /// tol_x_rel : float
-    ///     The relative position tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_x_abs : float
-    ///     The absolute position tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_f_rel : float
-    ///     The relative function tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_f_abs : float
-    ///     The absolute function tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_g_abs : float
-    ///     The absolute gradient tolerance used by termination methods (default is the cube
-    ///     root of machine epsilon)
-    /// g_tolerance : float, default=1e-5
-    ///     Another gradient tolerance used by termination methods (particularly L-BFGS-B)
-    /// adaptive : bool, default=False
-    ///     Use adaptive values for Nelder-Mead parameters
-    /// alpha : float, optional
-    ///     Overwrite the default :math:`\alpha` parameter in the Nelder-Mead algorithm
-    /// beta : float, optional
-    ///     Overwrite the default :math:`\beta` parameter in the Nelder-Mead algorithm
-    /// gamma : float, optional
-    ///     Overwrite the default :math:`\gamma` parameter in the Nelder-Mead algorithm
-    /// delta : float, optional
-    ///     Overwrite the default :math:`\delta` parameter in the Nelder-Mead algorithm
-    /// simplex_expansion_method : {'greedy_minimization', 'greedy_expansion'}
-    ///     The expansion method used by the Nelder-Mead algorithm
-    /// nelder_mead_f_terminator : {'stddev', 'absolute', 'stddev', 'none'}
-    ///     The function terminator used by the Nelder-Mead algorithm
-    /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
-    ///     The positional terminator used by the Nelder-Mead algorithm
     /// skip_hessian : bool, default = False
     ///     Skip calculation of the Hessian matrix (and parameter errors) at the termination of the
     ///     algorithm (use this when uncertainties are not needed/important)
@@ -1586,20 +1546,23 @@ impl PyNLL {
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
-    /// ValueError
-    ///     If any kwargs are invalid
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+    #[pyo3(signature = (p0, *, bounds=None, method=None, observers=None, max_steps=4000, debug=false, verbose=false, show_step=true, show_x=true, show_fx=true, skip_hessian=false, threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn minimize(
         &self,
         p0: Vec<Float>,
         bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        method: &str,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
         max_steps: usize,
         debug: bool,
         verbose: bool,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        show_step: bool,
+        show_x: bool,
+        show_fx: bool,
+        skip_hessian: bool,
+        threads: Option<usize>,
     ) -> PyResult<PyStatus> {
         let bounds = bounds.map(|bounds_vec| {
             bounds_vec
@@ -1612,9 +1575,18 @@ impl PyNLL {
                 })
                 .collect()
         });
-        let n_parameters = p0.len();
-        let options =
-            py_parse_minimizer_options(n_parameters, method, max_steps, debug, verbose, kwargs)?;
+        let options = py_parse_minimizer_options(
+            method,
+            observers,
+            max_steps,
+            debug,
+            verbose,
+            show_step,
+            show_x,
+            show_fx,
+            skip_hessian,
+            threads,
+        )?;
         let status = self.0.minimize(&p0, bounds, Some(options))?;
         Ok(PyStatus(status))
     }
@@ -1629,24 +1601,16 @@ impl PyNLL {
     ///     The initial parameters at the start of optimization
     /// n_steps : int,
     ///     The number of MCMC steps each walker should take
-    /// method : {'ESS', 'AIES'}
-    ///     The MCMC algorithm to use (see additional parameters for fine-tuning)
+    /// method : {ESS, AIES}, optional
+    ///     The MCMC algorithm to use (defaults to ESS)
+    /// observers : MCMCObserver or list of MCMCObservers, optional
+    ///     Callback functions which are applied after every sampling step
     /// debug : bool, default=False
     ///     Set to ``True`` to print out debugging information at each step
     /// verbose : bool, default=False
     ///     Set to ``True`` to print verbose information at each step
     /// seed : int,
     ///     The seed for the random number generator
-    /// ess_moves : list of tuple
-    ///     A list of moves for the ESS algorithm (see notes)
-    /// aies_moves : list of tuple
-    ///     A list of moves for the AIES algorithm (see notes)
-    /// n_adaptive : int, default=100
-    ///     Number of adaptive ESS steps to perform at the start of sampling
-    /// mu : float, default=1.0
-    ///     ESS adaptive parameter
-    /// max_ess_steps : int, default=10000
-    ///     The maximum number of slice expansions/contractions performed in the ESS algorithm
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
@@ -1659,56 +1623,33 @@ impl PyNLL {
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
-    /// ValueError
-    ///     If any kwargs are invalid
     ///
     /// Notes
     /// -----
-    /// Moves may be specified as tuples of ``(move name, usage weight)`` where the move name
-    /// depends on the algorithm and the usage weight gives the proportion of time that move is
-    /// used relative to the others in the list.
-    ///
-    /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
-    /// "gaussian", and "global", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
-    ///
-    /// For ESS, the "global" move can also be given with a dict containing some hyperparameters.
-    /// The dict should have the following keys (with default values given here): ``scale=1.0``,
-    /// the scale factor to apply to the multinormal distribution for jumps within the same
-    /// cluster, ``rescale_cov=0.001``, the rescaling factor which the covariance matrices are
-    /// multiplied by in jumps between different clusters (higher values promote jumping), and
-    /// ``n_components=5``, the maximum number of components to use in the mixture model (this
-    /// should be greater than or equal to the estimated number of modes in a multimodal distribution).
-    /// For example, a valid global move might look like ``(("global", {"scale": 1.3, "n_components":
-    /// 10}), 0.2), where the final ``0.2`` is the usage weight. Omitted values will use their
-    /// defaults.
-    ///
-    /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
-    /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
-    ///
-    /// For AIES, the "stretch" move can also be given with an adaptive parameter ``a``
-    /// (default=``2``). To add a stretch move with a different value of ``a``, the "move name"
-    /// can be instead given as a tuple ``(move name, a)``. For example, ``(("stretch", 2.2), 0.3)``
-    /// creates a stretch move with ``a=2.2`` and usage weight of ``0.3``.
+    /// The default algorithm is the ESS algorithm with a moveset of of 90% differential moves to
+    /// 10% gaussian moves.
     ///
     /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
     /// function sign is automatically flipped when calling this method.
     ///
-    #[pyo3(signature = (p0, n_steps, *, method="ESS", debug=false, verbose=false, seed=0, **kwargs))]
+    #[pyo3(signature = (p0, n_steps, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn mcmc(
         &self,
         p0: Vec<Vec<Float>>,
         n_steps: usize,
-        method: &str,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
         debug: bool,
         verbose: bool,
         seed: u64,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        threads: Option<usize>,
     ) -> PyResult<PyEnsemble> {
         let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
         let mut rng = Rng::new();
         rng.seed(seed);
-        let options = py_parse_mcmc_options(method, debug, verbose, kwargs, rng.clone())?;
+        let options =
+            py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
         let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
         Ok(PyEnsemble(ensemble))
     }
@@ -2492,10 +2433,7 @@ impl LikelihoodEvaluator {
         options: Option<MCMCOptions>,
         rng: Rng,
     ) -> Result<Ensemble, LadduError> {
-        let options = options.unwrap_or(MCMCOptions::new_ess(
-            [ESSMove::differential(0.9), ESSMove::gaussian(0.1)],
-            rng,
-        ));
+        let options = options.unwrap_or(MCMCOptions::default_with_rng(rng));
         let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
         for observer in options.observers {
             m = m.with_observer(observer);
@@ -2635,8 +2573,10 @@ impl PyLikelihoodEvaluator {
     ///     The initial parameters at the start of optimization
     /// bounds : list of tuple of float, optional
     ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'nelder_mead'}
-    ///     The minimization algorithm to use (see additional parameters for fine-tuning)
+    /// method : {LBFGSB, NelderMead}, optional
+    ///     The minimization algorithm to use (defaults to LBFGSB)
+    /// observers : Observer or list of Observers, optional
+    ///     Callback functions which are applied after every algorithm step
     /// max_steps : int, default=4000
     ///     The maximum number of algorithm steps to perform
     /// debug : bool, default=False
@@ -2649,41 +2589,9 @@ impl PyLikelihoodEvaluator {
     ///     Include current best position in verbose output
     /// show_fx : bool, default=True
     ///     Include current best NLL in verbose output
-    /// observers : Observer or list of Observers
-    ///     Callback functions which are applied after every algorithm step
-    /// tol_x_rel : float
-    ///     The relative position tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_x_abs : float
-    ///     The absolute position tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_f_rel : float
-    ///     The relative function tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_f_abs : float
-    ///     The absolute function tolerance used by termination methods (default is machine
-    ///     epsilon)
-    /// tol_g_abs : float
-    ///     The absolute gradient tolerance used by termination methods (default is the cube
-    ///     root of machine epsilon)
-    /// g_tolerance : float, default=1e-5
-    ///     Another gradient tolerance used by termination methods (particularly L-BFGS-B)
-    /// adaptive : bool, default=False
-    ///     Use adaptive values for Nelder-Mead parameters
-    /// alpha : float, optional
-    ///     Overwrite the default :math:`\alpha` parameter in the Nelder-Mead algorithm
-    /// beta : float, optional
-    ///     Overwrite the default :math:`\beta` parameter in the Nelder-Mead algorithm
-    /// gamma : float, optional
-    ///     Overwrite the default :math:`\gamma` parameter in the Nelder-Mead algorithm
-    /// delta : float, optional
-    ///     Overwrite the default :math:`\delta` parameter in the Nelder-Mead algorithm
-    /// simplex_expansion_method : {'greedy_minimization', 'greedy_expansion'}
-    ///     The expansion method used by the Nelder-Mead algorithm
-    /// nelder_mead_f_terminator : {'stddev', 'absolute', 'stddev', 'none'}
-    ///     The function terminator used by the Nelder-Mead algorithm
-    /// nelder_mead_x_terminator : {'singer', 'diameter', 'rowan', 'higham', 'none'}
-    ///     The positional terminator used by the Nelder-Mead algorithm
+    /// skip_hessian : bool, default = False
+    ///     Skip calculation of the Hessian matrix (and parameter errors) at the termination of the
+    ///     algorithm (use this when uncertainties are not needed/important)
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
@@ -2696,20 +2604,23 @@ impl PyLikelihoodEvaluator {
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
-    /// ValueError
-    ///     If any kwargs are invalid
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb", max_steps=4000, debug=false, verbose=false, **kwargs))]
+    #[pyo3(signature = (p0, *, bounds=None, method=None, observers=None, max_steps=4000, debug=false, verbose=false, show_step=true, show_x=true, show_fx=true, skip_hessian=false, threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn minimize(
         &self,
         p0: Vec<Float>,
         bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        method: &str,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
         max_steps: usize,
         debug: bool,
         verbose: bool,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        show_step: bool,
+        show_x: bool,
+        show_fx: bool,
+        skip_hessian: bool,
+        threads: Option<usize>,
     ) -> PyResult<PyStatus> {
         let bounds = bounds.map(|bounds_vec| {
             bounds_vec
@@ -2722,9 +2633,18 @@ impl PyLikelihoodEvaluator {
                 })
                 .collect()
         });
-        let n_parameters = p0.len();
-        let options =
-            py_parse_minimizer_options(n_parameters, method, max_steps, debug, verbose, kwargs)?;
+        let options = py_parse_minimizer_options(
+            method,
+            observers,
+            max_steps,
+            debug,
+            verbose,
+            show_step,
+            show_x,
+            show_fx,
+            skip_hessian,
+            threads,
+        )?;
         let status = self.0.minimize(&p0, bounds, Some(options))?;
         Ok(PyStatus(status))
     }
@@ -2740,24 +2660,16 @@ impl PyLikelihoodEvaluator {
     ///     The initial parameters at the start of optimization
     /// n_steps : int,
     ///     The number of MCMC steps each walker should take
-    /// method : {'ESS', 'AIES'}
-    ///     The MCMC algorithm to use (see additional parameters for fine-tuning)
+    /// method : {ESS, AIES}, optional
+    ///     The MCMC algorithm to use (defaults to ESS)
+    /// observers : MCMCObserver or list of MCMCObservers, optional
+    ///     Callback functions which are applied after every sampling step
     /// debug : bool, default=False
     ///     Set to ``True`` to print out debugging information at each step
     /// verbose : bool, default=False
     ///     Set to ``True`` to print verbose information at each step
     /// seed : int,
     ///     The seed for the random number generator
-    /// ess_moves : list of tuple
-    ///     A list of moves for the ESS algorithm (see notes)
-    /// aies_moves : list of tuple
-    ///     A list of moves for the AIES algorithm (see notes)
-    /// n_adaptive : int, default=100
-    ///     Number of adaptive ESS steps to perform at the start of sampling
-    /// mu : float, default=1.0
-    ///     ESS adaptive parameter
-    /// max_ess_steps : int, default=10000
-    ///     The maximum number of slice expansions/contractions performed in the ESS algorithm
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
@@ -2770,56 +2682,33 @@ impl PyLikelihoodEvaluator {
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
-    /// ValueError
-    ///     If any kwargs are invalid
     ///
     /// Notes
     /// -----
-    /// Moves may be specified as tuples of ``(move name, usage weight)`` where the move name
-    /// depends on the algorithm and the usage weight gives the proportion of time that move is
-    /// used relative to the others in the list.
-    ///
-    /// For the Ensemble Slice Sampler (ESS) algorithm, valid move types are "differential" and
-    /// "gaussian", and "global", and the default move set is ``[("differential", 0.9), ("gaussian", 0.1)]``.
-    ///
-    /// For ESS, the "global" move can also be given with a dict containing some hyperparameters.
-    /// The dict should have the following keys (with default values given here): ``scale=1.0``,
-    /// the scale factor to apply to the multinormal distribution for jumps within the same
-    /// cluster, ``rescale_cov=0.001``, the rescaling factor which the covariance matrices are
-    /// multiplied by in jumps between different clusters (higher values promote jumping), and
-    /// ``n_components=5``, the maximum number of components to use in the mixture model (this
-    /// should be greater than or equal to the estimated number of modes in a multimodal distribution).
-    /// For example, a valid global move might look like ``(("global", {"scale": 1.3, "n_components":
-    /// 10}), 0.2), where the final ``0.2`` is the usage weight. Omitted values will use their
-    /// defaults.
-    ///
-    /// For the Affine Invariant Ensemble Sampler (AIES) algorithm, valid move types are
-    /// "stretch" and "walk", and the default move set is ``[("stretch", 0.9), ("walk", 0.1)]``.
-    ///
-    /// For AIES, the "stretch" move can also be given with an adaptive parameter ``a``
-    /// (default=``2``). To add a stretch move with a different value of ``a``, the "move name"
-    /// can be instead given as a tuple ``(move name, a)``. For example, ``(("stretch", 2.2), 0.3)``
-    /// creates a stretch move with ``a=2.2`` and usage weight of ``0.3``.
+    /// The default algorithm is the ESS algorithm with a moveset of of 90% differential moves to
+    /// 10% gaussian moves.
     ///
     /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
     /// function sign is automatically flipped when calling this method.
     ///
-    #[pyo3(signature = (p0, n_steps, *, method="ESS", debug=false, verbose=false, seed=0, **kwargs))]
+    #[pyo3(signature = (p0, n_steps, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
     #[allow(clippy::too_many_arguments)]
     fn mcmc(
         &self,
         p0: Vec<Vec<Float>>,
         n_steps: usize,
-        method: &str,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
         debug: bool,
         verbose: bool,
         seed: u64,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        threads: Option<usize>,
     ) -> PyResult<PyEnsemble> {
         let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
         let mut rng = Rng::new();
         rng.seed(seed);
-        let options = py_parse_mcmc_options(method, debug, verbose, kwargs, rng.clone())?;
+        let options =
+            py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
         let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
         Ok(PyEnsemble(ensemble))
     }

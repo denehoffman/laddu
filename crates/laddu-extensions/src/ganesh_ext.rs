@@ -4,7 +4,7 @@ use fastrand::Rng;
 use ganesh::{
     algorithms::LBFGSB,
     observers::{DebugMCMCObserver, DebugObserver, MCMCObserver, Observer},
-    samplers::{aies::WeightedAIESMove, ess::WeightedESSMove, AIES, ESS},
+    samplers::{ESSMove, ESS},
     traits::{Algorithm, MCMCAlgorithm},
     Status,
 };
@@ -230,21 +230,12 @@ pub struct MCMCOptions {
 }
 
 impl MCMCOptions {
-    /// Use the [`ESS`] algorithm with `100` adaptive steps.
-    pub fn new_ess<T: AsRef<[WeightedESSMove]>>(moves: T, rng: Rng) -> Self {
+    /// Create the default set of [`MCMCOptions`], which cannot be made with a typical [`Default`]
+    /// implementation because it requires an [`Rng`] to be provided.
+    pub fn default_with_rng(rng: Rng) -> Self {
+        let default_ess_moves = [ESSMove::differential(0.9), ESSMove::gaussian(0.1)];
         Self {
-            algorithm: Box::new(ESS::new(moves, rng).with_n_adaptive(100)),
-            observers: Default::default(),
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
-        }
-    }
-    /// Use the [`AIES`] algorithm.
-    pub fn new_aies<T: AsRef<[WeightedAIESMove]>>(moves: T, rng: Rng) -> Self {
-        Self {
-            algorithm: Box::new(AIES::new(moves, rng)),
+            algorithm: Box::new(ESS::new(default_ess_moves, rng).with_n_adaptive(100)),
             observers: Default::default(),
             #[cfg(all(feature = "rayon", feature = "num_cpus"))]
             threads: num_cpus::get(),
@@ -276,22 +267,24 @@ impl MCMCOptions {
     }
     /// Set the [`MCMCAlgorithm`] to be used in the minimization.
     #[cfg(feature = "rayon")]
-    pub fn with_algorithm<A: MCMCAlgorithm<ThreadPool, LadduError> + 'static>(
-        self,
+    pub fn from_algorithm<A: MCMCAlgorithm<ThreadPool, LadduError> + 'static>(
         algorithm: A,
     ) -> Self {
         Self {
             algorithm: Box::new(algorithm),
-            observers: self.observers,
-            threads: self.threads,
+            observers: Default::default(),
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
+            threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
         }
     }
     /// Set the [`MCMCAlgorithm`] to be used in the minimization.
     #[cfg(not(feature = "rayon"))]
-    pub fn with_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+    pub fn from_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
         Self {
             algorithm: Box::new(algorithm),
-            observers: self.observers,
+            observers: Default::default(),
         }
     }
     #[cfg(feature = "rayon")]
@@ -337,8 +330,11 @@ pub mod py_ganesh {
     use fastrand::Rng;
     use ganesh::{
         algorithms::{
-            lbfgsb::{LBFGSBFTerminator, LBFGSBGTerminator},
-            nelder_mead::{NelderMeadFTerminator, NelderMeadXTerminator, SimplexExpansionMethod},
+            lbfgsb::LBFGSBErrorMode,
+            nelder_mead::{
+                NelderMeadFTerminator, NelderMeadXTerminator, SimplexConstructionMethod,
+                SimplexExpansionMethod,
+            },
             NelderMead, LBFGSB,
         },
         observers::{AutocorrelationObserver, MCMCObserver, Observer, SwarmObserver},
@@ -350,7 +346,6 @@ pub mod py_ganesh {
         Point, Status, Swarm,
     };
     use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
-    use laddu_python::GetStrExtractObj;
     use numpy::{PyArray1, PyArray2, PyArray3};
     use parking_lot::RwLock;
     use pyo3::{
@@ -358,6 +353,466 @@ pub mod py_ganesh {
         prelude::*,
         types::{PyBytes, PyDict, PyList, PyTuple},
     };
+
+    /// The L-BFGS-B Minimizer
+    ///
+    /// Parameters
+    /// ----------
+    /// eps_f_abs : float, optional
+    ///     Set the absolute tolerance on the function value for the termination criteria
+    /// eps_g_abs : float, optional
+    ///     Set the absolute tolerance on the gradient value for the termination criteria
+    /// tol_g_abs : float, optional
+    ///     Set the absolute tolerance on the gradient value for the termination criteria // TODO:
+    ///
+    #[pyclass(name = "LBFGSB", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyLBFGSB {
+        eps_f_abs: Option<Float>,
+        eps_g_abs: Option<Float>,
+        tol_g_abs: Option<Float>,
+    }
+    #[pymethods]
+    impl PyLBFGSB {
+        #[new]
+        #[pyo3(signature=(*, eps_f_abs=None, eps_g_abs=None, tol_g_abs=None))]
+        fn new(
+            eps_f_abs: Option<Float>,
+            eps_g_abs: Option<Float>,
+            tol_g_abs: Option<Float>,
+        ) -> Self {
+            PyLBFGSB {
+                eps_f_abs,
+                eps_g_abs,
+                tol_g_abs,
+            }
+        }
+    }
+    impl PyLBFGSB {
+        fn get_algorithm<U>(&self, skip_hessian: bool) -> LBFGSB<U, LadduError> {
+            let mut lbfgsb = LBFGSB::default();
+            if let Some(eps_f_abs) = self.eps_f_abs {
+                lbfgsb = lbfgsb.with_eps_f_abs(eps_f_abs);
+            }
+            if let Some(eps_g_abs) = self.eps_g_abs {
+                lbfgsb = lbfgsb.with_eps_g_abs(eps_g_abs);
+            }
+            if let Some(tol_g_abs) = self.tol_g_abs {
+                lbfgsb = lbfgsb.with_tol_g_abs(tol_g_abs);
+            }
+            if skip_hessian {
+                lbfgsb = lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
+            }
+            lbfgsb
+        }
+    }
+
+    /// Methods to initialize the ``NelderMead`` minimizer's simplex
+    ///
+    #[pyclass(name = "SimplexConstructionMethod", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySimplexConstructionMethod(SimplexConstructionMethod);
+    #[pymethods]
+    impl PySimplexConstructionMethod {
+        /// Create an orthogonal simplex structure with a given spacing
+        ///
+        /// Parameters
+        /// ----------
+        /// simplex_size : float
+        ///     The spacing between the vertices of the simplex
+        ///
+        /// Returns
+        /// -------
+        /// SimplexConstructionMethod
+        ///
+        /// Notes
+        /// -----
+        /// This will initialize a ``NelderMead`` simplex with a vertex at the initial guess of the
+        /// minimizer in parameter space along with other vertices a distance of ``simplex_size``
+        /// from the initial guess in each positive dimension of the space.
+        ///
+        #[staticmethod]
+        fn orthogonal(simplex_size: Float) -> Self {
+            Self(SimplexConstructionMethod::Orthogonal { simplex_size })
+        }
+        /// Create an simplex structure with the given vertices
+        ///
+        /// Parameters
+        /// ----------
+        /// simplex : list of list of float
+        ///     A list of vertices in the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// SimplexConstructionMethod
+        ///
+        /// Notes
+        /// -----
+        /// This construction method will ignore the initial guess input to the minimizer and will
+        /// instead use the vertices provided. The list of vertices must have a length od ``D+1``
+        /// where ``D`` is the dimensionality of the parameter space.
+        ///
+        #[staticmethod]
+        fn custom(simplex: Vec<Vec<Float>>) -> Self {
+            Self(SimplexConstructionMethod::Custom { simplex })
+        }
+    }
+
+    /// The Nelder-Mead simplex minimizer
+    ///
+    /// The Nedler-Mead algorithm is a gradient-free minimizer which uses a set of evaluations to
+    /// determine the next step to take.
+    ///
+    /// Parameters
+    /// ----------
+    /// eps_x_rel : float, optional
+    ///     The relative tolerance on the parameter space to determine convergence
+    /// eps_x_abs : float, optional
+    ///     The absolute tolerance on the parameter space to determine convergence
+    /// eps_f_rel : float, optional
+    ///     The relative tolerance on the function value to determine convergence
+    /// eps_f_abs : float, optional
+    ///     The absolute tolerance on the function value to determine convergence
+    /// alpha : float, optional
+    ///     The reflection coefficient (default = ``1``, must be greater than zero)
+    /// beta : float, optional
+    ///     The expansion coefficient (default = ``2``, must be greater than one and
+    ///     greater than ``alpha``)
+    /// gamma : float, optional
+    ///     The contraction coefficient (default = ``0.5``, must be strictly between zero and one)
+    /// delta : float, optional
+    ///     The shrink coefficient (default = ``0.5``, must be between zero and one)
+    /// adaptive : int, optional
+    ///     Override any of the coefficients ``alpha``, ``beta``, ``gamma``, and ``delta`` with
+    ///     adaptive versions which scale with the number of parameters (this value should be set
+    ///     to the number of free parameters if used, and setting any coefficient manually will
+    ///     override that value)
+    /// construction_method : SimplexConstructionMethod, optional
+    ///     Specify how to initialize the simplex
+    /// simplex_expansion_method : {"greedy minimization", "greedy expansion"}, optional
+    ///     Specify whether the expansion method should favor minimization or exploration
+    /// terminator_f : {"StdDev", "Amoeba", "Absolute", "None"}, optional
+    ///     Set the termination criteria for the function value
+    /// terminator_x : {"Singer", "Diameter", "Higham", "Rowan", "None"}, optional
+    ///     Set the termination criteria for the simplex positions
+    ///
+    #[pyclass(name = "NelderMead", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyNelderMead {
+        eps_x_rel: Option<Float>,
+        eps_x_abs: Option<Float>,
+        eps_f_rel: Option<Float>,
+        eps_f_abs: Option<Float>,
+        alpha: Option<Float>,
+        beta: Option<Float>,
+        gamma: Option<Float>,
+        delta: Option<Float>,
+        adaptive: Option<usize>,
+        construction_method: Option<SimplexConstructionMethod>,
+        simplex_expansion_method: Option<SimplexExpansionMethod>,
+        terminator_f: Option<NelderMeadFTerminator>,
+        terminator_x: Option<NelderMeadXTerminator>,
+    }
+    #[pymethods]
+    impl PyNelderMead {
+        #[new]
+        #[pyo3(signature=(*, eps_x_rel=None, eps_x_abs=None, eps_f_rel=None, eps_f_abs=None, alpha=None, beta=None, gamma=None, delta=None, adaptive=None, construction_method=None, simplex_expansion_method=None, terminator_f=None, terminator_x=None))]
+        #[allow(clippy::too_many_arguments)]
+        fn new(
+            eps_x_rel: Option<Float>,
+            eps_x_abs: Option<Float>,
+            eps_f_rel: Option<Float>,
+            eps_f_abs: Option<Float>,
+            alpha: Option<Float>,
+            beta: Option<Float>,
+            gamma: Option<Float>,
+            delta: Option<Float>,
+            adaptive: Option<usize>,
+            construction_method: Option<PySimplexConstructionMethod>,
+            simplex_expansion_method: Option<String>,
+            terminator_f: Option<String>,
+            terminator_x: Option<String>,
+        ) -> PyResult<Self> {
+            let construction_method = construction_method.map(|cm| cm.0);
+            let simplex_expansion_method = simplex_expansion_method.map(|sem| {match sem.to_lowercase().as_str() {
+                "greedy minimization" => Ok(SimplexExpansionMethod::GreedyMinimization),
+                "greedy expansion" => Ok(SimplexExpansionMethod::GreedyExpansion),
+                _ => Err(PyTypeError::new_err("Invalid simplex_expansion_method! Valid options are \"greedy minimization\" (default) or \"greedy expansion\".")),
+            }}).transpose()?;
+            let terminator_f=terminator_f.map(|tf| {match tf.to_lowercase().as_str() {
+                "amoeba" => Ok(NelderMeadFTerminator::Amoeba),
+                "absolute" => Ok(NelderMeadFTerminator::Absolute),
+                "stddev" => Ok(NelderMeadFTerminator::StdDev),
+                "none" => Ok(NelderMeadFTerminator::None),
+                _ => Err(PyTypeError::new_err("Invalid terminator_f! Valid options are \"stddev\" (default), \"amoeba\", \"absolute\", or \"none\".")),
+            }}).transpose()?;
+            let terminator_x=terminator_x.map(|tx| {match tx.to_lowercase().as_str() {
+                "diameter" => Ok(NelderMeadXTerminator::Diameter),
+                "higham" => Ok(NelderMeadXTerminator::Higham),
+                "rowan" => Ok(NelderMeadXTerminator::Rowan),
+                "singer" => Ok(NelderMeadXTerminator::Singer),
+                "none" => Ok(NelderMeadXTerminator::None),
+                _ => Err(PyTypeError::new_err("Invalid terminator_x! Valid options are \"singer\" (default), \"diameter\", \"higham\", \"rowan\", or \"none\".")),
+            }}).transpose()?;
+            Ok(PyNelderMead {
+                eps_x_rel,
+                eps_x_abs,
+                eps_f_rel,
+                eps_f_abs,
+                alpha,
+                beta,
+                gamma,
+                delta,
+                adaptive,
+                construction_method,
+                simplex_expansion_method,
+                terminator_f,
+                terminator_x,
+            })
+        }
+    }
+    impl PyNelderMead {
+        fn get_algorithm(&self, skip_hessian: bool) -> PyResult<NelderMead> {
+            let mut nm = NelderMead::default();
+            if let Some(eps_x_rel) = self.eps_x_rel {
+                nm = nm.with_eps_x_rel(eps_x_rel);
+            }
+            if let Some(eps_x_abs) = self.eps_x_abs {
+                nm = nm.with_eps_x_abs(eps_x_abs);
+            }
+            if let Some(eps_f_rel) = self.eps_f_rel {
+                nm = nm.with_eps_f_rel(eps_f_rel);
+            }
+            if let Some(eps_f_abs) = self.eps_f_abs {
+                nm = nm.with_eps_f_abs(eps_f_abs);
+            }
+            if let Some(adaptive) = self.adaptive {
+                nm = nm.with_adaptive(adaptive);
+            }
+            if let Some(alpha) = self.alpha {
+                nm = nm.with_alpha(alpha);
+            }
+            if let Some(beta) = self.beta {
+                nm = nm.with_beta(beta);
+            }
+            if let Some(gamma) = self.gamma {
+                nm = nm.with_gamma(gamma);
+            }
+            if let Some(delta) = self.delta {
+                nm = nm.with_delta(delta);
+            }
+            if let Some(construction_method) = self.construction_method.clone() {
+                nm = nm.with_construction_method(construction_method);
+            }
+            if let Some(simplex_expansion_method) = self.simplex_expansion_method.clone() {
+                nm = nm.with_expansion_method(simplex_expansion_method);
+            }
+            if let Some(terminator_f) = self.terminator_f.clone() {
+                nm = nm.with_terminator_f(terminator_f);
+            }
+            if let Some(terminator_x) = self.terminator_x.clone() {
+                nm = nm.with_terminator_x(terminator_x);
+            }
+            if skip_hessian {
+                nm = nm.with_no_error_calculation();
+            }
+            Ok(nm)
+        }
+    }
+
+    /// A weighted AIES move.
+    ///
+    #[pyclass(name = "AIESMove", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyAIESMove(WeightedAIESMove);
+    #[pymethods]
+    impl PyAIESMove {
+        /// Construct a stretch move.
+        ///
+        /// Parameters
+        /// ----------
+        /// weight : float, default=1.0
+        ///     The relative frequency this move should be chosen
+        /// a : float, default=2.0
+        ///     A scaling factor (higher values encourage exploration)
+        ///
+        #[staticmethod]
+        #[pyo3(signature = (weight=1.0, *, a=None))]
+        fn stretch(weight: Option<Float>, a: Option<Float>) -> Self {
+            let weight = weight.unwrap_or(1.0);
+            if let Some(a) = a {
+                Self((AIESMove::Stretch { a }, weight))
+            } else {
+                Self(AIESMove::stretch(weight))
+            }
+        }
+        /// Construct a walk move.
+        ///
+        /// Parameters
+        /// ----------
+        /// weight : float, default=1.0
+        ///     The relative frequency this move should be chosen
+        ///
+        #[staticmethod]
+        #[pyo3(signature = (weight=1.0))]
+        fn walk(weight: Option<Float>) -> Self {
+            let weight = weight.unwrap_or(1.0);
+            Self(AIESMove::walk(weight))
+        }
+    }
+
+    /// Construct an Affine Invariant Ensemble Sampler (AIES).
+    ///
+    /// Parameters
+    /// ----------
+    /// moves : list of AIESMove
+    ///     The set of moves to randomly draw from at each step
+    ///
+    #[pyclass(name = "AIES", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyAIES(Vec<PyAIESMove>);
+    #[pymethods]
+    impl PyAIES {
+        #[new]
+        fn new(moves: Vec<PyAIESMove>) -> Self {
+            Self(moves)
+        }
+    }
+    impl PyAIES {
+        fn get_algorithm(&self, rng: Rng) -> AIES {
+            AIES::new(
+                self.0
+                    .iter()
+                    .map(|m| m.0)
+                    .collect::<Vec<WeightedAIESMove>>(),
+                rng,
+            )
+        }
+    }
+
+    /// A weighted ESS move.
+    ///
+    #[pyclass(name = "ESSMove", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyESSMove(WeightedESSMove);
+    #[pymethods]
+    impl PyESSMove {
+        /// Construct a differential move.
+        ///
+        /// Parameters
+        /// ----------
+        /// weight : float, default=1.0
+        ///     The relative frequency this move should be chosen
+        ///
+        #[staticmethod]
+        #[pyo3(signature = (weight=1.0))]
+        fn differential(weight: Option<Float>) -> Self {
+            let weight = weight.unwrap_or(1.0);
+            Self(ESSMove::differential(weight))
+        }
+        /// Construct a Gaussian move.
+        ///
+        /// Parameters
+        /// ----------
+        /// weight : float, default=1.0
+        ///     The relative frequency this move should be chosen
+        ///
+        #[staticmethod]
+        #[pyo3(signature = (weight=1.0))]
+        fn gaussian(weight: Option<Float>) -> Self {
+            let weight = weight.unwrap_or(1.0);
+            Self(ESSMove::gaussian(weight))
+        }
+        /// Construct a global move.
+        ///
+        /// Parameters
+        /// ----------
+        /// weight : float, default=1.0
+        ///     The relative frequency this move should be chosen
+        /// scale : float, optional
+        ///     The rescaling factor to apply for jumps within the same mode (larger values promote
+        ///     larger jumps, the default is ``1.0``)
+        /// rescale_cov : float, optional
+        ///     The rescaling factor to apply to the covariance matrix for jumps between modes (larger values promote
+        ///     jumping, the default is ``0.001``)
+        /// n_components : int, optional
+        ///     The number of components to use in the Dirichlet Process Bayesian Gaussian Mixture
+        ///     model (defaults to ``5``)
+        ///
+        #[staticmethod]
+        #[pyo3(signature = (weight=1.0, *, scale=None, rescale_cov=None, n_components=None))]
+        fn global(
+            weight: Option<Float>,
+            scale: Option<Float>,
+            rescale_cov: Option<Float>,
+            n_components: Option<usize>,
+        ) -> Self {
+            let weight = weight.unwrap_or(1.0);
+            Self(ESSMove::global(weight, scale, rescale_cov, n_components))
+        }
+    }
+
+    /// Construct an Ensemble Slice Sampler (ESS).
+    ///
+    /// Parameters
+    /// ----------
+    /// moves : list of ESSMove
+    ///     The set of moves to randomly draw from at each step
+    /// n_adaptive : int, optional
+    ///     The number of adaptive moves to perform at the start of sampling (defaults to ``0``)
+    /// max_steps : int, optional
+    ///     The maximum number of expansions/contractions to perform at each step (defaults to
+    ///     ``10000``)
+    /// mu : float, optional
+    ///     The adaptive scaling parameter (defaults to ``1.0``)
+    ///
+    #[pyclass(name = "ESS", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyESS {
+        moves: Vec<PyESSMove>,
+        n_adaptive: Option<usize>,
+        max_steps: Option<usize>,
+        mu: Option<Float>,
+    }
+    #[pymethods]
+    impl PyESS {
+        #[new]
+        #[pyo3(signature = (moves, *, n_adaptive=None, max_steps=None, mu=None))]
+        fn new(
+            moves: Vec<PyESSMove>,
+            n_adaptive: Option<usize>,
+            max_steps: Option<usize>,
+            mu: Option<Float>,
+        ) -> Self {
+            Self {
+                moves,
+                n_adaptive,
+                max_steps,
+                mu,
+            }
+        }
+    }
+    impl PyESS {
+        fn get_algorithm(&self, rng: Rng) -> ESS {
+            let mut ess = ESS::new(
+                self.moves
+                    .iter()
+                    .map(|m| m.0)
+                    .collect::<Vec<WeightedESSMove>>(),
+                rng,
+            );
+            if let Some(n_adaptive) = self.n_adaptive {
+                ess = ess.with_n_adaptive(n_adaptive)
+            }
+            if let Some(max_steps) = self.max_steps {
+                ess = ess.with_max_steps(max_steps)
+            }
+            if let Some(mu) = self.mu {
+                ess = ess.with_mu(mu)
+            }
+            ess
+        }
+    }
 
     /// A user implementation of [`Observer`](`crate::ganesh::observers::Observer`) from Python
     #[pyclass]
@@ -817,6 +1272,8 @@ pub mod py_ganesh {
         }
     }
 
+    /// A point in parameter space with a position and value.
+    ///
     #[pyclass(name = "Point", module = "laddu")]
     #[derive(Clone)]
     pub struct PyPoint(pub Point);
@@ -897,6 +1354,8 @@ pub mod py_ganesh {
         }
     }
 
+    /// A particle in parameter space with a position, velocity, and best position.
+    ///
     #[pyclass(name = "Particle", module = "laddu")]
     #[derive(Clone)]
     pub struct PyParticle(pub Particle);
@@ -1471,165 +1930,48 @@ pub mod py_ganesh {
     }
 
     #[cfg(feature = "python")]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn py_parse_minimizer_options(
-        n_parameters: usize,
-        method: &str,
+        opt_method: Option<Bound<'_, PyAny>>,
+        opt_observers: Option<Bound<'_, PyAny>>,
         max_steps: usize,
         debug: bool,
         verbose: bool,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        show_step: bool,
+        show_x: bool,
+        show_fx: bool,
+        skip_hessian: bool,
+        opt_threads: Option<usize>,
     ) -> PyResult<MinimizerOptions> {
-        use ganesh::algorithms::lbfgsb::LBFGSBErrorMode;
-
         let mut options = MinimizerOptions::default();
-        let mut show_step = true;
-        let mut show_x = true;
-        let mut show_fx = true;
-        if let Some(kwargs) = kwargs {
-            show_step = kwargs.get_extract::<bool>("show_step")?.unwrap_or(true);
-            show_x = kwargs.get_extract::<bool>("show_x")?.unwrap_or(true);
-            show_fx = kwargs.get_extract::<bool>("show_fx")?.unwrap_or(true);
-            let eps_x_rel = kwargs
-                .get_extract::<Float>("eps_x_rel")?
-                .unwrap_or(Float::EPSILON);
-            let eps_x_abs = kwargs
-                .get_extract::<Float>("eps_x_abs")?
-                .unwrap_or(Float::EPSILON);
-            let eps_f_rel = kwargs
-                .get_extract::<Float>("eps_f_rel")?
-                .unwrap_or(Float::EPSILON);
-            let eps_f_abs = kwargs
-                .get_extract::<Float>("eps_f_abs")?
-                .unwrap_or(Float::EPSILON);
-            let eps_g_abs = kwargs
-                .get_extract::<Float>("eps_g_abs")?
-                .unwrap_or(Float::cbrt(Float::EPSILON));
-            let tol_g_abs = kwargs.get_extract::<Float>("tol_g_abs")?.unwrap_or(1e-5);
-            let skip_hessian = kwargs.get_extract::<bool>("skip_hessian")?.unwrap_or(false);
-            let adaptive = kwargs.get_extract::<bool>("adaptive")?.unwrap_or(false);
-            let alpha = kwargs.get_extract::<Float>("alpha")?;
-            let beta = kwargs.get_extract::<Float>("beta")?;
-            let gamma = kwargs.get_extract::<Float>("gamma")?;
-            let delta = kwargs.get_extract::<Float>("delta")?;
-            let simplex_expansion_method = kwargs
-                .get_extract::<String>("simplex_expansion_method")?
-                .unwrap_or("greedy minimization".into());
-            let nelder_mead_f_terminator = kwargs
-                .get_extract::<String>("nelder_mead_f_terminator")?
-                .unwrap_or("stddev".into());
-            let nelder_mead_x_terminator = kwargs
-                .get_extract::<String>("nelder_mead_x_terminator")?
-                .unwrap_or("singer".into());
-            #[cfg(feature = "rayon")]
-            let threads = kwargs
-                .get_extract::<usize>("threads")
-                .unwrap_or(None)
-                .unwrap_or_else(num_cpus::get);
-            let mut observers: Vec<Arc<RwLock<PyObserver>>> = Vec::default();
-            if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
-                if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
-                    for item in observer_list.iter() {
-                        let observer = item.extract::<PyObserver>()?;
-                        observers.push(Arc::new(RwLock::new(observer)));
-                    }
-                } else if let Ok(single_observer) = observer_arg.extract::<PyObserver>() {
-                    observers.push(Arc::new(RwLock::new(single_observer)));
-                } else {
-                    return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
+        let mut observers: Vec<Arc<RwLock<PyObserver>>> = Vec::default();
+        if let Some(pyany_observers) = opt_observers {
+            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
+                for item in observer_list.iter() {
+                    let observer = item.extract::<PyObserver>()?;
+                    observers.push(Arc::new(RwLock::new(observer)));
                 }
+            } else if let Ok(single_observer) = pyany_observers.extract::<PyObserver>() {
+                observers.push(Arc::new(RwLock::new(single_observer)));
+            } else {
+                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
             }
             for observer in observers {
                 options = options.with_observer(observer);
             }
-            match method.to_lowercase().as_str() {
-                "lbfgsb" => {
-                    let mut lbfgsb = LBFGSB::default()
-                        .with_terminator_f(LBFGSBFTerminator)
-                        .with_terminator_g(LBFGSBGTerminator)
-                        .with_eps_f_abs(eps_f_abs)
-                        .with_eps_g_abs(eps_g_abs)
-                        .with_tol_g_abs(tol_g_abs);
-                    if skip_hessian {
-                        lbfgsb = lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
-                    }
-                    options = options.with_algorithm(lbfgsb)
-                }
-                "nelder_mead" => {
-                    let terminator_f = match nelder_mead_f_terminator.to_lowercase().as_str() {
-                        "amoeba" => NelderMeadFTerminator::Amoeba,
-                        "absolute" => NelderMeadFTerminator::Absolute,
-                        "stddev" => NelderMeadFTerminator::StdDev,
-                        "none" => NelderMeadFTerminator::None,
-                        _ => {
-                            return Err(PyValueError::new_err(format!(
-                                "Invalid \"nelder_mead_f_terminator\": \"{}\"",
-                                nelder_mead_f_terminator
-                            )))
-                        }
-                    };
-                    let terminator_x = match nelder_mead_x_terminator.to_lowercase().as_str() {
-                        "diameter" => NelderMeadXTerminator::Diameter,
-                        "higham" => NelderMeadXTerminator::Higham,
-                        "rowan" => NelderMeadXTerminator::Rowan,
-                        "singer" => NelderMeadXTerminator::Singer,
-                        "none" => NelderMeadXTerminator::None,
-                        _ => {
-                            return Err(PyValueError::new_err(format!(
-                                "Invalid \"nelder_mead_x_terminator\": \"{}\"",
-                                nelder_mead_x_terminator
-                            )))
-                        }
-                    };
-                    let simplex_expansion_method =
-                        match simplex_expansion_method.to_lowercase().as_str() {
-                            "greedy minimization" => SimplexExpansionMethod::GreedyMinimization,
-                            "greedy expansion" => SimplexExpansionMethod::GreedyExpansion,
-                            _ => {
-                                return Err(PyValueError::new_err(format!(
-                                    "Invalid \"simplex_expansion_method\": \"{}\"",
-                                    simplex_expansion_method
-                                )))
-                            }
-                        };
-                    let mut nelder_mead = NelderMead::default()
-                        .with_terminator_f(terminator_f)
-                        .with_terminator_x(terminator_x)
-                        .with_eps_x_rel(eps_x_rel)
-                        .with_eps_x_abs(eps_x_abs)
-                        .with_eps_f_rel(eps_f_rel)
-                        .with_eps_f_abs(eps_f_abs)
-                        .with_expansion_method(simplex_expansion_method);
-                    if adaptive {
-                        nelder_mead = nelder_mead.with_adaptive(n_parameters);
-                    }
-                    if let Some(alpha) = alpha {
-                        nelder_mead = nelder_mead.with_alpha(alpha);
-                    }
-                    if let Some(beta) = beta {
-                        nelder_mead = nelder_mead.with_beta(beta);
-                    }
-                    if let Some(gamma) = gamma {
-                        nelder_mead = nelder_mead.with_gamma(gamma);
-                    }
-                    if let Some(delta) = delta {
-                        nelder_mead = nelder_mead.with_delta(delta);
-                    }
-                    if skip_hessian {
-                        nelder_mead = nelder_mead.with_no_error_calculation();
-                    }
-                    options = options.with_algorithm(nelder_mead)
-                }
-                _ => {
-                    return Err(PyValueError::new_err(format!(
-                        "Invalid \"method\": \"{}\"",
-                        method
-                    )))
-                }
+        }
+        if let Some(method) = opt_method {
+            if let Ok(algorithm) = method.extract::<PyLBFGSB>() {
+                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian))
+            } else if let Ok(algorithm) = method.extract::<PyNelderMead>() {
+                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian)?)
+            } else {
+                return Err(PyValueError::new_err("Invalid \"method\": Valid methods include 'laddu.extensions.LBFGSB', 'laddu.extensions.NelderMead'.".to_string()));
             }
-            #[cfg(feature = "rayon")]
-            {
-                options = options.with_threads(threads);
-            }
+        }
+        #[cfg(feature = "rayon")]
+        {
+            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
         }
         if debug {
             options = options.debug();
@@ -1643,161 +1985,43 @@ pub mod py_ganesh {
 
     #[cfg(feature = "python")]
     pub(crate) fn py_parse_mcmc_options(
-        method: &str,
+        opt_method: Option<Bound<'_, PyAny>>,
+        opt_observers: Option<Bound<'_, PyAny>>,
         debug: bool,
         verbose: bool,
-        kwargs: Option<&Bound<'_, PyDict>>,
+        opt_threads: Option<usize>,
         rng: Rng,
     ) -> PyResult<MCMCOptions> {
-        let default_ess_moves = [ESSMove::differential(0.9), ESSMove::gaussian(0.1)];
-        let default_aies_moves = [AIESMove::stretch(0.9), AIESMove::walk(0.1)];
-        let mut options = MCMCOptions::new_ess(default_ess_moves, rng.clone());
-        if let Some(kwargs) = kwargs {
-            let n_adaptive = kwargs.get_extract::<usize>("n_adaptive")?.unwrap_or(100);
-            let mu = kwargs.get_extract::<Float>("mu")?.unwrap_or(1.0);
-            let max_ess_steps = kwargs
-                .get_extract::<usize>("max_ess_steps")?
-                .unwrap_or(10000);
-            let mut ess_moves: Vec<WeightedESSMove> = Vec::default();
-            if let Ok(Some(ess_move_list_arg)) = kwargs.get_item("ess_moves") {
-                if let Ok(ess_move_list) = ess_move_list_arg.downcast::<PyList>() {
-                    for item in ess_move_list.iter() {
-                        let item_tuple = item.downcast::<PyTuple>()?;
-                        let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
-                        if let Ok(move_name) = item_tuple.get_item(0)?.extract::<String>() {
-                            match move_name.to_lowercase().as_ref() {
-                                "differential" => {
-                                    ess_moves.push(ESSMove::differential(move_weight))
-                                }
-                                "gaussian" => ess_moves.push(ESSMove::gaussian(move_weight)),
-                                "global" => {
-                                    ess_moves.push(ESSMove::global(move_weight, None, None, None))
-                                }
-                                _ => {
-                                    return Err(PyValueError::new_err(format!(
-                                        "Unknown ESS move type: {}",
-                                        move_name
-                                    )))
-                                }
-                            }
-                        } else if let Ok(move_spec) = item_tuple.get_item(0)?.downcast::<PyTuple>()
-                        {
-                            let move_name = move_spec.get_item(0)?.extract::<String>()?;
-                            if move_name.to_lowercase() == "global" {
-                                let move_dict =
-                                    move_spec.get_item(1)?.extract::<Bound<'_, PyDict>>()?;
-                                let scale = move_dict.get_extract("scale")?;
-                                let rescale_cov = move_dict.get_extract("rescale_cov")?;
-                                let n_components = move_dict.get_extract("n_components")?;
-                                ess_moves.push(ESSMove::global(
-                                    move_weight,
-                                    scale,
-                                    rescale_cov,
-                                    n_components,
-                                ));
-                            } else {
-                                return Err(PyValueError::new_err(
-                                    "Only the 'global' move has hyperparameters",
-                                ));
-                            }
-                        }
-                    }
+        let mut options = if let Some(method) = opt_method {
+            if let Ok(algorithm) = method.extract::<PyAIES>() {
+                MCMCOptions::from_algorithm(algorithm.get_algorithm(rng))
+            } else if let Ok(algorithm) = method.extract::<PyESS>() {
+                MCMCOptions::from_algorithm(algorithm.get_algorithm(rng))
+            } else {
+                return Err(PyValueError::new_err("Invalid \"method\": Valid methods include 'laddu.extensions.LBFGSB', 'laddu.extensions.NelderMead'.".to_string()));
+            }
+        } else {
+            MCMCOptions::default_with_rng(rng)
+        };
+        let mut observers: Vec<Arc<RwLock<PyMCMCObserver>>> = Vec::default();
+        if let Some(pyany_observers) = opt_observers {
+            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
+                for item in observer_list.iter() {
+                    let observer = item.extract::<PyMCMCObserver>()?;
+                    observers.push(Arc::new(RwLock::new(observer)));
                 }
-            }
-            if ess_moves.is_empty() {
-                ess_moves = default_ess_moves.to_vec();
-            }
-            let mut aies_moves: Vec<WeightedAIESMove> = Vec::default();
-            if let Ok(Some(aies_move_list_arg)) = kwargs.get_item("aies_moves") {
-                if let Ok(aies_move_list) = aies_move_list_arg.downcast::<PyList>() {
-                    for item in aies_move_list.iter() {
-                        let item_tuple = item.downcast::<PyTuple>()?;
-                        let move_weight = item_tuple.get_item(1)?.extract::<Float>()?;
-                        if let Ok(move_name) = item_tuple.get_item(0)?.extract::<String>() {
-                            match move_name.to_lowercase().as_ref() {
-                                "stretch" => aies_moves.push(AIESMove::stretch(move_weight)),
-                                "walk" => aies_moves.push(AIESMove::walk(move_weight)),
-                                _ => {
-                                    return Err(PyValueError::new_err(format!(
-                                        "Unknown AIES move type: {}",
-                                        move_name
-                                    )))
-                                }
-                            }
-                        } else if let Ok(move_spec) = item_tuple.get_item(0)?.downcast::<PyTuple>()
-                        {
-                            let move_name = move_spec.get_item(0)?.extract::<String>()?;
-                            if move_name.to_lowercase() == "stretch" {
-                                let a = move_spec.get_item(1)?.extract::<Float>()?;
-                                aies_moves.push((AIESMove::Stretch { a }, move_weight))
-                            } else {
-                                return Err(PyValueError::new_err(
-                                    "Only the 'stretch' move has a hyperparameter",
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            if aies_moves.is_empty() {
-                aies_moves = default_aies_moves.to_vec();
-            }
-            #[cfg(feature = "rayon")]
-            let threads = kwargs
-                .get_extract::<usize>("threads")
-                .unwrap_or(None)
-                .unwrap_or_else(num_cpus::get);
-            #[cfg(feature = "rayon")]
-            let mut observers: Vec<
-                Arc<RwLock<dyn ganesh::observers::MCMCObserver<ThreadPool>>>,
-            > = Vec::default();
-            #[cfg(not(feature = "rayon"))]
-            let mut observers: Vec<
-                Arc<RwLock<dyn ganesh::observers::MCMCObserver<()>>>,
-            > = Vec::default();
-            if let Ok(Some(observer_arg)) = kwargs.get_item("observers") {
-                if let Ok(observer_list) = observer_arg.downcast::<PyList>() {
-                    for item in observer_list.iter() {
-                        if let Ok(observer) = item.downcast::<PyAutocorrelationObserver>() {
-                            observers.push(observer.borrow().0.clone());
-                        } else if let Ok(observer) = item.extract::<PyMCMCObserver>() {
-                            observers.push(Arc::new(RwLock::new(observer)));
-                        }
-                    }
-                } else if let Ok(single_observer) =
-                    observer_arg.downcast::<PyAutocorrelationObserver>()
-                {
-                    observers.push(single_observer.borrow().0.clone());
-                } else if let Ok(single_observer) = observer_arg.extract::<PyMCMCObserver>() {
-                    observers.push(Arc::new(RwLock::new(single_observer)));
-                } else {
-                    return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single MCMCObserver or a list of MCMCObservers!"));
-                }
+            } else if let Ok(single_observer) = pyany_observers.extract::<PyMCMCObserver>() {
+                observers.push(Arc::new(RwLock::new(single_observer)));
+            } else {
+                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
             }
             for observer in observers {
-                options = options.with_observer(observer.clone());
+                options = options.with_observer(observer);
             }
-            match method.to_lowercase().as_ref() {
-                "ess" => {
-                    options = options.with_algorithm(
-                        ESS::new(ess_moves, rng)
-                            .with_mu(mu)
-                            .with_n_adaptive(n_adaptive)
-                            .with_max_steps(max_ess_steps),
-                    )
-                }
-                "aies" => options = options.with_algorithm(AIES::new(aies_moves, rng)),
-                _ => {
-                    return Err(PyValueError::new_err(format!(
-                        "Invalid \"method\": \"{}\"",
-                        method
-                    )))
-                }
-            }
-            #[cfg(feature = "rayon")]
-            {
-                options = options.with_threads(threads);
-            }
+        }
+        #[cfg(feature = "rayon")]
+        {
+            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
         }
         if debug {
             options = options.debug();
