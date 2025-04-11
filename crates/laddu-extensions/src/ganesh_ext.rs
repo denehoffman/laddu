@@ -466,7 +466,9 @@ pub mod py_ganesh {
             },
             NelderMead, LBFGSB,
         },
-        observers::{AutocorrelationObserver, MCMCObserver, Observer, SwarmObserver},
+        observers::{
+            AutocorrelationObserver, MCMCObserver, Observer, SwarmObserver, TrackingSwarmObserver,
+        },
         samplers::{
             aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
             AIESMove, ESSMove, AIES, ESS,
@@ -2062,6 +2064,46 @@ pub mod py_ganesh {
         }
     }
 
+    /// A SwarmObserver that tracks the swarm history.
+    ///
+    #[pyclass(name = "TrackingSwarmObserver")]
+    #[derive(Clone)]
+    pub struct PyTrackingSwarmObserver(TrackingSwarmObserver);
+    #[pymethods]
+    impl PyTrackingSwarmObserver {
+        /// The history of the swarm
+        ///
+        /// Each element is a list of particles representing the position of the swarm at the given
+        /// step.
+        ///
+        /// Returns
+        /// -------
+        /// list of list of Particle
+        ///
+        #[getter]
+        fn history(&self) -> Vec<Vec<PyParticle>> {
+            self.0
+                .history
+                .iter()
+                .map(|s| s.iter().map(|p| PyParticle(p.clone)).collect())
+                .collect()
+        }
+        /// The history of the best swarm position
+        ///
+        /// Returns
+        /// -------
+        /// list of Point
+        ///
+        #[getter]
+        fn best_history(&self) -> Vec<PyPoint> {
+            self.0
+                .best_history
+                .iter()
+                .map(|p| PyPoint(p.clone()))
+                .collect()
+        }
+    }
+
     /// A class representing a lower and upper bound on a free parameter
     ///
     #[pyclass]
@@ -2394,15 +2436,25 @@ pub mod py_ganesh {
         } else {
             MCMCOptions::default_with_rng(rng)
         };
-        let mut observers: Vec<Arc<RwLock<PyMCMCObserver>>> = Vec::default();
+        #[cfg(feature = "rayon")]
+        let mut observers: Vec<Arc<RwLock<dyn MCMCObserver<ThreadPool>>>> = Vec::default();
+        #[cfg(not(feature = "rayon"))]
+        let mut observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>> = Vec::default();
         if let Some(pyany_observers) = opt_observers {
             if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
                 for item in observer_list.iter() {
-                    let observer = item.extract::<PyMCMCObserver>()?;
-                    observers.push(Arc::new(RwLock::new(observer)));
+                    if let Ok(observer) = item.extract::<PyMCMCObserver>() {
+                        observers.push(Arc::new(RwLock::new(observer)));
+                    } else if let Ok(observer) = item.downcast::<PyAutocorrelationObserver>() {
+                        observers.push(observer.borrow().0.clone());
+                    }
                 }
             } else if let Ok(single_observer) = pyany_observers.extract::<PyMCMCObserver>() {
                 observers.push(Arc::new(RwLock::new(single_observer)));
+            } else if let Ok(single_observer) =
+                pyany_observers.downcast::<PyAutocorrelationObserver>()
+            {
+                observers.push(single_observer.borrow().0.clone());
             } else {
                 return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single MCMCObserver or a list of MCMCObservers!"));
             }
@@ -2443,15 +2495,25 @@ pub mod py_ganesh {
         } else {
             SwarmOptions::default_with_rng(rng)
         };
-        let mut observers: Vec<Arc<RwLock<PySwarmObserver>>> = Vec::default();
+        #[cfg(feature = "rayon")]
+        let mut observers: Vec<Arc<RwLock<dyn SwarmObserver<ThreadPool>>>> = Vec::default();
+        #[cfg(not(feature = "rayon"))]
+        let mut observers: Vec<Arc<RwLock<dyn SwarmObserver<()>>>> = Vec::default();
         if let Some(pyany_observers) = opt_observers {
             if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
                 for item in observer_list.iter() {
-                    let observer = item.extract::<PySwarmObserver>()?;
-                    observers.push(Arc::new(RwLock::new(observer)));
+                    if let Ok(observer) = item.extract::<PySwarmObserver>() {
+                        observers.push(Arc::new(RwLock::new(observer)));
+                    } else if let Ok(observer) = item.downcast::<PyTrackingSwarmObserver>() {
+                        observers.push(observer.borrow().0.clone());
+                    }
                 }
             } else if let Ok(single_observer) = pyany_observers.extract::<PySwarmObserver>() {
                 observers.push(Arc::new(RwLock::new(single_observer)));
+            } else if let Ok(single_observer) =
+                pyany_observers.downcast::<PyTrackingSwarmObserver>()
+            {
+                observers.push(single_observer.borrow().0.clone());
             } else {
                 return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single SwarmObserver or a list of SwarmObservers!"));
             }
