@@ -100,7 +100,7 @@ class LikelihoodEvaluator:
         p0: list[list[float]] | npt.NDArray[np.float64],
         n_steps: int,
         *,
-        method: Literal['ESS', 'AIES'] = 'ESS',
+        method: Literal['ESS', 'AEIS'] = 'ESS',
         debug: bool = False,
         verbose: bool = False,
         seed: int = 0,
@@ -164,7 +164,7 @@ class NLL:
         p0: list[list[float]] | npt.NDArray[np.float64],
         n_steps: int,
         *,
-        method: Literal['ESS', 'AIES'] = 'ESS',
+        method: Literal['ESS', 'AEIS'] = 'ESS',
         debug: bool = False,
         verbose: bool = False,
         seed: int = 0,
@@ -251,13 +251,13 @@ class ESS:
         mu: float | None = None,
     ) -> None: ...
 
-class AIESMove:
+class AEISMove:
     @staticmethod
-    def stretch(weight: float = 1.0, a: float | None = None) -> AIESMove: ...
+    def stretch(weight: float = 1.0, a: float | None = None) -> AEISMove: ...
     @staticmethod
-    def walk(weight: float = 1.0) -> AIESMove: ...
+    def walk(weight: float = 1.0) -> AEISMove: ...
 
-class AIES:
+class AEIS:
     def __init__(
         self,
         moves: list[ESSMove],
