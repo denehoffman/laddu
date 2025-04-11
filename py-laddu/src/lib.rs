@@ -148,11 +148,15 @@ mod laddu {
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyAIES;
     #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyAIESMove;
+    #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyAutocorrelationObserver;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyBound;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyESS;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyESSMove;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyEnsemble;
     #[pymodule_export]
