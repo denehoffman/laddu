@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/denehoffman/laddu/compare/py-laddu-v0.5.2...py-laddu-v0.5.3) - 2025-04-11
+
+### Added
+
+- add Swarm methods to Python API and update other algorithm initialization methods
+- add python versions of Point, Particle, SwarmObserver, and Swarm from ganesh
+- change swarm repr if the swarm is uninitialized to not confuse people
+- bump MSRV (for bincode) and bump all dependency versions
+- restructure the minimizer/mcmc methods to no longer take kwargs
+- update `ganesh` version and add Global move to ESS
+
+### Fixed
+
+- add a few more missed pyclasses to the py-laddu exports
+- missed AEISMove->AIESMove and condensed the lib.rs file for py-laddu
+- forgot to export MCMC moves
+- the last commit fixed the typo the wrong way, it is AIES
+- correct typo AIES->AEIS in python type checking files
+- remove  from the rayon-free  calls for  and
+- corrected typo where the `VerboseMCMCObserver` implemented `SwarmObserver<()>` rather than the `VerboseSwarmObserver`
+- move some imports under the python feature flag
+
+### Other
+
+- complete compatibility with newest version of bincode, remove unused dependencies and features across all crates
+- add a todo
+
 ## [0.5.2](https://github.com/denehoffman/laddu/compare/py-laddu-v0.5.1...py-laddu-v0.5.2) - 2025-04-04
 
 ### Added

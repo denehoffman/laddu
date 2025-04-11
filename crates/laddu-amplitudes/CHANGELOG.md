@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.5.1...laddu-amplitudes-v0.5.2) - 2025-04-11
+
+### Other
+
+- complete compatibility with newest version of bincode, remove unused dependencies and features across all crates
+
 ## [0.5.1](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.5.0...laddu-amplitudes-v0.5.1) - 2025-04-04
 
 ### Other

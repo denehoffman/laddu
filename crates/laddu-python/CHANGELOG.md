@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.5.1...laddu-python-v0.6.0) - 2025-04-11
+
+### Other
+
+- complete compatibility with newest version of bincode, remove unused dependencies and features across all crates
+
 ## [0.5.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.5.0...laddu-python-v0.5.1) - 2025-04-04
 
 ### Other
