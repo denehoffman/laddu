@@ -5,7 +5,7 @@
 #![allow(clippy::excessive_precision)]
 
 use bincode::ErrorKind;
-use ganesh::swarms::Particle;
+use ganesh::swarms::{Particle, SwarmPositionInitializer};
 use ganesh::{Point, Swarm};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
@@ -448,7 +448,10 @@ impl ReadWrite for Particle {
 }
 impl ReadWrite for Swarm {
     fn create_null() -> Self {
-        Swarm::default()
+        Swarm::new(SwarmPositionInitializer::Zero {
+            n_particles: 0,
+            n_dimensions: 0,
+        })
     }
 }
 impl ReadWrite for Model {

@@ -146,17 +146,35 @@ mod laddu {
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::py_integrated_autocorrelation_times;
     #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyAIES;
+    #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyAutocorrelationObserver;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyBound;
     #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyESS;
+    #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyEnsemble;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyLBFGSB;
     #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyMCMCObserver;
     #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyNelderMead;
+    #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyObserver;
     #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PyPSO;
+    #[pymodule_export]
     use laddu_extensions::ganesh_ext::py_ganesh::PyStatus;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PySwarm;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmObserver;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmPositionInitializer;
+    #[pymodule_export]
+    use laddu_extensions::ganesh_ext::py_ganesh::PySwarmVelocityInitializer;
 
     #[pymodule_export]
     use laddu_extensions::experimental::py_binned_guide_term;

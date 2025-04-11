@@ -3,10 +3,13 @@ use std::sync::Arc;
 use fastrand::Rng;
 use ganesh::{
     algorithms::LBFGSB,
-    observers::{DebugMCMCObserver, DebugObserver, MCMCObserver, Observer},
+    observers::{
+        DebugMCMCObserver, DebugObserver, DebugSwarmObserver, MCMCObserver, Observer, SwarmObserver,
+    },
     samplers::{ESSMove, ESS},
-    traits::{Algorithm, MCMCAlgorithm},
-    Status,
+    swarms::PSO,
+    traits::{Algorithm, MCMCAlgorithm, SwarmAlgorithm},
+    Status, Swarm,
 };
 use laddu_core::{Ensemble, LadduError};
 use parking_lot::RwLock;
@@ -320,6 +323,132 @@ impl MCMCOptions {
     }
 }
 
+struct VerboseSwarmObserver;
+impl VerboseSwarmObserver {
+    fn build() -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(Self))
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl SwarmObserver<ThreadPool> for VerboseSwarmObserver {
+    fn callback(&mut self, step: usize, _swarm: &mut Swarm, _thread_pool: &mut ThreadPool) -> bool {
+        println!("Step: {}", step);
+        false
+    }
+}
+
+impl SwarmObserver<()> for VerboseMCMCObserver {
+    fn callback(&mut self, step: usize, _swarm: &mut Swarm, _user_data: &mut ()) -> bool {
+        println!("Step: {}", step);
+        false
+    }
+}
+
+/// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
+pub struct SwarmOptions {
+    #[cfg(feature = "rayon")]
+    pub(crate) algorithm: Box<dyn SwarmAlgorithm<ThreadPool, LadduError>>,
+    #[cfg(not(feature = "rayon"))]
+    pub(crate) algorithm: Box<dyn SwarmAlgorithm<(), LadduError>>,
+    #[cfg(feature = "rayon")]
+    pub(crate) observers: Vec<Arc<RwLock<dyn SwarmObserver<ThreadPool>>>>,
+    #[cfg(not(feature = "rayon"))]
+    pub(crate) observers: Vec<Arc<RwLock<dyn SwarmObserver<()>>>>,
+    #[cfg(feature = "rayon")]
+    pub(crate) threads: usize,
+}
+
+impl SwarmOptions {
+    /// Create the default set of [`SwarmOptions`], which cannot be made with a typical [`Default`]
+    /// implementation because it requires an [`Rng`] to be provided.
+    pub fn default_with_rng(rng: Rng) -> Self {
+        Self {
+            algorithm: Box::new(PSO::new(rng)),
+            observers: Default::default(),
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
+            threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
+        }
+    }
+    /// Adds the [`DebugSwarmObserver`] to the minimization.
+    pub fn debug(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(DebugSwarmObserver::build());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            #[cfg(feature = "rayon")]
+            threads: self.threads,
+        }
+    }
+    /// Adds a customizable `VerboseObserver` to the minimization.
+    pub fn verbose(self) -> Self {
+        let mut observers = self.observers;
+        observers.push(VerboseSwarmObserver::build());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            #[cfg(feature = "rayon")]
+            threads: self.threads,
+        }
+    }
+    /// Set the [`SwarmAlgorithm`] to be used in the minimization.
+    #[cfg(feature = "rayon")]
+    pub fn from_algorithm<A: SwarmAlgorithm<ThreadPool, LadduError> + 'static>(
+        algorithm: A,
+    ) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: Default::default(),
+            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
+            threads: num_cpus::get(),
+            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
+            threads: 0,
+        }
+    }
+    /// Set the [`SwarmAlgorithm`] to be used in the minimization.
+    #[cfg(not(feature = "rayon"))]
+    pub fn from_algorithm<A: SwarmAlgorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
+        Self {
+            algorithm: Box::new(algorithm),
+            observers: Default::default(),
+        }
+    }
+    #[cfg(feature = "rayon")]
+    /// Add an [`SwarmObserver`] to the list of [`SwarmObserver`]s used in the minimization.
+    pub fn with_observer(self, observer: Arc<RwLock<dyn SwarmObserver<ThreadPool>>>) -> Self {
+        let mut observers = self.observers;
+        observers.push(observer.clone());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+            threads: self.threads,
+        }
+    }
+    #[cfg(not(feature = "rayon"))]
+    /// Add an [`SwarmObserver`] to the list of [`SwarmObserver`]s used in the minimization.
+    pub fn with_observer(self, observer: Arc<RwLock<dyn SwarmObserver<()>>>) -> Self {
+        let mut observers = self.observers;
+        observers.push(observer.clone());
+        Self {
+            algorithm: self.algorithm,
+            observers,
+        }
+    }
+
+    /// Set the number of threads to use.
+    #[cfg(feature = "rayon")]
+    pub fn with_threads(self, threads: usize) -> Self {
+        Self {
+            algorithm: self.algorithm,
+            observers: self.observers,
+            threads,
+        }
+    }
+}
+
 /// Python bindings for the [`ganesh`] crate
 #[cfg(feature = "python")]
 pub mod py_ganesh {
@@ -342,7 +471,10 @@ pub mod py_ganesh {
             aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
             AIESMove, ESSMove, AIES, ESS,
         },
-        swarms::Particle,
+        swarms::{
+            BoundaryMethod, Particle, SwarmPositionInitializer, SwarmVelocityInitializer, Topology,
+            UpdateMethod, PSO,
+        },
         Point, Status, Swarm,
     };
     use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
@@ -572,7 +704,7 @@ pub mod py_ganesh {
         }
     }
     impl PyNelderMead {
-        fn get_algorithm(&self, skip_hessian: bool) -> PyResult<NelderMead> {
+        fn get_algorithm(&self, skip_hessian: bool) -> NelderMead {
             let mut nm = NelderMead::default();
             if let Some(eps_x_rel) = self.eps_x_rel {
                 nm = nm.with_eps_x_rel(eps_x_rel);
@@ -616,7 +748,7 @@ pub mod py_ganesh {
             if skip_hessian {
                 nm = nm.with_no_error_calculation();
             }
-            Ok(nm)
+            nm
         }
     }
 
@@ -741,7 +873,7 @@ pub mod py_ganesh {
         ///
         #[staticmethod]
         #[pyo3(signature = (weight=1.0, *, scale=None, rescale_cov=None, n_components=None))]
-        fn global(
+        fn global_move(
             weight: Option<Float>,
             scale: Option<Float>,
             rescale_cov: Option<Float>,
@@ -811,6 +943,213 @@ pub mod py_ganesh {
                 ess = ess.with_mu(mu)
             }
             ess
+        }
+    }
+
+    /// A class which defines the initial position of a Swarm
+    ///
+    #[pyclass(name = "SwarmPositionInitializer", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySwarmPositionInitializer(SwarmPositionInitializer);
+    #[pymethods]
+    impl PySwarmPositionInitializer {
+        /// Construct a swarm with all particles at the origin.
+        ///
+        /// Parameters
+        /// ----------
+        /// n_particles : int
+        ///     The number of particles to create
+        /// n_dimensions : int
+        ///     The dimension of the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// SwarmPositionInitializer
+        ///
+        #[staticmethod]
+        fn zero(n_particles: usize, n_dimensions: usize) -> Self {
+            Self(SwarmPositionInitializer::Zero {
+                n_particles,
+                n_dimensions,
+            })
+        }
+        /// Construct a swarm of random particles in the given limits.
+        ///
+        /// Parameters
+        /// ----------
+        /// n_particles : int
+        ///     The number of particles to create
+        /// limits: list of tuple of float
+        ///     A list of lower and upper limit pairs for each dimension of the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// SwarmPositionInitializer
+        ///
+        #[staticmethod]
+        fn random_in_limits(n_particles: usize, limits: Vec<(Float, Float)>) -> Self {
+            Self(SwarmPositionInitializer::RandomInLimits {
+                n_particles,
+                limits,
+            })
+        }
+        /// Construct a swarm of particles at the given positions.
+        ///
+        /// Parameters
+        /// ----------
+        /// positions: array_like or list of list of float
+        ///     A list of particle positions
+        ///
+        /// Returns
+        /// -------
+        /// SwarmPositionInitializer
+        ///
+        #[staticmethod]
+        fn custom(positions: Vec<Vec<Float>>) -> Self {
+            Self(SwarmPositionInitializer::Custom(
+                positions.into_iter().map(DVector::from_vec).collect(),
+            ))
+        }
+        /// Construct a swarm of random particles in the given limits, using Latin Hypercube
+        /// sampling to distribute the particles.
+        ///
+        /// Parameters
+        /// ----------
+        /// n_particles : int
+        ///     The number of particles to create
+        /// limits: list of tuple of float
+        ///     A list of lower and upper limit pairs for each dimension of the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// SwarmPositionInitializer
+        ///
+        #[staticmethod]
+        fn latin_hypercube(n_particles: usize, limits: Vec<(Float, Float)>) -> Self {
+            Self(SwarmPositionInitializer::LatinHypercube {
+                n_particles,
+                limits,
+            })
+        }
+    }
+
+    /// A class which defines the initial velocity of a Swarm
+    ///
+    #[pyclass(name = "SwarmVelocityInitializer", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySwarmVelocityInitializer(SwarmVelocityInitializer);
+    #[pymethods]
+    impl PySwarmVelocityInitializer {
+        /// Initialize all particle velocities to zero.
+        ///
+        /// Returns
+        /// -------
+        /// SwarmVelocityInitializer
+        ///
+        #[staticmethod]
+        fn zero() -> Self {
+            Self(SwarmVelocityInitializer::Zero)
+        }
+        /// Initialize particle velocities to random values in the given limits.
+        ///
+        /// Parameters
+        /// ----------
+        /// limits: list of tuple of float
+        ///     A list of lower and upper limit pairs for each dimension of the parameter space
+        ///
+        /// Returns
+        /// -------
+        /// SwarmVelocityInitializer
+        ///
+        #[staticmethod]
+        fn random_in_limits(limits: Vec<(Float, Float)>) -> Self {
+            Self(SwarmVelocityInitializer::RandomInLimits(limits))
+        }
+    }
+
+    /// A standard Particle Swarm Optimization (PSO) algorithm.
+    ///
+    /// Parameters
+    /// ----------
+    /// omega : float, optional
+    ///     The inertial weight (defaults to ``0.8``)
+    /// c1 : float, optional
+    ///     The cognitive weight (defaults to ``0.1``)
+    /// c2 : float, optional
+    ///     The social weight (defaults to ``0.1``)
+    /// topology : {"global", "ring"}, optional
+    ///     The swarm topology to use (defaults to ``"global"``)
+    /// update_method : {"sync", "async"}, optional
+    ///     The update method to use (defaults to ``"sync"``)
+    ///
+    /// Returns
+    /// -------
+    /// PSO
+    ///
+    #[pyclass(name = "PSO", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyPSO {
+        omega: Option<Float>,
+        c1: Option<Float>,
+        c2: Option<Float>,
+        topology: Option<Topology>,
+        update_method: Option<UpdateMethod>,
+    }
+    #[pymethods]
+    impl PyPSO {
+        #[new]
+        #[pyo3(signature=(*, omega=None, c1=None, c2=None, topology=None, update_method=None))]
+        #[allow(clippy::too_many_arguments)]
+        fn new(
+            omega: Option<Float>,
+            c1: Option<Float>,
+            c2: Option<Float>,
+            topology: Option<String>,
+            update_method: Option<String>,
+        ) -> PyResult<Self> {
+            Ok(Self {
+                omega,
+                c1,
+                c2,
+                topology: topology
+                    .map(|t| match t.to_lowercase().as_str() {
+                        "global" => Ok(Topology::Global),
+                        "ring" => Ok(Topology::Ring),
+                        _ => Err(PyTypeError::new_err(
+                            "Invalid topology! Valid options are \"global\" (default) or \"ring\".",
+                        )),
+                    })
+                    .transpose()?,
+                update_method: update_method
+                    .map(|u| match u.to_lowercase().as_str() {
+                        "sync" => Ok(UpdateMethod::Synchronous),
+                        "async" => Ok(UpdateMethod::Asynchronous),
+                        _ => Err(PyTypeError::new_err(
+                            "Invalid update_method! Valid options are \"sync\" (default), or \"async\".",
+                        )),
+                    }).transpose()?,
+            })
+        }
+    }
+    impl PyPSO {
+        fn get_algorithm(&self, rng: Rng) -> PSO {
+            let mut pso = PSO::new(rng);
+            if let Some(omega) = self.omega {
+                pso = pso.with_omega(omega);
+            }
+            if let Some(c1) = self.c1 {
+                pso = pso.with_c1(c1);
+            }
+            if let Some(c2) = self.c2 {
+                pso = pso.with_c2(c2);
+            }
+            if let Some(topology) = self.topology {
+                pso = pso.with_topology(topology);
+            }
+            if let Some(update_method) = self.update_method {
+                pso = pso.with_update_method(update_method);
+            }
+            pso
         }
     }
 
@@ -1361,14 +1700,32 @@ pub mod py_ganesh {
     pub struct PyParticle(pub Particle);
     #[pymethods]
     impl PyParticle {
+        /// The position of the particle
+        ///
+        /// Returns
+        /// -------
+        /// Point
+        ///
         #[getter]
         fn position(&self) -> PyPoint {
             PyPoint(self.0.position.clone())
         }
+        /// The velocity of the particle
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             PyArray1::from_slice(py, self.0.velocity.as_slice())
         }
+        /// The best position the particle has found
+        ///
+        /// Returns
+        /// -------
+        /// Point
+        ///
         #[getter]
         fn best(&self) -> PyPoint {
             PyPoint(self.0.best.clone())
@@ -1430,11 +1787,49 @@ pub mod py_ganesh {
 
     /// A particle swarm used in particle-swarm-optimization-like algorithms
     ///
+    /// Parameters
+    /// ----------
+    /// position_initializer : PositionInitializer
+    ///     The method for setting the initial position of the swarm
+    /// velocity_initializer : VelocityInitializer, optional
+    ///     The method for setting the initial velocity of the swarm (defaults to setting all
+    ///     velocities to zero)
+    /// boundary_method : {"inf", "shr", "transform"}, optional
+    ///     Specifies the boundary method to use if bounds are specified (defaults to "inf")
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the boundary method given is not a valid method
+    ///
     #[pyclass(name = "Swarm", module = "laddu")]
     #[derive(Clone)]
     pub struct PySwarm(pub Swarm);
     #[pymethods]
     impl PySwarm {
+        #[new]
+        #[pyo3(signature = (position_initializer, *, velocity_initializer=None, boundary_method=None))]
+        fn new(
+            position_initializer: PySwarmPositionInitializer,
+            velocity_initializer: Option<PySwarmVelocityInitializer>,
+            boundary_method: Option<String>,
+        ) -> PyResult<Self> {
+            let mut swarm = Swarm::new(position_initializer.0);
+            if let Some(velocity_initializer) = velocity_initializer {
+                swarm = swarm.with_velocity_initializer(velocity_initializer.0);
+            }
+            if let Some(boundary_method) = boundary_method {
+                swarm = swarm.with_boundary_method(match boundary_method.to_lowercase().as_str() {
+                        "inf" => Ok(BoundaryMethod::Inf),
+                        "shr" => Ok(BoundaryMethod::Shr),
+                        "transform" => Ok(BoundaryMethod::Transform),
+                        _ => Err(PyTypeError::new_err(
+                            "Invalid boundary_method! Valid options are \"inf\" (default), \"shr\", or \"transform\".",
+                        )),
+                    }?);
+            }
+            Ok(PySwarm(swarm))
+        }
         /// The dimension of the parameter space
         ///
         /// Returns
@@ -1543,10 +1938,6 @@ pub mod py_ganesh {
         #[staticmethod]
         fn load_from(path: &str) -> PyResult<Self> {
             Ok(PySwarm(Swarm::load_from(path)?))
-        }
-        #[new]
-        fn new() -> Self {
-            PySwarm(Swarm::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
@@ -1788,18 +2179,16 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!");
                 let new_status = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
                     .extract::<PyEnsemble>()
-                    .expect(
-                        "The first item returned from \"callback\" must be a \"laddu.Ensemble\"!",
-                    )
+                    .expect("The first item returned from \"callback\" must be a \"Ensemble\"!")
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_status, result)
@@ -1827,18 +2216,16 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!");
                 let new_status = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
                     .extract::<PyEnsemble>()
-                    .expect(
-                        "The first item returned from \"callback\" must be a \"laddu.Ensemble\"!",
-                    )
+                    .expect("The first item returned from \"callback\" must be a \"Ensemble\"!")
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Ensemble, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_status, result)
@@ -1867,16 +2254,16 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!");
                 let new_swarm = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
                     .extract::<PySwarm>()
-                    .expect("The first item returned from \"callback\" must be a \"laddu.Swarm\"!")
+                    .expect("The first item returned from \"callback\" must be a \"Swarm\"!")
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_swarm, result)
@@ -1905,16 +2292,16 @@ pub mod py_ganesh {
                     });
                 let res_tuple = res
                     .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!");
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!");
                 let new_warm = res_tuple
                     .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
                     .extract::<PySwarm>()
-                    .expect("The first item returned from \"callback\" must be a \"laddu.Swarm\"!")
+                    .expect("The first item returned from \"callback\" must be a \"Swarm\"!")
                     .0;
                 let result = res_tuple
                     .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Swarm, bool]\"!")
+                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
                     .extract::<bool>()
                     .expect("The second item returned from \"callback\" must be a \"bool\"!");
                 (new_warm, result)
@@ -1964,9 +2351,11 @@ pub mod py_ganesh {
             if let Ok(algorithm) = method.extract::<PyLBFGSB>() {
                 options = options.with_algorithm(algorithm.get_algorithm(skip_hessian))
             } else if let Ok(algorithm) = method.extract::<PyNelderMead>() {
-                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian)?)
+                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian))
             } else {
-                return Err(PyValueError::new_err("Invalid \"method\": Valid methods include 'laddu.extensions.LBFGSB', 'laddu.extensions.NelderMead'.".to_string()));
+                return Err(PyValueError::new_err(
+                    "Invalid \"method\": Valid methods include 'LBFGSB', 'NelderMead'.".to_string(),
+                ));
             }
         }
         #[cfg(feature = "rayon")]
@@ -1998,7 +2387,9 @@ pub mod py_ganesh {
             } else if let Ok(algorithm) = method.extract::<PyESS>() {
                 MCMCOptions::from_algorithm(algorithm.get_algorithm(rng))
             } else {
-                return Err(PyValueError::new_err("Invalid \"method\": Valid methods include 'laddu.extensions.LBFGSB', 'laddu.extensions.NelderMead'.".to_string()));
+                return Err(PyValueError::new_err(
+                    "Invalid \"method\": Valid methods include 'ESS', and 'AIES'.".to_string(),
+                ));
             }
         } else {
             MCMCOptions::default_with_rng(rng)
@@ -2013,7 +2404,56 @@ pub mod py_ganesh {
             } else if let Ok(single_observer) = pyany_observers.extract::<PyMCMCObserver>() {
                 observers.push(Arc::new(RwLock::new(single_observer)));
             } else {
-                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
+                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single MCMCObserver or a list of MCMCObservers!"));
+            }
+            for observer in observers {
+                options = options.with_observer(observer);
+            }
+        }
+        #[cfg(feature = "rayon")]
+        {
+            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
+        }
+        if debug {
+            options = options.debug();
+        }
+        if verbose {
+            options = options.verbose();
+        }
+        Ok(options)
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn py_parse_swarm_options(
+        opt_method: Option<Bound<'_, PyAny>>,
+        opt_observers: Option<Bound<'_, PyAny>>,
+        debug: bool,
+        verbose: bool,
+        opt_threads: Option<usize>,
+        rng: Rng,
+    ) -> PyResult<SwarmOptions> {
+        let mut options = if let Some(method) = opt_method {
+            if let Ok(algorithm) = method.extract::<PyPSO>() {
+                SwarmOptions::from_algorithm(algorithm.get_algorithm(rng))
+            } else {
+                return Err(PyValueError::new_err(
+                    "Invalid \"method\": Valid methods include 'PSO'.".to_string(),
+                ));
+            }
+        } else {
+            SwarmOptions::default_with_rng(rng)
+        };
+        let mut observers: Vec<Arc<RwLock<PySwarmObserver>>> = Vec::default();
+        if let Some(pyany_observers) = opt_observers {
+            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
+                for item in observer_list.iter() {
+                    let observer = item.extract::<PySwarmObserver>()?;
+                    observers.push(Arc::new(RwLock::new(observer)));
+                }
+            } else if let Ok(single_observer) = pyany_observers.extract::<PySwarmObserver>() {
+                observers.push(Arc::new(RwLock::new(single_observer)));
+            } else {
+                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single SwarmObserver or a list of SwarmObservers!"));
             }
             for observer in observers {
                 options = options.with_observer(observer);

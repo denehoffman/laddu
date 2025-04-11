@@ -16,6 +16,10 @@ class MCMCObserver(metaclass=ABCMeta):
     @abstractmethod
     def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]: ...
 
+class SwarmObserver(metaclass=ABCMeta):
+    @abstractmethod
+    def callback(self, step: int, swarm: Swarm) -> tuple[Swarm, bool]: ...
+
 def likelihood_sum(
     likelihoods: Sequence[LikelihoodID | LikelihoodExpression]
     | Sequence[LikelihoodID]
@@ -169,6 +173,40 @@ class NLL:
 
 def LikelihoodScalar(name: str) -> LikelihoodTerm: ...
 
+class LBFGSB:
+    def __init__(
+        self,
+        eps_f_abs: float | None = None,
+        eps_g_abs: float | None = None,
+        tol_g_abs: float | None = None,
+    ) -> None: ...
+
+class SimplexConstructionMethod:
+    @staticmethod
+    def orthogonal(simplex_size: int) -> SimplexConstructionMethod: ...
+    @staticmethod
+    def custom(
+        simplex: list[list[float]] | list[npt.NDArray[np.float64]],
+    ) -> SimplexConstructionMethod: ...
+
+class NelderMead:
+    def __init__(
+        self,
+        eps_x_rel: float | None = None,
+        eps_x_abs: float | None = None,
+        eps_f_rel: float | None = None,
+        eps_f_abs: float | None = None,
+        alpha: float | None = None,
+        beta: float | None = None,
+        gamma: float | None = None,
+        delta: float | None = None,
+        adaptive: int | None = None,
+        construction_method: SimplexConstructionMethod | None = None,
+        simplex_expansion_method: str | None = None,
+        terminator_f: str | None = None,
+        terminator_x: str | None = None,
+    ) -> None: ...
+
 class Status:
     x: npt.NDArray[np.float64]
     err: npt.NDArray[np.float64] | None
@@ -190,6 +228,41 @@ class Status:
     def __getstate__(self) -> object: ...
     def __setstate__(self, state: object) -> None: ...
 
+class ESSMove:
+    @staticmethod
+    def differential(weight: float = 1.0) -> ESSMove: ...
+    @staticmethod
+    def gaussian(weight: float = 1.0) -> ESSMove: ...
+    @staticmethod
+    def global_move(
+        weight: float = 1.0,
+        *,
+        scale: float | None = None,
+        rescale_cov: float | None = None,
+        n_components: int | None = None,
+    ) -> ESSMove: ...
+
+class ESS:
+    def __init__(
+        self,
+        moves: list[ESSMove],
+        n_adaptive: int | None = None,
+        max_steps: int | None = None,
+        mu: float | None = None,
+    ) -> None: ...
+
+class AIESMove:
+    @staticmethod
+    def stretch(weight: float = 1.0, a: float | None = None) -> AIESMove: ...
+    @staticmethod
+    def walk(weight: float = 1.0) -> AIESMove: ...
+
+class AIES:
+    def __init__(
+        self,
+        moves: list[ESSMove],
+    ) -> None: ...
+
 class Ensemble:
     dimension: tuple[int, int, int]
 
@@ -206,6 +279,85 @@ class Ensemble:
     def get_integrated_autocorrelation_times(
         self, *, c: float = 7.0, burn: int = 0, thin: int = 1
     ) -> npt.NDArray[np.float64]: ...
+
+class Point:
+    x: npt.NDArray[np.float64]
+    fx: float
+
+    def __init__(self) -> None: ...
+    def save_as(self, path: str) -> None: ...
+    @staticmethod
+    def load_from(path: str) -> Status: ...
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
+
+class Particle:
+    position: Point
+    velocity: npt.NDArray[np.float64]
+    best: Point
+
+    def __init__(self) -> None: ...
+    def save_as(self, path: str) -> None: ...
+    @staticmethod
+    def load_from(path: str) -> Status: ...
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
+
+class SwarmPositionInitializer:
+    @staticmethod
+    def zero(n_particles: int, n_dimensions: int) -> SwarmPositionInitializer: ...
+    @staticmethod
+    def random_in_limits(
+        n_particles: int, limits: list[tuple[float, float]]
+    ) -> SwarmPositionInitializer: ...
+    @staticmethod
+    def custom(
+        positions: list[list[float]] | list[npt.NDArray[np.float64]],
+    ) -> SwarmPositionInitializer: ...
+    @staticmethod
+    def latin_hypercube(
+        n_particles: int, limits: list[tuple[float, float]]
+    ) -> SwarmPositionInitializer: ...
+
+class SwarmVelocityInitializer:
+    @staticmethod
+    def zero() -> SwarmVelocityInitializer: ...
+    @staticmethod
+    def random_in_limits(
+        limits: list[tuple[float, float]],
+    ) -> SwarmVelocityInitializer: ...
+
+class Swarm:
+    dimension: int
+    particles: list[Particle]
+    gbest: Point
+    message: str
+    converged: bool
+    bounds: list[Bound] | None
+
+    def __init__(
+        self,
+        position_initializer: SwarmPositionInitializer,
+        *,
+        velocity_initializer: SwarmVelocityInitializer | None = None,
+        boundary_method: str | None = None,
+    ) -> None: ...
+    def save_as(self, path: str) -> None: ...
+    @staticmethod
+    def load_from(path: str) -> Swarm: ...
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
+    def as_dict(self) -> dict[str, Any]: ...
+
+class PSO:
+    def __init__(
+        self,
+        omega: float | None = None,
+        c1: float | None = None,
+        c2: float | None = None,
+        topology: str | None = None,
+        update_method: str | None = None,
+    ) -> None: ...
 
 class Bound:
     lower: float

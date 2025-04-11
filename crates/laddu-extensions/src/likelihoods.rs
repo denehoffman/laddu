@@ -8,7 +8,7 @@ use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
-use ganesh::{Ensemble, Function, Minimizer, Sampler, Status};
+use ganesh::{Ensemble, Function, Minimizer, Sampler, Status, Swarm, SwarmMinimizer};
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
@@ -38,7 +38,10 @@ use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
 #[cfg(feature = "rayon")]
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 
-use crate::ganesh_ext::{MCMCOptions, MinimizerOptions};
+use crate::ganesh_ext::{
+    py_ganesh::{py_parse_swarm_options, PySwarm},
+    MCMCOptions, MinimizerOptions, SwarmOptions,
+};
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
@@ -1108,6 +1111,34 @@ impl NLL {
         }
         Ok(m.ensemble)
     }
+    /// Perform Particle Swarm Optimization on this [`NLL`].
+    pub fn swarm(
+        &self,
+        swarm: Swarm,
+        options: Option<SwarmOptions>,
+        rng: Rng,
+    ) -> Result<Swarm, LadduError> {
+        let options = options.unwrap_or(SwarmOptions::default_with_rng(rng));
+        let mut m = SwarmMinimizer::new(options.algorithm, swarm);
+        for observer in options.observers {
+            m = m.with_observer(observer);
+        }
+        #[cfg(feature = "rayon")]
+        {
+            m.minimize(
+                self,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.minimize(self, &mut ())?;
+        }
+        Ok(m.swarm)
+    }
 }
 
 /// A (extended) negative log-likelihood evaluator
@@ -1652,6 +1683,58 @@ impl PyNLL {
             py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
         let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
         Ok(PyEnsemble(ensemble))
+    }
+
+    /// Run a Particle Swarm Optimization algorithm on the free parameters of the NLL's model
+    ///
+    /// This method can be used minimize the underlying negative log-likelihood given
+    /// an initial swarm position.
+    ///
+    /// Parameters
+    /// ----------
+    /// swarm : Swarm
+    ///     The initial position of the swarm
+    /// method : {PSO}, optional
+    ///     The swarm algorithm to use (defaults to PSO)
+    /// observers : SwarmObserver or list of SwarmObservers, optional
+    ///     Callback functions which are applied after every swarm step
+    /// debug : bool, default=False
+    ///     Set to ``True`` to print out debugging information at each step
+    /// verbose : bool, default=False
+    ///     Set to ``True`` to print verbose information at each step
+    /// seed : int,
+    ///     The seed for the random number generator
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// Swarm
+    ///     The swarm at its final position
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool
+    ///
+    #[pyo3(signature = (swarm, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn swarm(
+        &self,
+        swarm: PySwarm,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
+        debug: bool,
+        verbose: bool,
+        seed: u64,
+        threads: Option<usize>,
+    ) -> PyResult<PySwarm> {
+        let mut rng = Rng::new();
+        rng.seed(seed);
+        let options =
+            py_parse_swarm_options(method, observers, debug, verbose, threads, rng.clone())?;
+        let swarm = self.0.swarm(swarm.0, Some(options), rng)?;
+        Ok(PySwarm(swarm))
     }
 }
 
@@ -2456,6 +2539,38 @@ impl LikelihoodEvaluator {
         }
         Ok(m.ensemble)
     }
+    /// A function that can be called to perform Particle Swarm Optimization
+    /// of the sum/product of the [`LikelihoodTerm`]s
+    /// contained by this [`LikelihoodEvaluator`].
+    ///
+    /// See [`NLL::swarm`] for more details.
+    pub fn swarm(
+        &self,
+        swarm: Swarm,
+        options: Option<SwarmOptions>,
+        rng: Rng,
+    ) -> Result<Swarm, LadduError> {
+        let options = options.unwrap_or(SwarmOptions::default_with_rng(rng));
+        let mut m = SwarmMinimizer::new(options.algorithm, swarm);
+        for observer in options.observers {
+            m = m.with_observer(observer);
+        }
+        #[cfg(feature = "rayon")]
+        {
+            m.minimize(
+                self,
+                &mut ThreadPoolBuilder::new()
+                    .num_threads(options.threads)
+                    .build()
+                    .map_err(LadduError::from)?,
+            )?;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            m.minimize(self, &mut ())?;
+        }
+        Ok(m.swarm)
+    }
 }
 
 /// A class which can be used to evaluate a collection of LikelihoodTerms managed by a
@@ -2564,7 +2679,7 @@ impl PyLikelihoodEvaluator {
     /// Minimize all LikelihoodTerms with respect to the free parameters in the model
     ///
     /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this
-    /// method performs a minimization over the tatal negative log-likelihood, optimizing the model
+    /// method performs a minimization over the total negative log-likelihood, optimizing the model
     /// over the stored signal data and Monte Carlo.
     ///
     /// Parameters
@@ -2711,6 +2826,58 @@ impl PyLikelihoodEvaluator {
             py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
         let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
         Ok(PyEnsemble(ensemble))
+    }
+
+    /// Run a Particle Swarm Optimization algorithm on the free parameters of the LikelihoodTerm's model
+    ///
+    /// This method can be used minimize the underlying negative log-likelihood given
+    /// an initial swarm position.
+    ///
+    /// Parameters
+    /// ----------
+    /// swarm : Swarm
+    ///     The initial position of the swarm
+    /// method : {PSO}, optional
+    ///     The swarm algorithm to use (defaults to PSO)
+    /// observers : SwarmObserver or list of SwarmObservers, optional
+    ///     Callback functions which are applied after every swarm step
+    /// debug : bool, default=False
+    ///     Set to ``True`` to print out debugging information at each step
+    /// verbose : bool, default=False
+    ///     Set to ``True`` to print verbose information at each step
+    /// seed : int,
+    ///     The seed for the random number generator
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// Swarm
+    ///     The swarm at its final position
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool
+    ///
+    #[pyo3(signature = (swarm, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn swarm(
+        &self,
+        swarm: PySwarm,
+        method: Option<Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
+        debug: bool,
+        verbose: bool,
+        seed: u64,
+        threads: Option<usize>,
+    ) -> PyResult<PySwarm> {
+        let mut rng = Rng::new();
+        rng.seed(seed);
+        let options =
+            py_parse_swarm_options(method, observers, debug, verbose, threads, rng.clone())?;
+        let swarm = self.0.swarm(swarm.0, Some(options), rng)?;
+        Ok(PySwarm(swarm))
     }
 }
 

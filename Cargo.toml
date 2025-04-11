@@ -24,7 +24,7 @@ dyn-clone = "1.0.17"
 factorial = "0.4.0"
 fastrand = "2.3.0"
 fastrand-contrib = "0.1.0"
-ganesh = "0.20.1"
+ganesh = "0.21.0"
 indexmap = { version = "2.6.0", features = ["serde"] }
 lazy_static = "1.4.0"
 mpi = { version = "0.8.0", features = ["complex"] }
