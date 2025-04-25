@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.6.0...laddu-amplitudes-v0.6.1) - 2025-04-25
+
+### Other
+
+- updated the following local packages: laddu-python
+
 ## [0.5.2](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.5.1...laddu-amplitudes-v0.5.2) - 2025-04-11
 
 ### Other
