@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.6.0...py-laddu-v0.6.1) - 2025-04-25
+
+### Added
+
+- add available_parallelism function to python API
+
 ## [0.5.3](https://github.com/denehoffman/laddu/compare/py-laddu-v0.5.2...py-laddu-v0.5.3) - 2025-04-11
 
 ### Added
