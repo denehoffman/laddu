@@ -45,6 +45,7 @@ from laddu.utils.vectors import Vector3, Vector4
 
 __doc__: str = _laddu.__doc__
 __version__: str = _laddu.version()
+available_parallelism = _laddu.available_parallelism
 
 
 __all__ = [

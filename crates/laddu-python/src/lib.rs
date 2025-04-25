@@ -3,6 +3,13 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+/// Returns the number of CPUs (logical cores) available for use by ``laddu``.
+///
+#[pyfunction]
+pub fn available_parallelism() -> usize {
+    num_cpus::get()
+}
+
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod amplitudes;
 #[cfg_attr(coverage_nightly, coverage(off))]

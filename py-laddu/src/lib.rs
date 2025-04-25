@@ -15,6 +15,7 @@ mod laddu {
             py_constant, py_parameter, PyAmplitude, PyAmplitudeID, PyEvaluator, PyExpression,
             PyManager, PyModel, PyParameterLike,
         },
+        available_parallelism,
         data::{py_open, PyBinnedDataset, PyDataset, PyEvent},
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         utils::{
