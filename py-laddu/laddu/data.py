@@ -43,7 +43,7 @@ def open_amptools(
         ]
     )
     if boost_to_com:
-        return ds.boost_to_rest_frame_of([range(1, n_particles)])  # skip the beam
+        return ds.boost_to_rest_frame_of(list(range(1, n_particles)))  # skip the beam
     return ds
 
 
