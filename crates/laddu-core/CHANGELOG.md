@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/denehoffman/laddu/compare/laddu-core-v0.6.0...laddu-core-v0.6.1) - 2025-05-16
+
+### Added
+
+- add method for boosting an event or a dataset to a given rest frame
+
 ## [0.6.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.5.1...laddu-core-v0.6.0) - 2025-04-11
 
 ### Added
