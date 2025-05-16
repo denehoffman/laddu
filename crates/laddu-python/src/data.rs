@@ -83,6 +83,22 @@ impl PyEvent {
     fn get_p4_sum(&self, indices: Vec<usize>) -> PyVector4 {
         PyVector4(self.0.get_p4_sum(indices))
     }
+    /// Boost all the four-momenta in the event to the rest frame of the given set of
+    /// four-momenta by indices.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : list of int
+    ///     The indices of the four-momenta to sum
+    ///
+    /// Returns
+    /// -------
+    /// Event
+    ///     The boosted event
+    ///
+    pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> Self {
+        PyEvent(Arc::new(self.0.boost_to_rest_frame_of(indices)))
+    }
 }
 
 /// A set of Events
@@ -251,6 +267,22 @@ impl PyDataset {
     ///
     fn bootstrap(&self, seed: usize) -> PyDataset {
         PyDataset(self.0.bootstrap(seed))
+    }
+    /// Boost all the four-momenta in all events to the rest frame of the given set of
+    /// four-momenta by indices.
+    ///
+    /// Parameters
+    /// ----------
+    /// indices : list of int
+    ///     The indices of the four-momenta to sum
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     The boosted dataset
+    ///
+    pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> PyDataset {
+        PyDataset(self.0.boost_to_rest_frame_of(indices))
     }
 }
 

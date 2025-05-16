@@ -87,6 +87,20 @@ impl Event {
     pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
         indices.as_ref().iter().map(|i| self.p4s[*i]).sum::<Vec4>()
     }
+    /// Boost all the four-momenta in the [`Event`] to the rest frame of the given set of
+    /// four-momenta by indices.
+    pub fn boost_to_rest_frame_of<T: AsRef<[usize]>>(&self, indices: T) -> Self {
+        let frame = self.get_p4_sum(indices);
+        Event {
+            p4s: self
+                .p4s
+                .iter()
+                .map(|p4| p4.boost(&(-frame.beta())))
+                .collect(),
+            aux: self.aux.clone(),
+            weight: self.weight,
+        }
+    }
 }
 
 /// A collection of [`Event`]s.
@@ -516,6 +530,31 @@ impl Dataset {
                 .map(|events| Arc::new(Dataset { events }))
                 .collect(),
             edges: bin_edges,
+        }
+    }
+
+    /// Boost all the four-momenta in all [`Event`]s to the rest frame of the given set of
+    /// four-momenta by indices.
+    pub fn boost_to_rest_frame_of<T: AsRef<[usize]> + Sync>(&self, indices: T) -> Arc<Dataset> {
+        #[cfg(feature = "rayon")]
+        {
+            Arc::new(Dataset {
+                events: self
+                    .events
+                    .par_iter()
+                    .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
+                    .collect(),
+            })
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Arc::new(Dataset {
+                events: self
+                    .events
+                    .iter()
+                    .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
+                    .collect(),
+            })
         }
     }
 }
