@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.6.1...py-laddu-mpi-v0.6.2) - 2025-05-16
+
+### Added
+
+- add method for boosting an event or a dataset to a given rest frame
+
 ## [0.6.1](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.6.0...py-laddu-mpi-v0.6.1) - 2025-04-25
 
 ### Added
