@@ -4,7 +4,7 @@ import numpy as np
 import numpy.typing as npt
 
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
-from laddu.utils.vectors import Vector3, Vector4
+from laddu.utils.vectors import Vec3, Vec4
 
 def open_amptools(
     path: str | Path,
@@ -17,11 +17,11 @@ def open_amptools(
 ) -> Dataset: ...
 
 class Event:
-    p4s: list[Vector4]
-    eps: list[Vector3]
+    p4s: list[Vec4]
+    eps: list[Vec3]
     weight: float
-    def __init__(self, p4s: list[Vector4], eps: list[Vector3], weight: float) -> None: ...
-    def get_p4_sum(self, indices: list[int]) -> Vector4: ...
+    def __init__(self, p4s: list[Vec4], eps: list[Vec3], weight: float) -> None: ...
+    def get_p4_sum(self, indices: list[int]) -> Vec4: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Event: ...
 
 class Dataset:

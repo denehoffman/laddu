@@ -40,7 +40,7 @@ from laddu.utils.variables import (
     Polarization,
     PolMagnitude,
 )
-from laddu.utils.vectors import Vector3, Vector4
+from laddu.utils.vectors import Vec3, Vec4
 
 __version__: str
 
@@ -76,8 +76,8 @@ __all__ = [
     'Polarization',
     'Scalar',
     'Status',
-    'Vector3',
-    'Vector4',
+    'Vec3',
+    'Vec4',
     'Ylm',
     'Zlm',
     '__version__',

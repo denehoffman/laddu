@@ -10,7 +10,7 @@ use pyo3::{
 };
 use std::sync::Arc;
 
-use crate::utils::vectors::{PyVector3, PyVector4};
+use crate::utils::vectors::{PyVec3, PyVec4};
 
 /// A single event
 ///
@@ -20,9 +20,9 @@ use crate::utils::vectors::{PyVector3, PyVector4};
 ///
 /// Parameters
 /// ----------
-/// p4s : list of Vector4
+/// p4s : list of Vec4
 ///     4-momenta of each particle in the event in the overall center-of-momentum frame
-/// eps : list of Vector3
+/// eps : list of Vec3
 ///     3-vectors describing the polarization or helicity of the particles
 ///     given in `p4s`
 /// weight : float
@@ -35,7 +35,7 @@ pub struct PyEvent(pub Arc<Event>);
 #[pymethods]
 impl PyEvent {
     #[new]
-    fn new(p4s: Vec<PyVector4>, eps: Vec<PyVector3>, weight: Float) -> Self {
+    fn new(p4s: Vec<PyVec4>, eps: Vec<PyVec3>, weight: Float) -> Self {
         Self(Arc::new(Event {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
             aux: eps.into_iter().map(|arr| arr.0).collect(),
@@ -48,19 +48,15 @@ impl PyEvent {
     /// The list of 4-momenta for each particle in the event
     ///
     #[getter]
-    fn get_p4s(&self) -> Vec<PyVector4> {
-        self.0.p4s.iter().map(|p4| PyVector4(*p4)).collect()
+    fn get_p4s(&self) -> Vec<PyVec4> {
+        self.0.p4s.iter().map(|p4| PyVec4(*p4)).collect()
     }
     /// The list of 3-vectors describing the polarization or helicity of particles in
     /// the event
     ///
     #[getter]
-    fn get_eps(&self) -> Vec<PyVector3> {
-        self.0
-            .aux
-            .iter()
-            .map(|eps_vec| PyVector3(*eps_vec))
-            .collect()
+    fn get_eps(&self) -> Vec<PyVec3> {
+        self.0.aux.iter().map(|eps_vec| PyVec3(*eps_vec)).collect()
     }
     /// The weight of this event relative to others in a Dataset
     ///
@@ -77,11 +73,11 @@ impl PyEvent {
     ///
     /// Returns
     /// -------
-    /// Vector4
+    /// Vec4
     ///     The result of summing the given four-momenta
     ///
-    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVector4 {
-        PyVector4(self.0.get_p4_sum(indices))
+    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVec4 {
+        PyVec4(self.0.get_p4_sum(indices))
     }
     /// Boost all the four-momenta in the event to the rest frame of the given set of
     /// four-momenta by indices.

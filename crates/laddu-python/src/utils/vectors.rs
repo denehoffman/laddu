@@ -9,11 +9,11 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 /// px, py, pz : float
 ///     The Cartesian components of the 3-vector
 ///
-#[pyclass(name = "Vector3", module = "laddu")]
+#[pyclass(name = "Vec3", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVector3(pub Vec3);
+pub struct PyVec3(pub Vec3);
 #[pymethods]
-impl PyVector3 {
+impl PyVec3 {
     #[new]
     fn new(px: Float, py: Float, pz: Float) -> Self {
         Self(Vec3::new(px, py, pz))
@@ -81,11 +81,11 @@ impl PyVector3 {
     fn __neg__(&self) -> PyResult<Self> {
         Ok(Self(-self.0))
     }
-    /// Calculate the dot product of two Vector3s.
+    /// Calculate the dot product of two Vec3s.
     ///
     /// Parameters
     /// ----------
-    /// other : Vector3
+    /// other : Vec3
     ///     A vector input with which the dot product is taken
     ///
     /// Returns
@@ -96,16 +96,16 @@ impl PyVector3 {
     pub fn dot(&self, other: Self) -> Float {
         self.0.dot(&other.0)
     }
-    /// Calculate the cross product of two Vector3s.
+    /// Calculate the cross product of two Vec3s.
     ///
     /// Parameters
     /// ----------
-    /// other : Vector3
+    /// other : Vec3
     ///     A vector input with which the cross product is taken
     ///
     /// Returns
     /// -------
-    /// Vector3
+    /// Vec3
     ///     The cross product of this vector and `other`
     ///
     fn cross(&self, other: Self) -> Self {
@@ -167,7 +167,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.x
+    /// Vec3.x
     ///
     #[getter]
     fn px(&self) -> Float {
@@ -177,7 +177,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.px
+    /// Vec3.px
     ///
     #[getter]
     fn x(&self) -> Float {
@@ -188,7 +188,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.y
+    /// Vec3.y
     ///
     #[getter]
     fn py(&self) -> Float {
@@ -198,7 +198,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.py
+    /// Vec3.py
     ///
     #[getter]
     fn y(&self) -> Float {
@@ -208,7 +208,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.z
+    /// Vec3.z
     ///
     #[getter]
     fn pz(&self) -> Float {
@@ -218,7 +218,7 @@ impl PyVector3 {
     ///
     /// See Also
     /// --------
-    /// Vector3.pz
+    /// Vec3.pz
     ///
     #[getter]
     fn z(&self) -> Float {
@@ -237,11 +237,11 @@ impl PyVector3 {
     ///
     /// Returns
     /// -------
-    /// Vector4
+    /// Vec4
     ///     A new 4-momentum with the given mass
     ///
-    fn with_mass(&self, mass: Float) -> PyVector4 {
-        PyVector4(self.0.with_mass(mass))
+    fn with_mass(&self, mass: Float) -> PyVec4 {
+        PyVec4(self.0.with_mass(mass))
     }
     /// Convert a 3-vector momentum to a 4-momentum with the given energy.
     ///
@@ -252,18 +252,18 @@ impl PyVector3 {
     ///
     /// Returns
     /// -------
-    /// Vector4
+    /// Vec4
     ///     A new 4-momentum with the given energy
     ///
-    fn with_energy(&self, mass: Float) -> PyVector4 {
-        PyVector4(self.0.with_energy(mass))
+    fn with_energy(&self, mass: Float) -> PyVec4 {
+        PyVec4(self.0.with_energy(mass))
     }
     /// Convert the 3-vector to a ``numpy`` array.
     ///
     /// Returns
     /// -------
     /// numpy_vec: array_like
-    ///     A ``numpy`` array built from the components of this ``Vector3``
+    ///     A ``numpy`` array built from the components of this ``Vec3``
     ///
     fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_vec(py, self.0.into())
@@ -273,11 +273,11 @@ impl PyVector3 {
     /// Parameters
     /// ----------
     /// array_like
-    ///     An array containing the components of this ``Vector3``
+    ///     An array containing the components of this ``Vec3``
     ///
     /// Returns
     /// -------
-    /// laddu_vec: Vector3
+    /// laddu_vec: Vec3
     ///     A copy of the input array as a ``laddu`` vector
     ///
     #[staticmethod]
@@ -305,11 +305,11 @@ impl PyVector3 {
 ///     The energy component
 ///
 ///
-#[pyclass(name = "Vector4", module = "laddu")]
+#[pyclass(name = "Vec4", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVector4(pub Vec4);
+pub struct PyVec4(pub Vec4);
 #[pymethods]
-impl PyVector4 {
+impl PyVec4 {
     #[new]
     fn new(px: Float, py: Float, pz: Float, e: Float) -> Self {
         Self(Vec4::new(px, py, pz, e))
@@ -383,7 +383,7 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.m
+    /// Vec4.m
     ///
     #[getter]
     fn mag(&self) -> Float {
@@ -395,7 +395,7 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.m2
+    /// Vec4.m2
     ///
     #[getter]
     fn mag2(&self) -> Float {
@@ -405,11 +405,11 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.momentum
+    /// Vec4.momentum
     ///
     #[getter]
-    fn vec3(&self) -> PyVector3 {
-        PyVector3(self.0.vec3())
+    fn vec3(&self) -> PyVec3 {
+        PyVec3(self.0.vec3())
     }
     /// Boost the given 4-momentum according to a boost velocity.
     ///
@@ -420,20 +420,20 @@ impl PyVector4 {
     ///
     /// Parameters
     /// ----------
-    /// beta : Vector3
+    /// beta : Vec3
     ///     The relative velocity needed to get to the new frame from the current one
     ///
     /// Returns
     /// -------
-    /// Vector4
+    /// Vec4
     ///     The boosted 4-momentum
     ///
     /// See Also
     /// --------
-    /// Vector4.beta
-    /// Vector4.gamma
+    /// Vec4.beta
+    /// Vec4.gamma
     ///
-    fn boost(&self, beta: &PyVector3) -> Self {
+    fn boost(&self, beta: &PyVec3) -> Self {
         Self(self.0.boost(&beta.0))
     }
     /// The energy associated with this vector
@@ -488,8 +488,8 @@ impl PyVector4 {
     /// The 3-momentum part of this 4-momentum
     ///
     #[getter]
-    fn momentum(&self) -> PyVector3 {
-        PyVector3(self.0.momentum())
+    fn momentum(&self) -> PyVec3 {
+        PyVec3(self.0.momentum())
     }
     /// The relativistic gamma factor
     ///
@@ -497,8 +497,8 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.beta
-    /// Vector4.boost
+    /// Vec4.beta
+    /// Vec4.boost
     ///
     #[getter]
     fn gamma(&self) -> Float {
@@ -510,12 +510,12 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.gamma
-    /// Vector4.boost
+    /// Vec4.gamma
+    /// Vec4.boost
     ///
     #[getter]
-    fn beta(&self) -> PyVector3 {
-        PyVector3(self.0.beta())
+    fn beta(&self) -> PyVec3 {
+        PyVec3(self.0.beta())
     }
     /// The invariant mass associated with the four-momentum
     ///
@@ -523,7 +523,7 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.mag
+    /// Vec4.mag
     ///
     #[getter]
     fn m(&self) -> Float {
@@ -535,7 +535,7 @@ impl PyVector4 {
     ///
     /// See Also
     /// --------
-    /// Vector4.mag2
+    /// Vec4.mag2
     ///
     #[getter]
     fn m2(&self) -> Float {
@@ -546,7 +546,7 @@ impl PyVector4 {
     /// Returns
     /// -------
     /// numpy_vec: array_like
-    ///     A ``numpy`` array built from the components of this ``Vector4``
+    ///     A ``numpy`` array built from the components of this ``Vec4``
     ///
     fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_vec(py, self.0.into())
@@ -556,11 +556,11 @@ impl PyVector4 {
     /// Parameters
     /// ----------
     /// array_like
-    ///     An array containing the components of this ``Vector4``
+    ///     An array containing the components of this ``Vec4``
     ///
     /// Returns
     /// -------
-    /// laddu_vec: Vector4
+    /// laddu_vec: Vec4
     ///     A copy of the input array as a ``laddu`` vector
     ///
     #[staticmethod]

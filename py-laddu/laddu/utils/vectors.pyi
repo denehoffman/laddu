@@ -3,9 +3,9 @@ from typing import Sequence
 import numpy as np
 import numpy.typing as npt
 
-__all__ = ['Vector3', 'Vector4']
+__all__ = ['Vec3', 'Vec4']
 
-class Vector3:
+class Vec3:
     """A 3-momentum vector formed from Cartesian components.
 
     Parameters
@@ -31,7 +31,7 @@ class Vector3:
     costheta: float
     theta: float
     phi: float
-    unit: Vector3
+    unit: Vec3
     x: float
     y: float
     z: float
@@ -39,17 +39,17 @@ class Vector3:
     py: float
     pz: float
     def __init__(self, px: float, py: float, pz: float) -> None: ...
-    def __add__(self, other: Vector3 | int) -> Vector3: ...
-    def __radd__(self, other: Vector3 | int) -> Vector3: ...
-    def __sub__(self, other: Vector3 | int) -> Vector3: ...
-    def __rsub__(self, other: Vector3 | int) -> Vector3: ...
-    def __neg__(self) -> Vector3: ...
-    def dot(self, other: Vector3) -> float:
+    def __add__(self, other: Vec3 | int) -> Vec3: ...
+    def __radd__(self, other: Vec3 | int) -> Vec3: ...
+    def __sub__(self, other: Vec3 | int) -> Vec3: ...
+    def __rsub__(self, other: Vec3 | int) -> Vec3: ...
+    def __neg__(self) -> Vec3: ...
+    def dot(self, other: Vec3) -> float:
         """Calculate the dot product of two vectors.
 
         Parameters
         ----------
-        other : Vector3
+        other : Vec3
             A vector input with which the dot product is taken
 
         Returns
@@ -57,30 +57,30 @@ class Vector3:
         float
             The dot product of this vector and `other`
         """
-    def cross(self, other: Vector3) -> Vector3:
+    def cross(self, other: Vec3) -> Vec3:
         """
         Calculate the cross product of two vectors.
 
         Parameters
         ----------
-        other : Vector3
+        other : Vec3
             A vector input with which the cross product is taken
 
         Returns
         -------
-        Vector3
+        Vec3
             The cross product of this vector and `other`
         """
     def to_numpy(self) -> npt.NDArray[np.float64]: ...
     @staticmethod
-    def from_array(array: Sequence) -> Vector3: ...
-    def with_mass(self, mass: float) -> Vector4: ...
-    def with_energy(self, mass: float) -> Vector4: ...
+    def from_array(array: Sequence) -> Vec3: ...
+    def with_mass(self, mass: float) -> Vec4: ...
+    def with_energy(self, mass: float) -> Vec4: ...
 
-class Vector4:
+class Vec4:
     mag: float
     mag2: float
-    vec3: Vector3
+    vec3: Vec3
     t: float
     x: float
     y: float
@@ -89,17 +89,17 @@ class Vector4:
     px: float
     py: float
     pz: float
-    momentum: Vector3
+    momentum: Vec3
     gamma: float
-    beta: Vector3
+    beta: Vec3
     m: float
     m2: float
     def __init__(self, px: float, py: float, pz: float, e: float) -> None: ...
-    def __add__(self, other: Vector4) -> Vector4: ...
-    def __sub__(self, other: Vector4 | int) -> Vector4: ...
-    def __rsub__(self, other: Vector4 | int) -> Vector4: ...
-    def __neg__(self) -> Vector4: ...
-    def boost(self, beta: Vector3) -> Vector4: ...
+    def __add__(self, other: Vec4) -> Vec4: ...
+    def __sub__(self, other: Vec4 | int) -> Vec4: ...
+    def __rsub__(self, other: Vec4 | int) -> Vec4: ...
+    def __neg__(self) -> Vec4: ...
+    def boost(self, beta: Vec3) -> Vec4: ...
     def to_numpy(self) -> npt.NDArray[np.float64]: ...
     @staticmethod
-    def from_array(array: Sequence) -> Vector4: ...
+    def from_array(array: Sequence) -> Vec4: ...

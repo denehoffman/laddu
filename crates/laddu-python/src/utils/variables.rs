@@ -68,7 +68,7 @@ impl Display for PyVariable {
 ///
 /// See Also
 /// --------
-/// laddu.utils.vectors.Vector4.m
+/// laddu.utils.vectors.Vec4.m
 ///
 #[pyclass(name = "Mass", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -159,7 +159,7 @@ impl PyMass {
 ///
 /// See Also
 /// --------
-/// laddu.utils.vectors.Vector3.costheta
+/// laddu.utils.vectors.Vec3.costheta
 ///
 #[pyclass(name = "CosTheta", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -264,7 +264,7 @@ impl PyCosTheta {
 ///
 /// See Also
 /// --------
-/// laddu.utils.vectors.Vector3.phi
+/// laddu.utils.vectors.Vec3.phi
 ///
 #[pyclass(name = "Phi", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -482,7 +482,7 @@ impl PyPolAngle {
 ///
 /// See Also
 /// --------
-/// laddu.utils.vectors.Vector3.mag
+/// laddu.utils.vectors.Vec3.mag
 ///
 #[pyclass(name = "PolMagnitude", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]

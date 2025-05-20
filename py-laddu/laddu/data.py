@@ -6,7 +6,7 @@ import numpy as np
 
 from laddu.convert import read_root_file
 from laddu.laddu import BinnedDataset, Dataset, Event, open
-from laddu.utils.vectors import Vector3, Vector4
+from laddu.utils.vectors import Vec3, Vec4
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,8 +35,8 @@ def open_amptools(
     ds = Dataset(
         [
             Event(
-                [Vector4.from_array(p4) for p4 in p4s],
-                [Vector3.from_array(eps_vec) for eps_vec in eps],
+                [Vec4.from_array(p4) for p4 in p4s],
+                [Vec3.from_array(eps_vec) for eps_vec in eps],
                 weight,
             )
             for p4s, eps, weight in zip(p4s_list, eps_list, weight_list)

@@ -23,7 +23,7 @@ mod laddu {
                 PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
                 PyPolarization,
             },
-            vectors::{PyVector3, PyVector4},
+            vectors::{PyVec3, PyVec4},
         },
     };
 
