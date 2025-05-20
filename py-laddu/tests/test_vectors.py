@@ -1,12 +1,12 @@
 import numpy as np
 import pytest
 
-from laddu import Vector3, Vector4
+from laddu import Vec3, Vec4
 
 
 def test_three_to_four_momentum_conversion() -> None:
-    p3 = Vector3(1.0, 2.0, 3.0)
-    target_p4 = Vector4(1.0, 2.0, 3.0, 10.0)
+    p3 = Vec3(1.0, 2.0, 3.0)
+    target_p4 = Vec4(1.0, 2.0, 3.0, 10.0)
     p4_from_mass = p3.with_mass(target_p4.m)
     assert target_p4.e == p4_from_mass.e
     assert target_p4.px == p4_from_mass.px
@@ -20,7 +20,7 @@ def test_three_to_four_momentum_conversion() -> None:
 
 
 def test_four_momentum_basics() -> None:
-    p = Vector4(3.0, 4.0, 5.0, 10.0)
+    p = Vec4(3.0, 4.0, 5.0, 10.0)
     assert p.e == 10.0
     assert p.px == 3.0
     assert p.py == 4.0
@@ -37,8 +37,8 @@ def test_four_momentum_basics() -> None:
 
 
 def test_three_momentum_basics() -> None:
-    p = Vector4(3.0, 4.0, 5.0, 10.0)
-    q = Vector4(1.2, -3.4, 7.6, 0.0)
+    p = Vec4(3.0, 4.0, 5.0, 10.0)
+    q = Vec4(1.2, -3.4, 7.6, 0.0)
     p3_view = p.momentum
     q3_view = q.momentum
     assert p3_view.px == 3.0
@@ -55,8 +55,8 @@ def test_three_momentum_basics() -> None:
     assert pytest.approx(p3_view.cross(q3_view).px) == 47.4
     assert pytest.approx(p3_view.cross(q3_view).py) == -16.8
     assert pytest.approx(p3_view.cross(q3_view).pz) == -15.0
-    p3 = Vector3(3.0, 4.0, 5.0)
-    q3 = Vector3(1.2, -3.4, 7.6)
+    p3 = Vec3(3.0, 4.0, 5.0)
+    q3 = Vec3(1.2, -3.4, 7.6)
     assert p3.px == 3.0
     assert p3.py == 4.0
     assert p3.pz == 5.0
@@ -74,7 +74,7 @@ def test_three_momentum_basics() -> None:
 
 
 def test_boost_com() -> None:
-    p = Vector4(3.0, 4.0, 5.0, 10.0)
+    p = Vec4(3.0, 4.0, 5.0, 10.0)
     zero = p.boost(-p.beta)
     assert zero.px == 0.0
     assert zero.py == 0.0
@@ -82,8 +82,8 @@ def test_boost_com() -> None:
 
 
 def test_boost() -> None:
-    p1 = Vector4(3.0, 4.0, 5.0, 10.0)
-    p2 = Vector4(3.4, 2.3, 1.2, 9.0)
+    p1 = Vec4(3.0, 4.0, 5.0, 10.0)
+    p2 = Vec4(3.4, 2.3, 1.2, 9.0)
     p1_boosted = p1.boost(-p2.beta)
     assert p1_boosted.e == 8.157632144622882
     assert p1_boosted.px == -0.6489200627053444

@@ -1,10 +1,14 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import numpy.typing as npt
+import pandas as pd
+import polars as pl
+import pyarrow as pa
+from numpy.typing import NDArray
 
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
-from laddu.utils.vectors import Vector3, Vector4
+from laddu.utils.vectors import Vec3, Vec4
 
 def open_amptools(
     path: str | Path,
@@ -14,21 +18,29 @@ def open_amptools(
     pol_angle: float | None = None,
     pol_magnitude: float | None = None,
     num_entries: int | None = None,
+    boost_to_com: bool = True,
 ) -> Dataset: ...
 
 class Event:
-    p4s: list[Vector4]
-    eps: list[Vector3]
+    p4s: list[Vec4]
+    aux: list[Vec3]
     weight: float
-    def __init__(self, p4s: list[Vector4], eps: list[Vector3], weight: float) -> None: ...
-    def get_p4_sum(self, indices: list[int]) -> Vector4: ...
+    def __init__(
+        self,
+        p4s: list[Vec4],
+        aux: list[Vec3],
+        weight: float,
+        *,
+        rest_frame_indices: list[int] | None = None,
+    ) -> None: ...
+    def get_p4_sum(self, indices: list[int]) -> Vec4: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Event: ...
 
 class Dataset:
     events: list[Event]
     n_events: int
     n_events_weighted: float
-    weights: npt.NDArray[np.float64]
+    weights: NDArray[np.float64]
     def __init__(self, events: list[Event]) -> None: ...
     def __len__(self) -> int: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
@@ -42,12 +54,32 @@ class Dataset:
     ) -> BinnedDataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Dataset: ...
+    @staticmethod
+    def from_dict(
+        data: dict[str, Any], rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
+    @staticmethod
+    def from_numpy(
+        data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
+    @staticmethod
+    def from_pandas(
+        data: pd.DataFrame, rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
+    @staticmethod
+    def from_polars(
+        data: pl.DataFrame, rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
+    @staticmethod
+    def from_arrow(
+        data: pa.Table, rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
 
 class BinnedDataset:
     n_bins: int
     range: tuple[float, float]
-    edges: npt.NDArray[np.float64]
+    edges: NDArray[np.float64]
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Dataset: ...
 
-def open(path: str) -> Dataset: ...
+def open(path: str | Path, *, rest_frame_indices: list[int] | None = None) -> Dataset: ...

@@ -1,3 +1,3 @@
-from laddu.laddu import Vector3, Vector4
+from laddu.laddu import Vec3, Vec4
 
-__all__ = ['Vector3', 'Vector4']
+__all__ = ['Vec3', 'Vec4']

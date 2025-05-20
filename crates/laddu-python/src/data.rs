@@ -1,6 +1,6 @@
 use crate::utils::variables::PyVariable;
 use laddu_core::{
-    data::{open, BinnedDataset, Dataset, Event},
+    data::{open, open_boosted_to_rest_frame_of, BinnedDataset, Dataset, Event},
     Float,
 };
 use numpy::PyArray1;
@@ -8,9 +8,9 @@ use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
     prelude::*,
 };
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use crate::utils::vectors::{PyVector3, PyVector4};
+use crate::utils::vectors::{PyVec3, PyVec4};
 
 /// A single event
 ///
@@ -20,13 +20,15 @@ use crate::utils::vectors::{PyVector3, PyVector4};
 ///
 /// Parameters
 /// ----------
-/// p4s : list of Vector4
+/// p4s : list of Vec4
 ///     4-momenta of each particle in the event in the overall center-of-momentum frame
-/// eps : list of Vector3
-///     3-vectors describing the polarization or helicity of the particles
-///     given in `p4s`
+/// aux: list of Vec3
+///     3-vectors describing auxiliary data for each particle given in `p4s`
 /// weight : float
 ///     The weight associated with this event
+/// rest_frame_indices : list of int, optional
+///     If supplied, the event will be boosted to the rest frame of the 4-momenta at the
+///     given indices
 ///
 #[pyclass(name = "Event", module = "laddu")]
 #[derive(Clone)]
@@ -35,12 +37,23 @@ pub struct PyEvent(pub Arc<Event>);
 #[pymethods]
 impl PyEvent {
     #[new]
-    fn new(p4s: Vec<PyVector4>, eps: Vec<PyVector3>, weight: Float) -> Self {
-        Self(Arc::new(Event {
+    #[pyo3(signature = (p4s, aux, weight, *, rest_frame_indices=None))]
+    fn new(
+        p4s: Vec<PyVec4>,
+        aux: Vec<PyVec3>,
+        weight: Float,
+        rest_frame_indices: Option<Vec<usize>>,
+    ) -> Self {
+        let event = Event {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
-            aux: eps.into_iter().map(|arr| arr.0).collect(),
+            aux: aux.into_iter().map(|arr| arr.0).collect(),
             weight,
-        }))
+        };
+        if let Some(indices) = rest_frame_indices {
+            Self(Arc::new(event.boost_to_rest_frame_of(indices)))
+        } else {
+            Self(Arc::new(event))
+        }
     }
     fn __str__(&self) -> String {
         self.0.to_string()
@@ -48,19 +61,15 @@ impl PyEvent {
     /// The list of 4-momenta for each particle in the event
     ///
     #[getter]
-    fn get_p4s(&self) -> Vec<PyVector4> {
-        self.0.p4s.iter().map(|p4| PyVector4(*p4)).collect()
+    fn get_p4s(&self) -> Vec<PyVec4> {
+        self.0.p4s.iter().map(|p4| PyVec4(*p4)).collect()
     }
-    /// The list of 3-vectors describing the polarization or helicity of particles in
+    /// The list of 3-vectors describing the auxiliary data of particles in
     /// the event
     ///
     #[getter]
-    fn get_eps(&self) -> Vec<PyVector3> {
-        self.0
-            .aux
-            .iter()
-            .map(|eps_vec| PyVector3(*eps_vec))
-            .collect()
+    fn get_aux(&self) -> Vec<PyVec3> {
+        self.0.aux.iter().map(|eps_vec| PyVec3(*eps_vec)).collect()
     }
     /// The weight of this event relative to others in a Dataset
     ///
@@ -77,11 +86,11 @@ impl PyEvent {
     ///
     /// Returns
     /// -------
-    /// Vector4
+    /// Vec4
     ///     The result of summing the given four-momenta
     ///
-    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVector4 {
-        PyVector4(self.0.get_p4_sum(indices))
+    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVec4 {
+        PyVec4(self.0.get_p4_sum(indices))
     }
     /// Boost all the four-momenta in the event to the rest frame of the given set of
     /// four-momenta by indices.
@@ -115,7 +124,7 @@ impl PyEvent {
 /// --------
 /// laddu.open
 ///
-#[pyclass(name = "Dataset", module = "laddu")]
+#[pyclass(name = "DatasetBase", module = "laddu", subclass)]
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
 
@@ -330,6 +339,15 @@ impl PyBinnedDataset {
 
 /// Open a Dataset from a file
 ///
+/// Arguments
+/// ---------
+/// path : str or Path
+///     The path to the file
+/// rest_frame_indices : list of int, optional
+///     If supplied, the dataset will be boosted to the rest frame of the 4-momenta at the
+///     given indices
+///
+///
 /// Returns
 /// -------
 /// Dataset
@@ -353,17 +371,28 @@ impl PyBinnedDataset {
 ///
 /// ``p4_{particle index}_{E|Px|Py|Pz}`` (four-momentum components for each particle)
 ///
-/// ``eps_{particle index}_{x|y|z}`` (polarization/helicity vectors for each particle)
+/// ``aux_{particle index}_{x|y|z}`` (auxiliary vectors for each particle)
 ///
 /// ``weight`` (the weight of the Event)
 ///
 /// For example, the four-momentum of the 0th particle in the event would be stored in columns
 /// with the names ``p4_0_E``, ``p4_0_Px``, ``p4_0_Py``, and ``p4_0_Pz``. That particle's
-/// polarization could be stored in the columns ``eps_0_x``, ``eps_0_y``, and ``eps_0_z``. This
+/// polarization could be stored in the columns ``aux_0_x``, ``aux_0_y``, and ``aux_0_z``. This
 /// could continue for an arbitrary number of particles. The ``weight`` column is always
 /// required.
 ///
-#[pyfunction(name = "open")]
-pub fn py_open(path: &str) -> PyResult<PyDataset> {
-    Ok(PyDataset(open(path)?))
+#[pyfunction(name = "open", signature = (path, *, rest_frame_indices=None))]
+pub fn py_open(path: Bound<PyAny>, rest_frame_indices: Option<Vec<usize>>) -> PyResult<PyDataset> {
+    let path_str = if let Ok(s) = path.extract::<String>() {
+        Ok(s)
+    } else if let Ok(pathbuf) = path.extract::<PathBuf>() {
+        Ok(pathbuf.to_string_lossy().into_owned())
+    } else {
+        Err(PyTypeError::new_err("Expected str or Path"))
+    }?;
+    if let Some(indices) = rest_frame_indices {
+        Ok(PyDataset(open_boosted_to_rest_frame_of(path_str, indices)?))
+    } else {
+        Ok(PyDataset(open(path_str)?))
+    }
 }
