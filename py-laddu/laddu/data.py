@@ -25,6 +25,21 @@ class Dataset(DatasetBase):
     def from_dict(
         data: dict[str, Any], rest_frame_indices: list[int] | None = None
     ) -> Dataset:
+        """
+        Create a Dataset from a dict.
+
+        Arguments
+        ---------
+        data: dict of str to Any
+            dict of lists with keys matching the dataset format
+        rest_frame_indices: list of int, optional
+            If provided, the dataset will be boosted to the rest frame
+            of the 4-momenta specified by the indices
+
+        Returns
+        -------
+        Dataset
+        """
         p4_count = len([key for key in data if key.startswith(Dataset.P4_PREFIX)]) // 4
         aux_count = len([key for key in data if key.startswith(Dataset.AUX_PREFIX)]) // 3
         events = []
@@ -60,24 +75,84 @@ class Dataset(DatasetBase):
     def from_numpy(
         data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None
     ) -> Dataset:
+        """
+        Create a Dataset from a dict of numpy arrays.
+
+        Arguments
+        ---------
+        data: dict of str to NDArray
+            dict of arrays with keys matching the dataset format
+        rest_frame_indices: list of int, optional
+            If provided, the dataset will be boosted to the rest frame
+            of the 4-momenta specified by the indices
+
+        Returns
+        -------
+        Dataset
+        """
         return Dataset.from_dict(data, rest_frame_indices=rest_frame_indices)
 
     @staticmethod
     def from_pandas(
         data: pd.DataFrame, rest_frame_indices: list[int] | None = None
     ) -> Dataset:
+        """
+        Create a Dataset from a pandas DataFrame.
+
+        Arguments
+        ---------
+        data: pandas.DataFrame
+            DataFrame with columns matching the dataset format
+        rest_frame_indices: list of int, optional
+            If provided, the dataset will be boosted to the rest frame
+            of the 4-momenta specified by the indices
+
+        Returns
+        -------
+        Dataset
+        """
         return Dataset.from_dict(data.to_dict(), rest_frame_indices=rest_frame_indices)
 
     @staticmethod
     def from_polars(
         data: pl.DataFrame, rest_frame_indices: list[int] | None = None
     ) -> Dataset:
+        """
+        Create a Dataset from a polars DataFrame.
+
+        Arguments
+        ---------
+        data: polars.DataFrame
+            DataFrame with columns matching the dataset format
+        rest_frame_indices: list of int, optional
+            If provided, the dataset will be boosted to the rest frame
+            of the 4-momenta specified by the indices
+
+        Returns
+        -------
+        Dataset
+        """
         return Dataset.from_dict(data.to_dict(), rest_frame_indices=rest_frame_indices)
 
     @staticmethod
     def from_arrow(
         data: pa.Table, rest_frame_indices: list[int] | None = None
     ) -> Dataset:
+        """
+        Create a Dataset from a pyarrow Table.
+
+        Arguments
+        ---------
+        data: pyarrow.Table
+            Table with columns matching the dataset format
+        rest_frame_indices: list of int, optional
+            If provided, the dataset will be boosted to the rest frame
+            of the 4-momenta specified by the indices
+
+        Returns
+        -------
+        Dataset
+        """
         return Dataset.from_dict(data.to_pydict(), rest_frame_indices=rest_frame_indices)
 
 
