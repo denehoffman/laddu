@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.6.3...py-laddu-mpi-v0.6.4) - 2025-05-20
+
+### Added
+
+- improvements to `Dataset` conversions and opening methods
+- add method for opening a dataset boosted to the rest frame of the given p4 indices
+
+### Fixed
+
+- update Python vector names (closes #57)
+
+### Other
+
+- *(data)* fix boost tests
+- add documentation to new Dataset constructors
+
 ## [0.6.2](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.6.1...py-laddu-mpi-v0.6.2) - 2025-05-16
 
 ### Added

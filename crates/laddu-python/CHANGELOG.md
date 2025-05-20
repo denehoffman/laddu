@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.6.2...laddu-python-v0.7.0) - 2025-05-20
+
+### Added
+
+- improvements to `Dataset` conversions and opening methods
+
+### Fixed
+
+- update Python vector names (closes #57)
+
 ## [0.6.2](https://github.com/denehoffman/laddu/compare/laddu-python-v0.6.1...laddu-python-v0.6.2) - 2025-05-16
 
 ### Added
