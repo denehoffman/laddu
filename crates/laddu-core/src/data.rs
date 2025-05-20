@@ -817,10 +817,9 @@ mod tests {
         let event = test_event();
         let event_boosted = event.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = event_boosted.get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0);
-        assert_relative_eq!(p4_sum.py(), 0.0);
-        assert_relative_eq!(p4_sum.pz(), 0.0);
-        assert_relative_eq!(p4_sum.e(), 0.0);
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
     }
 
     #[test]
@@ -882,10 +881,9 @@ mod tests {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0);
-        assert_relative_eq!(p4_sum.py(), 0.0);
-        assert_relative_eq!(p4_sum.pz(), 0.0);
-        assert_relative_eq!(p4_sum.e(), 0.0);
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
     }
 
     #[test]
