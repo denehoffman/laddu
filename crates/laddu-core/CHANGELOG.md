@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/denehoffman/laddu/compare/laddu-core-v0.6.1...laddu-core-v0.6.2) - 2025-05-20
+
+### Added
+
+- add method for opening a dataset boosted to the rest frame of the given p4 indices
+
+### Other
+
+- *(data)* fix boost tests
+
 ## [0.6.1](https://github.com/denehoffman/laddu/compare/laddu-core-v0.6.0...laddu-core-v0.6.1) - 2025-05-16
 
 ### Added

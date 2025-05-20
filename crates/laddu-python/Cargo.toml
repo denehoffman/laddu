@@ -1,6 +1,6 @@
 [package]
 name = "laddu-python"
-version = "0.6.2"
+version = "0.7.0"
 description = "Amplitude analysis made short and sweet"
 edition.workspace = true
 authors.workspace = true
