@@ -690,6 +690,54 @@ pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
     Ok(Arc::new(Dataset::new(events)))
 }
 
+/// Open a Parquet file and read the data into a [`Dataset`]. This method boosts each event to the
+/// rest frame of the four-momenta at the given indices.
+pub fn open_boosted_to_rest_frame_of<T: AsRef<str>, I: AsRef<[usize]> + Sync>(
+    file_path: T,
+    indices: I,
+) -> Result<Arc<Dataset>, LadduError> {
+    // TODO: make this read in directly to MPI ranks
+    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+    let file = File::open(file_path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+
+    #[cfg(feature = "rayon")]
+    let events: Vec<Arc<Event>> = batches
+        .into_par_iter()
+        .flat_map(|batch| {
+            let num_rows = batch.num_rows();
+            let mut local_events = Vec::with_capacity(num_rows);
+
+            // Process each row in the batch
+            for row in 0..num_rows {
+                let mut event = batch_to_event(&batch, row);
+                event = event.boost_to_rest_frame_of(indices.as_ref());
+                local_events.push(Arc::new(event));
+            }
+            local_events
+        })
+        .collect();
+    #[cfg(not(feature = "rayon"))]
+    let events: Vec<Arc<Event>> = batches
+        .into_iter()
+        .flat_map(|batch| {
+            let num_rows = batch.num_rows();
+            let mut local_events = Vec::with_capacity(num_rows);
+
+            // Process each row in the batch
+            for row in 0..num_rows {
+                let mut event = batch_to_event(&batch, row);
+                event = event.boost_to_rest_frame_of(indices.as_ref());
+                local_events.push(Arc::new(event));
+            }
+            local_events
+        })
+        .collect();
+    Ok(Arc::new(Dataset::new(events)))
+}
+
 /// A list of [`Dataset`]s formed by binning [`Event`]s by some [`Variable`].
 pub struct BinnedDataset {
     datasets: Vec<Arc<Dataset>>,
@@ -765,6 +813,17 @@ mod tests {
     }
 
     #[test]
+    fn test_event_boost() {
+        let event = test_event();
+        let event_boosted = event.boost_to_rest_frame_of([1, 2, 3]);
+        let p4_sum = event_boosted.get_p4_sum([1, 2, 3]);
+        assert_relative_eq!(p4_sum.px(), 0.0);
+        assert_relative_eq!(p4_sum.py(), 0.0);
+        assert_relative_eq!(p4_sum.pz(), 0.0);
+        assert_relative_eq!(p4_sum.e(), 0.0);
+    }
+
+    #[test]
     fn test_dataset_size_check() {
         let mut dataset = Dataset::default();
         assert_eq!(dataset.n_events(), 0);
@@ -816,6 +875,17 @@ mod tests {
         let filtered = dataset.filter(|event| event.p4s.len() == 2);
         assert_eq!(filtered.n_events(), 1);
         assert_eq!(filtered[0].p4s.len(), 2);
+    }
+
+    #[test]
+    fn test_dataset_boost() {
+        let dataset = test_dataset();
+        let dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3]);
+        let p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3]);
+        assert_relative_eq!(p4_sum.px(), 0.0);
+        assert_relative_eq!(p4_sum.py(), 0.0);
+        assert_relative_eq!(p4_sum.pz(), 0.0);
+        assert_relative_eq!(p4_sum.e(), 0.0);
     }
 
     #[test]
