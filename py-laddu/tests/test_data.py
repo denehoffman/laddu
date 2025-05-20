@@ -1,3 +1,9 @@
+import numpy as np
+import pandas as pd
+import polars as pl
+import pyarrow as pa
+import pytest
+
 from laddu import Dataset, Event, Mass, Vec3
 
 
@@ -21,7 +27,7 @@ def make_test_dataset() -> Dataset:
 def test_event_creation() -> None:
     event = make_test_event()
     assert len(event.p4s) == 4
-    assert len(event.eps) == 1
+    assert len(event.aux) == 1
     assert event.weight == 0.48
 
 
@@ -32,6 +38,34 @@ def test_event_p4_sum() -> None:
     assert p4_sum.py == event.p4s[2].py + event.p4s[3].py
     assert p4_sum.pz == event.p4s[2].pz + event.p4s[3].pz
     assert p4_sum.e == event.p4s[2].e + event.p4s[3].e
+
+
+def test_dataset_conversion() -> None:
+    data = {
+        'p4_0_Px': [1.0, 2.0, 3.0, 4.0],
+        'p4_0_Py': [2.0, 3.0, 4.0, 5.0],
+        'p4_0_Pz': [3.0, 4.0, 5.0, 6.0],
+        'p4_0_E': [4.0, 5.0, 6.0, 7.0],
+        'p4_1_Px': [5.0, 6.0, 7.0, 8.0],
+        'p4_1_Py': [6.0, 7.0, 8.0, 9.0],
+        'p4_1_Pz': [7.0, 8.0, 9.0, 10.0],
+        'p4_1_E': [80.0, 90.0, 100.0, 110.0],
+        'aux_0_x': [9.0, 10.0, 11.0, 3.3],
+        'aux_0_y': [10.1, 11.0, 12.0, 4.4],
+        'aux_0_z': [0.1, 0.2, 0.3, 5.5],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+    ds_from_dict = Dataset.from_dict(data)
+    np_data = {k: np.array(v) for k, v in data.items()}
+    ds_from_numpy = Dataset.from_numpy(np_data)
+    ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
+    ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
+    ds_from_arrow = Dataset.from_arrow(pa.Table.from_pydict(data))
+    assert ds_from_dict[1].p4s[0].px == 2.0
+    assert ds_from_numpy[0].aux[0].y == 10.1
+    assert ds_from_pandas[2].weight == 2.0
+    assert ds_from_polars[2].p4s[1].e == 100.0
+    assert ds_from_arrow[2].aux[0].z == 0.3
 
 
 def test_dataset_size_check() -> None:
@@ -47,7 +81,7 @@ def test_dataset_weights() -> None:
             make_test_event(),
             Event(
                 make_test_event().p4s,
-                make_test_event().eps,
+                make_test_event().aux,
                 0.52,
             ),
         ]
@@ -61,7 +95,7 @@ def test_dataset_weights() -> None:
 
 def test_dataset_sum() -> None:
     dataset = make_test_dataset()
-    dataset2 = Dataset([Event(make_test_event().p4s, make_test_event().eps, 0.52)])
+    dataset2 = Dataset([Event(make_test_event().p4s, make_test_event().aux, 0.52)])
     dataset_sum = dataset + dataset2
     assert dataset_sum[0].weight == dataset[0].weight
     assert dataset_sum[1].weight == dataset2[0].weight
@@ -109,7 +143,7 @@ def test_dataset_bootstrap() -> None:
             make_test_event(),
             Event(
                 make_test_event().p4s,
-                make_test_event().eps,
+                make_test_event().aux,
                 1.0,
             ),
         ]
@@ -123,6 +157,15 @@ def test_dataset_bootstrap() -> None:
     empty_dataset = Dataset([])
     empty_bootstrap = empty_dataset.bootstrap(43)
     assert len(empty_bootstrap) == 0
+
+
+def test_dataset_boost() -> None:
+    dataset = make_test_dataset()
+    dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3])
+    p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3])
+    assert pytest.approx(p4_sum.px) == 0.0
+    assert pytest.approx(p4_sum.py) == 0.0
+    assert pytest.approx(p4_sum.pz) == 0.0
 
 
 def test_event_display() -> None:
