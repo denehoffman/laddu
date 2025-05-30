@@ -424,13 +424,27 @@ impl Dataset {
             indices.sort();
         }
         world.process_at_root().broadcast_into(&mut indices);
+        let (_, displs) = world.get_counts_displs(self.n_events());
+        let local_indices: Vec<usize> = indices
+            .into_iter()
+            .filter_map(|idx| {
+                let (owning_rank, local_index) = Dataset::get_rank_index(idx, &displs, world);
+                if world.rank() == owning_rank {
+                    Some(local_index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // `local_indices` only contains indices owned by the current rank, translating them into
+        // local indices on the events vector.
         #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
+        let bootstrapped_events: Vec<Arc<Event>> = local_indices
             .into_par_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
+        let bootstrapped_events: Vec<Arc<Event>> = local_indices
             .into_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
@@ -948,7 +962,6 @@ mod tests {
         let empty_bootstrap = empty_dataset.bootstrap(43);
         assert_eq!(empty_bootstrap.n_events(), 0);
     }
-
     #[test]
     fn test_event_display() {
         let event = test_event();
