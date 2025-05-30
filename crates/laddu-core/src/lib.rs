@@ -4,9 +4,8 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 #![allow(clippy::excessive_precision)]
 
-use fastrand::Rng;
 use ganesh::swarms::{Particle, SwarmPositionInitializer};
-use ganesh::{Point, SampleFloat, Swarm};
+use ganesh::{Point, Swarm};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -464,93 +463,5 @@ impl ReadWrite for Model {
             manager: Manager::default(),
             expression: Expression::default(),
         }
-    }
-}
-
-/// A helper trait to provide a weighted random choice method
-pub trait RandChoice {
-    /// Return an random index sampled with the given weights
-    fn choice_weighted(&mut self, weights: &[Float]) -> usize;
-    /// Return an random index sampled with the given weights, assuming some may be positive and some
-    /// may be negative
-    fn choice_split_weighted(&mut self, weights: &[Float]) -> usize;
-    /// Return `n` random indices sampled (with replacement) with the given weights, assuming some
-    /// may be positive and some may be negative
-    fn choice_split_weighted_n(&mut self, weights: &[Float], n: usize) -> Vec<usize>;
-}
-
-impl RandChoice for Rng {
-    fn choice_weighted(&mut self, weights: &[Float]) -> usize {
-        let total_weight = weights.iter().sum();
-        let u: Float = self.range(0.0, total_weight);
-        let mut cumulative_weight = 0.0;
-        for (index, &weight) in weights.iter().enumerate() {
-            cumulative_weight += weight;
-            if u <= cumulative_weight {
-                return index;
-            }
-        }
-        weights
-            .iter()
-            .enumerate()
-            .rfind(|&(_, &w)| w > 0.0)
-            .map(|(i, _)| i)
-            .expect("No positive weights found")
-    }
-    fn choice_split_weighted(&mut self, weights: &[Float]) -> usize {
-        let pos: Vec<(usize, Float)> = weights
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &w)| if w > 0.0 { Some((i, w)) } else { None })
-            .collect();
-        let neg: Vec<(usize, Float)> = weights
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &w)| if w < 0.0 { Some((i, -w)) } else { None })
-            .collect();
-
-        let w_pos: Float = pos.iter().map(|&(_, w)| w).sum();
-        let w_neg: Float = neg.iter().map(|&(_, w)| w).sum();
-        let r_pos = w_pos / (w_pos + w_neg);
-
-        if self.float() < r_pos {
-            let choices: Vec<Float> = pos.iter().map(|&(_, w)| w).collect();
-            let index = self.choice_weighted(&choices);
-            pos[index].0
-        } else {
-            let choices: Vec<Float> = neg.iter().map(|&(_, w)| w).collect();
-            let index = self.choice_weighted(&choices);
-            neg[index].0
-        }
-    }
-
-    fn choice_split_weighted_n(&mut self, weights: &[Float], n: usize) -> Vec<usize> {
-        let pos: Vec<(usize, Float)> = weights
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &w)| if w > 0.0 { Some((i, w)) } else { None })
-            .collect();
-        let neg: Vec<(usize, Float)> = weights
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &w)| if w < 0.0 { Some((i, -w)) } else { None })
-            .collect();
-
-        let w_pos: Float = pos.iter().map(|&(_, w)| w).sum();
-        let w_neg: Float = neg.iter().map(|&(_, w)| w).sum();
-        let r_pos = w_pos / (w_pos + w_neg);
-
-        let pos_weights: Vec<Float> = pos.iter().map(|&(_, w)| w).collect();
-        let neg_weights: Vec<Float> = neg.iter().map(|&(_, w)| w).collect();
-
-        let mut indices = Vec::with_capacity(n);
-        for _ in 0..n {
-            if self.float() < r_pos {
-                indices.push(pos[self.choice_weighted(&pos_weights)].0)
-            } else {
-                indices.push(neg[self.choice_weighted(&neg_weights)].0)
-            }
-        }
-        indices
     }
 }

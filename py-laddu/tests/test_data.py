@@ -159,28 +159,6 @@ def test_dataset_bootstrap() -> None:
     assert len(empty_bootstrap) == 0
 
 
-def test_dataset_weighted_bootstrap() -> None:
-    dataset = Dataset(
-        [
-            make_test_event(),
-            Event(
-                make_test_event().p4s,
-                make_test_event().aux,
-                -1.0,
-            ),
-        ]
-    )
-    assert dataset[0].weight != dataset[1].weight
-
-    bootstrapped = dataset.weighted_bootstrap(43)
-    assert len(bootstrapped) == len(dataset)
-    assert bootstrapped[0].weight == bootstrapped[1].weight
-
-    empty_dataset = Dataset([])
-    empty_bootstrap = empty_dataset.weighted_bootstrap(43)
-    assert len(empty_bootstrap) == 0
-
-
 def test_dataset_boost() -> None:
     dataset = make_test_dataset()
     dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3])

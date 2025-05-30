@@ -19,7 +19,6 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 use crate::mpi::LadduMPI;
 
 use crate::utils::get_bin_edges;
-use crate::RandChoice;
 use crate::{
     utils::{
         variables::Variable,
@@ -464,99 +463,6 @@ impl Dataset {
             }
         }
         self.bootstrap_local(seed)
-    }
-
-    /// Generate a new dataset with the same length by resampling the events in the original datset
-    /// with replacement. This can be used to perform error analysis via the bootstrap method. (non-MPI version).
-    ///
-    /// This is the same as [`Dataset::bootstrap_local`], but the event weights are used in the
-    /// sample to attempt to maintain the same weighted sum of events.
-    ///
-    /// # Notes
-    ///
-    /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::bootstrap`] instead.
-    pub fn weighted_bootstrap_local(&self, seed: usize) -> Arc<Dataset> {
-        let mut rng = fastrand::Rng::with_seed(seed as u64);
-        let mut indices: Vec<usize> = rng.choice_split_weighted_n(&self.weights(), self.n_events());
-        indices.sort();
-        #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
-            .into_par_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
-            .into_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-        })
-    }
-    // Generate a new dataset with the same length by resampling the events in the original datset
-    /// with replacement. This can be used to perform error analysis via the bootstrap method. (MPI-compatible version).
-    ///
-    /// This is the same as [`Dataset::bootstrap_mpi`], but the event weights are used in the
-    /// sample to attempt to maintain the same weighted sum of events.
-    ///
-    /// # Notes
-    ///
-    /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::bootstrap`] instead.
-    #[cfg(feature = "mpi")]
-    pub fn weighted_bootstrap_mpi(&self, seed: usize, world: &SimpleCommunicator) -> Arc<Dataset> {
-        let n_events = self.n_events();
-        let mut indices: Vec<usize> = vec![0; n_events];
-        if world.is_root() {
-            let mut rng = fastrand::Rng::with_seed(seed as u64);
-            indices = rng.choice_split_weighted_n(&self.weights(), self.n_events());
-            indices.sort();
-        }
-        world.process_at_root().broadcast_into(&mut indices);
-        let (_, displs) = world.get_counts_displs(self.n_events());
-        let local_indices: Vec<usize> = indices
-            .into_iter()
-            .filter_map(|idx| {
-                let (owning_rank, local_index) = Dataset::get_rank_index(idx, &displs, world);
-                if world.rank() == owning_rank {
-                    Some(local_index)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        // `local_indices` only contains indices owned by the current rank, translating them into
-        // local indices on the events vector.
-
-        #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = local_indices
-            .into_par_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = local_indices
-            .into_iter()
-            .map(|idx| self.events[idx].clone())
-            .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-        })
-    }
-
-    /// Generate a new dataset with the same length by resampling the events in the original datset
-    /// with replacement. This can be used to perform error analysis via the bootstrap method.
-    ///
-    /// This is the same as [`Dataset::bootstrap`], but the event weights are used in the
-    /// sample to attempt to maintain the same weighted sum of events.
-    pub fn weighted_bootstrap(&self, seed: usize) -> Arc<Dataset> {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                return self.weighted_bootstrap_mpi(seed, &world);
-            }
-        }
-        self.weighted_bootstrap_local(seed)
     }
 
     /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
@@ -1056,28 +962,6 @@ mod tests {
         let empty_bootstrap = empty_dataset.bootstrap(43);
         assert_eq!(empty_bootstrap.n_events(), 0);
     }
-    #[test]
-    fn test_dataset_weighted_bootstrap() {
-        // TODO: Not a great unit test, but I don't quite know how to test that the distribution and
-        // sampling works properly
-        let mut dataset = test_dataset();
-        dataset.events.push(Arc::new(Event {
-            p4s: test_event().p4s.clone(),
-            aux: test_event().aux.clone(),
-            weight: -1.0,
-        }));
-        assert_relative_ne!(dataset[0].weight, dataset[1].weight);
-
-        let bootstrapped = dataset.weighted_bootstrap(43);
-        assert_eq!(bootstrapped.n_events(), dataset.n_events());
-        assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
-
-        // Test empty dataset bootstrap
-        let empty_dataset = Dataset::default();
-        let empty_bootstrap = empty_dataset.weighted_bootstrap(43);
-        assert_eq!(empty_bootstrap.n_events(), 0);
-    }
-
     #[test]
     fn test_event_display() {
         let event = test_event();
