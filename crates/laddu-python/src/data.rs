@@ -277,6 +277,25 @@ impl PyDataset {
     fn bootstrap(&self, seed: usize) -> PyDataset {
         PyDataset(self.0.bootstrap(seed))
     }
+    /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
+    ///
+    /// The new Dataset is resampled with a random generator seeded by the provided `seed`
+    /// This is the same as [`bootstrap`], but the event weights are used in the
+    /// sample to attempt to maintain the same weighted sum of events.
+    ///
+    /// Parameters
+    /// ----------
+    /// seed : int
+    ///     The random seed used in the resampling process
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     A bootstrapped Dataset
+    ///
+    fn weighted_bootstrap(&self, seed: usize) -> PyDataset {
+        PyDataset(self.0.weighted_bootstrap(seed))
+    }
     /// Boost all the four-momenta in all events to the rest frame of the given set of
     /// four-momenta by indices.
     ///
