@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/denehoffman/laddu/compare/laddu-v0.7.0...laddu-v0.7.1) - 2025-05-30
+
+### Added
+
+- add `Dataset::weighted_bootstrap`
+
+### Fixed
+
+- correct for out-of-bounds errors in MPI bootstrap
+
+### Other
+
+- remove weighted_bootstrap
+
 ## [0.6.3](https://github.com/denehoffman/laddu/compare/laddu-v0.6.2...laddu-v0.6.3) - 2025-05-20
 
 ### Added
