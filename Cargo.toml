@@ -46,8 +46,8 @@ typetag = "0.2.20"
 
 laddu = { version = "0.8.0", path = "crates/laddu" }
 laddu-core = { version = "0.8.0", path = "crates/laddu-core" }
-laddu-amplitudes = { version = "0.7.2", path = "crates/laddu-amplitudes" }
-laddu-extensions = { version = "0.7.2", path = "crates/laddu-extensions" }
+laddu-amplitudes = { version = "0.8.0", path = "crates/laddu-amplitudes" }
+laddu-extensions = { version = "0.8.0", path = "crates/laddu-extensions" }
 laddu-python = { version = "0.8.0", path = "crates/laddu-python" }
 
 [profile.release]
