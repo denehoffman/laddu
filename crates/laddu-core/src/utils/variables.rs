@@ -1,9 +1,6 @@
 use dyn_clone::DynClone;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -34,7 +31,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
-    fn value_on_local(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
+    fn value_on_local(&self, dataset: &Dataset) -> Vec<Float> {
         #[cfg(feature = "rayon")]
         let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
         #[cfg(not(feature = "rayon"))]
@@ -50,7 +47,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     #[cfg(feature = "mpi")]
-    fn value_on_mpi(&self, dataset: &Arc<Dataset>, world: &SimpleCommunicator) -> Vec<Float> {
+    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> Vec<Float> {
         let local_weights = self.value_on_local(dataset);
         let n_events = dataset.n_events();
         let mut buffer: Vec<Float> = vec![0.0; n_events];
@@ -64,7 +61,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
 
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`].
-    fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
+    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -577,6 +574,7 @@ impl Variable for Mandelstam {
 #[cfg(test)]
 mod tests {
     use approx::assert_relative_eq;
+    use std::sync::Arc;
 
     use crate::data::{test_dataset, test_event};
 
@@ -807,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_variable_value_on() {
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let mass = Mass::new(vec![2, 3]);
 
         let values = mass.value_on(&dataset);

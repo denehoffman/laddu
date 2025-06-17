@@ -40,6 +40,21 @@ def test_event_p4_sum() -> None:
     assert p4_sum.e == event.p4s[2].e + event.p4s[3].e
 
 
+def test_event_boost() -> None:
+    event = make_test_event()
+    event_boosted = event.boost_to_rest_frame_of([1, 2, 3])
+    p4_sum = event_boosted.get_p4_sum([1, 2, 3])
+    assert pytest.approx(p4_sum.px) == 0.0
+    assert pytest.approx(p4_sum.py) == 0.0
+    assert pytest.approx(p4_sum.pz) == 0.0
+
+
+def test_event_evaluate() -> None:
+    event = make_test_event()
+    mass = Mass([1])
+    assert event.evaluate(mass) == 1.007
+
+
 def test_dataset_conversion() -> None:
     data = {
         'p4_0_Px': [1.0, 2.0, 3.0, 4.0],
@@ -106,6 +121,19 @@ def test_dataset_sum() -> None:
 
 
 # TODO: Dataset::filter requires free-threading or some other workaround (or maybe we make a non-parallel method)
+
+
+def test_dataset_evaluate() -> None:
+    dataset = make_test_dataset()
+    mass = Mass([1])
+    assert dataset.evaluate(mass)[0] == 1.007
+
+
+def test_dataset_index() -> None:
+    dataset = make_test_dataset()
+    assert isinstance(dataset[0], Event)
+    mass = Mass([1])
+    assert isinstance(dataset[mass], np.ndarray)
 
 
 def test_binned_dataset() -> None:
