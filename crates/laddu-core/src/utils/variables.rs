@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_variable_value_on() {
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let mass = Mass::new(vec![2, 3]);
 
         let values = mass.value_on(&dataset);
