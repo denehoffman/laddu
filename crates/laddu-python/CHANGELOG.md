@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.7.1...laddu-python-v0.8.0) - 2025-06-17
+
+### Added
+
+- add `evaluate(Variable)` method to `Dataset` and `Event`
+
+### Other
+
+- [**breaking**] change `Variable` trait methods to operate on `&Dataset` rather than `&Arc<Dataset>`
+
 ## [0.7.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.7.0...laddu-python-v0.7.1) - 2025-05-30
 
 ### Other
