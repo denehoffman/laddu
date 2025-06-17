@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,9 @@ class Event:
     ) -> None: ...
     def get_p4_sum(self, indices: list[int]) -> Vec4: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Event: ...
+    def evaluate(
+        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> float: ...
 
 class Dataset:
     events: list[Event]
@@ -45,7 +48,15 @@ class Dataset:
     def __len__(self) -> int: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
+    @overload
     def __getitem__(self, index: int) -> Event: ...
+    @overload
+    def __getitem__(
+        self, index: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> NDArray[np.float64]: ...
+    def __getitem__(
+        self, index: int | Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> Event | NDArray[np.float64]: ...
     def bin_by(
         self,
         variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
@@ -74,6 +85,9 @@ class Dataset:
     def from_arrow(
         data: pa.Table, rest_frame_indices: list[int] | None = None
     ) -> Dataset: ...
+    def evaluate(
+        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> NDArray[np.float64]: ...
 
 class BinnedDataset:
     n_bins: int

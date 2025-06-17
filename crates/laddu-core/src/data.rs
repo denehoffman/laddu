@@ -101,6 +101,10 @@ impl Event {
             weight: self.weight,
         }
     }
+    /// Evaluate a [`Variable`] on an [`Event`].
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> Float {
+        variable.value(self)
+    }
 }
 
 /// A collection of [`Event`]s.
@@ -571,6 +575,10 @@ impl Dataset {
             })
         }
     }
+    /// Evaluate a [`Variable`] on every event in the [`Dataset`].
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> Vec<Float> {
+        variable.value_on(self)
+    }
 }
 
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| ->  Dataset { Dataset { events: a.events.iter().chain(b.events.iter()).cloned().collect() }});
@@ -805,6 +813,8 @@ impl BinnedDataset {
 
 #[cfg(test)]
 mod tests {
+    use crate::Mass;
+
     use super::*;
     use approx::{assert_relative_eq, assert_relative_ne};
     use serde::{Deserialize, Serialize};
@@ -834,6 +844,13 @@ mod tests {
         assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+    }
+
+    #[test]
+    fn test_event_evaluate() {
+        let event = test_event();
+        let mass = Mass::new([1]);
+        assert_relative_eq!(event.evaluate(&mass), 1.007);
     }
 
     #[test]
@@ -898,6 +915,13 @@ mod tests {
         assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+    }
+
+    #[test]
+    fn test_dataset_evaluate() {
+        let dataset = test_dataset();
+        let mass = Mass::new([1]);
+        assert_relative_eq!(dataset.evaluate(&mass)[0], 1.007);
     }
 
     #[test]

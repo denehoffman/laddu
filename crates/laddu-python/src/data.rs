@@ -7,6 +7,7 @@ use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
     prelude::*,
+    IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -107,6 +108,19 @@ impl PyEvent {
     ///
     pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> Self {
         PyEvent(Arc::new(self.0.boost_to_rest_frame_of(indices)))
+    }
+    /// Get the value of a Variable on the given Event
+    ///
+    /// Parameters
+    /// ----------
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///
+    /// Returns
+    /// -------
+    /// float
+    ///
+    fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<Float> {
+        Ok(self.0.evaluate(&variable.extract::<PyVariable>()?))
     }
 }
 
@@ -217,8 +231,20 @@ impl PyDataset {
             .map(|rust_event| PyEvent(rust_event.clone()))
             .collect()
     }
-    fn __getitem__(&self, index: usize) -> PyEvent {
-        PyEvent(Arc::new(self.0[index].clone()))
+    fn __getitem__<'py>(
+        &self,
+        py: Python<'py>,
+        index: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if let Ok(value) = self.evaluate(py, index.clone()) {
+            value.into_bound_py_any(py)
+        } else if let Ok(index) = index.extract::<usize>() {
+            PyEvent(Arc::new(self.0[index].clone())).into_bound_py_any(py)
+        } else {
+            Err(PyTypeError::new_err(
+                "Unsupported index type (int or Variable)",
+            ))
+        }
     }
     /// Separates a Dataset into histogram bins by a Variable value
     ///
@@ -292,6 +318,26 @@ impl PyDataset {
     ///
     pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> PyDataset {
         PyDataset(self.0.boost_to_rest_frame_of(indices))
+    }
+    /// Get the value of a Variable over every event in the Dataset.
+    ///
+    /// Parameters
+    /// ----------
+    /// variable : {laddu.Mass, laddu.CosTheta, laddu.Phi, laddu.PolAngle, laddu.PolMagnitude, laddu.Mandelstam}
+    ///
+    /// Returns
+    /// -------
+    /// values : array_like
+    ///
+    fn evaluate<'py>(
+        &self,
+        py: Python<'py>,
+        variable: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyArray1<Float>>> {
+        Ok(PyArray1::from_slice(
+            py,
+            &self.0.evaluate(&variable.extract::<PyVariable>()?),
+        ))
     }
 }
 
