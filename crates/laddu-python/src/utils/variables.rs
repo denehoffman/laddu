@@ -10,10 +10,7 @@ use laddu_core::{
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display};
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {
@@ -683,7 +680,7 @@ impl PyMandelstam {
 
 #[typetag::serde]
 impl Variable for PyVariable {
-    fn value_on(&self, dataset: &Arc<Dataset>) -> Vec<Float> {
+    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
         match self {
             PyVariable::Mass(mass) => mass.0.value_on(dataset),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),
