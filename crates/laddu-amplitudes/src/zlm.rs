@@ -167,6 +167,99 @@ pub fn py_zlm(
     )))
 }
 
+/// An [`Amplitude`] representing the expression :math:`P_\gamma \text{Exp}(2\imath\Phi)` where
+/// :math:`\P_\gamma` is the beam polarization magniutde and :math:`\Phi` is the beam
+/// polarization angle. This [`Amplitude`] enocdes a polarization phase similar to Equation (3)
+/// [here](https://arxiv.org/abs/1906.04841)[^1].
+///
+/// [^1]: Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in $`\eta\pi^0`$ photoproduction at GlueX. _Physical Review D_, **100**(5). [doi:10.1103/physrevd.100.054017](https://doi.org/10.1103/PhysRevD.100.054017)
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PolPhase {
+    name: String,
+    polarization: Polarization,
+    csid: ComplexScalarID,
+}
+
+impl PolPhase {
+    /// Construct a new [`PolPhase`] with the given name the given set of [`Polarization`] [`Variable`]s.
+    pub fn new(name: &str, polarization: &Polarization) -> Box<Self> {
+        Self {
+            name: name.to_string(),
+            polarization: polarization.clone(),
+            csid: ComplexScalarID::default(),
+        }
+        .into()
+    }
+}
+
+#[typetag::serde]
+impl Amplitude for PolPhase {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+        self.csid = resources.register_complex_scalar(None);
+        resources.register_amplitude(&self.name)
+    }
+
+    fn precompute(&self, event: &Event, cache: &mut Cache) {
+        let pol_angle = self.polarization.pol_angle.value(event);
+        let pgamma = self.polarization.pol_magnitude.value(event);
+        let phase = Complex::new(Float::cos(2.0 * pol_angle), Float::sin(2.0 * pol_angle));
+        cache.store_complex_scalar(self.csid, pgamma * phase);
+    }
+
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+        cache.get_complex_scalar(self.csid)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _event: &Event,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex<Float>>,
+    ) {
+        // This amplitude is independent of free parameters
+    }
+}
+
+/// An Amplitude representing the expression :math:`P_\gamma \text{Exp}(2\imath\Phi)` where
+/// :math:`\P_\gamma` is the beam polarization magniutde and :math:`\Phi` is the beam
+/// polarization angle.
+///
+/// This Amplitude is intended to be used by its real and imaginary parts to decompose an intensity
+/// function into polarized intensity components:
+///
+/// :math:`I = I_0 - I_1 \Re[A] - I_2 \im[A]`
+///
+/// where :math:`A = P_\gamma \text{Exp}(2\imath\Phi)`.
+///
+/// Parameters
+/// ----------
+/// name : str
+///     The Amplitude name
+/// polarization : laddu.Polarization
+///     The beam polarization to use in the calculation
+///
+/// Returns
+/// -------
+/// laddu.Amplitude
+///     An Amplitude which can be registered by a laddu.Manager
+///
+/// See Also
+/// --------
+/// laddu.Manager
+///
+/// Notes
+/// -----
+/// This amplitude is described in [Mathieu]_
+///
+/// .. [Mathieu] Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in :math:`\eta\pi^0` photoproduction at GlueX. Physical Review D, 100(5). `doi:10.1103/physrevd.100.054017 <https://doi.org/10.1103/PhysRevD.100.054017>`_
+///
+#[cfg(feature = "python")]
+#[pyfunction(name = "PolPhase")]
+pub fn py_polphase(name: &str, polarization: &PyPolarization) -> PyAmplitude {
+    PyAmplitude(PolPhase::new(name, &polarization.0))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -200,6 +293,40 @@ mod tests {
         let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
         let polarization = Polarization::new(0, [1], 0);
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let result = evaluator.evaluate_gradient(&[]);
+        assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+
+    #[test]
+    fn test_polphase_evaluation() {
+        let mut manager = Manager::default();
+        let polarization = Polarization::new(0, [1], 0);
+        let amp = PolPhase::new("polphase", &polarization);
+        let aid = manager.register(amp).unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let expr = aid.into();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, -0.28729145, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, -0.25724039, epsilon = Float::EPSILON.sqrt());
+    }
+
+    #[test]
+    fn test_polphase_gradient() {
+        let mut manager = Manager::default();
+        let polarization = Polarization::new(0, [1], 0);
+        let amp = PolPhase::new("polphase", &polarization);
         let aid = manager.register(amp).unwrap();
 
         let dataset = Arc::new(test_dataset());

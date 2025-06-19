@@ -13,7 +13,7 @@ from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
 from laddu.amplitudes.ylm import Ylm
-from laddu.amplitudes.zlm import Zlm
+from laddu.amplitudes.zlm import PolPhase, Zlm
 from laddu.convert import convert_from_amptools
 from laddu.data import BinnedDataset, Dataset, Event, open, open_amptools
 from laddu.extensions import (
@@ -72,6 +72,7 @@ __all__ = [
     'Phi',
     'PolAngle',
     'PolMagnitude',
+    'PolPhase',
     'PolarComplexScalar',
     'Polarization',
     'Scalar',

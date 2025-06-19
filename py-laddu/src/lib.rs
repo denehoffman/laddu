@@ -40,7 +40,7 @@ mod laddu {
             py_piecewise_complex_scalar, py_piecewise_polar_complex_scalar, py_piecewise_scalar,
         },
         ylm::py_ylm,
-        zlm::py_zlm,
+        zlm::{py_polphase, py_zlm},
     };
 
     #[pymodule_export]
