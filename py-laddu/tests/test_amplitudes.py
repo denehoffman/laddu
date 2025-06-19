@@ -146,6 +146,18 @@ def test_expression_operations() -> None:
     result_mul2_imag = eval_mul2_imag.evaluate([])
     assert result_mul2_imag[0] == 4.0 + 0.0j
 
+    expr_conj = aid3.conj()
+    model_conj = manager.model(expr_conj)
+    eval_conj = model_conj.load(dataset)
+    result_conj = eval_conj.evaluate([])
+    assert result_conj[0] == 3.0 - 4.0j
+
+    expr_mul2_conj = expr_mul2.conj()
+    model_mul2_conj = manager.model(expr_mul2_conj)
+    eval_mul2_conj = model_mul2_conj.load(dataset)
+    result_mul2_conj = eval_mul2_conj.evaluate([])
+    assert result_mul2_conj[0] == -2.0 - 4.0j
+
     expr_norm = aid1.norm_sqr()
     model_norm = manager.model(expr_norm)
     eval_norm = model_norm.load(dataset)
@@ -304,6 +316,21 @@ def test_gradient() -> None:
     assert gradient[0][3].real == 2.0
     assert gradient[0][3].imag == 0.0
 
+    expr = (aid1 * aid2).conj()
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 4.0
+    assert gradient[0][0].imag == -5.0
+    assert gradient[0][1].real == -5.0
+    assert gradient[0][1].imag == -4.0
+    assert gradient[0][2].real == 2.0
+    assert gradient[0][2].imag == -3.0
+    assert gradient[0][3].real == -3.0
+    assert gradient[0][3].imag == -2.0
+
     expr = (aid1 * aid2).norm_sqr()
     model = manager.model(expr)
     evaluator = model.load(dataset)
@@ -374,7 +401,7 @@ def test_tree_printing() -> None:
     aid2 = manager.register(amp2)
     expr = (
         aid1.real()
-        + aid2.imag()
+        + aid2.conj().imag()
         + AmplitudeOne() * -AmplitudeZero()
         - AmplitudeZero() / AmplitudeOne()
         + (aid1 * aid2).norm_sqr()
@@ -388,7 +415,8 @@ def test_tree_printing() -> None:
 │  │  │  ├─ Re
 │  │  │  │  └─ parametric_1(id=0)
 │  │  │  └─ Im
-│  │  │     └─ parametric_2(id=1)
+│  │  │     └─ *
+│  │  │        └─ parametric_2(id=1)
 │  │  └─ ×
 │  │     ├─ 1
 │  │     └─ -
@@ -400,6 +428,7 @@ def test_tree_printing() -> None:
    └─ ×
       ├─ parametric_1(id=0)
       └─ parametric_2(id=1)
+
 """
     )
 

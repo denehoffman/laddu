@@ -152,6 +152,16 @@ impl PyAmplitudeID {
     fn imag(&self) -> PyExpression {
         PyExpression(self.0.imag())
     }
+    /// The complex conjugate of a complex Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// Expression
+    ///     The complex conjugate of the given Amplitude
+    ///
+    fn conj(&self) -> PyExpression {
+        PyExpression(self.0.conj())
+    }
     /// The norm-squared of a complex Amplitude
     ///
     /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
@@ -284,6 +294,16 @@ impl PyExpression {
     ///
     fn imag(&self) -> PyExpression {
         PyExpression(self.0.imag())
+    }
+    /// The complex conjugate of a complex Expression
+    ///
+    /// Returns
+    /// -------
+    /// Expression
+    ///     The complex conjugate of the given Expression
+    ///
+    fn conj(&self) -> PyExpression {
+        PyExpression(self.0.conj())
     }
     /// The norm-squared of a complex Expression
     ///

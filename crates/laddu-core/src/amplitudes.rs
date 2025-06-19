@@ -236,6 +236,8 @@ pub enum Expression {
     Real(Box<Expression>),
     /// The imaginary part of an [`Expression`].
     Imag(Box<Expression>),
+    /// The complex conjugate of an [`Expression`].
+    Conj(Box<Expression>),
     /// The absolute square of an [`Expression`].
     NormSqr(Box<Expression>),
 }
@@ -334,6 +336,10 @@ impl AmplitudeID {
     pub fn imag(&self) -> Expression {
         Expression::Imag(Box::new(Expression::Amp(self.clone())))
     }
+    /// Takes the complex conjugate of the given [`Amplitude`].
+    pub fn conj(&self) -> Expression {
+        Expression::Conj(Box::new(Expression::Amp(self.clone())))
+    }
     /// Takes the absolute square of the given [`Amplitude`].
     pub fn norm_sqr(&self) -> Expression {
         Expression::NormSqr(Box::new(Expression::Amp(self.clone())))
@@ -355,6 +361,7 @@ impl Expression {
             Expression::Neg(a) => -a.evaluate(amplitude_values),
             Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
+            Expression::Conj(a) => a.evaluate(amplitude_values).conj(),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
             Expression::Zero => Complex::ZERO,
             Expression::One => Complex::ONE,
@@ -403,6 +410,9 @@ impl Expression {
             Expression::Imag(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| Complex::new(g.im, 0.0)),
+            Expression::Conj(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| g.conj()),
             Expression::NormSqr(a) => {
                 let conj_f_a = a.evaluate(amplitude_values).conjugate();
                 a.evaluate_gradient(amplitude_values, gradient_values)
@@ -418,6 +428,10 @@ impl Expression {
     /// Takes the imaginary part of the given [`Expression`].
     pub fn imag(&self) -> Self {
         Self::Imag(Box::new(self.clone()))
+    }
+    /// Takes the complex conjugate of the given [`Expression`].
+    pub fn conj(&self) -> Self {
+        Self::Conj(Box::new(self.clone()))
     }
     /// Takes the absolute square of the given [`Expression`].
     pub fn norm_sqr(&self) -> Self {
@@ -441,6 +455,7 @@ impl Expression {
             Self::Neg(_) => "-".to_string(),
             Self::Real(_) => "Re".to_string(),
             Self::Imag(_) => "Im".to_string(),
+            Self::Conj(_) => "*".to_string(),
             Self::NormSqr(_) => "NormSqr".to_string(),
             Self::Zero => "0".to_string(),
             Self::One => "1".to_string(),
@@ -459,7 +474,7 @@ impl Expression {
                     }?;
                 }
             }
-            Self::Neg(a) | Self::Real(a) | Self::Imag(a) | Self::NormSqr(a) => {
+            Self::Neg(a) | Self::Real(a) | Self::Imag(a) | Self::Conj(a) | Self::NormSqr(a) => {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 a.write_tree(f, &child_prefix, "└─ ", "   ")?;
             }
@@ -1043,6 +1058,13 @@ mod tests {
         let result_mul2_real = eval_mul2_real.evaluate(&[]);
         assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
 
+        // Test (amp) imag
+        let expr_imag = aid3.imag();
+        let model_imag = manager.model(&expr_imag);
+        let eval_imag = model_imag.load(&dataset);
+        let result_imag = eval_imag.evaluate(&[]);
+        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
         let model_mul2_imag = manager.model(&expr_mul2_imag);
@@ -1050,12 +1072,19 @@ mod tests {
         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
         assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
 
-        // Test (amp) imag
-        let expr_imag = aid3.imag();
-        let model_imag = manager.model(&expr_imag);
-        let eval_imag = model_imag.load(&dataset);
-        let result_imag = eval_imag.evaluate(&[]);
-        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+        // Test (amp) conj
+        let expr_conj = aid3.conj();
+        let model_conj = manager.model(&expr_conj);
+        let eval_conj = model_conj.load(&dataset);
+        let result_conj = eval_conj.evaluate(&[]);
+        assert_eq!(result_conj[0], Complex::new(3.0, -4.0));
+
+        // Test (expr) conj
+        let expr_mul2_conj = expr_mul2.conj();
+        let model_mul2_conj = manager.model(&expr_mul2_conj);
+        let eval_mul2_conj = model_mul2_conj.load(&dataset);
+        let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
+        assert_eq!(result_mul2_conj[0], Complex::new(-2.0, -4.0));
 
         // Test (amp) norm_sqr
         let expr_norm = aid1.norm_sqr();
@@ -1230,6 +1259,21 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, 2.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
 
+        let expr = (&aid1 * &aid2).conj();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, -5.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, -4.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, -3.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, -2.0);
+
         let expr = (&aid1 * &aid2).norm_sqr();
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
@@ -1308,7 +1352,7 @@ mod tests {
         );
         let aid1 = manager.register(amp1).unwrap();
         let aid2 = manager.register(amp2).unwrap();
-        let expr = &aid1.real() + &aid2.imag() + Expression::One * -Expression::Zero
+        let expr = &aid1.real() + &aid2.conj().imag() + Expression::One * -Expression::Zero
             - Expression::Zero / Expression::One
             + (&aid1 * &aid2).norm_sqr();
         assert_eq!(
@@ -1320,7 +1364,8 @@ mod tests {
 │  │  │  ├─ Re
 │  │  │  │  └─ parametric_1(id=0)
 │  │  │  └─ Im
-│  │  │     └─ parametric_2(id=1)
+│  │  │     └─ *
+│  │  │        └─ parametric_2(id=1)
 │  │  └─ ×
 │  │     ├─ 1
 │  │     └─ -
