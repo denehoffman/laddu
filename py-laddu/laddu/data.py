@@ -176,14 +176,14 @@ def open_amptools(
         num_entries=num_entries,
     )
     n_particles = len(p4s_list[0])
-    boost_indices = list(range(1, n_particles)) if boost_to_com else None
+    rest_frame_indices = list(range(1, n_particles)) if boost_to_com else None
     ds = Dataset(
         [
             Event(
                 [Vec4.from_array(p4) for p4 in p4s],
                 [Vec3.from_array(eps_vec) for eps_vec in eps],
                 weight,
-                boost_indices=boost_indices,
+                rest_frame_indices=rest_frame_indices,
             )
             for p4s, eps, weight in zip(p4s_list, eps_list, weight_list)
         ]
