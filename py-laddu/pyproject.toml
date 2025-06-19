@@ -121,6 +121,7 @@ ignore = [
   "TRY003", # Avoid specifying long messages outside the exception class
   "PYI021", # Avoid docstring in stub file
   "E741",   # Ambiguous variable names
+  "RUF001", # Ambiguous character in string
 ]
 
 [tool.ruff.lint.pydocstyle]

@@ -61,11 +61,18 @@ def test_expression_operations() -> None:
     aid2 = manager.register(amp2)
     aid3 = manager.register(amp3)
     dataset = make_test_dataset()
+
     expr_add = aid1 + aid2
     model_add = manager.model(expr_add)
     eval_add = model_add.load(dataset)
     result_add = eval_add.evaluate([])
     assert result_add[0] == 2.0 + 1.0j
+
+    expr_sub = aid1 - aid2
+    model_sub = manager.model(expr_sub)
+    eval_sub = model_sub.load(dataset)
+    result_sub = eval_sub.evaluate([])
+    assert result_sub[0] == 2.0 - 1.0j
 
     expr_mul = aid1 * aid2
     model_mul = manager.model(expr_mul)
@@ -73,17 +80,47 @@ def test_expression_operations() -> None:
     result_mul = eval_mul.evaluate([])
     assert result_mul[0] == 0.0 + 2.0j
 
+    expr_div = aid1 / aid3
+    model_div = manager.model(expr_div)
+    eval_div = model_div.load(dataset)
+    result_div = eval_div.evaluate([])
+    assert result_div[0] == (6.0 / 25.0) - (8.0j / 25.0)
+
+    expr_neg = -aid3
+    model_neg = manager.model(expr_neg)
+    eval_neg = model_neg.load(dataset)
+    result_neg = eval_neg.evaluate([])
+    assert result_neg[0] == -3.0 - 4.0j
+
     expr_add2 = expr_add + expr_mul
     model_add2 = manager.model(expr_add2)
     eval_add2 = model_add2.load(dataset)
     result_add2 = eval_add2.evaluate([])
     assert result_add2[0] == 2.0 + 3.0j
 
+    expr_sub2 = expr_add - expr_mul
+    model_sub2 = manager.model(expr_sub2)
+    eval_sub2 = model_sub2.load(dataset)
+    result_sub2 = eval_sub2.evaluate([])
+    assert result_sub2[0] == 2.0 - 1.0j
+
     expr_mul2 = expr_add * expr_mul
     model_mul2 = manager.model(expr_mul2)
     eval_mul2 = model_mul2.load(dataset)
     result_mul2 = eval_mul2.evaluate([])
     assert result_mul2[0] == -2.0 + 4.0j
+
+    expr_div2 = expr_add / expr_add2
+    model_div2 = manager.model(expr_div2)
+    eval_div2 = model_div2.load(dataset)
+    result_div2 = eval_div2.evaluate([])
+    assert result_div2[0] == (7.0 / 13.0) - (4.0j / 13.0)
+
+    expr_neg2 = -expr_mul2
+    model_neg2 = manager.model(expr_neg2)
+    eval_neg2 = model_neg2.load(dataset)
+    result_neg2 = eval_neg2.evaluate([])
+    assert result_neg2[0] == 2.0 - 4.0j
 
     expr_real = aid3.real()
     model_real = manager.model(expr_real)
@@ -162,6 +199,36 @@ def test_gradient() -> None:
     dataset = make_test_dataset()
     params = [2.0, 3.0, 4.0, 5.0]
 
+    expr = aid1 + aid2
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 1.0
+    assert gradient[0][0].imag == 0.0
+    assert gradient[0][1].real == 0.0
+    assert gradient[0][1].imag == 1.0
+    assert gradient[0][2].real == 1.0
+    assert gradient[0][2].imag == 0.0
+    assert gradient[0][3].real == 0.0
+    assert gradient[0][3].imag == 1.0
+
+    expr = aid1 - aid2
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 1.0
+    assert gradient[0][0].imag == 0.0
+    assert gradient[0][1].real == 0.0
+    assert gradient[0][1].imag == 1.0
+    assert gradient[0][2].real == -1.0
+    assert gradient[0][2].imag == 0.0
+    assert gradient[0][3].real == 0.0
+    assert gradient[0][3].imag == -1.0
+
     expr = aid1 * aid2
     model = manager.model(expr)
     evaluator = model.load(dataset)
@@ -176,6 +243,36 @@ def test_gradient() -> None:
     assert gradient[0][2].imag == 3.0
     assert gradient[0][3].real == -3.0
     assert gradient[0][3].imag == 2.0
+
+    expr = aid1 / aid2
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == 4.0 / 41.0
+    assert gradient[0][0].imag == -5.0 / 41.0
+    assert gradient[0][1].real == 5.0 / 41.0
+    assert gradient[0][1].imag == 4.0 / 41.0
+    assert gradient[0][2].real == -102.0 / 1681.0
+    assert gradient[0][2].imag == 107.0 / 1681.0
+    assert gradient[0][3].real == -107.0 / 1681.0
+    assert gradient[0][3].imag == -102.0 / 1681.0
+
+    expr = -(aid1 * aid2)
+    model = manager.model(expr)
+    evaluator = model.load(dataset)
+
+    gradient = evaluator.evaluate_gradient(params)
+
+    assert gradient[0][0].real == -4.0
+    assert gradient[0][0].imag == -5.0
+    assert gradient[0][1].real == 5.0
+    assert gradient[0][1].imag == -4.0
+    assert gradient[0][2].real == -2.0
+    assert gradient[0][2].imag == -3.0
+    assert gradient[0][3].real == 3.0
+    assert gradient[0][3].imag == -2.0
 
     expr = (aid1 * aid2).real()
     model = manager.model(expr)
@@ -278,23 +375,29 @@ def test_tree_printing() -> None:
     expr = (
         aid1.real()
         + aid2.imag()
-        + AmplitudeOne() * AmplitudeZero()
+        + AmplitudeOne() * -AmplitudeZero()
+        - AmplitudeZero() / AmplitudeOne()
         + (aid1 * aid2).norm_sqr()
     )
     assert (
         str(expr)
         == """+
-├─ +
+├─ -
 │  ├─ +
-│  │  ├─ Re
-│  │  │  └─ parametric_1(id=0)
-│  │  └─ Im
-│  │     └─ parametric_2(id=1)
-│  └─ *
-│     ├─ 1
-│     └─ 0
+│  │  ├─ +
+│  │  │  ├─ Re
+│  │  │  │  └─ parametric_1(id=0)
+│  │  │  └─ Im
+│  │  │     └─ parametric_2(id=1)
+│  │  └─ ×
+│  │     ├─ 1
+│  │     └─ -
+│  │        └─ 0
+│  └─ ÷
+│     ├─ 0
+│     └─ 1
 └─ NormSqr
-   └─ *
+   └─ ×
       ├─ parametric_1(id=0)
       └─ parametric_2(id=1)
 """
