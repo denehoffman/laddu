@@ -428,7 +428,6 @@ def test_tree_printing() -> None:
    └─ ×
       ├─ parametric_1(id=0)
       └─ parametric_2(id=1)
-
 """
     )
 
