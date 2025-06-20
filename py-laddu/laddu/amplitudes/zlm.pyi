@@ -57,3 +57,7 @@ def Zlm(
     angles: Angles,
     polarization: Polarization,
 ) -> Amplitude: ...
+def PolPhase(
+    name: str,
+    polarization: Polarization,
+) -> Amplitude: ...

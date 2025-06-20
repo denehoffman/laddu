@@ -224,12 +224,20 @@ pub enum Expression {
     Amp(AmplitudeID),
     /// The sum of two [`Expression`]s.
     Add(Box<Expression>, Box<Expression>),
+    /// The difference of two [`Expression`]s.
+    Sub(Box<Expression>, Box<Expression>),
     /// The product of two [`Expression`]s.
     Mul(Box<Expression>, Box<Expression>),
+    /// The division of two [`Expression`]s.
+    Div(Box<Expression>, Box<Expression>),
+    /// The additive inverse of an [`Expression`].
+    Neg(Box<Expression>),
     /// The real part of an [`Expression`].
     Real(Box<Expression>),
     /// The imaginary part of an [`Expression`].
     Imag(Box<Expression>),
+    /// The complex conjugate of an [`Expression`].
+    Conj(Box<Expression>),
     /// The absolute square of an [`Expression`].
     NormSqr(Box<Expression>),
 }
@@ -246,19 +254,76 @@ impl Display for Expression {
     }
 }
 
-impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression { Expression::Add(Box::new(a.clone()), Box::new(b.clone()))});
-impl_op_ex!(*|a: &Expression, b: &Expression| -> Expression {
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression {
+    Expression::Add(Box::new(a.clone()), Box::new(b.clone()))
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression, b: &Expression| -> Expression {
+    Expression::Sub(Box::new(a.clone()), Box::new(b.clone()))
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &Expression, b: &Expression| -> Expression {
     Expression::Mul(Box::new(a.clone()), Box::new(b.clone()))
 });
-impl_op_ex_commutative!(+ |a: &AmplitudeID, b: &Expression| -> Expression { Expression::Add(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))});
-impl_op_ex_commutative!(*|a: &AmplitudeID, b: &Expression| -> Expression {
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &Expression, b: &Expression| -> Expression {
+    Expression::Div(Box::new(a.clone()), Box::new(b.clone()))
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression| -> Expression {
+    Expression::Neg(Box::new(a.clone()))
+});
+
+#[rustfmt::skip]
+impl_op_ex_commutative!(+ |a: &AmplitudeID, b: &Expression| -> Expression {
+    Expression::Add(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
+});
+#[rustfmt::skip]
+impl_op_ex_commutative!(- |a: &AmplitudeID, b: &Expression| -> Expression {
+    Expression::Sub(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
+});
+#[rustfmt::skip]
+impl_op_ex_commutative!(* |a: &AmplitudeID, b: &Expression| -> Expression {
     Expression::Mul(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
 });
-impl_op_ex!(+ |a: &AmplitudeID, b: &AmplitudeID| -> Expression { Expression::Add(Box::new(Expression::Amp(a.clone())), Box::new(Expression::Amp(b.clone())))});
-impl_op_ex!(*|a: &AmplitudeID, b: &AmplitudeID| -> Expression {
+#[rustfmt::skip]
+impl_op_ex_commutative!(/ |a: &AmplitudeID, b: &Expression| -> Expression {
+    Expression::Div(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
+});
+
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
+    Expression::Add(
+        Box::new(Expression::Amp(a.clone())),
+        Box::new(Expression::Amp(b.clone()))
+    )
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
+    Expression::Sub(
+        Box::new(Expression::Amp(a.clone())),
+        Box::new(Expression::Amp(b.clone()))
+    )
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
     Expression::Mul(
         Box::new(Expression::Amp(a.clone())),
         Box::new(Expression::Amp(b.clone())),
+    )
+});
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
+    Expression::Div(
+        Box::new(Expression::Amp(a.clone())),
+        Box::new(Expression::Amp(b.clone())),
+    )
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &AmplitudeID| -> Expression {
+    Expression::Neg(
+        Box::new(Expression::Amp(a.clone())),
     )
 });
 
@@ -270,6 +335,10 @@ impl AmplitudeID {
     /// Takes the imaginary part of the given [`Amplitude`].
     pub fn imag(&self) -> Expression {
         Expression::Imag(Box::new(Expression::Amp(self.clone())))
+    }
+    /// Takes the complex conjugate of the given [`Amplitude`].
+    pub fn conj(&self) -> Expression {
+        Expression::Conj(Box::new(Expression::Amp(self.clone())))
     }
     /// Takes the absolute square of the given [`Amplitude`].
     pub fn norm_sqr(&self) -> Expression {
@@ -286,9 +355,13 @@ impl Expression {
         match self {
             Expression::Amp(aid) => amplitude_values.0[aid.1],
             Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
+            Expression::Sub(a, b) => a.evaluate(amplitude_values) - b.evaluate(amplitude_values),
             Expression::Mul(a, b) => a.evaluate(amplitude_values) * b.evaluate(amplitude_values),
+            Expression::Div(a, b) => a.evaluate(amplitude_values) / b.evaluate(amplitude_values),
+            Expression::Neg(a) => -a.evaluate(amplitude_values),
             Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
             Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
+            Expression::Conj(a) => a.evaluate(amplitude_values).conj(),
             Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
             Expression::Zero => Complex::ZERO,
             Expression::One => Complex::ONE,
@@ -309,6 +382,10 @@ impl Expression {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     + b.evaluate_gradient(amplitude_values, gradient_values)
             }
+            Expression::Sub(a, b) => {
+                a.evaluate_gradient(amplitude_values, gradient_values)
+                    - b.evaluate_gradient(amplitude_values, gradient_values)
+            }
             Expression::Mul(a, b) => {
                 let f_a = a.evaluate(amplitude_values);
                 let f_b = b.evaluate(amplitude_values);
@@ -317,12 +394,25 @@ impl Expression {
                     + a.evaluate_gradient(amplitude_values, gradient_values)
                         .map(|g| g * f_b)
             }
+            Expression::Div(a, b) => {
+                let f_a = a.evaluate(amplitude_values);
+                let f_b = b.evaluate(amplitude_values);
+                (a.evaluate_gradient(amplitude_values, gradient_values)
+                    .map(|g| g * f_b)
+                    - b.evaluate_gradient(amplitude_values, gradient_values)
+                        .map(|g| g * f_a))
+                    / (f_b * f_b)
+            }
+            Expression::Neg(a) => -a.evaluate_gradient(amplitude_values, gradient_values),
             Expression::Real(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| Complex::new(g.re, 0.0)),
             Expression::Imag(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| Complex::new(g.im, 0.0)),
+            Expression::Conj(a) => a
+                .evaluate_gradient(amplitude_values, gradient_values)
+                .map(|g| g.conj()),
             Expression::NormSqr(a) => {
                 let conj_f_a = a.evaluate(amplitude_values).conjugate();
                 a.evaluate_gradient(amplitude_values, gradient_values)
@@ -338,6 +428,10 @@ impl Expression {
     /// Takes the imaginary part of the given [`Expression`].
     pub fn imag(&self) -> Self {
         Self::Imag(Box::new(self.clone()))
+    }
+    /// Takes the complex conjugate of the given [`Expression`].
+    pub fn conj(&self) -> Self {
+        Self::Conj(Box::new(self.clone()))
     }
     /// Takes the absolute square of the given [`Expression`].
     pub fn norm_sqr(&self) -> Self {
@@ -355,9 +449,13 @@ impl Expression {
         let display_string = match self {
             Self::Amp(aid) => aid.to_string(),
             Self::Add(_, _) => "+".to_string(),
-            Self::Mul(_, _) => "*".to_string(),
+            Self::Sub(_, _) => "-".to_string(),
+            Self::Mul(_, _) => "×".to_string(),
+            Self::Div(_, _) => "÷".to_string(),
+            Self::Neg(_) => "-".to_string(),
             Self::Real(_) => "Re".to_string(),
             Self::Imag(_) => "Im".to_string(),
+            Self::Conj(_) => "*".to_string(),
             Self::NormSqr(_) => "NormSqr".to_string(),
             Self::Zero => "0".to_string(),
             Self::One => "1".to_string(),
@@ -365,7 +463,7 @@ impl Expression {
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match self {
             Self::Amp(_) | Self::Zero | Self::One => {}
-            Self::Add(a, b) | Self::Mul(a, b) => {
+            Self::Add(a, b) | Self::Sub(a, b) | Self::Mul(a, b) | Self::Div(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
@@ -376,7 +474,7 @@ impl Expression {
                     }?;
                 }
             }
-            Self::Real(a) | Self::Imag(a) | Self::NormSqr(a) => {
+            Self::Neg(a) | Self::Real(a) | Self::Imag(a) | Self::Conj(a) | Self::NormSqr(a) => {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 a.write_tree(f, &child_prefix, "└─ ", "   ")?;
             }
@@ -883,12 +981,33 @@ mod tests {
         let result_add = eval_add.evaluate(&[]);
         assert_eq!(result_add[0], Complex::new(2.0, 1.0));
 
+        // Test (amp) subtraction
+        let expr_sub = &aid1 - &aid2;
+        let model_sub = manager.model(&expr_sub);
+        let eval_sub = model_sub.load(&dataset);
+        let result_sub = eval_sub.evaluate(&[]);
+        assert_eq!(result_sub[0], Complex::new(2.0, -1.0));
+
         // Test (amp) multiplication
         let expr_mul = &aid1 * &aid2;
         let model_mul = manager.model(&expr_mul);
         let eval_mul = model_mul.load(&dataset);
         let result_mul = eval_mul.evaluate(&[]);
         assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
+
+        // Test (amp) division
+        let expr_div = &aid1 / &aid3;
+        let model_div = manager.model(&expr_div);
+        let eval_div = model_div.load(&dataset);
+        let result_div = eval_div.evaluate(&[]);
+        assert_eq!(result_div[0], Complex::new(6.0 / 25.0, -8.0 / 25.0));
+
+        // Test (amp) neg
+        let expr_neg = -&aid3;
+        let model_neg = manager.model(&expr_neg);
+        let eval_neg = model_neg.load(&dataset);
+        let result_neg = eval_neg.evaluate(&[]);
+        assert_eq!(result_neg[0], Complex::new(-3.0, -4.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
@@ -897,12 +1016,33 @@ mod tests {
         let result_add2 = eval_add2.evaluate(&[]);
         assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
 
+        // Test (expr) subtraction
+        let expr_sub2 = &expr_add - &expr_mul;
+        let model_sub2 = manager.model(&expr_sub2);
+        let eval_sub2 = model_sub2.load(&dataset);
+        let result_sub2 = eval_sub2.evaluate(&[]);
+        assert_eq!(result_sub2[0], Complex::new(2.0, -1.0));
+
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
         let model_mul2 = manager.model(&expr_mul2);
         let eval_mul2 = model_mul2.load(&dataset);
         let result_mul2 = eval_mul2.evaluate(&[]);
         assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
+
+        // Test (expr) division
+        let expr_div2 = &expr_add / &expr_add2;
+        let model_div2 = manager.model(&expr_div2);
+        let eval_div2 = model_div2.load(&dataset);
+        let result_div2 = eval_div2.evaluate(&[]);
+        assert_eq!(result_div2[0], Complex::new(7.0 / 13.0, -4.0 / 13.0));
+
+        // Test (expr) neg
+        let expr_neg2 = -&expr_mul2;
+        let model_neg2 = manager.model(&expr_neg2);
+        let eval_neg2 = model_neg2.load(&dataset);
+        let result_neg2 = eval_neg2.evaluate(&[]);
+        assert_eq!(result_neg2[0], Complex::new(2.0, -4.0));
 
         // Test (amp) real
         let expr_real = aid3.real();
@@ -918,6 +1058,13 @@ mod tests {
         let result_mul2_real = eval_mul2_real.evaluate(&[]);
         assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
 
+        // Test (amp) imag
+        let expr_imag = aid3.imag();
+        let model_imag = manager.model(&expr_imag);
+        let eval_imag = model_imag.load(&dataset);
+        let result_imag = eval_imag.evaluate(&[]);
+        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
         let model_mul2_imag = manager.model(&expr_mul2_imag);
@@ -925,12 +1072,19 @@ mod tests {
         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
         assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
 
-        // Test (amp) imag
-        let expr_imag = aid3.imag();
-        let model_imag = manager.model(&expr_imag);
-        let eval_imag = model_imag.load(&dataset);
-        let result_imag = eval_imag.evaluate(&[]);
-        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+        // Test (amp) conj
+        let expr_conj = aid3.conj();
+        let model_conj = manager.model(&expr_conj);
+        let eval_conj = model_conj.load(&dataset);
+        let result_conj = eval_conj.evaluate(&[]);
+        assert_eq!(result_conj[0], Complex::new(3.0, -4.0));
+
+        // Test (expr) conj
+        let expr_mul2_conj = expr_mul2.conj();
+        let model_mul2_conj = manager.model(&expr_mul2_conj);
+        let eval_mul2_conj = model_mul2_conj.load(&dataset);
+        let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
+        assert_eq!(result_mul2_conj[0], Complex::new(-2.0, -4.0));
 
         // Test (amp) norm_sqr
         let expr_norm = aid1.norm_sqr();
@@ -1000,6 +1154,36 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let params = vec![2.0, 3.0, 4.0, 5.0];
 
+        let expr = &aid1 + &aid2;
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 1.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 0.0);
+        assert_relative_eq!(gradient[0][1].im, 1.0);
+        assert_relative_eq!(gradient[0][2].re, 1.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 0.0);
+        assert_relative_eq!(gradient[0][3].im, 1.0);
+
+        let expr = &aid1 - &aid2;
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 1.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 0.0);
+        assert_relative_eq!(gradient[0][1].im, 1.0);
+        assert_relative_eq!(gradient[0][2].re, -1.0);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 0.0);
+        assert_relative_eq!(gradient[0][3].im, -1.0);
+
         let expr = &aid1 * &aid2;
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
@@ -1014,6 +1198,36 @@ mod tests {
         assert_relative_eq!(gradient[0][2].im, 3.0);
         assert_relative_eq!(gradient[0][3].re, -3.0);
         assert_relative_eq!(gradient[0][3].im, 2.0);
+
+        let expr = &aid1 / &aid2;
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 4.0 / 41.0);
+        assert_relative_eq!(gradient[0][0].im, -5.0 / 41.0);
+        assert_relative_eq!(gradient[0][1].re, 5.0 / 41.0);
+        assert_relative_eq!(gradient[0][1].im, 4.0 / 41.0);
+        assert_relative_eq!(gradient[0][2].re, -102.0 / 1681.0);
+        assert_relative_eq!(gradient[0][2].im, 107.0 / 1681.0);
+        assert_relative_eq!(gradient[0][3].re, -107.0 / 1681.0);
+        assert_relative_eq!(gradient[0][3].im, -102.0 / 1681.0);
+
+        let expr = -(&aid1 * &aid2);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, -4.0);
+        assert_relative_eq!(gradient[0][0].im, -5.0);
+        assert_relative_eq!(gradient[0][1].re, 5.0);
+        assert_relative_eq!(gradient[0][1].im, -4.0);
+        assert_relative_eq!(gradient[0][2].re, -2.0);
+        assert_relative_eq!(gradient[0][2].im, -3.0);
+        assert_relative_eq!(gradient[0][3].re, 3.0);
+        assert_relative_eq!(gradient[0][3].im, -2.0);
 
         let expr = (&aid1 * &aid2).real();
         let model = manager.model(&expr);
@@ -1044,6 +1258,21 @@ mod tests {
         assert_relative_eq!(gradient[0][2].im, 0.0);
         assert_relative_eq!(gradient[0][3].re, 2.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
+
+        let expr = (&aid1 * &aid2).conj();
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+
+        let gradient = evaluator.evaluate_gradient(&params);
+
+        assert_relative_eq!(gradient[0][0].re, 4.0);
+        assert_relative_eq!(gradient[0][0].im, -5.0);
+        assert_relative_eq!(gradient[0][1].re, -5.0);
+        assert_relative_eq!(gradient[0][1].im, -4.0);
+        assert_relative_eq!(gradient[0][2].re, 2.0);
+        assert_relative_eq!(gradient[0][2].im, -3.0);
+        assert_relative_eq!(gradient[0][3].re, -3.0);
+        assert_relative_eq!(gradient[0][3].im, -2.0);
 
         let expr = (&aid1 * &aid2).norm_sqr();
         let model = manager.model(&expr);
@@ -1123,24 +1352,29 @@ mod tests {
         );
         let aid1 = manager.register(amp1).unwrap();
         let aid2 = manager.register(amp2).unwrap();
-        let expr = &aid1.real()
-            + &aid2.imag()
-            + Expression::One * Expression::Zero
+        let expr = &aid1.real() + &aid2.conj().imag() + Expression::One * -Expression::Zero
+            - Expression::Zero / Expression::One
             + (&aid1 * &aid2).norm_sqr();
         assert_eq!(
             expr.to_string(),
             "+
-├─ +
+├─ -
 │  ├─ +
-│  │  ├─ Re
-│  │  │  └─ parametric_1(id=0)
-│  │  └─ Im
-│  │     └─ parametric_2(id=1)
-│  └─ *
-│     ├─ 1
-│     └─ 0
+│  │  ├─ +
+│  │  │  ├─ Re
+│  │  │  │  └─ parametric_1(id=0)
+│  │  │  └─ Im
+│  │  │     └─ *
+│  │  │        └─ parametric_2(id=1)
+│  │  └─ ×
+│  │     ├─ 1
+│  │     └─ -
+│  │        └─ 0
+│  └─ ÷
+│     ├─ 0
+│     └─ 1
 └─ NormSqr
-   └─ *
+   └─ ×
       ├─ parametric_1(id=0)
       └─ parametric_2(id=1)
 "

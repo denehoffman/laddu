@@ -261,7 +261,7 @@ This example would probably make the most sense for a binned fit, since there is
 
 ### Other Examples
 
-You can find other Python examples in the `py-laddu/examples` folder. They should each have a corresponding `requirements_[#].txt` file.
+You can find other Python examples in the `py-laddu/examples` folder. These scripts have inline script metadata (PEP 723) which allows them to be run with `uv run` (which will automatically install the necessary dependencies).
 
 #### Example 1
 
@@ -293,9 +293,25 @@ Some example plots can be seen below for the first data bin:
   </table>
 </p>
 
+#### Example 2
+
+The second example uses linear algebra to calculate unpolarized and polarized moments $`H(\ell, m)`$ from the same data used in the first example. While the results are not as informative, it is a good demonstration of how `laddu` can also be used outside of the context of a maximum likelihood fit. The mechanism for obtaining moments could also be written with `numpy` and `scipy` alone, but `laddu`'s data format, variables, and amplitude evaluation make it easy to write the same code in a very straightforward way which will efficiently run in parallel or even over an MPI instance.
+
+A moment analysis is similar to a partial-wave analysis, except the target observables are coefficients attached to spherical harmonics in a standard sum rather than a coherent sum. This makes it difficult to extract these observables from a maximum likelihood fit, since the corresponding intensity function may be negative for some parameter values, making the logarithm of that intensity undefined. However, similar to a discrete Fourier transform, a moment analysis can be performed by simply summing the spherical harmonic evaluated on each event, and this is what the example does. However, there are two additional considerations. First, since the example data contains a polarized photon beam, we can extract polarized moments which span a basis of not only spherical harmonics of decay angles, but also sine and cosine functions of the polarization angle. Second, we have a Monte Carlo dataset which models the detector efficiency, so we have to construct a matrix of normalization integrals (similar to what we do in an extended maximum likelihood fit). Any non-unitary acceptance function will cause mixing between all of the moments, so we invert the normalization integral matrix and use the matrix-vector product to transform measured moments into the true physical moments.
+
+The resulting unpolarized moments are shown below:
+
+<p align="center">
+  <img
+    width="800"
+    src="py-laddu/examples/example_2/moments.svg"
+  />
+</p>
+
 # Data Format
 
 The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
+
 | Column name | Data Type | Interpretation |
 | ----------- | --------- | -------------- |
 | `p4_0_E` | `Float32` | Beam Energy |

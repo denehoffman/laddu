@@ -573,12 +573,10 @@ impl Variable for Mandelstam {
 
 #[cfg(test)]
 mod tests {
-    use approx::assert_relative_eq;
-    use std::sync::Arc;
-
-    use crate::data::{test_dataset, test_event};
-
     use super::*;
+    use crate::data::{test_dataset, test_event};
+    use approx::assert_relative_eq;
+
     #[test]
     fn test_mass_single_particle() {
         let event = test_event();

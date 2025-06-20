@@ -1,6 +1,7 @@
 import pytest
 
 from laddu import Angles, Dataset, Event, Manager, Polarization, Vec3, Zlm
+from laddu.amplitudes.zlm import PolPhase
 
 
 def make_test_event() -> Event:
@@ -22,9 +23,9 @@ def make_test_dataset() -> Dataset:
 
 def test_zlm_evaluation() -> None:
     manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], "Helicity")
+    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
     polarization = Polarization(0, [1], 0)
-    amp = Zlm("zlm", 1, 1, "+", angles, polarization)
+    amp = Zlm('zlm', 1, 1, '+', angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -36,9 +37,34 @@ def test_zlm_evaluation() -> None:
 
 def test_zlm_gradient() -> None:
     manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], "Helicity")
+    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
     polarization = Polarization(0, [1], 0)
-    amp = Zlm("zlm", 1, 1, "+", angles, polarization)
+    amp = Zlm('zlm', 1, 1, '+', angles, polarization)
+    aid = manager.register(amp)
+    dataset = make_test_dataset()
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
+    result = evaluator.evaluate_gradient([])
+    assert len(result[0]) == 0  # amplitude has no parameters
+
+
+def test_polphase_evaluation() -> None:
+    manager = Manager()
+    polarization = Polarization(0, [1], 0)
+    amp = PolPhase('polphase', polarization)
+    aid = manager.register(amp)
+    dataset = make_test_dataset()
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
+    result = evaluator.evaluate([])
+    assert pytest.approx(result[0].real) == -0.28729145
+    assert pytest.approx(result[0].imag) == -0.25724039
+
+
+def test_polphase_gradient() -> None:
+    manager = Manager()
+    polarization = Polarization(0, [1], 0)
+    amp = PolPhase('polphase', polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)

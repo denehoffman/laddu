@@ -152,6 +152,16 @@ impl PyAmplitudeID {
     fn imag(&self) -> PyExpression {
         PyExpression(self.0.imag())
     }
+    /// The complex conjugate of a complex Amplitude
+    ///
+    /// Returns
+    /// -------
+    /// Expression
+    ///     The complex conjugate of the given Amplitude
+    ///
+    fn conj(&self) -> PyExpression {
+        PyExpression(self.0.conj())
+    }
     /// The norm-squared of a complex Amplitude
     ///
     /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
@@ -198,6 +208,24 @@ impl PyAmplitudeID {
             Err(PyTypeError::new_err("Unsupported operand type for +"))
         }
     }
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(self.0.clone() - other_aid.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() - other_expr.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
+    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(other_aid.0.clone() - self.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0.clone() - self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
             Ok(PyExpression(self.0.clone() * other_aid.0.clone()))
@@ -215,6 +243,27 @@ impl PyAmplitudeID {
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for *"))
         }
+    }
+    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(self.0.clone() / other_aid.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() / other_expr.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(other_aid.0.clone() / self.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0.clone() / self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __neg__(&self) -> PyExpression {
+        PyExpression(-self.0.clone())
     }
     fn __str__(&self) -> String {
         format!("{}", self.0)
@@ -245,6 +294,16 @@ impl PyExpression {
     ///
     fn imag(&self) -> PyExpression {
         PyExpression(self.0.imag())
+    }
+    /// The complex conjugate of a complex Expression
+    ///
+    /// Returns
+    /// -------
+    /// Expression
+    ///     The complex conjugate of the given Expression
+    ///
+    fn conj(&self) -> PyExpression {
+        PyExpression(self.0.conj())
     }
     /// The norm-squared of a complex Expression
     ///
@@ -292,6 +351,24 @@ impl PyExpression {
             Err(PyTypeError::new_err("Unsupported operand type for +"))
         }
     }
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(self.0.clone() - other_aid.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() - other_expr.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
+    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(other_aid.0.clone() - self.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0.clone() - self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
             Ok(PyExpression(self.0.clone() * other_aid.0.clone()))
@@ -309,6 +386,27 @@ impl PyExpression {
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for *"))
         }
+    }
+    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(self.0.clone() / other_aid.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() / other_expr.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
+            Ok(PyExpression(other_aid.0.clone() / self.0.clone()))
+        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0.clone() / self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __neg__(&self) -> PyExpression {
+        PyExpression(-self.0.clone())
     }
     fn __str__(&self) -> String {
         format!("{}", self.0)

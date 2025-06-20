@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "corner",
+#     "laddu",
+#     "loguru",
+#     "matplotlib",
+#     "numpy",
+# ]
+# ///
 from __future__ import annotations
 
 import os

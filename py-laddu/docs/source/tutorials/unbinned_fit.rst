@@ -27,7 +27,7 @@ gives the predicted number of events with efficiency encorporated, so
 
 While we mathematically could maximize the likelihood given above, a large product of terms between zero and one (or floating point values in general) is computationally unstable. Instead, we rephrase the problem from maximimizing the likelihood to maximizing the natural log of the likelihood, since the logarithm is monotonic and the log of a product is just the sum of the logs of the terms. Futhermore, since most optimization algorithms prefer to minimize functions rather than maximize them, we can just flip the sign. The the negative log of the extended likelihood (times two for error estimation purposes) is given by
 
-.. math:: 
+.. math::
 
    -2\ln\mathcal{L} &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\right] - \mathcal{N}' + \ln N! \right) \\
    &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \right] + \ln N! \right) \\
@@ -118,7 +118,7 @@ where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude f
 .. code:: python
 
    manager = ld.Manager()
-   polarization = ld.Polarization(0, [1])
+   polarization = ld.Polarization(0, [1], 0)
 
 Next, we can create ``Zlm`` amplitudes:
 

@@ -8,4 +8,5 @@ To get started with ``laddu``, please refer to the following tutorials for the b
   
    unbinned_fit
    binned_fit
+   moment_analysis
    live_plotting
