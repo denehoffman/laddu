@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.8.0...laddu-amplitudes-v0.8.1) - 2025-06-20
+
+### Added
+
+- add `PolPhase` amplitude
+
+### Other
+
+- update moment analysis tutorial and example
+
 ## [0.7.2](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.7.1...laddu-amplitudes-v0.7.2) - 2025-06-17
 
 ### Other

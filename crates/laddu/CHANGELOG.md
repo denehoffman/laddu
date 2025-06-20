@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/denehoffman/laddu/compare/laddu-v0.8.0...laddu-v0.8.1) - 2025-06-20
+
+### Added
+
+- add `conj` operator to `Amplitude`s and `Expression`s
+- add subtraction, division, and negation operations for all Amplitudes and Expressions
+- add `PolPhase` amplitude
+
+### Other
+
+- update moment analysis tutorial and example
+
 ## [0.8.0](https://github.com/denehoffman/laddu/compare/laddu-v0.7.1...laddu-v0.8.0) - 2025-06-17
 
 ### Added

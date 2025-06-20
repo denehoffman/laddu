@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.8.0...laddu-python-v0.8.1) - 2025-06-20
+
+### Added
+
+- add `conj` operator to `Amplitude`s and `Expression`s
+- add subtraction, division, and negation operations for all Amplitudes and Expressions
+
 ## [0.8.0](https://github.com/denehoffman/laddu/compare/laddu-python-v0.7.1...laddu-python-v0.8.0) - 2025-06-17
 
 ### Added
