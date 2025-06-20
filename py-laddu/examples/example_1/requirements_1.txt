@@ -2,8 +2,8 @@
 
 laddu
 docopt-ng==0.9.0
+matplotlib==3.10.3
+numpy==2.3.0
 loguru==0.7.2
-matplotlib==3.9.2
-numpy==2.1.2
 rich==13.9.3
 uncertainties==3.2.2
