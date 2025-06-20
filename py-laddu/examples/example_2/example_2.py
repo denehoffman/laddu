@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "docopt-ng",
+#     "laddu",
+#     "matplotlib",
+#     "numpy",
+# ]
+# ///
 """
-Usage: example_2.py [-n <nbins>] [-b <nboot>]
+Usage: example_2.py [-n <nbins>] [-l <lmax>] [-b <nboot>]
 
 Options:
 -n <nbins>   Number of bins to use in binned fit and plot [default: 40]
 -l <lmax>    Maximum L to use in analysis [default: 4]
 -b <nboot>   Number of bootstrapped fits to perform for each fit [default: 10]
-"""
+"""  # noqa: D400
 
 from __future__ import annotations
 
@@ -201,12 +210,13 @@ if __name__ == '__main__':
             fmt='.',
         )
         ax[l, m].set_title(name)
+        ax[l, m].set_xlabel('Mass of $K_S^0 K_S^0$ (GeV/$c^2$)')
     for l in range(l_max + 1):
         for m in range(l_max + 1):
             if m > l:
                 ax[l, m].set_visible(False)
     plt.tight_layout()
-    plt.savefig('moments.png')
+    plt.savefig('moments.svg')
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
@@ -267,10 +277,13 @@ if __name__ == '__main__':
                 fmt='.',
             )
             ax[l - (1 if j == 2 else 0), m - (1 if j == 2 else 0)].set_title(name)
+            ax[l - (1 if j == 2 else 0), m - (1 if j == 2 else 0)].set_xlabel(
+                'Mass of $K_S^0 K_S^0$ (GeV/$c^2$)'
+            )
         for l in range(l_max + (1 if j != 2 else 0)):
             for m in range(l_max + (1 if j != 2 else 0)):
                 if m > l:
                     ax[l, m].set_visible(False)
         plt.tight_layout()
-        plt.savefig(f'polarized_moments_{j}.png')
+        plt.savefig(f'polarized_moments_{j}.svg')
         plt.close()

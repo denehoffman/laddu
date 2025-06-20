@@ -222,13 +222,13 @@ impl Amplitude for PolPhase {
 }
 
 /// An Amplitude representing the expression :math:`P_\gamma \text{Exp}(2\imath\Phi)` where
-/// :math:`\P_\gamma` is the beam polarization magniutde and :math:`\Phi` is the beam
+/// :math:`P_\gamma` is the beam polarization magniutde and :math:`\Phi` is the beam
 /// polarization angle.
 ///
 /// This Amplitude is intended to be used by its real and imaginary parts to decompose an intensity
 /// function into polarized intensity components:
 ///
-/// :math:`I = I_0 - I_1 \Re[A] - I_2 \im[A]`
+/// :math:`I = I_0 - I_1 \Re[A] - I_2 \Im[A]`
 ///
 /// where :math:`A = P_\gamma \text{Exp}(2\imath\Phi)`.
 ///
@@ -251,8 +251,6 @@ impl Amplitude for PolPhase {
 /// Notes
 /// -----
 /// This amplitude is described in [Mathieu]_
-///
-/// .. [Mathieu] Mathieu, V., Albaladejo, M., Fernández-Ramírez, C., Jackura, A. W., Mikhasenko, M., Pilloni, A., & Szczepaniak, A. P. (2019). Moments of angular distribution and beam asymmetries in :math:`\eta\pi^0` photoproduction at GlueX. Physical Review D, 100(5). `doi:10.1103/physrevd.100.054017 <https://doi.org/10.1103/PhysRevD.100.054017>`_
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "PolPhase")]

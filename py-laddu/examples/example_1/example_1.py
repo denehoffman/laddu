@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "docopt-ng",
+#     "laddu",
+#     "loguru",
+#     "matplotlib",
+#     "numpy",
+#     "rich",
+#     "uncertainties",
+# ]
+# ///
 """
 Usage: example_1.py [-n <nbins>] [-i <niters>] [-b <nboot>]
 
@@ -6,7 +18,7 @@ Options:
 -n <nbins>   Number of bins to use in binned fit and plot [default: 50]
 -i <niters>  Number of iterations with randomized starting parameters for each fit [default: 20]
 -b <nboot>   Number of bootstrapped fits to perform for each fit [default: 20]
-"""
+"""  # noqa: D400
 
 from __future__ import annotations
 
