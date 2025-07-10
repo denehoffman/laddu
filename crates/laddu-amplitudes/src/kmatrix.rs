@@ -1,10 +1,12 @@
 use std::array;
 
-use nalgebra::{matrix, vector};
+use nalgebra::{matrix, vector, DMatrix};
 use nalgebra::{SMatrix, SVector};
 use num::traits::ConstOne;
 use num::traits::FloatConst;
 use serde::{Deserialize, Serialize};
+
+use ganesh::SampleFloat;
 
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
@@ -46,6 +48,64 @@ pub struct FixedKMatrix<const CHANNELS: usize, const RESONANCES: usize> {
     l: usize,
 }
 impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESONANCES> {
+    fn new(
+        g: SMatrix<Float, CHANNELS, RESONANCES>,
+        c: SMatrix<Float, CHANNELS, CHANNELS>,
+        m1s: SVector<Float, CHANNELS>,
+        m2s: SVector<Float, CHANNELS>,
+        mrs: SVector<Float, RESONANCES>,
+        adler_zero: Option<AdlerZero>,
+        l: usize,
+        cov: DMatrix<Float>,
+        seed: Option<usize>,
+    ) -> Self {
+        let (g, c, mrs) = if let Some(seed) = seed {
+            let mut rng = fastrand::Rng::with_seed(seed as u64);
+            let mut flat = DVector::zeros(CHANNELS * RESONANCES + CHANNELS * CHANNELS + RESONANCES);
+            let mut i = 0;
+
+            for val in g.iter() {
+                flat[i] = *val;
+                i += 1;
+            }
+            for val in c.iter() {
+                flat[i] = *val;
+                i += 1;
+            }
+            for val in mrs.iter() {
+                flat[i] = *val;
+                i += 1;
+            }
+            let flat = rng.mv_normal(&flat, &cov);
+            let mut i = 0;
+
+            let g = SMatrix::<Float, CHANNELS, RESONANCES>::from_iterator(
+                flat.iter().skip(i).take(CHANNELS * RESONANCES).cloned(),
+            );
+            i += CHANNELS * RESONANCES;
+
+            let c = SMatrix::<Float, CHANNELS, CHANNELS>::from_iterator(
+                flat.iter().skip(i).take(CHANNELS * CHANNELS).cloned(),
+            );
+            i += CHANNELS * CHANNELS;
+
+            let mrs = SVector::<Float, RESONANCES>::from_iterator(
+                flat.iter().skip(i).take(RESONANCES).cloned(),
+            );
+            (g, c, mrs)
+        } else {
+            (g, c, mrs)
+        };
+        Self {
+            g,
+            c,
+            m1s,
+            m2s,
+            mrs,
+            adler_zero,
+            l,
+        }
+    }
     fn c_mat(&self, s: Float) -> SMatrix<Complex<Float>, CHANNELS, CHANNELS> {
         SMatrix::from_diagonal(&SVector::from_fn(|i, _| {
             let m1 = self.m1s[i];
@@ -183,6 +243,7 @@ impl KopfKMatrixF0 {
         couplings: [[ParameterLike; 2]; 5],
         channel: usize,
         mass: &Mass,
+        seed: Option<usize>,
     ) -> Box<Self> {
         let mut couplings_real: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
         let mut couplings_imag: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
@@ -194,8 +255,8 @@ impl KopfKMatrixF0 {
             name: name.to_string(),
             channel,
             mass: mass.clone(),
-            constants: FixedKMatrix {
-                g: matrix![
+            constants: FixedKMatrix::new(
+                matrix![
                      0.74987,  0.06401, -0.23417,  0.01270, -0.14242;
                     -0.01257,  0.00204, -0.01032,  0.26700,  0.22780;
                      0.27536,  0.77413,  0.72283,  0.09214,  0.15981;
@@ -203,22 +264,24 @@ impl KopfKMatrixF0 {
                      0.36103,  0.13112,  0.36792, -0.04025, -0.17397
 
                 ],
-                c: matrix![
+                matrix![
                      0.03728,  0.00000, -0.01398, -0.02203,  0.01397;
                      0.00000,  0.00000,  0.00000,  0.00000,  0.00000;
                     -0.01398,  0.00000,  0.02349,  0.03101, -0.04003;
                     -0.02203,  0.00000,  0.03101, -0.13769, -0.06722;
                      0.01397,  0.00000, -0.04003, -0.06722, -0.28401
                 ],
-                m1s: vector![0.1349768, 2.0 * 0.1349768, 0.493677, 0.547862, 0.547862],
-                m2s: vector![0.1349768, 2.0 * 0.1349768, 0.497611, 0.547862, 0.95778],
-                mrs: vector![0.51461, 0.90630, 1.23089, 1.46104, 1.69611],
-                adler_zero: Some(AdlerZero {
+                vector![0.1349768, 2.0 * 0.1349768, 0.493677, 0.547862, 0.547862],
+                vector![0.1349768, 2.0 * 0.1349768, 0.497611, 0.547862, 0.95778],
+                vector![0.51461, 0.90630, 1.23089, 1.46104, 1.69611],
+                Some(AdlerZero {
                     s_0: 0.0091125,
                     s_norm: 1.0,
                 }),
-                l: 0,
-            },
+                0,
+                cov,
+                seed,
+            ),
             couplings_real,
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 5],
@@ -344,18 +407,20 @@ impl Amplitude for KopfKMatrixF0 {
 /// .. [Kopf] Kopf, B., Albrecht, M., Koch, H., Küßner, M., Pychy, J., Qin, X., & Wiedner, U. (2021). Investigation of the lightest hybrid meson candidate with a coupled-channel analysis of :math:`\bar{p}p`-, :math:`\pi^- p`- and :math:`\pi \pi`-Data. The European Physical Journal C, 81(12). `doi:10.1140/epjc/s10052-021-09821-2 <https://doi.org/10.1140/epjc/s10052-021-09821-2>`__
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "KopfKMatrixF0")]
+#[pyfunction(name = "KopfKMatrixF0", signature = (name, couplings, channel, mass, seed = None))]
 pub fn py_kopf_kmatrix_f0(
     name: &str,
     couplings: [[PyParameterLike; 2]; 5],
     channel: usize,
     mass: PyMass,
+    seed: Option<usize>,
 ) -> PyAmplitude {
     PyAmplitude(KopfKMatrixF0::new(
         name,
         array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
         channel,
         &mass.0,
+        seed,
     ))
 }
 
@@ -1345,6 +1410,7 @@ mod tests {
             ],
             1,
             &res_mass,
+            None,
         );
         let aid = manager.register(amp).unwrap();
 
@@ -1374,6 +1440,7 @@ mod tests {
             ],
             1,
             &res_mass,
+            None,
         );
         let aid = manager.register(amp).unwrap();
 
