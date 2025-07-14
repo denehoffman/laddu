@@ -10,13 +10,32 @@ from laddu import (
     constant,
     parameter,
 )
-from laddu.amplitudes import AmplitudeOne, AmplitudeZero, amplitude_product, amplitude_sum
+from laddu.amplitudes import (
+    AmplitudeOne,
+    AmplitudeZero,
+    TestAmplitude,
+    amplitude_product,
+    amplitude_sum,
+)
 
 
 def make_test_event() -> Event:
     return Event(
         [
             Vec3(0.0, 0.0, 8.747).with_mass(0.0),
+            Vec3(0.119, 0.374, 0.222).with_mass(1.007),
+            Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
+            Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
+        ],
+        [Vec3(0.385, 0.022, 0.000)],
+        0.48,
+    )
+
+
+def make_test_event_with_beam_energy(energy: float) -> Event:
+    return Event(
+        [
+            Vec3(0.0, 0.0, energy).with_mass(0.0),
             Vec3(0.119, 0.374, 0.222).with_mass(1.007),
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
@@ -50,6 +69,32 @@ def test_parametric_amplitude() -> None:
     evaluator = model.load(dataset)
     result = evaluator.evaluate([3.0])
     assert result[0] == 3.0 + 0.0j
+
+
+def test_batch_evaluation() -> None:
+    manager = Manager()
+    amp = TestAmplitude('test', parameter('real'), parameter('imag'))
+    aid = manager.register(amp)
+    event1 = make_test_event_with_beam_energy(10.0)
+    event2 = make_test_event_with_beam_energy(11.0)
+    event3 = make_test_event_with_beam_energy(12.0)
+    dataset = Dataset([event1, event2, event3])
+    model = manager.model(aid)
+    evaluator = model.load(dataset)
+    result = evaluator.evaluate_batch([1.1, 2.2], [0, 2])
+    assert len(result) == 2
+    assert result[0] == (1.1 + 2.2j) * 10.0
+    assert result[1] == (1.1 + 2.2j) * 12.0
+    result_grad = evaluator.evaluate_gradient_batch([1.1, 2.2], [0, 2])
+    assert len(result_grad) == 2
+    assert result_grad[0][0].real == 10.0
+    assert result_grad[0][0].imag == 0.0
+    assert result_grad[0][1].real == 0.0
+    assert result_grad[0][1].imag == 10.0
+    assert result_grad[1][0].real == 12.0
+    assert result_grad[1][0].imag == 0.0
+    assert result_grad[1][1].real == 0.0
+    assert result_grad[1][1].imag == 12.0
 
 
 def test_expression_operations() -> None:
@@ -200,12 +245,8 @@ def test_amplitude_activation() -> None:
 
 def test_gradient() -> None:
     manager = Manager()
-    amp1 = ComplexScalar(
-        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
-    )
-    amp2 = ComplexScalar(
-        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
-    )
+    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
+    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     dataset = make_test_dataset()
@@ -391,12 +432,8 @@ def test_duplicate_amplitude_registration() -> None:
 
 def test_tree_printing() -> None:
     manager = Manager()
-    amp1 = ComplexScalar(
-        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
-    )
-    amp2 = ComplexScalar(
-        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
-    )
+    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
+    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     expr = (

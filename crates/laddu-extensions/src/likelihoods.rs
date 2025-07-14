@@ -1045,17 +1045,32 @@ impl Function<(), LadduError> for LogLikelihood<'_> {
     }
 }
 
-pub(crate) struct StochasticNLL<'a>(&'a NLL);
-
 impl NLL {
-    fn evaluate_stochastic_local(&self, parameters: &[Float]) -> Float {
-        let data_result = self.data_evaluator.evaluate_local(parameters);
+    fn evaluate_stochastic_local(&self, parameters: &[Float], indices: &[usize]) -> Float {
+        let data_result = self
+            .data_evaluator
+            .evaluate_batch_local(parameters, indices);
         let mc_result = self.accmc_evaluator.evaluate_local(parameters);
         let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
         #[cfg(feature = "rayon")]
         let data_term: Float = data_result
             .par_iter()
-            .zip(self.data_evaluator.dataset.events.par_iter())
+            .zip(
+                self.data_evaluator
+                    .dataset
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, event)| {
+                        if indices.contains(&i) {
+                            Some(event)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .par_iter(),
+            )
             .map(|(l, e)| e.weight * Float::ln(l.re))
             .parallel_sum_with_accumulator::<Klein<Float>>();
         #[cfg(feature = "rayon")]
@@ -1067,7 +1082,20 @@ impl NLL {
         #[cfg(not(feature = "rayon"))]
         let data_term: Float = data_result
             .iter()
-            .zip(self.data_evaluator.dataset.events.iter())
+            .zip(
+                self.data_evaluator
+                    .dataset
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, event)| {
+                        if indices.contains(&i) {
+                            Some(event)
+                        } else {
+                            None
+                        }
+                    }),
+            )
             .map(|(l, e)| e.weight * Float::ln(l.re))
             .sum_with_accumulator::<Klein<Float>>();
         #[cfg(not(feature = "rayon"))]
@@ -1080,14 +1108,27 @@ impl NLL {
     }
 
     #[cfg(feature = "mpi")]
-    fn evaluate_stochastic_mpi(&self, parameters: &[Float], world: &SimpleCommunicator) -> Float {
-        let local_evaluation = self.evaluate_stochastic_local(parameters);
+    fn evaluate_stochastic_mpi(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+        world: &SimpleCommunicator,
+    ) -> Float {
+        let (_, _, locals) = self
+            .data_evaluator
+            .dataset
+            .get_counts_displs_locals_from_indices(indices, world);
+        let local_evaluation = self.evaluate_stochastic_local(parameters, &locals);
         let mut buffer: Vec<Float> = vec![0.0; world.size() as usize];
         world.all_gather_into(&local_evaluation, &mut buffer);
         buffer.iter().sum()
     }
 
-    fn evaluate_stochastic_gradient_local(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_stochastic_gradient_local(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+    ) -> DVector<Float> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
@@ -1100,6 +1141,14 @@ impl NLL {
             .events
             .par_iter()
             .zip(data_resources.caches.par_iter())
+            .enumerate()
+            .filter_map(|(i, (event, cache))| {
+                if indices.contains(&i) {
+                    Some((event, cache))
+                } else {
+                    None
+                }
+            })
             .map(|(event, cache)| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
@@ -1203,6 +1252,14 @@ impl NLL {
             .events
             .iter()
             .zip(data_resources.caches.iter())
+            .enumerate()
+            .filter_map(|(i, (event, cache))| {
+                if indices.contains(&i) {
+                    Some((event, cache))
+                } else {
+                    None
+                }
+            })
             .map(|(event, cache)| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
@@ -1302,10 +1359,15 @@ impl NLL {
     fn evaluate_stochastic_gradient_mpi(
         &self,
         parameters: &[Float],
+        indices: &[usize],
         world: &SimpleCommunicator,
     ) -> DVector<Float> {
+        let (_, _, locals) = self
+            .data_evaluator
+            .dataset
+            .get_counts_displs_locals_from_indices(indices, world);
         let local_evaluation_vec = self
-            .evaluate_stochastic_gradient_local(parameters)
+            .evaluate_stochastic_gradient_local(parameters, locals)
             .data
             .as_vec()
             .to_vec();

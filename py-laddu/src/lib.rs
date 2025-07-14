@@ -12,8 +12,8 @@ mod laddu {
     use laddu_python::{
         amplitudes::{
             py_amplitude_one, py_amplitude_product, py_amplitude_sum, py_amplitude_zero,
-            py_constant, py_parameter, PyAmplitude, PyAmplitudeID, PyEvaluator, PyExpression,
-            PyManager, PyModel, PyParameterLike,
+            py_constant, py_parameter, py_test_amplitude, PyAmplitude, PyAmplitudeID, PyEvaluator,
+            PyExpression, PyManager, PyModel, PyParameterLike,
         },
         available_parallelism,
         data::{py_open, PyBinnedDataset, PyDataset, PyEvent},
