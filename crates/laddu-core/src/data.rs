@@ -146,6 +146,65 @@ impl Dataset {
     }
 
     #[cfg(feature = "mpi")]
+    pub fn get_counts_displs_locals_from_indices(
+        &self,
+        indices: &[usize],
+        world: &SimpleCommunicator,
+    ) -> (Vec<i32>, Vec<i32>, Vec<usize>) {
+        let mut counts = vec![0; world.size() as usize];
+        let mut displs = vec![0; world.size() as usize];
+        let mut locals = Vec::new();
+        let (_, global_displs) = world.get_counts_displs(self.n_events());
+        let owning_rank_locals: Vec<(i32, usize)> = indices
+            .iter()
+            .map(|i| Dataset::get_rank_index(i, global_displs, world))
+            .collect();
+        let mut locals_by_rank = vec![Vec::new(); world.size() as usize];
+        for &(r, li) in owning_rank_locals.iter() {
+            locals_by_rank[r as usize].push(li);
+        }
+        for rank in 0..world.size() as usize {
+            counts[rank] = locals_by_rank[rank].len();
+            displs[rank] = if rank == 0 {
+                0
+            } else {
+                displs[rank - 1] + counts[rank - 1]
+            };
+        }
+        (counts, displs, locals_by_rank[world.rank() as usize])
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn get_flattened_counts_displs_locals_from_indices(
+        &self,
+        indices: &[usize],
+        internal_len: usize,
+        world: &SimpleCommunicator,
+    ) -> (Vec<i32>, Vec<i32>, Vec<usize>) {
+        let mut counts = vec![0; world.size() as usize];
+        let mut displs = vec![0; world.size() as usize];
+        let mut locals = Vec::new();
+        let (_, global_displs) = world.get_counts_displs(self.n_events());
+        let owning_rank_locals: Vec<(i32, usize)> = indices
+            .iter()
+            .map(|i| Dataset::get_rank_index(i, global_displs, world))
+            .collect();
+        let mut locals_by_rank = vec![Vec::new(); world.size() as usize];
+        for &(r, li) in owning_rank_locals.iter() {
+            locals_by_rank[r as usize].push(li);
+        }
+        for rank in 0..world.size() as usize {
+            counts[rank] = locals_by_rank[rank].len() * internal_len;
+            displs[rank] = if rank == 0 {
+                0
+            } else {
+                displs[rank - 1] + counts[rank - 1]
+            };
+        }
+        (counts, displs, locals_by_rank[world.rank() as usize])
+    }
+
+    #[cfg(feature = "mpi")]
     fn partition(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Vec<Vec<Arc<Event>>> {
         let (counts, displs) = world.get_counts_displs(events.len());
         counts
