@@ -52,6 +52,18 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         central_difference(parameters, |parameters: &[Float]| self.evaluate(parameters))
     }
+    #[allow(unused_variables)]
+    fn evaluate_stochastic(&self, parameters: &[Float], indices: &[usize]) -> Float {
+        self.evaluate(parameters)
+    }
+    #[allow(unused_variables)]
+    fn evaluate_gradient_stochastic(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+    ) -> DVector<Float> {
+        self.evaluate_gradient(parameters)
+    }
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
 }
@@ -1377,6 +1389,51 @@ impl NLL {
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .sum::<DVector<Float>>()
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl Function<(ThreadPool, Vec<usize>), LadduError> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        thread_pool_and_indices: &mut (ThreadPool, Vec<usize>),
+    ) -> Result<Float, LadduError> {
+        Ok(thread_pool_and_indices.0.install(|| {
+            LikelihoodTerm::evaluate_stochastic(self, parameters, &thread_pool_and_indices.1)
+        }))
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        thread_pool_and_indices: &mut (ThreadPool, Vec<usize>),
+    ) -> Result<DVector<Float>, LadduError> {
+        Ok(thread_pool_and_indices.0.install(|| {
+            LikelihoodTerm::evaluate_gradient_stochastic(
+                self,
+                parameters,
+                &thread_pool_and_indices.1,
+            )
+        }))
+    }
+    // TODO: update ganesh with method that updates user data
+}
+
+#[cfg(not(feature = "rayon"))]
+impl Function<Vec<usize>, LadduError> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &[Float],
+        indices: &mut Vec<usize>,
+    ) -> Result<Float, LadduError> {
+        LikelihoodTerm::evaluate_stochastic(self, parameters, indices)
+    }
+    fn gradient(
+        &self,
+        parameters: &[Float],
+        indices: &mut Vec<usize>,
+    ) -> Result<DVector<Float>, LadduError> {
+        LikelihoodTerm::evaluate_gradient_stochastic(self, parameters, indices)
     }
 }
 
