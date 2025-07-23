@@ -1,5 +1,4 @@
 use fastrand::Rng;
-#[cfg(not(feature = "f32"))]
 use fastrand_contrib::RngExt;
 use nalgebra::{Cholesky, DMatrix};
 use nalgebra::{SMatrix, SVector};
