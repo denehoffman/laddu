@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.10.0...laddu-amplitudes-v0.10.1) - 2025-07-23
+
+### Fixed
+
+- add more precision to covariance matrices to ensure positive definiteness
+
 ## [0.10.0](https://github.com/denehoffman/laddu/compare/laddu-amplitudes-v0.9.0...laddu-amplitudes-v0.10.0) - 2025-07-23
 
 ### Other
