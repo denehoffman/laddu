@@ -84,6 +84,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             0,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let f0n = manager
