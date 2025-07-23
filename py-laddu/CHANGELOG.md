@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.9.0...py-laddu-v0.9.1) - 2025-07-23
+
+### Other
+
+- K-Matrix Covariance ([#81](https://github.com/denehoffman/laddu/pull/81))
+
 ## [0.8.1](https://github.com/denehoffman/laddu/compare/py-laddu-v0.8.0...py-laddu-v0.8.1) - 2025-06-20
 
 ### Added
