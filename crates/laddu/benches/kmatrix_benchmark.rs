@@ -72,6 +72,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             0,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let a0p = manager
@@ -97,6 +98,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             0,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let a0n = manager
@@ -108,6 +110,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             0,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let f2 = manager
@@ -121,6 +124,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             2,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let a2 = manager
@@ -132,6 +136,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             ],
             2,
             &resonance_mass,
+            None,
         ))
         .unwrap();
     let s0p = f0p + a0p;
