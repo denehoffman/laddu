@@ -300,8 +300,18 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, -0.83799097, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.02275711, epsilon = Float::EPSILON.sqrt());
+        #[cfg(not(feature = "f32"))]
+        {
+            assert_relative_eq!(result[0].re, -0.83799097, epsilon = Float::EPSILON.sqrt());
+            assert_relative_eq!(result[0].im, -0.02275711, epsilon = Float::EPSILON.sqrt());
+        }
+        // NOTE: the f32 feature implies a different standard normal RNG which makes all these
+        // values different than the f64 version but still reproducible
+        #[cfg(feature = "f32")]
+        {
+            assert_relative_eq!(result[0].re, -0.78789650, epsilon = Float::EPSILON.sqrt());
+            assert_relative_eq!(result[0].im, -0.16928345, epsilon = Float::EPSILON.sqrt());
+        }
     }
 
     #[test]
@@ -327,13 +337,29 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.3067087, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -0.0483031, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][1].re, -result[0][0].im);
-        assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, -1.1808166, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 1.3101937, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][3].re, -result[0][2].im);
-        assert_relative_eq!(result[0][3].im, result[0][2].re);
+        #[cfg(not(feature = "f32"))]
+        {
+            assert_relative_eq!(result[0][0].re, 0.3067087, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][0].im, -0.0483031, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][1].re, -result[0][0].im);
+            assert_relative_eq!(result[0][1].im, result[0][0].re);
+            assert_relative_eq!(result[0][2].re, -1.1808166, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][2].im, 1.3101937, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][3].re, -result[0][2].im);
+            assert_relative_eq!(result[0][3].im, result[0][2].re);
+        }
+        // NOTE: the f32 feature implies a different standard normal RNG which makes all these
+        // values different than the f64 version but still reproducible
+        #[cfg(feature = "f32")]
+        {
+            assert_relative_eq!(result[0][0].re, 0.2876683, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][0].im, -0.1252435, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][1].re, -result[0][0].im);
+            assert_relative_eq!(result[0][1].im, result[0][0].re);
+            assert_relative_eq!(result[0][2].re, -1.3529229, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][2].im, 1.0895880, epsilon = Float::EPSILON.cbrt());
+            assert_relative_eq!(result[0][3].re, -result[0][2].im);
+            assert_relative_eq!(result[0][3].im, result[0][2].re);
+        }
     }
 }
