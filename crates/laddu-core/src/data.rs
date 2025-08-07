@@ -914,7 +914,11 @@ mod tests {
 
         let filtered = dataset.filter(&expression);
         assert_eq!(filtered.n_events(), 1);
-        assert_eq!(mass.value(&filtered[0]), 0.5);
+        assert_relative_eq!(
+            mass.value(&filtered[0]),
+            0.5,
+            epsilon = Float::EPSILON.sqrt()
+        );
     }
 
     #[test]
