@@ -21,7 +21,7 @@ use crate::mpi::LadduMPI;
 use crate::utils::get_bin_edges;
 use crate::{
     utils::{
-        variables::Variable,
+        variables::{Variable, VariableExpression},
         vectors::{Vec3, Vec4},
     },
     Float, LadduError,
@@ -469,24 +469,22 @@ impl Dataset {
         self.bootstrap_local(seed)
     }
 
-    /// Filter the [`Dataset`] by a given `predicate`, selecting events for which the predicate
-    /// returns `true`.
-    pub fn filter<P>(&self, predicate: P) -> Arc<Dataset>
-    where
-        P: Fn(&Event) -> bool + Send + Sync,
-    {
+    /// Filter the [`Dataset`] by a given [`VariableExpression`], selecting events for which
+    /// the expression returns `true`.
+    pub fn filter(&self, expression: &VariableExpression) -> Arc<Dataset> {
+        let compiled = expression.compile();
         #[cfg(feature = "rayon")]
         let filtered_events = self
             .events
             .par_iter()
-            .filter(|e| predicate(e))
+            .filter(|e| compiled.evaluate(e))
             .cloned()
             .collect();
         #[cfg(not(feature = "rayon"))]
         let filtered_events = self
             .events
             .iter()
-            .filter(|e| predicate(e))
+            .filter(|e| compiled.evaluate(e))
             .cloned()
             .collect();
         Arc::new(Dataset {
@@ -892,19 +890,31 @@ mod tests {
 
     #[test]
     fn test_dataset_filtering() {
-        let mut dataset = test_dataset();
+        let mut dataset = Dataset::default();
         dataset.events.push(Arc::new(Event {
-            p4s: vec![
-                Vec3::new(0.0, 0.0, 5.0).with_mass(0.0),
-                Vec3::new(0.0, 0.0, 1.0).with_mass(1.0),
-            ],
+            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.0)],
+            aux: vec![],
+            weight: 1.0,
+        }));
+        dataset.events.push(Arc::new(Event {
+            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.5)],
+            aux: vec![],
+            weight: 1.0,
+        }));
+        dataset.events.push(Arc::new(Event {
+            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(1.1)],
+            // HACK: using 1.0 messes with this test because the eventual computation gives a mass
+            // slightly less than 1.0
             aux: vec![],
             weight: 1.0,
         }));
 
-        let filtered = dataset.filter(|event| event.p4s.len() == 2);
+        let mass = Mass::new([0]);
+        let expression = mass.gt(0.0).and(&mass.lt(1.0));
+
+        let filtered = dataset.filter(&expression);
         assert_eq!(filtered.n_events(), 1);
-        assert_eq!(filtered[0].p4s.len(), 2);
+        assert_eq!(mass.value(&filtered[0]), 0.5);
     }
 
     #[test]

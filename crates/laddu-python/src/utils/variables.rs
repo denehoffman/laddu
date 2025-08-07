@@ -4,6 +4,7 @@ use laddu_core::{
     traits::Variable,
     utils::variables::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+        VariableExpression,
     },
     Float,
 };
@@ -50,6 +51,25 @@ impl Display for PyVariable {
             Self::PolMagnitude(v) => write!(f, "{}", v.0),
             Self::Mandelstam(v) => write!(f, "{}", v.0),
         }
+    }
+}
+
+#[pyclass(name = "VariableExpression", module = "laddu")]
+pub struct PyVariableExpression(pub VariableExpression);
+
+#[pymethods]
+impl PyVariableExpression {
+    fn __and__(&self, rhs: &PyVariableExpression) -> PyVariableExpression {
+        PyVariableExpression(self.0.clone() & rhs.0.clone())
+    }
+    fn __or__(&self, rhs: &PyVariableExpression) -> PyVariableExpression {
+        PyVariableExpression(self.0.clone() | rhs.0.clone())
+    }
+    fn __invert__(&self) -> PyVariableExpression {
+        PyVariableExpression(!self.0.clone())
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
     }
 }
 
@@ -106,6 +126,21 @@ impl PyMass {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
@@ -211,6 +246,21 @@ impl PyCosTheta {
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
+    }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -315,6 +365,21 @@ impl PyPhi {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
@@ -459,6 +524,21 @@ impl PyPolAngle {
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
+    }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -520,6 +600,21 @@ impl PyPolMagnitude {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
@@ -669,6 +764,21 @@ impl PyMandelstam {
     ///
     fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    }
+    fn __eq__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.eq(value))
+    }
+    fn __lt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.lt(value))
+    }
+    fn __gt__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.gt(value))
+    }
+    fn __le__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.le(value))
+    }
+    fn __ge__(&self, value: Float) -> PyVariableExpression {
+        PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
