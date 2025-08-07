@@ -15,6 +15,9 @@ use crate::{
     },
     Float, LadduError,
 };
+
+use auto_ops::impl_op_ex;
+
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
@@ -70,8 +73,211 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         }
         self.value_on_local(dataset)
     }
+
+    /// Create an [`VariableExpression`] that evaluates to `self == val`
+    fn eq(&self, val: Float) -> VariableExpression
+    where
+        Self: std::marker::Sized + 'static,
+    {
+        VariableExpression::Eq(dyn_clone::clone_box(self), val)
+    }
+
+    /// Create an [`VariableExpression`] that evaluates to `self < val`
+    fn lt(&self, val: Float) -> VariableExpression
+    where
+        Self: std::marker::Sized + 'static,
+    {
+        VariableExpression::Lt(dyn_clone::clone_box(self), val)
+    }
+
+    /// Create an [`VariableExpression`] that evaluates to `self > val`
+    fn gt(&self, val: Float) -> VariableExpression
+    where
+        Self: std::marker::Sized + 'static,
+    {
+        VariableExpression::Gt(dyn_clone::clone_box(self), val)
+    }
+
+    /// Create an [`VariableExpression`] that evaluates to `self >= val`
+    fn ge(&self, val: Float) -> VariableExpression
+    where
+        Self: std::marker::Sized + 'static,
+    {
+        self.gt(val).or(&self.eq(val))
+    }
+
+    /// Create an [`VariableExpression`] that evaluates to `self <= val`
+    fn le(&self, val: Float) -> VariableExpression
+    where
+        Self: std::marker::Sized + 'static,
+    {
+        self.lt(val).or(&self.eq(val))
+    }
 }
 dyn_clone::clone_trait_object!(Variable);
+
+/// Expressions which can be used to compare [`Variable`]s to [`Float`]s.
+#[derive(Clone, Debug)]
+pub enum VariableExpression {
+    /// Expression which is true when the variable is equal to the float.
+    Eq(Box<dyn Variable>, Float),
+    /// Expression which is true when the variable is less than the float.
+    Lt(Box<dyn Variable>, Float),
+    /// Expression which is true when the variable is greater than the float.
+    Gt(Box<dyn Variable>, Float),
+    /// Expression which is true when both inner expressions are true.
+    And(Box<VariableExpression>, Box<VariableExpression>),
+    /// Expression which is true when either inner expression is true.
+    Or(Box<VariableExpression>, Box<VariableExpression>),
+    /// Expression which is true when the inner expression is false.
+    Not(Box<VariableExpression>),
+}
+
+impl VariableExpression {
+    /// Construct an [`VariableExpression::And`] from the current expression and another.
+    pub fn and(&self, rhs: &VariableExpression) -> VariableExpression {
+        VariableExpression::And(Box::new(self.clone()), Box::new(rhs.clone()))
+    }
+
+    /// Construct an [`VariableExpression::Or`] from the current expression and another.
+    pub fn or(&self, rhs: &VariableExpression) -> VariableExpression {
+        VariableExpression::Or(Box::new(self.clone()), Box::new(rhs.clone()))
+    }
+
+    /// Comple the [`VariableExpression`] into a [`CompiledExpression`].
+    pub(crate) fn compile(&self) -> CompiledExpression {
+        compile_expression(self.clone())
+    }
+}
+impl Display for VariableExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VariableExpression::Eq(var, val) => {
+                write!(f, "({} == {})", var, val)
+            }
+            VariableExpression::Lt(var, val) => {
+                write!(f, "({} < {})", var, val)
+            }
+            VariableExpression::Gt(var, val) => {
+                write!(f, "({} > {})", var, val)
+            }
+            VariableExpression::And(lhs, rhs) => {
+                write!(f, "({} & {})", lhs, rhs)
+            }
+            VariableExpression::Or(lhs, rhs) => {
+                write!(f, "({} | {})", lhs, rhs)
+            }
+            VariableExpression::Not(inner) => {
+                write!(f, "!({})", inner)
+            }
+        }
+    }
+}
+
+/// A method which negates the given expression.
+pub fn not(expr: &VariableExpression) -> VariableExpression {
+    VariableExpression::Not(Box::new(expr.clone()))
+}
+
+#[rustfmt::skip]
+impl_op_ex!(& |lhs: &VariableExpression, rhs: &VariableExpression| -> VariableExpression{ lhs.and(rhs) });
+#[rustfmt::skip]
+impl_op_ex!(| |lhs: &VariableExpression, rhs: &VariableExpression| -> VariableExpression{ lhs.or(rhs) });
+#[rustfmt::skip]
+impl_op_ex!(! |exp: &VariableExpression| -> VariableExpression{ not(exp) });
+
+#[derive(Debug)]
+enum Opcode {
+    PushEq(usize, Float),
+    PushLt(usize, Float),
+    PushGt(usize, Float),
+    And,
+    Or,
+    Not,
+}
+
+pub(crate) struct CompiledExpression {
+    bytecode: Vec<Opcode>,
+    variables: Vec<Box<dyn Variable>>,
+}
+
+impl CompiledExpression {
+    /// Evaluate the [`CompiledExpression`] on a given [`Event`].
+    pub fn evaluate(&self, event: &Event) -> bool {
+        let mut stack = Vec::with_capacity(self.bytecode.len());
+
+        for op in &self.bytecode {
+            match op {
+                Opcode::PushEq(i, val) => stack.push(self.variables[*i].value(event) == *val),
+                Opcode::PushLt(i, val) => stack.push(self.variables[*i].value(event) < *val),
+                Opcode::PushGt(i, val) => stack.push(self.variables[*i].value(event) > *val),
+                Opcode::Not => {
+                    let a = stack.pop().unwrap();
+                    stack.push(!a);
+                }
+                Opcode::And => {
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    stack.push(a && b);
+                }
+                Opcode::Or => {
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    stack.push(a || b);
+                }
+            }
+        }
+
+        stack.pop().unwrap()
+    }
+}
+
+pub(crate) fn compile_expression(expr: VariableExpression) -> CompiledExpression {
+    let mut bytecode = Vec::new();
+    let mut variables: Vec<Box<dyn Variable>> = Vec::new();
+
+    fn compile(
+        expr: VariableExpression,
+        bytecode: &mut Vec<Opcode>,
+        variables: &mut Vec<Box<dyn Variable>>,
+    ) {
+        match expr {
+            VariableExpression::Eq(var, val) => {
+                variables.push(var);
+                bytecode.push(Opcode::PushEq(variables.len() - 1, val));
+            }
+            VariableExpression::Lt(var, val) => {
+                variables.push(var);
+                bytecode.push(Opcode::PushLt(variables.len() - 1, val));
+            }
+            VariableExpression::Gt(var, val) => {
+                variables.push(var);
+                bytecode.push(Opcode::PushGt(variables.len() - 1, val));
+            }
+            VariableExpression::And(lhs, rhs) => {
+                compile(*lhs, bytecode, variables);
+                compile(*rhs, bytecode, variables);
+                bytecode.push(Opcode::And);
+            }
+            VariableExpression::Or(lhs, rhs) => {
+                compile(*lhs, bytecode, variables);
+                compile(*rhs, bytecode, variables);
+                bytecode.push(Opcode::Or);
+            }
+            VariableExpression::Not(inner) => {
+                compile(*inner, bytecode, variables);
+                bytecode.push(Opcode::Not);
+            }
+        }
+    }
+
+    compile(expr, &mut bytecode, &mut variables);
+
+    CompiledExpression {
+        bytecode,
+        variables,
+    }
+}
 
 fn sort_indices<T: AsRef<[usize]>>(indices: T) -> Vec<usize> {
     let mut indices = indices.as_ref().to_vec();

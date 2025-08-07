@@ -120,7 +120,22 @@ def test_dataset_sum() -> None:
     assert list_sum[1].weight == dataset_sum[1].weight
 
 
-# TODO: Dataset::filter requires free-threading or some other workaround (or maybe we make a non-parallel method)
+def test_dataset_filtering() -> None:
+    dataset = Dataset(
+        [
+            Event([Vec3(0, 0, 5).with_mass(0.0)], [], 1.0),
+            Event([Vec3(0, 0, 5).with_mass(0.5)], [], 1.0),
+            Event([Vec3(0, 0, 5).with_mass(1.1)], [], 1.0),
+            # HACK: using 1.0 messes with this test because the eventual computation gives a mass
+            # slightly less than 1.0
+        ]
+    )
+    mass = Mass([0])
+    expression = (mass > 0.0) & (mass < 1.0)
+
+    filtered = dataset.filter(expression)
+    assert filtered.n_events == 1
+    assert mass.value(filtered[0]) == 0.5
 
 
 def test_dataset_evaluate() -> None:

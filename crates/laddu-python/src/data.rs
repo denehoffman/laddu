@@ -1,4 +1,4 @@
-use crate::utils::variables::PyVariable;
+use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{open, open_boosted_to_rest_frame_of, BinnedDataset, Dataset, Event},
     Float,
@@ -285,6 +285,21 @@ impl PyDataset {
     ) -> PyResult<PyBinnedDataset> {
         let py_variable = variable.extract::<PyVariable>()?;
         Ok(PyBinnedDataset(self.0.bin_by(py_variable, bins, range)))
+    }
+    /// Filter the Dataset by a given VariableExpression, selecting events for which the expression returns ``True``.
+    ///
+    /// Parameters
+    /// ----------
+    /// expression : VariableExpression
+    ///     The expression with which to filter the Dataset
+    ///
+    /// Returns
+    /// -------
+    /// Dataset
+    ///     The filtered Dataset
+    ///
+    pub fn filter(&self, expression: &PyVariableExpression) -> PyDataset {
+        PyDataset(self.0.filter(&expression.0))
     }
     /// Generate a new bootstrapped Dataset by randomly resampling the original with replacement
     ///

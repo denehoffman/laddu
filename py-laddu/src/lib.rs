@@ -21,7 +21,7 @@ mod laddu {
         utils::{
             variables::{
                 PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
-                PyPolarization,
+                PyPolarization, PyVariableExpression,
             },
             vectors::{PyVec3, PyVec4},
         },
