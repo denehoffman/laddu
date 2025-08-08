@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.9.0...laddu-python-v0.9.1) - 2025-08-08
+
+### Added
+
+- add VariableExpressions to handle Dataset filtering
+
 ## [0.8.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.8.0...laddu-python-v0.8.1) - 2025-06-20
 
 ### Added
