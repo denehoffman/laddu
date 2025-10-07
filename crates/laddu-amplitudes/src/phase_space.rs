@@ -1,20 +1,20 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID},
     data::Event,
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
-    Complex, DVector, Float, LadduError, Mandelstam, Mass, ScalarID, PI,
+    Float, LadduError, Mandelstam, Mass, ScalarID, PI,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::PyAmplitude,
     utils::variables::{PyMandelstam, PyMass},
 };
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// An [`Amplitude`] describing the phase space factor given in Equation A4 [here](https://arxiv.org/abs/1906.04841)[^1]
 ///

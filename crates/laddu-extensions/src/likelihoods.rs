@@ -4,30 +4,31 @@ use std::{
     sync::Arc,
 };
 
+use crate::RngSubsetExtension;
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
-use ganesh::{
-    traits::AbortSignal, Ensemble, Function, Minimizer, Sampler, Status, Swarm, SwarmMinimizer,
-};
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
     resources::Parameters,
-    Complex, DVector, Float, LadduError,
+    Float, LadduError,
 };
+use nalgebra::DVector;
+use num::Complex;
 
 #[cfg(feature = "mpi")]
 use laddu_core::mpi::LadduMPI;
 
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
+use parking_lot::Mutex;
 
 #[cfg(feature = "python")]
-use crate::ganesh_ext::py_ganesh::{
-    py_parse_mcmc_options, py_parse_minimizer_options, py_parse_swarm_options, PyEnsemble,
-    PyStatus, PySwarm,
+use crate::ganesh_ext::{
+    py_ganesh::{FromPyArgs, PyMCMCSummary, PyMinimizationSummary},
+    MCMCSettings, MinimizationSettings,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -37,11 +38,15 @@ use laddu_python::{
 #[cfg(feature = "python")]
 use numpy::PyArray1;
 #[cfg(feature = "python")]
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
+use pyo3::{
+    exceptions::PyTypeError,
+    prelude::*,
+    types::{PyDict, PyList},
+};
 #[cfg(feature = "rayon")]
-use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
-
-use crate::ganesh_ext::{MCMCOptions, MinimizerOptions, SwarmOptions};
+use rayon::prelude::*;
+#[cfg(all(feature = "python", feature = "rayon"))]
+use rayon::ThreadPoolBuilder;
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
@@ -52,20 +57,10 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         central_difference(parameters, |parameters: &[Float]| self.evaluate(parameters))
     }
-    #[allow(unused_variables)]
-    fn evaluate_stochastic(&self, parameters: &[Float], indices: &[usize]) -> Float {
-        self.evaluate(parameters)
-    }
-    #[allow(unused_variables)]
-    fn evaluate_gradient_stochastic(
-        &self,
-        parameters: &[Float],
-        indices: &[usize],
-    ) -> DVector<Float> {
-        self.evaluate_gradient(parameters)
-    }
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
+    /// A method called every step of any minimization/MCMC algorithm.
+    fn update(&self) {}
 }
 
 dyn_clone::clone_trait_object!(LikelihoodTerm);
@@ -74,7 +69,7 @@ dyn_clone::clone_trait_object!(LikelihoodTerm);
 ///
 /// See Also
 /// --------
-/// NLL.as_term
+/// NLL.to_term
 ///
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodTerm", module = "laddu")]
@@ -99,6 +94,10 @@ impl NLL {
             accmc_evaluator: model.load(ds_accmc),
         }
         .into()
+    }
+    /// Create a new [`StochasticNLL`] from this [`NLL`].
+    pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
+        StochasticNLL::new(self.clone(), batch_size, seed)
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
@@ -165,19 +164,19 @@ impl NLL {
                 self.accmc_evaluator.evaluate_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let output: Vec<Float> = result
             .par_iter()
             .zip(mc_dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc as Float)
+            .map(|(l, e)| e.weight * l.re / n_mc)
             .collect();
 
         #[cfg(not(feature = "rayon"))]
         let output: Vec<Float> = result
             .iter()
             .zip(mc_dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re / n_mc as Float)
+            .map(|(l, e)| e.weight * l.re / n_mc)
             .collect();
         output
     }
@@ -261,7 +260,7 @@ impl NLL {
                 self.accmc_evaluator.evaluate_gradient_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         {
             (
@@ -388,18 +387,18 @@ impl NLL {
             mc_evaluator.isolate_many(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events();
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let output: Vec<Float> = result
                 .par_iter()
                 .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<Float> = result
                 .iter()
                 .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             mc_evaluator.resources.write().active = current_active_mc;
             Ok(output)
@@ -409,18 +408,18 @@ impl NLL {
             self.isolate_many(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events();
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let output: Vec<Float> = result
                 .par_iter()
                 .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<Float> = result
                 .iter()
                 .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc as Float)
+                .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             self.data_evaluator.resources.write().active = current_active_data;
             self.accmc_evaluator.resources.write().active = current_active_accmc;
@@ -513,7 +512,7 @@ impl NLL {
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
             let result_gradient = mc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
@@ -553,7 +552,7 @@ impl NLL {
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
             let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
@@ -676,7 +675,7 @@ impl NLL {
     fn evaluate_local(&self, parameters: &[Float]) -> Float {
         let data_result = self.data_evaluator.evaluate_local(parameters);
         let mc_result = self.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let data_term: Float = data_result
             .par_iter()
@@ -717,7 +716,7 @@ impl NLL {
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let data_term: DVector<Float> = self
             .data_evaluator
@@ -991,163 +990,203 @@ impl LikelihoodTerm for NLL {
     }
 }
 
-#[cfg(feature = "rayon")]
-impl Function<ThreadPool, LadduError> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<Float, LadduError> {
-        Ok(thread_pool.install(|| LikelihoodTerm::evaluate(self, parameters)))
+/// A stochastic [`NLL`] term.
+///
+/// While a regular [`NLL`] will operate over the entire dataset, this term will only operate over
+/// a random subset of the data, determined by the `batch_size` parameter. This will make the
+/// objective function faster to evaluate at the cost of adding random noise to the likelihood.
+#[derive(Clone)]
+pub struct StochasticNLL {
+    /// A handle to the original [`NLL`] term.
+    pub nll: NLL,
+    n: usize,
+    batch_size: usize,
+    batch_indices: Arc<Mutex<Vec<usize>>>,
+    rng: Arc<Mutex<Rng>>,
+}
+
+impl LikelihoodTerm for StochasticNLL {
+    fn parameters(&self) -> Vec<String> {
+        self.nll.parameters()
     }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
-        Ok(thread_pool.install(|| LikelihoodTerm::evaluate_gradient(self, parameters)))
+    fn evaluate(&self, parameters: &[Float]) -> Float {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.evaluate_mpi(parameters, &self.batch_indices.lock(), &world);
+            }
+        }
+        #[cfg(feature = "rayon")]
+        let n_data_batch_local = self
+            .batch_indices
+            .lock()
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch_local = self
+            .batch_indices
+            .lock()
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .sum_with_accumulator::<Klein<Float>>();
+        self.evaluate_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
+    }
+
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.evaluate_gradient_mpi(parameters, &self.batch_indices.lock(), &world);
+            }
+        }
+        #[cfg(feature = "rayon")]
+        let n_data_batch_local = self
+            .batch_indices
+            .lock()
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch_local = self
+            .batch_indices
+            .lock()
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .sum_with_accumulator::<Klein<Float>>();
+        self.evaluate_gradient_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
+    }
+    fn update(&self) {
+        self.resample();
     }
 }
 
-#[cfg(not(feature = "rayon"))]
-impl Function<(), LadduError> for NLL {
-    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, LadduError> {
-        Ok(LikelihoodTerm::evaluate(self, parameters))
+impl StochasticNLL {
+    /// Generate a new [`StochasticNLL`] with the given [`NLL`], batch size, and optional random seed
+    ///
+    /// # See Also
+    ///
+    /// [`NLL::to_stochastic`]
+    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> Self {
+        let mut rng = seed.map_or_else(Rng::new, |seed| Rng::with_seed(seed as u64));
+        let n = nll.data_evaluator.dataset.n_events();
+        assert!(batch_size > 0 && batch_size <= n);
+        let batch_indices = rng.subset(batch_size, n);
+        Self {
+            nll,
+            n,
+            batch_size,
+            batch_indices: Arc::new(Mutex::new(batch_indices)),
+            rng: Arc::new(Mutex::new(rng)),
+        }
     }
-    fn gradient(
+    /// Resample the batch indices used in evaluation
+    pub fn resample(&self) {
+        let mut rng = self.rng.lock();
+        *self.batch_indices.lock() = rng.subset(self.batch_size, self.n);
+    }
+    fn evaluate_local(
         &self,
         parameters: &[Float],
-        _user_data: &mut (),
-    ) -> Result<DVector<Float>, LadduError> {
-        Ok(LikelihoodTerm::evaluate_gradient(self, parameters))
-    }
-}
-
-pub(crate) struct LogLikelihood<'a>(&'a NLL);
-
-#[cfg(feature = "rayon")]
-impl Function<ThreadPool, LadduError> for LogLikelihood<'_> {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<Float, LadduError> {
-        Function::evaluate(self.0, parameters, thread_pool).map(|res| -res)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
-        Function::gradient(self.0, parameters, thread_pool).map(|res| -res)
-    }
-}
-
-#[cfg(not(feature = "rayon"))]
-impl Function<(), LadduError> for LogLikelihood<'_> {
-    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
-        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        user_data: &mut (),
-    ) -> Result<DVector<Float>, LadduError> {
-        Function::gradient(self.0, parameters, user_data).map(|res| -res)
-    }
-}
-
-impl NLL {
-    fn evaluate_stochastic_local(&self, parameters: &[Float], indices: &[usize]) -> Float {
+        indices: &[usize],
+        n_data_batch: Float,
+    ) -> Float {
         let data_result = self
+            .nll
             .data_evaluator
             .evaluate_batch_local(parameters, indices);
-        let mc_result = self.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+        let mc_result = self.nll.accmc_evaluator.evaluate_local(parameters);
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
-        let data_term: Float = data_result
-            .par_iter()
-            .zip(
-                self.data_evaluator
-                    .dataset
-                    .events
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, event)| {
-                        if indices.contains(&i) {
-                            Some(event)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .par_iter(),
-            )
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .parallel_sum_with_accumulator::<Klein<Float>>();
-        #[cfg(feature = "rayon")]
-        let mc_term: Float = mc_result
-            .par_iter()
-            .zip(self.accmc_evaluator.dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .parallel_sum_with_accumulator::<Klein<Float>>();
+        {
+            let data_term: Float = indices
+                .par_iter()
+                .map(|&i| {
+                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let l = data_result[i];
+                    e.weight * l.re.ln()
+                })
+                .parallel_sum_with_accumulator::<Klein<Float>>();
+            let mc_term: Float = mc_result
+                .par_iter()
+                .zip(self.nll.accmc_evaluator.dataset.events.par_iter())
+                .map(|(l, e)| e.weight * l.re)
+                .parallel_sum_with_accumulator::<Klein<Float>>();
+            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        }
         #[cfg(not(feature = "rayon"))]
-        let data_term: Float = data_result
-            .iter()
-            .zip(
-                self.data_evaluator
-                    .dataset
-                    .events
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, event)| {
-                        if indices.contains(&i) {
-                            Some(event)
-                        } else {
-                            None
-                        }
-                    }),
-            )
-            .map(|(l, e)| e.weight * Float::ln(l.re))
-            .sum_with_accumulator::<Klein<Float>>();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: Float = mc_result
-            .iter()
-            .zip(self.accmc_evaluator.dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum_with_accumulator::<Klein<Float>>();
-        -2.0 * (data_term - mc_term / n_mc)
+        {
+            let data_term: Float = indices
+                .iter()
+                .map(|&i| {
+                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let l = data_result[i];
+                    e.weight * l.re.ln()
+                })
+                .sum_with_accumulator::<Klein<Float>>();
+            let mc_term: Float = mc_result
+                .iter()
+                .zip(self.nll.accmc_evaluator.dataset.events.iter())
+                .map(|(l, e)| e.weight * l.re)
+                .sum_with_accumulator::<Klein<Float>>();
+            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        }
     }
 
     #[cfg(feature = "mpi")]
-    fn evaluate_stochastic_mpi(
+    fn evaluate_mpi(
         &self,
         parameters: &[Float],
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> Float {
         let (_, _, locals) = self
+            .nll
             .data_evaluator
             .dataset
             .get_counts_displs_locals_from_indices(indices, world);
-        let local_evaluation = self.evaluate_stochastic_local(parameters, &locals);
+        let mut n_data_batch_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
+        #[cfg(feature = "rayon")]
+        let n_data_batch_local = indices
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch_local = indices
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .sum_with_accumulator::<Klein<Float>>();
+        world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
+        #[cfg(feature = "rayon")]
+        let n_data_batch = n_data_batch_partitioned
+            .into_par_iter()
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch = n_data_batch_partitioned
+            .into_iter()
+            .sum_with_accumulator::<Klein<Float>>();
+        let local_evaluation = self.evaluate_local(parameters, &locals, n_data_batch);
         let mut buffer: Vec<Float> = vec![0.0; world.size() as usize];
         world.all_gather_into(&local_evaluation, &mut buffer);
         buffer.iter().sum()
     }
 
-    fn evaluate_stochastic_gradient_local(
+    fn evaluate_gradient_local(
         &self,
         parameters: &[Float],
         indices: &[usize],
+        n_data_batch: Float,
     ) -> DVector<Float> {
-        let data_resources = self.data_evaluator.resources.read();
+        let data_resources = self.nll.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.accmc_evaluator.resources.read();
+        let mc_resources = self.nll.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.n_events() as Float;
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let data_term: DVector<Float> = self
+            .nll
             .data_evaluator
             .dataset
             .events
@@ -1162,9 +1201,12 @@ impl NLL {
                 }
             })
             .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
+                let mut gradient_values = vec![
+                    DVector::zeros(parameters.len());
+                    self.nll.data_evaluator.amplitudes.len()
+                ];
+                self.nll
+                    .data_evaluator
                     .amplitudes
                     .iter()
                     .zip(data_resources.active.iter())
@@ -1177,7 +1219,8 @@ impl NLL {
                 (
                     event.weight,
                     AmplitudeValues(
-                        self.data_evaluator
+                        self.nll
+                            .data_evaluator
                             .amplitudes
                             .iter()
                             .zip(data_resources.active.iter())
@@ -1196,8 +1239,9 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.data_evaluator.expression.evaluate(&amp_vals),
-                    self.data_evaluator
+                    self.nll.data_evaluator.expression.evaluate(&amp_vals),
+                    self.nll
+                        .data_evaluator
                         .expression
                         .evaluate_gradient(&amp_vals, &grad_vals),
                 )
@@ -1208,15 +1252,19 @@ impl NLL {
             .sum(); // TODO: replace with custom implementation of accurate crate's trait
         #[cfg(feature = "rayon")]
         let mc_term: DVector<Float> = self
+            .nll
             .accmc_evaluator
             .dataset
             .events
             .par_iter()
             .zip(mc_resources.caches.par_iter())
             .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-                self.accmc_evaluator
+                let mut gradient_values = vec![
+                    DVector::zeros(parameters.len());
+                    self.nll.accmc_evaluator.amplitudes.len()
+                ];
+                self.nll
+                    .accmc_evaluator
                     .amplitudes
                     .iter()
                     .zip(mc_resources.active.iter())
@@ -1229,7 +1277,8 @@ impl NLL {
                 (
                     event.weight,
                     AmplitudeValues(
-                        self.accmc_evaluator
+                        self.nll
+                            .accmc_evaluator
                             .amplitudes
                             .iter()
                             .zip(mc_resources.active.iter())
@@ -1248,7 +1297,8 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.accmc_evaluator
+                    self.nll
+                        .accmc_evaluator
                         .expression
                         .evaluate_gradient(&amp_vals, &grad_vals),
                 )
@@ -1259,6 +1309,7 @@ impl NLL {
             .sum();
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<Float> = self
+            .nll
             .data_evaluator
             .dataset
             .events
@@ -1273,9 +1324,12 @@ impl NLL {
                 }
             })
             .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
+                let mut gradient_values = vec![
+                    DVector::zeros(parameters.len());
+                    self.nll.data_evaluator.amplitudes.len()
+                ];
+                self.nll
+                    .data_evaluator
                     .amplitudes
                     .iter()
                     .zip(data_resources.active.iter())
@@ -1288,7 +1342,8 @@ impl NLL {
                 (
                     event.weight,
                     AmplitudeValues(
-                        self.data_evaluator
+                        self.nll
+                            .data_evaluator
                             .amplitudes
                             .iter()
                             .zip(data_resources.active.iter())
@@ -1307,8 +1362,9 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.data_evaluator.expression.evaluate(&amp_vals),
-                    self.data_evaluator
+                    self.nll.data_evaluator.expression.evaluate(&amp_vals),
+                    self.nll
+                        .data_evaluator
                         .expression
                         .evaluate_gradient(&amp_vals, &grad_vals),
                 )
@@ -1317,15 +1373,19 @@ impl NLL {
             .sum();
         #[cfg(not(feature = "rayon"))]
         let mc_term: DVector<Float> = self
+            .nll
             .accmc_evaluator
             .dataset
             .events
             .iter()
             .zip(mc_resources.caches.iter())
             .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-                self.accmc_evaluator
+                let mut gradient_values = vec![
+                    DVector::zeros(parameters.len());
+                    self.nll.accmc_evaluator.amplitudes.len()
+                ];
+                self.nll
+                    .accmc_evaluator
                     .amplitudes
                     .iter()
                     .zip(mc_resources.active.iter())
@@ -1338,7 +1398,8 @@ impl NLL {
                 (
                     event.weight,
                     AmplitudeValues(
-                        self.accmc_evaluator
+                        self.nll
+                            .accmc_evaluator
                             .amplitudes
                             .iter()
                             .zip(mc_resources.active.iter())
@@ -1357,29 +1418,51 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.accmc_evaluator
+                    self.nll
+                        .accmc_evaluator
                         .expression
                         .evaluate_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
             .sum();
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
 
     #[cfg(feature = "mpi")]
-    fn evaluate_stochastic_gradient_mpi(
+    fn evaluate_gradient_mpi(
         &self,
         parameters: &[Float],
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> DVector<Float> {
         let (_, _, locals) = self
+            .nll
             .data_evaluator
             .dataset
             .get_counts_displs_locals_from_indices(indices, world);
+        let mut n_data_batch_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
+        #[cfg(feature = "rayon")]
+        let n_data_batch_local = indices
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch_local = indices
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .sum_with_accumulator::<Klein<Float>>();
+        world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
+        #[cfg(feature = "rayon")]
+        let n_data_batch = n_data_batch_partitioned
+            .into_par_iter()
+            .parallel_sum_with_accumulator::<Klein<Float>>();
+        #[cfg(not(feature = "rayon"))]
+        let n_data_batch = n_data_batch_partitioned
+            .into_iter()
+            .sum_with_accumulator::<Klein<Float>>();
         let local_evaluation_vec = self
-            .evaluate_stochastic_gradient_local(parameters, locals)
+            .evaluate_gradient_local(parameters, &locals, n_data_batch)
             .data
             .as_vec()
             .to_vec();
@@ -1389,164 +1472,6 @@ impl NLL {
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .sum::<DVector<Float>>()
-    }
-}
-
-#[cfg(feature = "rayon")]
-impl Function<(ThreadPool, Vec<usize>), LadduError> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        thread_pool_and_indices: &mut (ThreadPool, Vec<usize>),
-    ) -> Result<Float, LadduError> {
-        Ok(thread_pool_and_indices.0.install(|| {
-            LikelihoodTerm::evaluate_stochastic(self, parameters, &thread_pool_and_indices.1)
-        }))
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        thread_pool_and_indices: &mut (ThreadPool, Vec<usize>),
-    ) -> Result<DVector<Float>, LadduError> {
-        Ok(thread_pool_and_indices.0.install(|| {
-            LikelihoodTerm::evaluate_gradient_stochastic(
-                self,
-                parameters,
-                &thread_pool_and_indices.1,
-            )
-        }))
-    }
-    // TODO: update ganesh with method that updates user data
-}
-
-#[cfg(not(feature = "rayon"))]
-impl Function<Vec<usize>, LadduError> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        indices: &mut Vec<usize>,
-    ) -> Result<Float, LadduError> {
-        LikelihoodTerm::evaluate_stochastic(self, parameters, indices)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        indices: &mut Vec<usize>,
-    ) -> Result<DVector<Float>, LadduError> {
-        LikelihoodTerm::evaluate_gradient_stochastic(self, parameters, indices)
-    }
-}
-
-impl NLL {
-    /// Minimizes the negative log-likelihood using the L-BFGS-B algorithm (by default), a limited-memory
-    /// quasi-Newton minimizer which supports bounded optimization.
-    pub fn minimize(
-        &self,
-        p0: &[Float],
-        bounds: Option<Vec<(Float, Float)>>,
-        options: Option<MinimizerOptions>,
-    ) -> Result<Status, LadduError> {
-        let options = options.unwrap_or_default();
-        let mut m = Minimizer::new(options.algorithm, self.parameters().len())
-            .with_max_steps(options.max_steps);
-        if let Some(bounds) = bounds {
-            m = m.with_bounds(bounds);
-        }
-        for observer in options.observers {
-            m = m.with_observer(observer);
-        }
-        #[cfg(feature = "rayon")]
-        {
-            m.minimize(
-                self,
-                p0,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.minimize(
-                self,
-                p0,
-                &mut (),
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.status)
-    }
-    /// Perform Markov Chain Monte Carlo sampling on this [`NLL`]. By default, this uses the [`ESS`](`ganesh::algorithms::mcmc::ESS`) sampler.
-    pub fn mcmc<T: AsRef<[DVector<Float>]>>(
-        &self,
-        p0: T,
-        n_steps: usize,
-        options: Option<MCMCOptions>,
-        rng: Rng,
-    ) -> Result<Ensemble, LadduError> {
-        let options = options.unwrap_or(MCMCOptions::default_with_rng(rng));
-        let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
-        for observer in options.observers {
-            m = m.with_observer(observer);
-        }
-        let func = LogLikelihood(self);
-        #[cfg(feature = "rayon")]
-        {
-            m.sample(
-                &func,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                n_steps,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.sample(
-                &func,
-                &mut (),
-                n_steps,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.ensemble)
-    }
-    /// Perform Particle Swarm Optimization on this [`NLL`].
-    pub fn swarm(
-        &self,
-        swarm: Swarm,
-        options: Option<SwarmOptions>,
-        rng: Rng,
-    ) -> Result<Swarm, LadduError> {
-        let options = options.unwrap_or(SwarmOptions::default_with_rng(rng));
-        let mut m = SwarmMinimizer::new(options.algorithm, swarm);
-        for observer in options.observers {
-            m = m.with_observer(observer);
-        }
-        #[cfg(feature = "rayon")]
-        {
-            m.minimize(
-                self,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.minimize(
-                self,
-                &mut (),
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.swarm)
     }
 }
 
@@ -1594,6 +1519,22 @@ impl PyNLL {
     fn accmc(&self) -> PyDataset {
         PyDataset(self.0.accmc_evaluator.dataset.clone())
     }
+    /// Turn an ``NLL`` into a ``StochasticNLL``
+    ///
+    /// Parameters
+    /// ----------
+    /// batch_size : int
+    ///     The batch size for the data
+    /// seed : int, default=None
+    ///
+    /// Returns
+    /// -------
+    /// StochasticNLL
+    ///
+    #[pyo3(signature = (batch_size, *, seed=None))]
+    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyStochasticNLL {
+        PyStochasticNLL(self.0.to_stochastic(batch_size, seed))
+    }
     /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
     ///
     /// Returns
@@ -1601,7 +1542,8 @@ impl PyNLL {
     /// term : LikelihoodTerm
     ///     The isolated NLL which can be used to build more complex models
     ///
-    fn as_term(&self) -> PyLikelihoodTerm {
+    ///
+    fn to_term(&self) -> PyLikelihoodTerm {
         PyLikelihoodTerm(self.0.clone())
     }
     /// The names of the free parameters used to evaluate the NLL
@@ -1737,7 +1679,7 @@ impl PyNLL {
         #[cfg(feature = "rayon")]
         {
             Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or_else(num_cpus::get))
+                .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
                 .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)))
@@ -1779,7 +1721,7 @@ impl PyNLL {
             Ok(PyArray1::from_slice(
                 py,
                 ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
                     .install(|| self.0.evaluate_gradient(&parameters))
@@ -1833,7 +1775,7 @@ impl PyNLL {
             Ok(PyArray1::from_slice(
                 py,
                 ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
                     .install(|| {
@@ -1915,7 +1857,7 @@ impl PyNLL {
             Ok(PyArray1::from_slice(
                 py,
                 ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
                     .install(|| {
@@ -1945,7 +1887,7 @@ impl PyNLL {
 
     /// Minimize the NLL with respect to the free parameters in the model
     ///
-    /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this
+    /// This method "runs the fit". Given an initial position `p0`, this
     /// method performs a minimization over the negative log-likelihood, optimizing the model
     /// over the stored signal data and Monte Carlo.
     ///
@@ -1953,111 +1895,27 @@ impl PyNLL {
     /// ----------
     /// p0 : array_like
     ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float, optional
-    ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
-    /// method : {LBFGSB, NelderMead}, optional
-    ///     The minimization algorithm to use (defaults to LBFGSB)
-    /// observers : Observer or list of Observers, optional
-    ///     Callback functions which are applied after every algorithm step
-    /// max_steps : int, default=4000
-    ///     The maximum number of algorithm steps to perform
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    ///     The minimization algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the minimization algorithm (see notes)
+    /// observers : MinimizerObserver or list of MinimizerObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
     /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// show_step : bool, default=True
-    ///     Include step number in verbose output
-    /// show_x : bool, default=True
-    ///     Include current best position in verbose output
-    /// show_fx : bool, default=True
-    ///     Include current best NLL in verbose output
-    /// skip_hessian : bool, default = False
-    ///     Skip calculation of the Hessian matrix (and parameter errors) at the termination of the
-    ///     algorithm (use this when uncertainties are not needed/important)
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
     ///
     /// Returns
     /// -------
-    /// Status
+    /// MinimizationSummary
     ///     The status of the minimization algorithm at termination
-    ///
-    /// Raises
-    /// ------
-    /// Exception
-    ///     If there was an error building the thread pool
-    ///
-    #[pyo3(signature = (p0, *, bounds=None, method=None, observers=None, max_steps=4000, debug=false, verbose=false, show_step=true, show_x=true, show_fx=true, skip_hessian=false, threads=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn minimize(
-        &self,
-        p0: Vec<Float>,
-        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        method: Option<Bound<'_, PyAny>>,
-        observers: Option<Bound<'_, PyAny>>,
-        max_steps: usize,
-        debug: bool,
-        verbose: bool,
-        show_step: bool,
-        show_x: bool,
-        show_fx: bool,
-        skip_hessian: bool,
-        threads: Option<usize>,
-    ) -> PyResult<PyStatus> {
-        let bounds = bounds.map(|bounds_vec| {
-            bounds_vec
-                .iter()
-                .map(|(opt_lb, opt_ub)| {
-                    (
-                        opt_lb.unwrap_or(Float::NEG_INFINITY),
-                        opt_ub.unwrap_or(Float::INFINITY),
-                    )
-                })
-                .collect()
-        });
-        let options = py_parse_minimizer_options(
-            method,
-            observers,
-            max_steps,
-            debug,
-            verbose,
-            show_step,
-            show_x,
-            show_fx,
-            skip_hessian,
-            threads,
-        )?;
-        let status = self.0.minimize(&p0, bounds, Some(options))?;
-        Ok(PyStatus(status))
-    }
-    /// Run an MCMC algorithm on the free parameters of the NLL's model
-    ///
-    /// This method can be used to sample the underlying log-likelihood given an initial
-    /// position for each walker `p0`.
-    ///
-    /// Parameters
-    /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// n_steps : int,
-    ///     The number of MCMC steps each walker should take
-    /// method : {ESS, AIES}, optional
-    ///     The MCMC algorithm to use (defaults to ESS)
-    /// observers : MCMCObserver or list of MCMCObservers, optional
-    ///     Callback functions which are applied after every sampling step
-    /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// seed : int,
-    ///     The seed for the random number generator
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
-    ///
-    /// Returns
-    /// -------
-    /// Ensemble
-    ///     The resulting ensemble of walkers
     ///
     /// Raises
     /// ------
@@ -2066,84 +1924,608 @@ impl PyNLL {
     ///
     /// Notes
     /// -----
-    /// The default algorithm is the ESS algorithm with a moveset of of 90% differential moves to
-    /// 10% gaussian moves.
+    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
+    /// algorithm has different settings:
     ///
-    /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
-    /// function sign is automatically flipped when calling this method.
+    /// L-BFGS-B
+    /// ========
+    /// m : int, default=10
+    ///     The number of saved corrections to the approximated Hessian.
+    /// skip_hessian : bool, default=False
+    ///     If True, the exact Hessian will not be calculated.
+    /// line_search : dict
+    ///     Settings for the line search (see next section).
+    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    ///     The tolerance for stopping based on the change in function value.
+    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    ///     The tolerance for stopping based on the change in function gradient.
+    /// eps_norm_g : float : default=1e-5
+    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
     ///
-    #[pyo3(signature = (p0, n_steps, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    /// Line Search
+    /// ===========
+    /// method : {"morethuente", "hagerzhang"}
+    ///     The line search method to use.
+    /// max_iterations : int, default=100
+    ///     The maximum number of line search iterations.
+    /// c1 : float, default=1e-4
+    ///     The first Wolfe condition constant (More-Thuente only).
+    /// c2 : float, default=0.9
+    ///     The second Wolfe condition constant (More-Thuente only).
+    /// max_zoom : int, default=100
+    ///     The maximum number of zoom steps (More-Thuente only).
+    /// delta : float, default=0.1
+    ///     The first Wolfe condition constant (Hager-Zhang only).
+    /// sigma : float, default=0.9
+    ///     The second Wolfe condition constant (Hager-Zhang only).
+    /// epsilon : float, default=`MACH_EPS^(1/3)`
+    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
+    /// theta : float, default=0.5
+    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
+    /// gamma : float, default=0.66
+    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
+    /// max_bisects : int, default=50
+    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///
+    /// Adam
+    /// ====
+    /// beta_c : float, default=0.9
+    ///     The slope of the exponential moving average used to terminate the algorithm.
+    /// eps_loss : float, default=`MACH_EPS^(1/2)`
+    ///     The minimum change in exponential moving average loss which will increase the patience counter.
+    /// patience : int, default=1
+    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///
+    /// Nelder-Mead
+    /// ===========
+    /// alpha : float, default=1.0
+    ///     The reflection coefficient.
+    /// beta : float, default=2.0
+    ///     The expansion coefficient.
+    /// gamma : float, default=0.5
+    ///     The contraction coefficient.
+    /// delta : float, default=0.5
+    ///     The shrink coefficient.
+    /// adaptive : bool, default=False
+    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    /// expansion_method : {"greedyminimization", "greedyexpansion"}
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
+    ///     The method used to generate the initial simplex.
+    /// orthogonal_multiplier : float, default=1.05
+    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
+    /// orthogonal_zero_step : float, default=0.00025
+    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
+    /// simplex_size : float, default=1.0
+    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
+    /// simplex : list of list of floats
+    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
+    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    /// eps_f : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the f_terminator method.
+    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    /// eps_x : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the x_terminator method.
+    ///
+    /// Particle Swarm Optimization (PSO)
+    /// =================================
+    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
+    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
+    /// swarm_position_bounds : list of tuple of floats or None
+    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm_size : int
+    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm : list of list of floats
+    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
+    /// swarm_topology : {"global", "ring"}
+    ///     The topology connecting particles in the swarm.
+    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
+    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
+    /// swarm_boundary_method : {"inf", "shr"}
+    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
+    /// use_transform : bool, default=False
+    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
+    /// swarm_velocity_bounds : list of tuple of floats or None, optional
+    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
+    /// omega : float, default=0.8
+    ///     The inertial weight.
+    /// c1 : float, default = 0.1
+    ///     The cognitive weight.
+    /// c2 : float, default = 0.1
+    ///     The social weight.
+    ///
+    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc(
+    fn minimize<'py>(
         &self,
-        p0: Vec<Vec<Float>>,
-        n_steps: usize,
-        method: Option<Bound<'_, PyAny>>,
+        py: Python<'py>,
+        p0: Vec<Float>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
         observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
         debug: bool,
-        verbose: bool,
-        seed: u64,
-        threads: Option<usize>,
-    ) -> PyResult<PyEnsemble> {
-        let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
-        let mut rng = Rng::new();
-        rng.seed(seed);
-        let options =
-            py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
-        let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
-        Ok(PyEnsemble(ensemble))
+        threads: usize,
+    ) -> PyResult<PyMinimizationSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self
+            .0
+            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        Ok(PyMinimizationSummary(result))
     }
 
-    /// Run a Particle Swarm Optimization algorithm on the free parameters of the NLL's model
+    /// Run an MCMC algorithm on the free parameters of the NLL's model
     ///
-    /// This method can be used minimize the underlying negative log-likelihood given
-    /// an initial swarm position.
+    /// This method can be used to sample the underlying log-likelihood given an initial
+    /// position for each walker `p0`.
     ///
     /// Parameters
     /// ----------
-    /// swarm : Swarm
-    ///     The initial position of the swarm
-    /// method : {PSO}, optional
-    ///     The swarm algorithm to use (defaults to PSO)
-    /// observers : SwarmObserver or list of SwarmObservers, optional
-    ///     Callback functions which are applied after every swarm step
+    /// p0 : array_like
+    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'aies', 'ess'}
+    ///     The MCMC algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the MCMC algorithm (see notes)
+    /// observers : MCMCObserver or list of MCMCObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MCMCTerminator or list of MCMCTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
     /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// seed : int,
-    ///     The seed for the random number generator
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
     ///
     /// Returns
     /// -------
-    /// Swarm
-    ///     The swarm at its final position
+    /// MCMCSummary
+    ///     The status of the MCMC algorithm at termination
     ///
     /// Raises
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
     ///
-    #[pyo3(signature = (swarm, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    /// Notes
+    /// -----
+    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
+    /// algorithm has different settings.
+    ///
+    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// =============================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
+    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
+    ///     parameter may be provided to specify properties of moves which support it. For the AIES
+    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
+    ///     (2.0 by default).
+    ///
+    /// ESS (Ensemble Slice Sampler) [2]_
+    /// =================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
+    ///     should be used relative to the sum of all frequencies given across all moves. An
+    ///     optional middle dictionary parameter may be provided to specify properties of moves
+    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
+    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
+    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
+    ///     'n_components' parameter (5 by default) which represents the number of mixture
+    ///     components to use for clustering (should be larger than the expected number of modes).
+    /// n_adaptive : int, default=0
+    ///     The number of adaptive moves to perform at the start of sampling
+    /// max_steps : int, default=10000
+    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
+    /// mu : float, default = 1.0
+    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    ///
+    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn swarm(
+    fn mcmc<'py>(
         &self,
-        swarm: PySwarm,
-        method: Option<Bound<'_, PyAny>>,
+        py: Python<'py>,
+        p0: Vec<Vec<Float>>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
         observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
         debug: bool,
-        verbose: bool,
-        seed: u64,
-        threads: Option<usize>,
-    ) -> PyResult<PySwarm> {
-        let mut rng = Rng::new();
-        rng.seed(seed);
-        let options =
-            py_parse_swarm_options(method, observers, debug, verbose, threads, rng.clone())?;
-        let swarm = self.0.swarm(swarm.0, Some(options), rng)?;
-        Ok(PySwarm(swarm))
+        threads: usize,
+    ) -> PyResult<PyMCMCSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &full_settings,
+        )?)?;
+        Ok(PyMCMCSummary(result))
+    }
+}
+
+/// A stochastic (extended) negative log-likelihood evaluator
+///
+/// This evaluator operates on a subset of the data, which may improve performance for large
+/// datasets at the cost of adding noise to the likelihood.
+///
+/// Attributes
+/// ----------
+/// nll: NLL
+///     The NLL term containing the underlying model and evaluators
+///
+/// Notes
+/// -----
+/// See the `NLL.to_stochastic` method for details.
+#[cfg(feature = "python")]
+#[pyclass(name = "StochasticNLL", module = "laddu")]
+#[derive(Clone)]
+pub struct PyStochasticNLL(pub StochasticNLL);
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl PyStochasticNLL {
+    #[getter]
+    fn nll(&self) -> PyNLL {
+        PyNLL(Box::new(self.0.nll.clone()))
+    }
+    /// Minimize the StochasticNLL with respect to the free parameters in the model
+    ///
+    /// This method "runs the fit". Given an initial position `p0`, this
+    /// method performs a minimization over the negative log-likelihood, optimizing the model
+    /// over the stored signal data and Monte Carlo.
+    ///
+    /// Parameters
+    /// ----------
+    /// p0 : array_like
+    ///     The initial parameters at the start of optimization
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    ///     The minimization algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the minimization algorithm (see notes)
+    /// observers : MinimizerObserver or list of MinimizerObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
+    /// debug : bool, default=False
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// MinimizationSummary
+    ///     The status of the minimization algorithm at termination
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool
+    ///
+    /// Notes
+    /// -----
+    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
+    /// algorithm has different settings:
+    ///
+    /// L-BFGS-B
+    /// ========
+    /// m : int, default=10
+    ///     The number of saved corrections to the approximated Hessian.
+    /// skip_hessian : bool, default=False
+    ///     If True, the exact Hessian will not be calculated.
+    /// line_search : dict
+    ///     Settings for the line search (see next section).
+    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    ///     The tolerance for stopping based on the change in function value.
+    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    ///     The tolerance for stopping based on the change in function gradient.
+    /// eps_norm_g : float : default=1e-5
+    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
+    ///
+    /// Line Search
+    /// ===========
+    /// method : {"morethuente", "hagerzhang"}
+    ///     The line search method to use.
+    /// max_iterations : int, default=100
+    ///     The maximum number of line search iterations.
+    /// c1 : float, default=1e-4
+    ///     The first Wolfe condition constant (More-Thuente only).
+    /// c2 : float, default=0.9
+    ///     The second Wolfe condition constant (More-Thuente only).
+    /// max_zoom : int, default=100
+    ///     The maximum number of zoom steps (More-Thuente only).
+    /// delta : float, default=0.1
+    ///     The first Wolfe condition constant (Hager-Zhang only).
+    /// sigma : float, default=0.9
+    ///     The second Wolfe condition constant (Hager-Zhang only).
+    /// epsilon : float, default=`MACH_EPS^(1/3)`
+    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
+    /// theta : float, default=0.5
+    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
+    /// gamma : float, default=0.66
+    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
+    /// max_bisects : int, default=50
+    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///
+    /// Adam
+    /// ====
+    /// beta_c : float, default=0.9
+    ///     The slope of the exponential moving average used to terminate the algorithm.
+    /// eps_loss : float, default=`MACH_EPS^(1/2)`
+    ///     The minimum change in exponential moving average loss which will increase the patience counter.
+    /// patience : int, default=1
+    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///
+    /// Nelder-Mead
+    /// ===========
+    /// alpha : float, default=1.0
+    ///     The reflection coefficient.
+    /// beta : float, default=2.0
+    ///     The expansion coefficient.
+    /// gamma : float, default=0.5
+    ///     The contraction coefficient.
+    /// delta : float, default=0.5
+    ///     The shrink coefficient.
+    /// adaptive : bool, default=False
+    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    /// expansion_method : {"greedyminimization", "greedyexpansion"}
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
+    ///     The method used to generate the initial simplex.
+    /// orthogonal_multiplier : float, default=1.05
+    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
+    /// orthogonal_zero_step : float, default=0.00025
+    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
+    /// simplex_size : float, default=1.0
+    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
+    /// simplex : list of list of floats
+    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
+    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    /// eps_f : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the f_terminator method.
+    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    /// eps_x : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the x_terminator method.
+    ///
+    /// Particle Swarm Optimization (PSO)
+    /// =================================
+    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
+    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
+    /// swarm_position_bounds : list of tuple of floats or None
+    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm_size : int
+    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm : list of list of floats
+    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
+    /// swarm_topology : {"global", "ring"}
+    ///     The topology connecting particles in the swarm.
+    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
+    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
+    /// swarm_boundary_method : {"inf", "shr"}
+    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
+    /// use_transform : bool, default=False
+    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
+    /// swarm_velocity_bounds : list of tuple of floats or None, optional
+    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
+    /// omega : float, default=0.8
+    ///     The inertial weight.
+    /// c1 : float, default = 0.1
+    ///     The cognitive weight.
+    /// c2 : float, default = 0.1
+    ///     The social weight.
+    ///
+    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[allow(clippy::too_many_arguments)]
+    fn minimize<'py>(
+        &self,
+        py: Python<'py>,
+        p0: Vec<Float>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
+        observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
+        debug: bool,
+        threads: usize,
+    ) -> PyResult<PyMinimizationSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self
+            .0
+            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        Ok(PyMinimizationSummary(result))
+    }
+    /// Run an MCMC algorithm on the free parameters of the StochasticNLL's model
+    ///
+    /// This method can be used to sample the underlying log-likelihood given an initial
+    /// position for each walker `p0`.
+    ///
+    /// Parameters
+    /// ----------
+    /// p0 : array_like
+    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'aies', 'ess'}
+    ///     The MCMC algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the MCMC algorithm (see notes)
+    /// observers : MCMCObserver or list of MCMCObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MCMCTerminator or list of MCMCTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
+    /// debug : bool, default=False
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// MCMCSummary
+    ///     The status of the MCMC algorithm at termination
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool
+    ///
+    /// Notes
+    /// -----
+    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
+    /// algorithm has different settings.
+    ///
+    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// =============================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
+    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
+    ///     parameter may be provided to specify properties of moves which support it. For the AIES
+    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
+    ///     (2.0 by default).
+    ///
+    /// ESS (Ensemble Slice Sampler) [2]_
+    /// =================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
+    ///     should be used relative to the sum of all frequencies given across all moves. An
+    ///     optional middle dictionary parameter may be provided to specify properties of moves
+    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
+    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
+    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
+    ///     'n_components' parameter (5 by default) which represents the number of mixture
+    ///     components to use for clustering (should be larger than the expected number of modes).
+    /// n_adaptive : int, default=0
+    ///     The number of adaptive moves to perform at the start of sampling
+    /// max_steps : int, default=10000
+    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
+    /// mu : float, default = 1.0
+    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    ///
+    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[allow(clippy::too_many_arguments)]
+    fn mcmc<'py>(
+        &self,
+        py: Python<'py>,
+        p0: Vec<Vec<Float>>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
+        observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
+        debug: bool,
+        threads: usize,
+    ) -> PyResult<PyMCMCSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &full_settings,
+        )?)?;
+        Ok(PyMCMCSummary(result))
     }
 }
 
@@ -2722,84 +3104,26 @@ impl PyLikelihoodExpression {
 }
 
 /// A structure to evaluate and minimize combinations of [`LikelihoodTerm`]s.
+#[derive(Clone)]
 pub struct LikelihoodEvaluator {
     likelihood_manager: LikelihoodManager,
     likelihood_expression: LikelihoodExpression,
 }
 
-#[cfg(feature = "rayon")]
-impl Function<ThreadPool, LadduError> for LikelihoodEvaluator {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<Float, LadduError> {
-        thread_pool.install(|| self.evaluate(parameters))
+impl LikelihoodTerm for LikelihoodEvaluator {
+    fn update(&self) {
+        self.likelihood_manager
+            .terms
+            .iter()
+            .for_each(|term| term.update())
     }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
-        thread_pool.install(|| self.evaluate_gradient(parameters))
-    }
-}
-
-#[cfg(not(feature = "rayon"))]
-impl Function<(), LadduError> for LikelihoodEvaluator {
-    fn evaluate(&self, parameters: &[Float], _user_data: &mut ()) -> Result<Float, LadduError> {
-        self.evaluate(parameters)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        _user_data: &mut (),
-    ) -> Result<DVector<Float>, LadduError> {
-        self.evaluate_gradient(parameters)
-    }
-}
-
-pub(crate) struct NegativeLikelihoodEvaluator<'a>(&'a LikelihoodEvaluator);
-#[cfg(feature = "rayon")]
-impl Function<ThreadPool, LadduError> for NegativeLikelihoodEvaluator<'_> {
-    fn evaluate(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<Float, LadduError> {
-        Function::evaluate(self.0, parameters, thread_pool).map(|res| -res)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        thread_pool: &mut ThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
-        Function::gradient(self.0, parameters, thread_pool).map(|res| -res)
-    }
-}
-
-#[cfg(not(feature = "rayon"))]
-impl Function<(), LadduError> for NegativeLikelihoodEvaluator<'_> {
-    fn evaluate(&self, parameters: &[Float], user_data: &mut ()) -> Result<Float, LadduError> {
-        Function::evaluate(self.0, parameters, user_data).map(|res| -res)
-    }
-    fn gradient(
-        &self,
-        parameters: &[Float],
-        user_data: &mut (),
-    ) -> Result<DVector<Float>, LadduError> {
-        Function::gradient(self.0, parameters, user_data).map(|res| -res)
-    }
-}
-
-impl LikelihoodEvaluator {
     /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
-    pub fn parameters(&self) -> Vec<String> {
+    fn parameters(&self) -> Vec<String> {
         self.likelihood_manager.parameters()
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
-    pub fn evaluate(&self, parameters: &[Float]) -> Result<Float, LadduError> {
+    fn evaluate(&self, parameters: &[Float]) -> Float {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
             .param_counts
@@ -2824,12 +3148,12 @@ impl LikelihoodEvaluator {
                 .map(|(term, buffer)| term.evaluate(buffer))
                 .collect(),
         );
-        Ok(self.likelihood_expression.evaluate(&likelihood_values))
+        self.likelihood_expression.evaluate(&likelihood_values)
     }
 
     /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
-    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Result<DVector<Float>, LadduError> {
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let mut param_buffers: Vec<Vec<Float>> = self
             .likelihood_manager
             .param_counts
@@ -2871,131 +3195,8 @@ impl LikelihoodEvaluator {
             }
         }
         let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        Ok(self
-            .likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients))
-    }
-
-    /// A function that can be called to minimize the sum/product of the [`LikelihoodTerm`]s
-    /// contained by this [`LikelihoodEvaluator`].
-    ///
-    /// See [`NLL::minimize`] for more details.
-    pub fn minimize(
-        &self,
-        p0: &[Float],
-        bounds: Option<Vec<(Float, Float)>>,
-        options: Option<MinimizerOptions>,
-    ) -> Result<Status, LadduError> {
-        let options = options.unwrap_or_default();
-        let mut m = Minimizer::new(options.algorithm, self.parameters().len())
-            .with_max_steps(options.max_steps);
-        if let Some(bounds) = bounds {
-            m = m.with_bounds(bounds);
-        }
-        for observer in options.observers {
-            m = m.with_observer(observer)
-        }
-        #[cfg(feature = "rayon")]
-        {
-            m.minimize(
-                self,
-                p0,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.minimize(
-                self,
-                p0,
-                &mut (),
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.status)
-    }
-
-    /// A function that can be called to perform Markov Chain Monte Carlo sampling
-    /// of the sum/product of the [`LikelihoodTerm`]s
-    /// contained by this [`LikelihoodEvaluator`].
-    ///
-    /// See [`NLL::mcmc`] for more details.
-    pub fn mcmc<T: AsRef<[DVector<Float>]>>(
-        &self,
-        p0: T,
-        n_steps: usize,
-        options: Option<MCMCOptions>,
-        rng: Rng,
-    ) -> Result<Ensemble, LadduError> {
-        let options = options.unwrap_or(MCMCOptions::default_with_rng(rng));
-        let mut m = Sampler::new(options.algorithm, p0.as_ref().to_vec());
-        for observer in options.observers {
-            m = m.with_observer(observer);
-        }
-        let func = NegativeLikelihoodEvaluator(self);
-        #[cfg(feature = "rayon")]
-        {
-            m.sample(
-                &func,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                n_steps,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.sample(
-                &func,
-                &mut (),
-                n_steps,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.ensemble)
-    }
-    /// A function that can be called to perform Particle Swarm Optimization
-    /// of the sum/product of the [`LikelihoodTerm`]s
-    /// contained by this [`LikelihoodEvaluator`].
-    ///
-    /// See [`NLL::swarm`] for more details.
-    pub fn swarm(
-        &self,
-        swarm: Swarm,
-        options: Option<SwarmOptions>,
-        rng: Rng,
-    ) -> Result<Swarm, LadduError> {
-        let options = options.unwrap_or(SwarmOptions::default_with_rng(rng));
-        let mut m = SwarmMinimizer::new(options.algorithm, swarm);
-        for observer in options.observers {
-            m = m.with_observer(observer);
-        }
-        #[cfg(feature = "rayon")]
-        {
-            m.minimize(
-                self,
-                &mut ThreadPoolBuilder::new()
-                    .num_threads(options.threads)
-                    .build()
-                    .map_err(LadduError::from)?,
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            m.minimize(
-                self,
-                &mut (),
-                ganesh::abort_signal::CtrlCAbortSignal::new().boxed(),
-            )?;
-        }
-        Ok(m.swarm)
+        self.likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients)
     }
 }
 
@@ -3043,14 +3244,14 @@ impl PyLikelihoodEvaluator {
         #[cfg(feature = "rayon")]
         {
             Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or_else(num_cpus::get))
+                .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters))?)
+                .install(|| self.0.evaluate(&parameters)))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(self.0.evaluate(&parameters)?)
+            Ok(self.0.evaluate(&parameters))
         }
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
@@ -3086,10 +3287,10 @@ impl PyLikelihoodEvaluator {
             Ok(PyArray1::from_slice(
                 py,
                 ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))?
+                    .install(|| self.0.evaluate_gradient(&parameters))
                     .as_slice(),
             ))
         }
@@ -3097,127 +3298,41 @@ impl PyLikelihoodEvaluator {
         {
             Ok(PyArray1::from_slice(
                 py,
-                self.0.evaluate_gradient(&parameters)?.as_slice(),
+                self.0.evaluate_gradient(&parameters).as_slice(),
             ))
         }
     }
-
-    /// Minimize all LikelihoodTerms with respect to the free parameters in the model
+    /// Minimize the LikelihoodTerm with respect to the free parameters in the model
     ///
-    /// This method "runs the fit". Given an initial position `p0` and optional `bounds`, this
-    /// method performs a minimization over the total negative log-likelihood, optimizing the model
+    /// This method "runs the fit". Given an initial position `p0`, this
+    /// method performs a minimization over the likelihood term, optimizing the model
     /// over the stored signal data and Monte Carlo.
     ///
     /// Parameters
     /// ----------
     /// p0 : array_like
     ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float, optional
-    ///     A list of lower and upper bound pairs for each parameter (use ``None`` for no bound)
-    /// method : {LBFGSB, NelderMead}, optional
-    ///     The minimization algorithm to use (defaults to LBFGSB)
-    /// observers : Observer or list of Observers, optional
-    ///     Callback functions which are applied after every algorithm step
-    /// max_steps : int, default=4000
-    ///     The maximum number of algorithm steps to perform
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    ///     The minimization algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the minimization algorithm (see notes)
+    /// observers : MinimizerObserver or list of MinimizerObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
     /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// show_step : bool, default=True
-    ///     Include step number in verbose output
-    /// show_x : bool, default=True
-    ///     Include current best position in verbose output
-    /// show_fx : bool, default=True
-    ///     Include current best NLL in verbose output
-    /// skip_hessian : bool, default = False
-    ///     Skip calculation of the Hessian matrix (and parameter errors) at the termination of the
-    ///     algorithm (use this when uncertainties are not needed/important)
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
     ///
     /// Returns
     /// -------
-    /// Status
+    /// MinimizationSummary
     ///     The status of the minimization algorithm at termination
-    ///
-    /// Raises
-    /// ------
-    /// Exception
-    ///     If there was an error building the thread pool
-    ///
-    #[pyo3(signature = (p0, *, bounds=None, method=None, observers=None, max_steps=4000, debug=false, verbose=false, show_step=true, show_x=true, show_fx=true, skip_hessian=false, threads=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn minimize(
-        &self,
-        p0: Vec<Float>,
-        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
-        method: Option<Bound<'_, PyAny>>,
-        observers: Option<Bound<'_, PyAny>>,
-        max_steps: usize,
-        debug: bool,
-        verbose: bool,
-        show_step: bool,
-        show_x: bool,
-        show_fx: bool,
-        skip_hessian: bool,
-        threads: Option<usize>,
-    ) -> PyResult<PyStatus> {
-        let bounds = bounds.map(|bounds_vec| {
-            bounds_vec
-                .iter()
-                .map(|(opt_lb, opt_ub)| {
-                    (
-                        opt_lb.unwrap_or(Float::NEG_INFINITY),
-                        opt_ub.unwrap_or(Float::INFINITY),
-                    )
-                })
-                .collect()
-        });
-        let options = py_parse_minimizer_options(
-            method,
-            observers,
-            max_steps,
-            debug,
-            verbose,
-            show_step,
-            show_x,
-            show_fx,
-            skip_hessian,
-            threads,
-        )?;
-        let status = self.0.minimize(&p0, bounds, Some(options))?;
-        Ok(PyStatus(status))
-    }
-
-    /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
-    ///
-    /// This method can be used to sample the underlying log-likelihood given an initial
-    /// position for each walker `p0`.
-    ///
-    /// Parameters
-    /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// n_steps : int,
-    ///     The number of MCMC steps each walker should take
-    /// method : {ESS, AIES}, optional
-    ///     The MCMC algorithm to use (defaults to ESS)
-    /// observers : MCMCObserver or list of MCMCObservers, optional
-    ///     Callback functions which are applied after every sampling step
-    /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// seed : int,
-    ///     The seed for the random number generator
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
-    ///
-    /// Returns
-    /// -------
-    /// Ensemble
-    ///     The resulting ensemble of walkers
     ///
     /// Raises
     /// ------
@@ -3226,84 +3341,273 @@ impl PyLikelihoodEvaluator {
     ///
     /// Notes
     /// -----
-    /// The default algorithm is the ESS algorithm with a moveset of of 90% differential moves to
-    /// 10% gaussian moves.
+    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
+    /// algorithm has different settings:
     ///
-    /// Since MCMC methods are inclined to sample maxima rather than minima, the underlying
-    /// function sign is automatically flipped when calling this method.
+    /// L-BFGS-B
+    /// ========
+    /// m : int, default=10
+    ///     The number of saved corrections to the approximated Hessian.
+    /// skip_hessian : bool, default=False
+    ///     If True, the exact Hessian will not be calculated.
+    /// line_search : dict
+    ///     Settings for the line search (see next section).
+    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    ///     The tolerance for stopping based on the change in function value.
+    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    ///     The tolerance for stopping based on the change in function gradient.
+    /// eps_norm_g : float : default=1e-5
+    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
     ///
-    #[pyo3(signature = (p0, n_steps, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    /// Line Search
+    /// ===========
+    /// method : {"morethuente", "hagerzhang"}
+    ///     The line search method to use.
+    /// max_iterations : int, default=100
+    ///     The maximum number of line search iterations.
+    /// c1 : float, default=1e-4
+    ///     The first Wolfe condition constant (More-Thuente only).
+    /// c2 : float, default=0.9
+    ///     The second Wolfe condition constant (More-Thuente only).
+    /// max_zoom : int, default=100
+    ///     The maximum number of zoom steps (More-Thuente only).
+    /// delta : float, default=0.1
+    ///     The first Wolfe condition constant (Hager-Zhang only).
+    /// sigma : float, default=0.9
+    ///     The second Wolfe condition constant (Hager-Zhang only).
+    /// epsilon : float, default=`MACH_EPS^(1/3)`
+    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
+    /// theta : float, default=0.5
+    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
+    /// gamma : float, default=0.66
+    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
+    /// max_bisects : int, default=50
+    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///
+    /// Adam
+    /// ====
+    /// beta_c : float, default=0.9
+    ///     The slope of the exponential moving average used to terminate the algorithm.
+    /// eps_loss : float, default=`MACH_EPS^(1/2)`
+    ///     The minimum change in exponential moving average loss which will increase the patience counter.
+    /// patience : int, default=1
+    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///
+    /// Nelder-Mead
+    /// ===========
+    /// alpha : float, default=1.0
+    ///     The reflection coefficient.
+    /// beta : float, default=2.0
+    ///     The expansion coefficient.
+    /// gamma : float, default=0.5
+    ///     The contraction coefficient.
+    /// delta : float, default=0.5
+    ///     The shrink coefficient.
+    /// adaptive : bool, default=False
+    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    /// expansion_method : {"greedyminimization", "greedyexpansion"}
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
+    ///     The method used to generate the initial simplex.
+    /// orthogonal_multiplier : float, default=1.05
+    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
+    /// orthogonal_zero_step : float, default=0.00025
+    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
+    /// simplex_size : float, default=1.0
+    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
+    /// simplex : list of list of floats
+    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
+    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    /// eps_f : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the f_terminator method.
+    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    /// eps_x : float, default=`MACH_EPS^(1/4)`
+    ///     The tolerance for the x_terminator method.
+    ///
+    /// Particle Swarm Optimization (PSO)
+    /// =================================
+    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
+    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
+    /// swarm_position_bounds : list of tuple of floats or None
+    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm_size : int
+    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
+    /// swarm : list of list of floats
+    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
+    /// swarm_topology : {"global", "ring"}
+    ///     The topology connecting particles in the swarm.
+    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
+    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
+    /// swarm_boundary_method : {"inf", "shr"}
+    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
+    /// use_transform : bool, default=False
+    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
+    /// swarm_velocity_bounds : list of tuple of floats or None, optional
+    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
+    /// omega : float, default=0.8
+    ///     The inertial weight.
+    /// c1 : float, default = 0.1
+    ///     The cognitive weight.
+    /// c2 : float, default = 0.1
+    ///     The social weight.
+    ///
+    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc(
+    fn minimize<'py>(
         &self,
-        p0: Vec<Vec<Float>>,
-        n_steps: usize,
-        method: Option<Bound<'_, PyAny>>,
+        py: Python<'py>,
+        p0: Vec<Float>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
         observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
         debug: bool,
-        verbose: bool,
-        seed: u64,
-        threads: Option<usize>,
-    ) -> PyResult<PyEnsemble> {
-        let p0 = p0.into_iter().map(DVector::from_vec).collect::<Vec<_>>();
-        let mut rng = Rng::new();
-        rng.seed(seed);
-        let options =
-            py_parse_mcmc_options(method, observers, debug, verbose, threads, rng.clone())?;
-        let ensemble = self.0.mcmc(&p0, n_steps, Some(options), rng)?;
-        Ok(PyEnsemble(ensemble))
+        threads: usize,
+    ) -> PyResult<PyMinimizationSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self
+            .0
+            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        Ok(PyMinimizationSummary(result))
     }
-
-    /// Run a Particle Swarm Optimization algorithm on the free parameters of the LikelihoodTerm's model
+    /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
     ///
-    /// This method can be used minimize the underlying negative log-likelihood given
-    /// an initial swarm position.
+    /// This method can be used to sample the underlying likelihood term given an initial
+    /// position for each walker `p0`.
     ///
     /// Parameters
     /// ----------
-    /// swarm : Swarm
-    ///     The initial position of the swarm
-    /// method : {PSO}, optional
-    ///     The swarm algorithm to use (defaults to PSO)
-    /// observers : SwarmObserver or list of SwarmObservers, optional
-    ///     Callback functions which are applied after every swarm step
+    /// p0 : array_like
+    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
+    /// bounds : list of tuple of float or None, optional
+    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// method : {'aies', 'ess'}
+    ///     The MCMC algorithm to use
+    /// settings : dict, optional
+    ///     Settings for the MCMC algorithm (see notes)
+    /// observers : MCMCObserver or list of MCMCObserver, optional
+    ///     User-defined observers which are called at each step
+    /// terminators : MCMCTerminator or list of MCMCTerminator, optional
+    ///     User-defined terminators which are called at each step
+    /// max_steps : int, optional
+    ///     Set the maximum number of steps
     /// debug : bool, default=False
-    ///     Set to ``True`` to print out debugging information at each step
-    /// verbose : bool, default=False
-    ///     Set to ``True`` to print verbose information at each step
-    /// seed : int,
-    ///     The seed for the random number generator
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     Use a debug observer to print out debugging information at each step
+    /// threads : int, default=0
+    ///     The number of threads to use (setting this to 0 will use all available CPUs)
     ///
     /// Returns
     /// -------
-    /// Swarm
-    ///     The swarm at its final position
+    /// MCMCSummary
+    ///     The status of the MCMC algorithm at termination
     ///
     /// Raises
     /// ------
     /// Exception
     ///     If there was an error building the thread pool
     ///
-    #[pyo3(signature = (swarm, *, method=None, observers=None, debug=false, verbose=false, seed=0, threads=None))]
+    /// Notes
+    /// -----
+    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
+    /// algorithm has different settings.
+    ///
+    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// =============================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
+    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
+    ///     parameter may be provided to specify properties of moves which support it. For the AIES
+    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
+    ///     (2.0 by default).
+    ///
+    /// ESS (Ensemble Slice Sampler) [2]_
+    /// =================================
+    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
+    ///     The list of moves to use. The first element of the tuple is the name of the move
+    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
+    ///     should be used relative to the sum of all frequencies given across all moves. An
+    ///     optional middle dictionary parameter may be provided to specify properties of moves
+    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
+    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
+    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
+    ///     'n_components' parameter (5 by default) which represents the number of mixture
+    ///     components to use for clustering (should be larger than the expected number of modes).
+    /// n_adaptive : int, default=0
+    ///     The number of adaptive moves to perform at the start of sampling
+    /// max_steps : int, default=10000
+    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
+    /// mu : float, default = 1.0
+    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    ///
+    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    ///
+    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn swarm(
+    fn mcmc<'py>(
         &self,
-        swarm: PySwarm,
-        method: Option<Bound<'_, PyAny>>,
+        py: Python<'py>,
+        p0: Vec<Vec<Float>>,
+        bounds: Option<Vec<(Option<Float>, Option<Float>)>>,
+        method: String,
+        settings: Option<Bound<'py, PyDict>>,
         observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
         debug: bool,
-        verbose: bool,
-        seed: u64,
-        threads: Option<usize>,
-    ) -> PyResult<PySwarm> {
-        let mut rng = Rng::new();
-        rng.seed(seed);
-        let options =
-            py_parse_swarm_options(method, observers, debug, verbose, threads, rng.clone())?;
-        let swarm = self.0.swarm(swarm.0, Some(options), rng)?;
-        Ok(PySwarm(swarm))
+        threads: usize,
+    ) -> PyResult<PyMCMCSummary> {
+        let full_settings = PyDict::new(py);
+        if let Some(bounds) = bounds {
+            full_settings.set_item("bounds", bounds)?;
+        }
+        full_settings.set_item("method", method)?;
+        if let Some(observers) = observers {
+            full_settings.set_item("observers", observers)?;
+        }
+        if let Some(terminators) = terminators {
+            full_settings.set_item("terminators", terminators)?;
+        }
+        if let Some(max_steps) = max_steps {
+            full_settings.set_item("max_steps", max_steps)?;
+        }
+        full_settings.set_item("debug", debug)?;
+        full_settings.set_item("threads", threads)?;
+        if let Some(settings) = settings {
+            full_settings.set_item("settings", settings)?;
+        }
+        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &full_settings,
+        )?)?;
+        Ok(PyMCMCSummary(result))
     }
 }
 

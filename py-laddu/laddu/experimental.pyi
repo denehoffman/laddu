@@ -21,4 +21,5 @@ def Regularizer(
     weights: npt.NDArray | None = None,
 ) -> LikelihoodTerm: ...
 
+
 __all__ = ['BinnedGuideTerm', 'Regularizer']

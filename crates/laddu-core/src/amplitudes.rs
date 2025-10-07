@@ -808,7 +808,7 @@ impl Evaluator {
         let (counts, displs, locals) = self
             .dataset
             .get_counts_displs_locals_from_indices(indices, world);
-        let local_evaluation = self.evaluate_batch_local(parameters, locals);
+        let local_evaluation = self.evaluate_batch_local(parameters, &locals);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
@@ -1107,7 +1107,7 @@ impl Evaluator {
             .dataset
             .get_flattened_counts_displs_locals_from_indices(indices, parameters.len(), world);
         let flattened_local_evaluation = self
-            .evaluate_gradient_batch_local(parameters, locals)
+            .evaluate_gradient_batch_local(parameters, &locals)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
             .collect::<Vec<Complex<Float>>>();
@@ -1142,6 +1142,7 @@ impl Evaluator {
     }
 }
 
+/// A testing [`Amplitude`].
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TestAmplitude {
     name: String,
@@ -1152,6 +1153,7 @@ pub struct TestAmplitude {
 }
 
 impl TestAmplitude {
+    /// Create a new testing [`Amplitude`].
     pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
         Self {
             name: name.to_string(),
@@ -1200,7 +1202,7 @@ mod tests {
     use crate::{
         data::Event,
         resources::{Cache, ParameterID, Parameters, Resources},
-        Complex, DVector, Float, LadduError,
+        Float, LadduError,
     };
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};

@@ -8,14 +8,15 @@ use laddu_core::{
         functions::{blatt_weisskopf, breakup_momentum},
         variables::{Mass, Variable},
     },
-    Complex, DVector, Float, LadduError, PI,
+    Float, LadduError, PI,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyAmplitude, PyParameterLike},
     utils::variables::PyMass,
 };
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

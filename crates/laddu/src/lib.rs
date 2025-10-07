@@ -53,11 +53,12 @@
 //! ```rust
 //! use laddu::{
 //!    ParameterLike, Event, Cache, Resources, Mass,
-//!    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+//!    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID,
 //! };
 //! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 //! use laddu::{Deserialize, Serialize, typetag};
+//! use num::Complex;
 //!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
@@ -132,11 +133,12 @@
 //! ```rust
 //! # use laddu::{
 //! #    ParameterLike, Event, Cache, Resources,
-//! #    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+//! #    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID,
 //! # };
 //! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 //! # use laddu::{Deserialize, Serialize, typetag};
+//! # use num::Complex;
 //!
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
@@ -332,11 +334,8 @@ pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::Complex;
-pub use laddu_core::DVector;
 pub use laddu_core::Float;
 pub use laddu_core::LadduError;
-pub use laddu_core::Status;
 pub use laddu_core::PI;
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};

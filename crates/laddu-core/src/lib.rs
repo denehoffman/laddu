@@ -4,8 +4,6 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 #![allow(clippy::excessive_precision)]
 
-use ganesh::swarms::{Particle, SwarmPositionInitializer};
-use ganesh::{Point, Swarm};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -280,11 +278,6 @@ pub use amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 
-// Re-exports
-pub use ganesh::{Bound, Ensemble, Status};
-pub use nalgebra::DVector;
-pub use num::Complex;
-
 /// A floating-point number type (defaults to [`f64`], see `f32` feature).
 #[cfg(not(feature = "f32"))]
 pub type Float = f64;
@@ -429,34 +422,34 @@ pub trait ReadWrite: Serialize + DeserializeOwned {
     }
 }
 
-impl ReadWrite for Status {
-    fn create_null() -> Self {
-        Status::default()
-    }
-}
-impl ReadWrite for Ensemble {
-    fn create_null() -> Self {
-        Ensemble::new(Vec::default())
-    }
-}
-impl ReadWrite for Point {
-    fn create_null() -> Self {
-        Point::default()
-    }
-}
-impl ReadWrite for Particle {
-    fn create_null() -> Self {
-        Particle::default()
-    }
-}
-impl ReadWrite for Swarm {
-    fn create_null() -> Self {
-        Swarm::new(SwarmPositionInitializer::Zero {
-            n_particles: 0,
-            n_dimensions: 0,
-        })
-    }
-}
+// impl ReadWrite for Status {
+//     fn create_null() -> Self {
+//         Status::default()
+//     }
+// }
+// impl ReadWrite for Ensemble {
+//     fn create_null() -> Self {
+//         Ensemble::new(Vec::default())
+//     }
+// }
+// impl ReadWrite for Point {
+//     fn create_null() -> Self {
+//         Point::default()
+//     }
+// }
+// impl ReadWrite for Particle {
+//     fn create_null() -> Self {
+//         Particle::default()
+//     }
+// }
+// impl ReadWrite for Swarm {
+//     fn create_null() -> Self {
+//         Swarm::new(SwarmPositionInitializer::Zero {
+//             n_particles: 0,
+//             n_dimensions: 0,
+//         })
+//     }
+// }
 impl ReadWrite for Model {
     fn create_null() -> Self {
         Model {

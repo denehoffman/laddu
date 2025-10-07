@@ -2,14 +2,15 @@ use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::Event,
     resources::{Cache, ParameterID, Parameters, Resources},
-    Complex, DVector, Float, LadduError,
+    Float, LadduError,
 };
-use serde::{Deserialize, Serialize};
-
 #[cfg(feature = "python")]
 use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// A scalar-valued [`Amplitude`] which just contains a single parameter as its value.
 #[derive(Clone, Serialize, Deserialize)]

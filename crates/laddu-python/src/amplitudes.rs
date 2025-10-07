@@ -5,8 +5,9 @@ use laddu_core::{
         ParameterLike, TestAmplitude,
     },
     traits::ReadWrite,
-    Complex, Float, LadduError,
+    Float, LadduError,
 };
+use num::Complex;
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,

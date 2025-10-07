@@ -1,25 +1,22 @@
-use nalgebra::SVector;
-use nalgebra::{matrix, vector};
-use serde::{Deserialize, Serialize};
-use std::array;
-
+use super::FixedKMatrix;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::Event,
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Complex, DVector, Float, LadduError,
+    Float, LadduError,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyAmplitude, PyParameterLike},
     utils::variables::PyMass,
 };
+use nalgebra::{matrix, vector, DVector, SVector};
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-
-use super::FixedKMatrix;
+use serde::{Deserialize, Serialize};
+use std::array;
 
 /// A K-matrix parameterization for the $`\pi_1`$ hybrid candidate described by Kopf et al.[^1] with fixed couplings and mass poles
 /// (free production couplings only).

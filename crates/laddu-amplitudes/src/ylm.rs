@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID},
     data::Event,
@@ -8,13 +6,15 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Complex, DVector, Float, LadduError,
+    Float, LadduError,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// An [`Amplitude`] for the spherical harmonic function $`Y_\ell^m(\theta, \phi)`$.
 #[derive(Clone, Serialize, Deserialize)]
@@ -89,7 +89,7 @@ impl Amplitude for Ylm {
 ///     The orbital moment (:math:`-l \leq m \leq l`)
 /// angles : laddu.Angles
 ///     The spherical angles to use in the calculation
-///     
+///
 /// Returns
 /// -------
 /// laddu.Amplitude

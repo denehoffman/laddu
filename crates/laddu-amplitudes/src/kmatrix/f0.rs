@@ -1,25 +1,22 @@
-use nalgebra::{matrix, vector};
-use nalgebra::{SMatrix, SVector};
-use serde::{Deserialize, Serialize};
-use std::array;
-
+use super::{AdlerZero, FixedKMatrix};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::Event,
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Complex, DVector, Float, LadduError,
+    Float, LadduError,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyAmplitude, PyParameterLike},
     utils::variables::PyMass,
 };
+use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-
-use super::{AdlerZero, FixedKMatrix};
+use serde::{Deserialize, Serialize};
+use std::array;
 
 const G_F0: SMatrix<Float, 5, 5> = matrix![
      0.74987,  0.06401, -0.23417,  0.01270, -0.14242;
