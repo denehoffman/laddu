@@ -7,6 +7,7 @@ from laddu.laddu import (
     PolAngle,
     Polarization,
     PolMagnitude,
+    VariableExpression,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     'PolAngle',
     'PolMagnitude',
     'Polarization',
+    'VariableExpression',
 ]

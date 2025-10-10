@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3](https://github.com/denehoffman/laddu/compare/laddu-v0.9.2...laddu-v0.9.3) - 2025-08-08
+
+### Added
+
+- add VariableExpressions to handle Dataset filtering
+
+### Other
+
+- fix rounding error in filter test
+
+## [0.9.2](https://github.com/denehoffman/laddu/compare/laddu-v0.9.1...laddu-v0.9.2) - 2025-07-23
+
+### Fixed
+
+- add more precision to covariance matrices to ensure positive definiteness
+
 ## [0.9.1](https://github.com/denehoffman/laddu/compare/laddu-v0.9.0...laddu-v0.9.1) - 2025-07-23
 
 ### Other
