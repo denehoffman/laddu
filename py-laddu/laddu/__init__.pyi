@@ -58,9 +58,7 @@ from laddu.utils.vectors import Vec3, Vec4
 
 __version__: str
 
-
 def available_parallelism() -> int: ...
-
 
 __all__ = [
     'NLL',

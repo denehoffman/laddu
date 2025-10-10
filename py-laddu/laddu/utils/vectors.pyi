@@ -5,7 +5,6 @@ import numpy.typing as npt
 
 __all__ = ['Vec3', 'Vec4']
 
-
 class Vec3:
     """A 3-momentum vector formed from Cartesian components.
 
@@ -82,7 +81,6 @@ class Vec3:
     def from_array(array: Sequence) -> Vec3: ...
     def with_mass(self, mass: float) -> Vec4: ...
     def with_energy(self, mass: float) -> Vec4: ...
-
 
 class Vec4:
     mag: float

@@ -30,11 +30,11 @@ def test_piecewise_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseScalar(
-        "test_scalar",
+        'test_scalar',
         v,
         3,
         (0.0, 1.0),
-        [parameter("test_param0"), parameter("test_param1"), parameter("test_param2")],
+        [parameter('test_param0'), parameter('test_param1'), parameter('test_param2')],
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -49,11 +49,11 @@ def test_piecewise_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseScalar(
-        "test_scalar",
+        'test_scalar',
         v,
         3,
         (0.0, 1.0),
-        [parameter("test_param0"), parameter("test_param1"), parameter("test_param2")],
+        [parameter('test_param0'), parameter('test_param1'), parameter('test_param2')],
     )
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -73,14 +73,14 @@ def test_piecewise_complex_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseComplexScalar(
-        "test_complex",
+        'test_complex',
         v,
         3,
         (0.0, 1.0),
         [
-            (parameter("re_param0"), parameter("im_param0")),
-            (parameter("re_param1"), parameter("im_param1")),
-            (parameter("re_param2"), parameter("im_param2")),
+            (parameter('re_param0'), parameter('im_param0')),
+            (parameter('re_param1'), parameter('im_param1')),
+            (parameter('re_param2'), parameter('im_param2')),
         ],
     )
     aid = manager.register(amp)
@@ -96,14 +96,14 @@ def test_piecewise_complex_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewiseComplexScalar(
-        "test_complex",
+        'test_complex',
         v,
         3,
         (0.0, 1.0),
         [
-            (parameter("re_param0"), parameter("im_param0")),
-            (parameter("re_param1"), parameter("im_param1")),
-            (parameter("re_param2"), parameter("im_param2")),
+            (parameter('re_param0'), parameter('im_param0')),
+            (parameter('re_param1'), parameter('im_param1')),
+            (parameter('re_param2'), parameter('im_param2')),
         ],
     )
 
@@ -131,14 +131,14 @@ def test_piecewise_polar_complex_scalar_evaluation() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewisePolarComplexScalar(
-        "test_polar",
+        'test_polar',
         v,
         3,
         (0.0, 1.0),
         [
-            (parameter("r_param0"), parameter("theta_param0")),
-            (parameter("r_param1"), parameter("theta_param1")),
-            (parameter("r_param2"), parameter("theta_param2")),
+            (parameter('r_param0'), parameter('theta_param0')),
+            (parameter('r_param1'), parameter('theta_param1')),
+            (parameter('r_param2'), parameter('theta_param2')),
         ],
     )
     aid = manager.register(amp)
@@ -147,7 +147,9 @@ def test_piecewise_polar_complex_scalar_evaluation() -> None:
     evaluator = model.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
-    result = evaluator.evaluate([1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta])
+    result = evaluator.evaluate(
+        [1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta]
+    )
     assert pytest.approx(result[0].real) == 2.1 * r * np.cos(2.2 * theta)
     assert pytest.approx(result[0].imag) == 2.1 * r * np.sin(2.2 * theta)
 
@@ -156,14 +158,14 @@ def test_piecewise_polar_complex_scalar_gradient() -> None:
     manager = Manager()
     v = Mass([2])
     amp = PiecewisePolarComplexScalar(
-        "test_polar",
+        'test_polar',
         v,
         3,
         (0.0, 1.0),
         [
-            (parameter("r_param0"), parameter("theta_param0")),
-            (parameter("r_param1"), parameter("theta_param1")),
-            (parameter("r_param2"), parameter("theta_param2")),
+            (parameter('r_param0'), parameter('theta_param0')),
+            (parameter('r_param1'), parameter('theta_param1')),
+            (parameter('r_param2'), parameter('theta_param2')),
         ],
     )
     aid = manager.register(amp)
@@ -172,7 +174,9 @@ def test_piecewise_polar_complex_scalar_gradient() -> None:
     evaluator = model.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
-    result = evaluator.evaluate_gradient([1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta])
+    result = evaluator.evaluate_gradient(
+        [1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta]
+    )
     assert pytest.approx(result[0][0].real) == 0.0
     assert pytest.approx(result[0][0].imag) == 0.0
     assert pytest.approx(result[0][1].real) == 0.0

@@ -32,13 +32,13 @@ def test_f0_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixF0(
-        "f0",
+        'f0',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
-            (parameter("p4"), parameter("p5")),
-            (parameter("p6"), parameter("p7")),
-            (parameter("p8"), parameter("p9")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
+            (parameter('p8'), parameter('p9')),
         ),
         1,
         res_mass,
@@ -56,13 +56,13 @@ def test_f0_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixF0(
-        "f0",
+        'f0',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
-            (parameter("p4"), parameter("p5")),
-            (parameter("p6"), parameter("p7")),
-            (parameter("p8"), parameter("p9")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
+            (parameter('p8'), parameter('p9')),
         ),
         1,
         res_mass,
@@ -71,7 +71,9 @@ def test_f0_gradient() -> None:
     dataset = make_test_dataset()
     model = manager.model(aid)
     evaluator = model.load(dataset)
-    result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    result = evaluator.evaluate_gradient(
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    )
     assert pytest.approx(result[0][0].real) == -0.0324912
     assert pytest.approx(result[0][0].imag) == -0.01107348
     assert pytest.approx(result[0][1].real) == pytest.approx(-result[0][0].imag)
@@ -98,12 +100,12 @@ def test_f2_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixF2(
-        "f2",
+        'f2',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
-            (parameter("p4"), parameter("p5")),
-            (parameter("p6"), parameter("p7")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
         ),
         1,
         res_mass,
@@ -121,12 +123,12 @@ def test_f2_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixF2(
-        "f2",
+        'f2',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
-            (parameter("p4"), parameter("p5")),
-            (parameter("p6"), parameter("p7")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
         ),
         1,
         res_mass,
@@ -158,10 +160,10 @@ def test_a0_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixA0(
-        "a0",
+        'a0',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -179,10 +181,10 @@ def test_a0_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixA0(
-        "a0",
+        'a0',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -206,10 +208,10 @@ def test_a2_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixA2(
-        "a2",
+        'a2',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -227,10 +229,10 @@ def test_a2_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixA2(
-        "a2",
+        'a2',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -254,10 +256,10 @@ def test_rho_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixRho(
-        "rho",
+        'rho',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -275,10 +277,10 @@ def test_rho_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixRho(
-        "rho",
+        'rho',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
         ),
         1,
         res_mass,
@@ -302,8 +304,8 @@ def test_pi1_evaluation() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixPi1(
-        "pi1",
-        ((parameter("p0"), parameter("p1")),),
+        'pi1',
+        ((parameter('p0'), parameter('p1')),),
         1,
         res_mass,
     )
@@ -320,8 +322,8 @@ def test_pi1_gradient() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     amp = KopfKMatrixPi1(
-        "pi1",
-        ((parameter("p0"), parameter("p1")),),
+        'pi1',
+        ((parameter('p0'), parameter('p1')),),
         1,
         res_mass,
     )

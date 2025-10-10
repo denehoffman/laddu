@@ -245,8 +245,12 @@ def test_amplitude_activation() -> None:
 
 def test_gradient() -> None:
     manager = Manager()
-    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
-    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
+    amp1 = ComplexScalar(
+        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+    )
+    amp2 = ComplexScalar(
+        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+    )
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     dataset = make_test_dataset()
@@ -432,8 +436,12 @@ def test_duplicate_amplitude_registration() -> None:
 
 def test_tree_printing() -> None:
     manager = Manager()
-    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
-    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
+    amp1 = ComplexScalar(
+        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+    )
+    amp2 = ComplexScalar(
+        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+    )
     aid1 = manager.register(amp1)
     aid2 = manager.register(amp2)
     expr = (

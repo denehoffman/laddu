@@ -30,29 +30,29 @@ def test_serde() -> None:
     manager = Manager()
     res_mass = Mass([2, 3])
     f0 = KopfKMatrixF0(
-        "f0",
+        'f0',
         (
-            (parameter("p0"), parameter("p1")),
-            (parameter("p2"), parameter("p3")),
-            (parameter("p4"), parameter("p5")),
-            (parameter("p6"), parameter("p7")),
-            (parameter("p8"), parameter("p9")),
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
+            (parameter('p8'), parameter('p9')),
         ),
         1,
         res_mass,
     )
     f2 = KopfKMatrixF2(
-        "f2",
+        'f2',
         (
-            (parameter("g0"), parameter("g1")),
-            (parameter("g2"), parameter("g3")),
-            (parameter("g4"), parameter("g5")),
-            (parameter("g6"), parameter("g7")),
+            (parameter('g0'), parameter('g1')),
+            (parameter('g2'), parameter('g3')),
+            (parameter('g4'), parameter('g5')),
+            (parameter('g6'), parameter('g7')),
         ),
         1,
         res_mass,
     )
-    s = Scalar("s", parameter("s"))
+    s = Scalar('s', parameter('s'))
     f0_aid = manager.register(f0)
     f2_aid = manager.register(f2)
     s_aid = manager.register(s)

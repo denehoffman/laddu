@@ -22,7 +22,9 @@ def make_test_dataset() -> Dataset:
 
 def test_bw_evaluation() -> None:
     manager = Manager()
-    amp = BreitWigner("bw", parameter("mass"), parameter("width"), 2, Mass([2]), Mass([3]), Mass([2, 3]))
+    amp = BreitWigner(
+        'bw', parameter('mass'), parameter('width'), 2, Mass([2]), Mass([3]), Mass([2, 3])
+    )
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -34,7 +36,9 @@ def test_bw_evaluation() -> None:
 
 def test_bw_gradient() -> None:
     manager = Manager()
-    amp = BreitWigner("bw", parameter("mass"), parameter("width"), 2, Mass([2]), Mass([3]), Mass([2, 3]))
+    amp = BreitWigner(
+        'bw', parameter('mass'), parameter('width'), 2, Mass([2]), Mass([3]), Mass([2, 3])
+    )
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)

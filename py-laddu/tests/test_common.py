@@ -32,7 +32,7 @@ def make_test_dataset() -> Dataset:
 
 def test_scalar_creation_and_evaluation() -> None:
     manager = Manager()
-    amp = Scalar("test_scalar", parameter("test_param"))
+    amp = Scalar('test_scalar', parameter('test_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -44,7 +44,7 @@ def test_scalar_creation_and_evaluation() -> None:
 
 def test_scalar_gradient() -> None:
     manager = Manager()
-    amp = Scalar("test_scalar", parameter("test_param"))
+    amp = Scalar('test_scalar', parameter('test_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     expr = aid.norm_sqr()
@@ -57,7 +57,7 @@ def test_scalar_gradient() -> None:
 
 def test_complex_scalar_creation_and_evaluation() -> None:
     manager = Manager()
-    amp = ComplexScalar("test_complex", parameter("re_param"), parameter("im_param"))
+    amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -69,7 +69,7 @@ def test_complex_scalar_creation_and_evaluation() -> None:
 
 def test_complex_scalar_gradient() -> None:
     manager = Manager()
-    amp = ComplexScalar("test_complex", parameter("re_param"), parameter("im_param"))
+    amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     expr = aid.norm_sqr()
@@ -84,7 +84,7 @@ def test_complex_scalar_gradient() -> None:
 
 def test_polar_complex_scalar_creation_and_evaluation() -> None:
     manager = Manager()
-    amp = PolarComplexScalar("test_polar", parameter("r_param"), parameter("theta_param"))
+    amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -98,7 +98,7 @@ def test_polar_complex_scalar_creation_and_evaluation() -> None:
 
 def test_polar_complex_scalar_gradient() -> None:
     manager = Manager()
-    amp = PolarComplexScalar("test_polar", parameter("r_param"), parameter("theta_param"))
+    amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)

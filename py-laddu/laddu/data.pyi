@@ -24,6 +24,7 @@ class Event:
     p4s: list[Vec4]
     aux: list[Vec3]
     weight: float
+
     def __init__(
         self,
         p4s: list[Vec4],
@@ -43,6 +44,7 @@ class Dataset:
     n_events: int
     n_events_weighted: float
     weights: NDArray[np.float64]
+
     def __init__(self, events: list[Event]) -> None: ...
     def __len__(self) -> int: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
@@ -88,6 +90,7 @@ class BinnedDataset:
     n_bins: int
     range: tuple[float, float]
     edges: NDArray[np.float64]
+
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Dataset: ...
 
