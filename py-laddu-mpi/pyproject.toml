@@ -115,8 +115,6 @@ ignore = [
   "D104", # Missing docstring in public package
   "D105", # Missing docstring in magic method
   # ------------------------------------------------------------------
-  "ANN101", # Missing type annotation for self
-  "ANN102", # Missing type annotation for cls
   "ANN401", # Dynamically typed expressions (Any) are disallowed
   "E501",   # Line length regulated by formatter
   "PT011",  # pytest.raises is too broad, set match or use a more specific exception
