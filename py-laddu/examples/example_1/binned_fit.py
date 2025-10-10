@@ -46,24 +46,6 @@ with Path('binned_statuses.pkl').open('wb') as output_path:
 # binned_statuses = pickle.load(Path("binned_statuses.pkl").open("rb"))
 
 
-# sorted_accmc_ds = sum([ds for ds in binned_accmc_ds])
-# assert sorted_accmc_ds != 0  # this line is for type-checkers only!
-# tot_weights = np.concatenate(
-#     [np.array(nlls[ibin].project(binned_statuses[ibin].x)) for ibin in range(bins)]
-# )
-# s0p_weights = np.concatenate(
-#     [
-#         np.array(nlls[ibin].project_with(binned_statuses[ibin].x, ['S0+', 'Z00+']))
-#         for ibin in range(bins)
-#     ]
-# )
-# d2p_weights = np.concatenate(
-#     [
-#         np.array(nlls[ibin].project_with(binned_statuses[ibin].x, ['D2+', 'Z22+']))
-#         for ibin in range(bins)
-#     ]
-# )
-
 edges = np.histogram_bin_edges([], bins, mass_range)
 
 tot_counts = []

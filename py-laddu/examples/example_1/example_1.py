@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import os
 import pickle
-import sys
 from pathlib import Path
 from time import perf_counter
 
@@ -90,8 +89,8 @@ def main(bins: int, niters: int, nboot: int) -> None:
     u_f0_re = ufloat(f0_re, f0_re_err)
     u_f2_re = ufloat(f2_re, f2_re_err)
     u_f2_im = ufloat(f2_im, f2_im_err)
-    sd_ratio = u_f0_re / unp.sqrt(unp.pow(u_f2_re, 2) + unp.pow(u_f2_im, 2))  # pyright: ignore
-    sd_phase = unp.atan2(u_f2_im, u_f2_re)  # pyright: ignore
+    sd_ratio = u_f0_re / unp.sqrt(unp.pow(u_f2_re, 2) + unp.pow(u_f2_im, 2))  # ty: ignore
+    sd_phase = unp.atan2(u_f2_im, u_f2_re)  # ty: ignore
 
     table = Table('', 'f0(1500) Width', "f2'(1525) Width", 'S/D Ratio', 'S-D Phase')
     table.add_row(
@@ -382,8 +381,8 @@ def fit_binned(
                 best_status = status
 
         if best_status is None:
-            logger.error(f'All fits for bin #{ibin} failed!')
-            sys.exit(1)
+            msg = f'All fits for bin #{ibin} failed!'
+            raise RuntimeError(msg)
 
         tot_res.append(nll.project(best_status.x).sum())
         tot_res_acc.append(nll.project(best_status.x, mc_evaluator=gen_eval).sum())
@@ -544,8 +543,8 @@ def fit_unbinned(
             best_status = status
 
     if best_status is None:
-        logger.error('All unbinned fits failed!')
-        sys.exit(1)
+        msg = 'All unbinned fits failed!'
+        raise RuntimeError(msg)
 
     tot_weights = nll.project(best_status.x)
     tot_weights_acc = nll.project(best_status.x, mc_evaluator=gen_eval)
@@ -580,5 +579,5 @@ def fit_unbinned(
 
 
 if __name__ == '__main__':
-    args = docopt(__doc__)  # pyright: ignore
+    args = docopt(__doc__ or '')
     main(int(args['-n']), int(args['-i']), int(args['-b']))
