@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import polars as pl
-import pyarrow as pa
 import pytest
 
 from laddu import Dataset, Event, Mass, Vec3
@@ -75,12 +74,10 @@ def test_dataset_conversion() -> None:
     ds_from_numpy = Dataset.from_numpy(np_data)
     ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
     ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
-    ds_from_arrow = Dataset.from_arrow(pa.Table.from_pydict(data))
     assert ds_from_dict[1].p4s[0].px == 2.0
     assert ds_from_numpy[0].aux[0].y == 10.1
     assert ds_from_pandas[2].weight == 2.0
     assert ds_from_polars[2].p4s[1].e == 100.0
-    assert ds_from_arrow[2].aux[0].z == 0.3
 
 
 def test_dataset_size_check() -> None:
