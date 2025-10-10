@@ -8,6 +8,10 @@ build:
   tools:
     python: "3.12"
     rust: "latest"
+  jobs:
+    post_create_environment:
+      - rustup toolchain install 1.87.0
+      - rustup default 1.87.0
 
 sphinx:
   configuration: py-laddu/docs/source/conf.py
