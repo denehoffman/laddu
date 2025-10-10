@@ -73,6 +73,9 @@ class MinimizationSummary:
     converged: bool
     covariance: npt.NDArray[np.float64]
 
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
+
 
 class MCMCSummary:
     bounds: list[tuple[float, float]] | None
@@ -81,9 +84,12 @@ class MCMCSummary:
     cost_evals: int
     gradient_evals: int
     converged: bool
+    dimension: tuple[int, int, int]
 
     def get_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
     def get_flat_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
+    def __getstate__(self) -> object: ...
+    def __setstate__(self, state: object) -> None: ...
 
 
 class EnsembleStatus:
@@ -91,6 +97,10 @@ class EnsembleStatus:
     n_f_evals: int
     n_g_evals: int
     walkers: list[Walker]
+    dimension: tuple[int, int, int]
+
+    def get_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
+    def get_flat_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
 
 
 class Swarm:
@@ -141,17 +151,17 @@ class LikelihoodEvaluator:
 
     def evaluate(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> float: ...
     def evaluate_gradient(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
-        p0: list[float] | npt.NDArray[np.float64],
+        p0: list[float] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
@@ -164,7 +174,7 @@ class LikelihoodEvaluator:
     ) -> MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.NDArray[np.float64],
+        p0: list[list[float]] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
@@ -174,6 +184,7 @@ class LikelihoodEvaluator:
         | AutocorrelationTerminator
         | Sequence[MCMCTerminator | AutocorrelationTerminator]
         | None = None,
+        max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
     ) -> MCMCSummary: ...
@@ -184,7 +195,7 @@ class StochasticNLL:
 
     def minimize(
         self,
-        p0: list[float] | npt.NDArray[np.float64],
+        p0: list[float] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
@@ -197,7 +208,7 @@ class StochasticNLL:
     ) -> MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.NDArray[np.float64],
+        p0: list[list[float]] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
@@ -207,6 +218,7 @@ class StochasticNLL:
         | AutocorrelationTerminator
         | Sequence[MCMCTerminator | AutocorrelationTerminator]
         | None = None,
+        max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
     ) -> MCMCSummary: ...
@@ -232,24 +244,24 @@ class NLL:
     def isolate(self, name: str | list[str]) -> None: ...
     def evaluate(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> float: ...
     def evaluate_gradient(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def project(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         *,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def project_with(
         self,
-        parameters: list[float] | npt.NDArray[np.float64],
+        parameters: list[float] | npt.ArrayLike,
         name: str | list[str],
         *,
         mc_evaluator: Evaluator | None = None,
@@ -257,7 +269,7 @@ class NLL:
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
-        p0: list[float] | npt.NDArray[np.float64],
+        p0: list[float] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
@@ -270,7 +282,7 @@ class NLL:
     ) -> MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.NDArray[np.float64],
+        p0: list[list[float]] | npt.ArrayLike,
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
@@ -280,6 +292,7 @@ class NLL:
         | AutocorrelationTerminator
         | Sequence[MCMCTerminator | AutocorrelationTerminator]
         | None = None,
+        max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
     ) -> MCMCSummary: ...
@@ -302,6 +315,9 @@ class AutocorrelationTerminator:
         c: float = 7.0,
         verbose: bool = False,
     ) -> None: ...
+
+
+def integrated_autocorrelation_times(samples: npt.ArrayLike, *, c: float | None = None) -> npt.NDArray[np.float64]: ...
 
 
 __all__ = [
@@ -328,6 +344,7 @@ __all__ = [
     'Swarm',
     'SwarmParticle',
     'Walker',
+    'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',
 ]

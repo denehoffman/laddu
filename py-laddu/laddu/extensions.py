@@ -22,6 +22,7 @@ from laddu.laddu import (
     Swarm,
     SwarmParticle,
     Walker,
+    integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
@@ -75,6 +76,7 @@ __all__ = [
     'Swarm',
     'SwarmParticle',
     'Walker',
+    'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',
 ]

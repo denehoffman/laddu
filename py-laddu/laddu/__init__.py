@@ -41,6 +41,7 @@ from laddu.extensions import (
     Swarm,
     SwarmParticle,
     Walker,
+    integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
@@ -120,6 +121,7 @@ __all__ = [
     'data',
     'experimental',
     'extensions',
+    'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',
     'mpi',

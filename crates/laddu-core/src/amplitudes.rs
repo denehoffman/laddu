@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{Dataset, Event},
     resources::{Cache, Parameters, Resources},
-    Float, LadduError, ParameterID,
+    Float, LadduError, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -529,6 +529,14 @@ pub struct Model {
     pub(crate) expression: Expression,
 }
 
+impl ReadWrite for Model {
+    fn create_null() -> Self {
+        Model {
+            manager: Manager::default(),
+            expression: Expression::default(),
+        }
+    }
+}
 impl Model {
     /// Get the list of parameter names in the order they appear in the [`Model`]'s [`Manager`] field.
     pub fn parameters(&self) -> Vec<String> {

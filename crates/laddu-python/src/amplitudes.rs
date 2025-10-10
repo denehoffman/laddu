@@ -540,46 +540,9 @@ impl PyModel {
     fn load(&self, dataset: &PyDataset) -> PyEvaluator {
         PyEvaluator(self.0.load(&dataset.0))
     }
-    /// Save the Model to a file
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str
-    ///     The path of the new file (overwrites if the file exists!)
-    ///
-    /// Raises
-    /// ------
-    /// IOError
-    ///     If anything fails when trying to write the file
-    ///
-    fn save_as(&self, path: &str) -> PyResult<()> {
-        self.0.save_as(path)?;
-        Ok(())
-    }
-    /// Load a Model from a file
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str
-    ///     The path of the existing fit file
-    ///
-    /// Returns
-    /// -------
-    /// Model
-    ///     The model contained in the file
-    ///
-    /// Raises
-    /// ------
-    /// IOError
-    ///     If anything fails when trying to read the file
-    ///
-    #[staticmethod]
-    fn load_from(path: &str) -> PyResult<Self> {
-        Ok(PyModel(Model::load_from(path)?))
-    }
     #[new]
     fn new() -> Self {
-        PyModel(Model::create_null())
+        Self(Model::create_null())
     }
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(

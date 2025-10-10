@@ -647,7 +647,10 @@ pub mod py_ganesh {
                 SimplexExpansionMethod,
             },
             line_search::{HagerZhangLineSearch, MoreThuenteLineSearch, StrongWolfeLineSearch},
-            mcmc::{AIESMove, AutocorrelationTerminator, ESSMove, Walker},
+            mcmc::{
+                integrated_autocorrelation_times, AIESMove, AutocorrelationTerminator, ESSMove,
+                Walker,
+            },
             particles::{
                 Swarm, SwarmBoundaryMethod, SwarmParticle, SwarmPositionInitializer, SwarmTopology,
                 SwarmUpdateMethod, SwarmVelocityInitializer,
@@ -656,14 +659,14 @@ pub mod py_ganesh {
         core::{Bounds, CtrlCAbortSignal, DebugObserver, MaxSteps},
         traits::{Observer, Status, SupportsBounds, SupportsTransform, Terminator},
     };
-    use laddu_core::{Float, LadduError};
+    use laddu_core::{Float, LadduError, ReadWrite};
     use nalgebra::DMatrix;
     use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
     use parking_lot::Mutex;
     use pyo3::{
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
-        types::{PyDict, PyList},
+        types::{PyBytes, PyDict, PyList},
     };
 
     /// A helper trait for parsing Python arguments.
@@ -1258,11 +1261,16 @@ pub mod py_ganesh {
                 vec![]
             };
             let terminators = if let Some(terminators) = d.get_item("terminators")? {
-                if let Ok(terminator) = terminators.extract::<MinimizationTerminator>() {
+                if let Ok(terminators) = terminators.downcast::<PyList>() {
+                    terminators.into_iter().map(|terminator| {
+                    if let Ok(terminator) = terminator.extract::<MinimizationTerminator>() {
+                        Ok(terminator)
+                    } else {
+                        Err(PyValueError::new_err("The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators."))
+                        }
+                    }).collect::<PyResult<Vec<MinimizationTerminator>>>()?
+                } else if let Ok(terminator) = terminators.extract::<MinimizationTerminator>() {
                     vec![terminator]
-                } else if let Ok(terminators) = terminators.extract::<Vec<MinimizationTerminator>>()
-                {
-                    terminators
                 } else {
                     return Err(PyValueError::new_err("The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators."));
                 }
@@ -1586,10 +1594,16 @@ pub mod py_ganesh {
                 .transpose()?
                 .unwrap_or(false);
             let observers = if let Some(observers) = d.get_item("observers")? {
-                if let Ok(observer) = observers.extract::<MCMCObserver>() {
+                if let Ok(observers) = observers.downcast::<PyList>() {
+                    observers.into_iter().map(|observer| {
+                        if let Ok(observer) = observer.extract::<MCMCObserver>() {
+                            Ok(observer)
+                        } else {
+                            Err(PyValueError::new_err("The observers must be either a single MCMCObserver or a list of MCMCObservers."))
+                        }
+                    }).collect::<PyResult<Vec<MCMCObserver>>>()?
+                } else if let Ok(observer) = observers.extract::<MCMCObserver>() {
                     vec![observer]
-                } else if let Ok(observers) = observers.extract::<Vec<MCMCObserver>>() {
-                    observers
                 } else {
                     return Err(PyValueError::new_err("The observers must be either a single MCMCObserver or a list of MCMCObservers."));
                 }
@@ -1597,26 +1611,27 @@ pub mod py_ganesh {
                 vec![]
             };
             let terminators = if let Some(terminators) = d.get_item("terminators")? {
-                if let Ok(terminator) = terminators.extract::<MCMCTerminator>() {
-                    vec![PythonMCMCTerminator::UserDefined(terminator)]
-                } else if let Ok(terminator) = terminators.extract::<PyAutocorrelationTerminator>()
-                {
-                    vec![PythonMCMCTerminator::Autocorrelation(terminator)]
-                } else if let Ok(terminators) = terminators.downcast::<PyList>() {
+                if let Ok(terminators) = terminators.downcast::<PyList>() {
                     terminators
                         .into_iter()
                         .map(|terminator| {
-                            if let Ok(terminator) = terminator.extract::<MCMCTerminator>() {
-                                Ok(PythonMCMCTerminator::UserDefined(terminator))
-                            } else if let Ok(terminator) =
+                            if let Ok(terminator) =
                                 terminator.extract::<PyAutocorrelationTerminator>()
                             {
                                 Ok(PythonMCMCTerminator::Autocorrelation(terminator))
-                            } else{
-Err(PyValueError::new_err("The terminators must be either a single MCMCTerminator or a list of MCMCTerminators."))
+                            }
+                            else if let Ok(terminator) = terminator.extract::<MCMCTerminator>() {
+                                Ok(PythonMCMCTerminator::UserDefined(terminator))
+                            } else {
+                                Err(PyValueError::new_err("The terminators must be either a single MCMCTerminator or a list of MCMCTerminators."))
                             }
                         })
                         .collect::<PyResult<Vec<PythonMCMCTerminator>>>()?
+                } else if let Ok(terminator) = terminators.extract::<PyAutocorrelationTerminator>()
+                {
+                    vec![PythonMCMCTerminator::Autocorrelation(terminator)]
+                } else if let Ok(terminator) = terminators.extract::<MCMCTerminator>() {
+                    vec![PythonMCMCTerminator::UserDefined(terminator)]
                 } else {
                     return Err(PyValueError::new_err("The terminators must be either a single MCMCTerminator or a list of MCMCTerminators."));
                 }
@@ -2021,6 +2036,26 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
         fn __str__(&self) -> String {
             self.0.to_string()
         }
+        #[new]
+        fn new() -> Self {
+            Self(MinimizationSummary::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Self(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
+            Ok(())
+        }
     }
 
     /// An enum used by a terminator to continue or stop an algorithm.
@@ -2071,7 +2106,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
             Python::attach(|py| {
                 self.0
                     .bind(py)
-                    .call_method(
+                    .call_method1(
                         "observe",
                         (
                             current_step,
@@ -2079,7 +2114,6 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                                 Mutex::new(status.clone()),
                             ))),
                         ),
-                        None,
                     )
                     .expect("Error calling observe");
             })
@@ -2102,7 +2136,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
             Python::attach(|py| {
                 self.0
                     .bind(py)
-                    .call_method(
+                    .call_method1(
                         "observe",
                         (
                             current_step,
@@ -2110,7 +2144,6 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                                 Mutex::new(status.clone()),
                             ))),
                         ),
-                        None,
                     )
                     .expect("Error calling observe");
             })
@@ -2132,7 +2165,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
             Python::attach(|py| {
                 self.0
                     .bind(py)
-                    .call_method(
+                    .call_method1(
                         "observe",
                         (
                             current_step,
@@ -2140,7 +2173,6 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                                 Mutex::new(status.clone()),
                             ))),
                         ),
-                        None,
                     )
                     .expect("Error calling observe");
             })
@@ -2186,7 +2218,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                 let ret = self
                     .0
                     .bind(py)
-                    .call1((current_step, py_status))
+                    .call_method1("check_for_termination", (current_step, py_status))
                     .expect("Error calling check_for_termination");
                 {
                     let mut guard = wrapped_status.lock();
@@ -2223,7 +2255,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                 let ret = self
                     .0
                     .bind(py)
-                    .call1((current_step, py_status))
+                    .call_method1("check_for_termination", (current_step, py_status))
                     .expect("Error calling check_for_termination");
                 {
                     let mut guard = wrapped_status.lock();
@@ -2258,7 +2290,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                 let ret = self
                     .0
                     .bind(py)
-                    .call1((current_step, py_status))
+                    .call_method1("check_for_termination", (current_step, py_status))
                     .expect("Error calling check_for_termination");
                 {
                     let mut guard = wrapped_status.lock();
@@ -2308,6 +2340,8 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
     ///     The number of gradient function evaluations performed.
     /// walkers : list of Walker
     ///     The walkers in the ensemble.
+    /// dimension : tuple of `(n_walkers, n_steps, n_variables)`
+    ///     The dimension of the ensemble.
     ///
     #[pyclass(name = "EnsembleStatus", module = "laddu")]
     pub struct PyEnsembleStatus(Arc<Mutex<EnsembleStatus>>);
@@ -2335,6 +2369,65 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                 .map(|w| PyWalker(w.clone()))
                 .collect()
         }
+        #[getter]
+        fn dimension(&self) -> (usize, usize, usize) {
+            self.0.lock().dimension()
+        }
+
+        /// Retrieve the chain of the MCMC sampling.
+        ///
+        /// Parameters
+        /// ----------
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
+        ///
+        /// Returns
+        /// -------
+        /// chain : array of shape (n_steps, n_variables, n_walkers)
+        ///
+        #[pyo3(signature = (*, burn = None, thin = None))]
+        fn get_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
+            let vec_chain: Vec<Vec<Vec<Float>>> = self
+                .0
+                .lock()
+                .get_chain(burn, thin)
+                .iter()
+                .map(|steps| steps.iter().map(|p| p.as_slice().to_vec()).collect())
+                .collect();
+            Ok(PyArray3::from_vec3(py, &vec_chain)?)
+        }
+
+        /// Retrieve the chain of the MCMC sampling, flattened over walkers.
+        ///
+        /// Parameters
+        /// ----------
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
+        ///
+        /// Returns
+        /// -------
+        /// flat_chain : array of shape (n_steps * n_walkers, n_variables)
+        ///
+        #[pyo3(signature = (*, burn = None, thin = None))]
+        fn get_flat_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> Bound<'py, PyArray2<Float>> {
+            DMatrix::from_columns(&self.0.lock().get_flat_chain(burn, thin))
+                .transpose()
+                .to_pyarray(py)
+        }
     }
 
     /// A summary of the results of an MCMC sampling.
@@ -2353,6 +2446,8 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
     ///     The number of gradient function evaluations performed.
     /// converged : bool
     ///     True if the MCMC algorithm has converged.
+    /// dimension : tuple of `(n_walkers, n_steps, n_variables)`
+    ///     The dimension of the ensemble.
     ///
     #[pyclass(name = "MCMCSummary", module = "laddu")]
     pub struct PyMCMCSummary(pub MCMCSummary);
@@ -2385,6 +2480,11 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
         #[getter]
         fn converged(&self) -> bool {
             self.0.converged
+        }
+
+        #[getter]
+        fn dimension(&self) -> (usize, usize, usize) {
+            self.0.dimension
         }
 
         /// Retrieve the chain of the MCMC sampling.
@@ -2436,7 +2536,30 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
             burn: Option<usize>,
             thin: Option<usize>,
         ) -> Bound<'py, PyArray2<Float>> {
-            DMatrix::from_columns(&self.0.get_flat_chain(burn, thin)).to_pyarray(py)
+            DMatrix::from_columns(&self.0.get_flat_chain(burn, thin))
+                .transpose()
+                .to_pyarray(py)
+        }
+
+        #[new]
+        fn new() -> Self {
+            Self(MCMCSummary::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Self(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
+            Ok(())
         }
     }
 
@@ -2469,10 +2592,13 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
             Python::attach(|py| {
                 self.0
                     .bind(py)
-                    .call1((
-                        current_step,
-                        PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
-                    ))
+                    .call_method1(
+                        "observe",
+                        (
+                            current_step,
+                            PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
+                        ),
+                    )
                     .expect("Error calling observe");
             })
         }
@@ -2553,7 +2679,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
                 let ret = self
                     .0
                     .bind(py)
-                    .call1((current_step, py_status))
+                    .call_method1("check_for_termination", (current_step, py_status))
                     .expect("Error calling check_for_termination");
                 {
                     let mut guard = wrapped_status.lock();
@@ -2566,7 +2692,39 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
         }
     }
 
-    /// A terminator for MCMC algorithms that monitors autocorrelation.
+    /// Calculate the integrated autocorrelation time for each parameter according to
+    /// [Karamanis]_
+    ///
+    /// Parameters
+    /// ----------
+    /// x : array_like
+    ///     An array of dimension ``(n_walkers, n_steps, n_parameters)``
+    /// c : float, default = 7.0
+    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
+    ///     size of 7.0 is used.
+    ///
+    /// .. rubric:: References
+    ///
+    /// .. [Karamanis] Karamanis, M., & Beutler, F. (2021). Ensemble slice sampling. Statistics and Computing, 31(5). https://doi.org/10.1007/s11222-021-10038-2
+    /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In NATO ASI Series (pp. 131–192). Springer US. https://doi.org/10.1007/978-1-4899-0319-8_6
+    ///
+    #[pyfunction(name = "integrated_autocorrelation_times")]
+    #[pyo3(signature = (samples, *, c=None))]
+    pub fn py_integrated_autocorrelation_times<'py>(
+        py: Python<'py>,
+        samples: Vec<Vec<Vec<Float>>>,
+        c: Option<Float>,
+    ) -> Bound<'py, PyArray1<Float>> {
+        let samples: Vec<Vec<DVector<Float>>> = samples
+            .into_iter()
+            .map(|v| v.into_iter().map(|p| DVector::from_vec(p)).collect())
+            .collect();
+        integrated_autocorrelation_times(samples, c)
+            .as_slice()
+            .to_pyarray(py)
+    }
+
+    /// A terminator for MCMC algorithms that monitors autocorrelation according to [Karamanis]_.
     ///
     /// Parameters
     /// ----------
@@ -2583,7 +2741,7 @@ Err(PyValueError::new_err("The terminators must be either a single MCMCTerminato
     ///     If set to False, the terminator will act like an observer and only store
     ///     autocorrelation times.
     /// sokal_window : float, default=None
-    ///     Set the time window for Sokal's autocorrelation function. If None, the default window
+    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
     ///     size of 7.0 is used.
     /// verbose : bool, default=False
     ///     Print autocorrelation information at each check step.

@@ -1987,9 +1987,9 @@ impl PyNLL {
     /// delta : float, default=0.5
     ///     The shrink coefficient.
     /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
     /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
     /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
     ///     The method used to generate the initial simplex.
     /// orthogonal_multiplier : float, default=1.05
@@ -2001,11 +2001,11 @@ impl PyNLL {
     /// simplex : list of list of floats
     ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
     /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
     /// eps_f : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the f_terminator method.
     /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
     /// eps_x : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the x_terminator method.
     ///
@@ -2036,9 +2036,11 @@ impl PyNLL {
     /// c2 : float, default = 0.1
     ///     The social weight.
     ///
-    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// .. rubric:: References
+    ///
+    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2121,7 +2123,7 @@ impl PyNLL {
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
     /// algorithm has different settings.
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
     /// =============================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -2131,7 +2133,7 @@ impl PyNLL {
     ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
     ///     (2.0 by default).
     ///
-    /// ESS (Ensemble Slice Sampler) [2]_
+    /// ESS (Ensemble Slice Sampler) [Karamanis]_
     /// =================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -2150,8 +2152,10 @@ impl PyNLL {
     /// mu : float, default = 1.0
     ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
     ///
-    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// .. rubric:: References
+    ///
+    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2322,9 +2326,9 @@ impl PyStochasticNLL {
     /// delta : float, default=0.5
     ///     The shrink coefficient.
     /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
     /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
     /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
     ///     The method used to generate the initial simplex.
     /// orthogonal_multiplier : float, default=1.05
@@ -2336,11 +2340,11 @@ impl PyStochasticNLL {
     /// simplex : list of list of floats
     ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
     /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
     /// eps_f : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the f_terminator method.
     /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
     /// eps_x : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the x_terminator method.
     ///
@@ -2371,9 +2375,11 @@ impl PyStochasticNLL {
     /// c2 : float, default = 0.1
     ///     The social weight.
     ///
-    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// .. rubric:: References
+    ///
+    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2455,7 +2461,7 @@ impl PyStochasticNLL {
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
     /// algorithm has different settings.
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
     /// =============================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -2465,7 +2471,7 @@ impl PyStochasticNLL {
     ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
     ///     (2.0 by default).
     ///
-    /// ESS (Ensemble Slice Sampler) [2]_
+    /// ESS (Ensemble Slice Sampler) [Karamanis]_
     /// =================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -2484,8 +2490,10 @@ impl PyStochasticNLL {
     /// mu : float, default = 1.0
     ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
     ///
-    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// .. rubric:: References
+    ///
+    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -3404,9 +3412,9 @@ impl PyLikelihoodEvaluator {
     /// delta : float, default=0.5
     ///     The shrink coefficient.
     /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[1]_.
+    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
     /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [2]_ for details.
+    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
     /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
     ///     The method used to generate the initial simplex.
     /// orthogonal_multiplier : float, default=1.05
@@ -3418,11 +3426,11 @@ impl PyLikelihoodEvaluator {
     /// simplex : list of list of floats
     ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
     /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
     /// eps_f : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the f_terminator method.
     /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [3]_ for details. Set to None to skip this check.
+    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
     /// eps_x : float, default=`MACH_EPS^(1/4)`
     ///     The tolerance for the x_terminator method.
     ///
@@ -3453,9 +3461,11 @@ impl PyLikelihoodEvaluator {
     /// c2 : float, default = 0.1
     ///     The social weight.
     ///
-    /// .. [1] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [2] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [3] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// .. rubric:: References
+    ///
+    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
+    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
+    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -3537,7 +3547,7 @@ impl PyLikelihoodEvaluator {
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
     /// algorithm has different settings.
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [1]_
+    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
     /// =============================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -3547,7 +3557,7 @@ impl PyLikelihoodEvaluator {
     ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
     ///     (2.0 by default).
     ///
-    /// ESS (Ensemble Slice Sampler) [2]_
+    /// ESS (Ensemble Slice Sampler) [Karamanis]_
     /// =================================
     /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
     ///     The list of moves to use. The first element of the tuple is the name of the move
@@ -3566,8 +3576,8 @@ impl PyLikelihoodEvaluator {
     /// mu : float, default = 1.0
     ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
     ///
-    /// .. [1] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [2] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
+    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
