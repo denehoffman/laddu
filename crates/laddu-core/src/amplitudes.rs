@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{Dataset, Event},
     resources::{Cache, Parameters, Resources},
-    Float, LadduError,
+    Float, LadduError, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -529,6 +529,14 @@ pub struct Model {
     pub(crate) expression: Expression,
 }
 
+impl ReadWrite for Model {
+    fn create_null() -> Self {
+        Model {
+            manager: Manager::default(),
+            expression: Expression::default(),
+        }
+    }
+}
 impl Model {
     /// Get the list of parameter names in the order they appear in the [`Model`]'s [`Manager`] field.
     pub fn parameters(&self) -> Vec<String> {
@@ -712,7 +720,123 @@ impl Evaluator {
         self.evaluate_local(parameters)
     }
 
-    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
+    /// than all events in the total dataset.
+    pub fn evaluate_batch_local(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+    ) -> Vec<Complex<Float>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        #[cfg(feature = "rayon")]
+        {
+            let amplitude_values_vec: Vec<AmplitudeValues> = self
+                .dataset
+                .events
+                .par_iter()
+                .zip(resources.caches.par_iter())
+                .enumerate()
+                .filter_map(|(i, (event, cache))| {
+                    if indices.contains(&i) {
+                        Some((event, cache))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(event, cache)| {
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            amplitude_values_vec
+                .par_iter()
+                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let amplitude_values_vec: Vec<AmplitudeValues> = self
+                .dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .enumerate()
+                .filter_map(|(i, (event, cache))| {
+                    if indices.contains(&i) {
+                        Some((event, cache))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(event, cache)| {
+                    AmplitudeValues(
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&parameters, event, cache)
+                                } else {
+                                    Complex::new(0.0, 0.0)
+                                }
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            amplitude_values_vec
+                .iter()
+                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
+                .collect()
+        }
+    }
+
+    /// See [`Evaluator::evaluate_mpi`]. This method evaluates over a subset of events rather
+    /// than all events in the total dataset.
+    #[cfg(feature = "mpi")]
+    fn evaluate_batch_mpi(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+        world: &SimpleCommunicator,
+    ) -> Vec<Complex<Float>> {
+        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; indices.len()];
+        let (counts, displs, locals) = self
+            .dataset
+            .get_counts_displs_locals_from_indices(indices, world);
+        let local_evaluation = self.evaluate_batch_local(parameters, &locals);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
+    /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
+    /// [`Evaluator`] with the given values for free parameters. See also [`Expression::evaluate`].
+    pub fn evaluate_batch(&self, parameters: &[Float], indices: &[usize]) -> Vec<Complex<Float>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_batch_mpi(parameters, indices, &world);
+            }
+        }
+        self.evaluate_batch_local(parameters, indices)
+    }
+
+    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters (non-MPI version).
     ///
     /// # Notes
@@ -815,7 +939,7 @@ impl Evaluator {
         }
     }
 
-    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
     ///
     /// # Notes
@@ -848,7 +972,7 @@ impl Evaluator {
             .collect()
     }
 
-    /// Evaluate gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
+    /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
         #[cfg(feature = "mpi")]
@@ -858,6 +982,223 @@ impl Evaluator {
             }
         }
         self.evaluate_gradient_local(parameters)
+    }
+
+    /// See [`Evaluator::evaluate_gradient_local`]. This method evaluates over a subset
+    /// of events rather than all events in the total dataset.
+    pub fn evaluate_gradient_batch_local(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+    ) -> Vec<DVector<Complex<Float>>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        #[cfg(feature = "rayon")]
+        {
+            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+                .dataset
+                .events
+                .par_iter()
+                .zip(resources.caches.par_iter())
+                .enumerate()
+                .filter_map(|(i, (event, cache))| {
+                    if indices.contains(&i) {
+                        Some((event, cache))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    (
+                        AmplitudeValues(
+                            self.amplitudes
+                                .iter()
+                                .zip(resources.active.iter())
+                                .map(|(amp, active)| {
+                                    if *active {
+                                        amp.compute(&parameters, event, cache)
+                                    } else {
+                                        Complex::new(0.0, 0.0)
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        GradientValues(parameters.len(), gradient_values),
+                    )
+                })
+                .collect();
+            amplitude_values_and_gradient_vec
+                .par_iter()
+                .map(|(amplitude_values, gradient_values)| {
+                    self.expression
+                        .evaluate_gradient(amplitude_values, gradient_values)
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
+                .dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .enumerate()
+                .filter_map(|(i, (event, cache))| {
+                    if indices.contains(&i) {
+                        Some((event, cache))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    (
+                        AmplitudeValues(
+                            self.amplitudes
+                                .iter()
+                                .zip(resources.active.iter())
+                                .map(|(amp, active)| {
+                                    if *active {
+                                        amp.compute(&parameters, event, cache)
+                                    } else {
+                                        Complex::new(0.0, 0.0)
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        GradientValues(parameters.len(), gradient_values),
+                    )
+                })
+                .collect();
+
+            amplitude_values_and_gradient_vec
+                .iter()
+                .map(|(amplitude_values, gradient_values)| {
+                    self.expression
+                        .evaluate_gradient(amplitude_values, gradient_values)
+                })
+                .collect()
+        }
+    }
+
+    /// See [`Evaluator::evaluate_gradient_mpi`]. This method evaluates over a subset
+    /// of events rather than all events in the total dataset.
+    #[cfg(feature = "mpi")]
+    fn evaluate_gradient_batch_mpi(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+        world: &SimpleCommunicator,
+    ) -> Vec<DVector<Complex<Float>>> {
+        let (counts, displs, locals) = self
+            .dataset
+            .get_flattened_counts_displs_locals_from_indices(indices, parameters.len(), world);
+        let flattened_local_evaluation = self
+            .evaluate_gradient_batch_local(parameters, &locals)
+            .iter()
+            .flat_map(|g| g.data.as_vec().to_vec())
+            .collect::<Vec<Complex<Float>>>();
+        let mut flattened_result_buffer = vec![Complex::ZERO; indices.len() * parameters.len()];
+        let mut partitioned_flattened_result_buffer =
+            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        world.all_gather_varcount_into(
+            &flattened_local_evaluation,
+            &mut partitioned_flattened_result_buffer,
+        );
+        flattened_result_buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
+            .collect()
+    }
+
+    /// Evaluate the gradient of the stored [`Expression`] over a subset of the
+    /// events in the [`Dataset`] stored by the [`Evaluator`] with the given values
+    /// for free parameters. See also [`Expression::evaluate_gradient`].
+    pub fn evaluate_gradient_batch(
+        &self,
+        parameters: &[Float],
+        indices: &[usize],
+    ) -> Vec<DVector<Complex<Float>>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_gradient_batch_mpi(parameters, indices, &world);
+            }
+        }
+        self.evaluate_gradient_batch_local(parameters, indices)
+    }
+}
+
+/// A testing [`Amplitude`].
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TestAmplitude {
+    name: String,
+    re: ParameterLike,
+    pid_re: ParameterID,
+    im: ParameterLike,
+    pid_im: ParameterID,
+}
+
+impl TestAmplitude {
+    /// Create a new testing [`Amplitude`].
+    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
+        Self {
+            name: name.to_string(),
+            re,
+            pid_re: Default::default(),
+            im,
+            pid_im: Default::default(),
+        }
+        .into()
+    }
+}
+
+#[typetag::serde]
+impl Amplitude for TestAmplitude {
+    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+        self.pid_re = resources.register_parameter(&self.re);
+        self.pid_im = resources.register_parameter(&self.im);
+        resources.register_amplitude(&self.name)
+    }
+
+    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+        Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        event: &Event,
+        _cache: &Cache,
+        gradient: &mut DVector<Complex<Float>>,
+    ) {
+        if let ParameterID::Parameter(ind) = self.pid_re {
+            gradient[ind] = Complex::ONE * event.p4s[0].e();
+        }
+        if let ParameterID::Parameter(ind) = self.pid_im {
+            gradient[ind] = Complex::I * event.p4s[0].e();
+        }
     }
 }
 
@@ -869,7 +1210,7 @@ mod tests {
     use crate::{
         data::Event,
         resources::{Cache, ParameterID, Parameters, Resources},
-        Complex, DVector, Float, LadduError,
+        Float, LadduError,
     };
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
@@ -927,6 +1268,35 @@ mod tests {
                 gradient[ind] = Complex::I;
             }
         }
+    }
+
+    #[test]
+    fn test_batch_evaluation() {
+        let mut manager = Manager::default();
+        let amp = TestAmplitude::new("test", parameter("real"), parameter("imag"));
+        let aid = manager.register(amp).unwrap();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 10.0;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 11.0;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 12.0;
+        let dataset = Arc::new(Dataset {
+            events: vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+        });
+        let expr = Expression::Amp(aid);
+        let model = manager.model(&expr);
+        let evaluator = model.load(&dataset);
+        let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], Complex::new(1.1, 2.2) * 10.0);
+        assert_eq!(result[1], Complex::new(1.1, 2.2) * 12.0);
+        let result_grad = evaluator.evaluate_gradient_batch(&[1.1, 2.2], &[0, 2]);
+        assert_eq!(result_grad.len(), 2);
+        assert_eq!(result_grad[0][0], Complex::new(10.0, 0.0));
+        assert_eq!(result_grad[0][1], Complex::new(0.0, 10.0));
+        assert_eq!(result_grad[1][0], Complex::new(12.0, 0.0));
+        assert_eq!(result_grad[1][1], Complex::new(0.0, 12.0));
     }
 
     #[test]

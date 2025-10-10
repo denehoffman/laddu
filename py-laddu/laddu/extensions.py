@@ -3,16 +3,10 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 
 from laddu.laddu import (
-    AIES,
-    ESS,
-    LBFGSB,
     NLL,
-    PSO,
-    AIESMove,
-    AutocorrelationObserver,
-    Bound,
-    Ensemble,
-    ESSMove,
+    AutocorrelationTerminator,
+    ControlFlow,
+    EnsembleStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodID,
@@ -21,49 +15,48 @@ from laddu.laddu import (
     LikelihoodScalar,
     LikelihoodTerm,
     LikelihoodZero,
-    NelderMead,
-    Particle,
-    Point,
-    SimplexConstructionMethod,
-    Status,
+    MCMCSummary,
+    MinimizationStatus,
+    MinimizationSummary,
+    StochasticNLL,
     Swarm,
-    SwarmPositionInitializer,
-    SwarmVelocityInitializer,
+    SwarmParticle,
+    Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
 
 
-class Observer(metaclass=ABCMeta):
+class MinimizationObserver(metaclass=ABCMeta):
     @abstractmethod
-    def callback(self, step: int, status: Status) -> tuple[Status, bool]:
+    def observe(self, step: int, status: MinimizationStatus) -> None:
+        pass
+
+
+class MinimizationTerminator(metaclass=ABCMeta):
+    @abstractmethod
+    def check_for_termination(self, step: int, status: MinimizationStatus) -> ControlFlow:
         pass
 
 
 class MCMCObserver(metaclass=ABCMeta):
     @abstractmethod
-    def callback(self, step: int, ensemble: Ensemble) -> tuple[Ensemble, bool]:
+    def observe(self, step: int, status: EnsembleStatus) -> None:
         pass
 
 
-class SwarmObserver(metaclass=ABCMeta):
+class MCMCTerminator(metaclass=ABCMeta):
     @abstractmethod
-    def callback(self, step: int, swarm: Swarm) -> tuple[Swarm, bool]:
+    def check_for_termination(self, step: int, status: EnsembleStatus) -> ControlFlow:
         pass
 
 
 __all__ = [
-    'AIES',
-    'ESS',
-    'LBFGSB',
     'NLL',
-    'PSO',
-    'AIESMove',
-    'AutocorrelationObserver',
-    'Bound',
-    'ESSMove',
-    'Ensemble',
+    'AutocorrelationTerminator',
+    'ControlFlow',
+    'EnsembleStatus',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodID',
@@ -73,16 +66,16 @@ __all__ = [
     'LikelihoodTerm',
     'LikelihoodZero',
     'MCMCObserver',
-    'NelderMead',
-    'Observer',
-    'Particle',
-    'Point',
-    'SimplexConstructionMethod',
-    'Status',
+    'MCMCSummary',
+    'MCMCTerminator',
+    'MinimizationObserver',
+    'MinimizationStatus',
+    'MinimizationSummary',
+    'MinimizationTerminator',
+    'StochasticNLL',
     'Swarm',
-    'SwarmObserver',
-    'SwarmPositionInitializer',
-    'SwarmVelocityInitializer',
+    'SwarmParticle',
+    'Walker',
     'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',

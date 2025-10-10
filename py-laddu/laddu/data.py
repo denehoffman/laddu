@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 
     import pandas as pd
     import polars as pl
-    import pyarrow as pa
     from numpy.typing import NDArray
 
 
@@ -133,27 +132,6 @@ class Dataset(DatasetBase):
         Dataset
         """
         return Dataset.from_dict(data.to_dict(), rest_frame_indices=rest_frame_indices)
-
-    @staticmethod
-    def from_arrow(
-        data: pa.Table, rest_frame_indices: list[int] | None = None
-    ) -> Dataset:
-        """
-        Create a Dataset from a pyarrow Table.
-
-        Arguments
-        ---------
-        data: pyarrow.Table
-            Table with columns matching the dataset format
-        rest_frame_indices: list of int, optional
-            If provided, the dataset will be boosted to the rest frame
-            of the 4-momenta specified by the indices
-
-        Returns
-        -------
-        Dataset
-        """
-        return Dataset.from_dict(data.to_pydict(), rest_frame_indices=rest_frame_indices)
 
 
 def open_amptools(

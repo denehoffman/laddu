@@ -113,7 +113,12 @@ def test_mandelstam() -> None:
     m2_res = event.get_p4_sum([2, 3]).m2
     assert (
         pytest.approx(
-            s.value(event) + t.value(event) + u.value(event) - m2_beam - m2_recoil - m2_res,
+            s.value(event)
+            + t.value(event)
+            + u.value(event)
+            - m2_beam
+            - m2_recoil
+            - m2_res,
             abs=1e-2,
         )
         == 1.0

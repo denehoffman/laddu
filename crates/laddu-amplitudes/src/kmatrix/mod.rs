@@ -1,15 +1,15 @@
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
-use nalgebra::{Cholesky, DMatrix};
-use nalgebra::{SMatrix, SVector};
-use num::traits::ConstOne;
-use num::traits::FloatConst;
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     utils::functions::{blatt_weisskopf, chi_plus, rho},
-    Complex, DVector, Float,
+    Float,
 };
+use nalgebra::{Cholesky, DMatrix, DVector, SMatrix, SVector};
+use num::{
+    traits::{ConstOne, FloatConst},
+    Complex,
+};
+use serde::{Deserialize, Serialize};
 
 fn sample_normal<const PARAMETERS: usize>(
     mu: SVector<Float, PARAMETERS>,

@@ -154,7 +154,7 @@ def get_names(*, l_max: int, polarized: bool) -> list[tuple[str, int, int, int]]
 
 
 if __name__ == '__main__':
-    args = docopt(__doc__)  # pyright: ignore
+    args = docopt(__doc__ or '')
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     bins = int(args['-n'])
     nboot = int(args['-b'])

@@ -64,22 +64,22 @@ class Amplitude: ...
 
 class Manager:
     parameters: list[str]
+
     def __init__(self) -> None: ...
     def register(self, amplitude: Amplitude) -> AmplitudeID: ...
     def model(self, expression: Expression | AmplitudeID) -> Model: ...
 
 class Model:
     parameters: list[str]
+
     def __init__(self) -> None: ...
     def load(self, dataset: Dataset) -> Evaluator: ...
-    def save_as(self, path: str) -> None: ...
-    @staticmethod
-    def load_from(path: str) -> Model: ...
     def __getstate__(self) -> object: ...
     def __setstate__(self, state: object) -> None: ...
 
 class Evaluator:
     parameters: list[str]
+
     def activate(self, name: str | list[str]) -> None: ...
     def activate_all(self) -> None: ...
     def deactivate(self, name: str | list[str]) -> None: ...
@@ -88,13 +88,31 @@ class Evaluator:
     def evaluate(
         self,
         parameters: list[float] | npt.NDArray[np.float64],
+        *,
+        threads: int | None = None,
+    ) -> npt.NDArray[np.complex128]: ...
+    def evaluate_batch(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        indices: list[int] | npt.NDArray[np.integer],
+        *,
         threads: int | None = None,
     ) -> npt.NDArray[np.complex128]: ...
     def evaluate_gradient(
         self,
         parameters: list[float] | npt.NDArray[np.float64],
+        *,
         threads: int | None = None,
     ) -> npt.NDArray[np.complex128]: ...
+    def evaluate_gradient_batch(
+        self,
+        parameters: list[float] | npt.NDArray[np.float64],
+        indices: list[int] | npt.NDArray[np.integer],
+        *,
+        threads: int | None = None,
+    ) -> npt.NDArray[np.complex128]: ...
+
+def TestAmplitude(name: str, re: ParameterLike, im: ParameterLike) -> Amplitude: ...
 
 __all__ = [
     'Amplitude',
@@ -106,6 +124,7 @@ __all__ = [
     'Manager',
     'Model',
     'ParameterLike',
+    'TestAmplitude',
     'amplitude_sum',
     'breit_wigner',
     'common',

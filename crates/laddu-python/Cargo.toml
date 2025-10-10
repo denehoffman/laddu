@@ -16,6 +16,7 @@ readme = "README.md"
 laddu-core = { workspace = true, features = ["python"] }
 
 bincode = { workspace = true }
+num = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }

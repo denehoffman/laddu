@@ -1,21 +1,21 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::Event,
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
-    Complex, DVector, Float, LadduError, ScalarID,
+    Float, LadduError, ScalarID,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyAmplitude, PyParameterLike},
     utils::variables::PyVariable,
 };
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// A piecewise scalar-valued [`Amplitude`] which just contains a single parameter for each bin as its value.
 #[derive(Clone, Serialize, Deserialize)]

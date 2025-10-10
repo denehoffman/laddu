@@ -22,8 +22,8 @@ def make_test_dataset() -> Dataset:
 
 def test_ylm_evaluation() -> None:
     manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], "Helicity")
-    amp = Ylm("ylm", 1, 1, angles)
+    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
+    amp = Ylm('ylm', 1, 1, angles)
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)
@@ -35,8 +35,8 @@ def test_ylm_evaluation() -> None:
 
 def test_ylm_gradient() -> None:
     manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], "Helicity")
-    amp = Ylm("ylm", 1, 1, angles)
+    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
+    amp = Ylm('ylm', 1, 1, angles)
     aid = manager.register(amp)
     dataset = make_test_dataset()
     model = manager.model(aid)

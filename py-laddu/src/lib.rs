@@ -12,8 +12,8 @@ mod laddu {
     use laddu_python::{
         amplitudes::{
             py_amplitude_one, py_amplitude_product, py_amplitude_sum, py_amplitude_zero,
-            py_constant, py_parameter, PyAmplitude, PyAmplitudeID, PyEvaluator, PyExpression,
-            PyManager, PyModel, PyParameterLike,
+            py_constant, py_parameter, py_test_amplitude, PyAmplitude, PyAmplitudeID, PyEvaluator,
+            PyExpression, PyManager, PyModel, PyParameterLike,
         },
         available_parallelism,
         data::{py_open, PyBinnedDataset, PyDataset, PyEvent},
@@ -46,15 +46,14 @@ mod laddu {
     #[pymodule_export]
     use laddu_extensions::{
         ganesh_ext::py_ganesh::{
-            py_integrated_autocorrelation_times, PyAIES, PyAIESMove, PyAutocorrelationObserver,
-            PyBound, PyESS, PyESSMove, PyEnsemble, PyLBFGSB, PyMCMCObserver, PyNelderMead,
-            PyObserver, PyPSO, PyParticle, PyPoint, PySimplexConstructionMethod, PyStatus, PySwarm,
-            PySwarmObserver, PySwarmPositionInitializer, PySwarmVelocityInitializer,
+            py_integrated_autocorrelation_times, PyAutocorrelationTerminator, PyControlFlow,
+            PyEnsembleStatus, PyMCMCSummary, PyMinimizationStatus, PyMinimizationSummary, PySwarm,
+            PySwarmParticle, PyWalker,
         },
         likelihoods::{
             py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,
             py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyLikelihoodID,
-            PyLikelihoodManager, PyLikelihoodTerm, PyNLL,
+            PyLikelihoodManager, PyLikelihoodTerm, PyNLL, PyStochasticNLL,
         },
     };
 

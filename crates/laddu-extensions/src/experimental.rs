@@ -1,5 +1,6 @@
 use laddu_core::LadduError;
-use laddu_core::{traits::Variable, utils::histogram, DVector, Float};
+use laddu_core::{traits::Variable, utils::histogram, Float};
+use nalgebra::DVector;
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
 
@@ -116,7 +117,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
         self.nll.parameters()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> laddu_core::DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
         let mut gradient = DVector::zeros(parameters.len());
         let bin_width = (self.range.1 - self.range.0) / self.bins as Float;
         for ((counts, errors), amplitudes) in self

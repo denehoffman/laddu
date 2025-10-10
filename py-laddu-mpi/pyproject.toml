@@ -9,14 +9,21 @@ classifiers = [
   "Programming Language :: Rust",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version", "license", "description", "readme"]
 dependencies = [
   "numpy",
   "docopt-ng",
-  "pyarrow",
   "uproot",
-  "fastparquet",
   "pandas",
   "polars",
 ]
@@ -108,8 +115,6 @@ ignore = [
   "D104", # Missing docstring in public package
   "D105", # Missing docstring in magic method
   # ------------------------------------------------------------------
-  "ANN101", # Missing type annotation for self
-  "ANN102", # Missing type annotation for cls
   "ANN401", # Dynamically typed expressions (Any) are disallowed
   "E501",   # Line length regulated by formatter
   "PT011",  # pytest.raises is too broad, set match or use a more specific exception

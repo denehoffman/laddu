@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID},
     data::Event,
@@ -8,16 +6,18 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Complex, DVector, Float, LadduError, Polarization, Sign,
+    Float, LadduError, Polarization, Sign,
 };
-
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::PyAmplitude,
     utils::variables::{PyAngles, PyPolarization},
 };
+use nalgebra::DVector;
+use num::Complex;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// An [`Amplitude`] representing an extension of the [`Ylm`](crate::ylm::Ylm)
 /// [`Amplitude`] assuming a linearly polarized beam as described in Equation (D13)

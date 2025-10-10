@@ -2,11 +2,12 @@ use crate::data::PyDataset;
 use laddu_core::{
     amplitudes::{
         constant, parameter, Amplitude, AmplitudeID, Evaluator, Expression, Manager, Model,
-        ParameterLike,
+        ParameterLike, TestAmplitude,
     },
     traits::ReadWrite,
-    Complex, Float, LadduError,
+    Float, LadduError,
 };
+use num::Complex;
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,
@@ -539,46 +540,9 @@ impl PyModel {
     fn load(&self, dataset: &PyDataset) -> PyEvaluator {
         PyEvaluator(self.0.load(&dataset.0))
     }
-    /// Save the Model to a file
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str
-    ///     The path of the new file (overwrites if the file exists!)
-    ///
-    /// Raises
-    /// ------
-    /// IOError
-    ///     If anything fails when trying to write the file
-    ///
-    fn save_as(&self, path: &str) -> PyResult<()> {
-        self.0.save_as(path)?;
-        Ok(())
-    }
-    /// Load a Model from a file
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str
-    ///     The path of the existing fit file
-    ///
-    /// Returns
-    /// -------
-    /// Model
-    ///     The model contained in the file
-    ///
-    /// Raises
-    /// ------
-    /// IOError
-    ///     If anything fails when trying to read the file
-    ///
-    #[staticmethod]
-    fn load_from(path: &str) -> PyResult<Self> {
-        Ok(PyModel(Model::load_from(path)?))
-    }
     #[new]
     fn new() -> Self {
-        PyModel(Model::create_null())
+        Self(Model::create_null())
     }
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(
@@ -767,6 +731,54 @@ impl PyEvaluator {
             Ok(PyArray1::from_slice(py, &self.0.evaluate(&parameters)))
         }
     }
+    /// Evaluate the stored Expression over a subset of the stored Dataset
+    ///
+    /// Parameters
+    /// ----------
+    /// parameters : list of float
+    ///     The values to use for the free parameters
+    /// indices : list of int
+    ///     The indices of events to evaluate
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// result : array_like
+    ///     A ``numpy`` array of complex values for each indexed Event in the Dataset
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool
+    ///
+    #[pyo3(signature = (parameters, indices, *, threads=None))]
+    fn evaluate_batch<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: Vec<Float>,
+        indices: Vec<usize>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyArray1<Complex<Float>>>> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(PyArray1::from_slice(
+                py,
+                &ThreadPoolBuilder::new()
+                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .build()
+                    .map_err(LadduError::from)?
+                    .install(|| self.0.evaluate_batch(&parameters, &indices)),
+            ))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(PyArray1::from_slice(
+                py,
+                &self.0.evaluate_batch(&parameters, &indices),
+            ))
+        }
+    }
     /// Evaluate the gradient of the stored Expression over the stored Dataset
     ///
     /// Parameters
@@ -826,6 +838,68 @@ impl PyEvaluator {
             .map_err(LadduError::NumpyError)?)
         }
     }
+    /// Evaluate the gradient of the stored Expression over a subset of the stored Dataset
+    ///
+    /// Parameters
+    /// ----------
+    /// parameters : list of float
+    ///     The values to use for the free parameters
+    /// indices : list of int
+    ///     The indices of events to evaluate
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// result : array_like
+    ///     A ``numpy`` 2D array of complex values for each indexed Event in the Dataset
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool or problem creating the resulting
+    ///     ``numpy`` array
+    ///
+    #[pyo3(signature = (parameters, indices, *, threads=None))]
+    fn evaluate_gradient_batch<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: Vec<Float>,
+        indices: Vec<usize>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyArray2<Complex<Float>>>> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(PyArray2::from_vec2(
+                py,
+                &ThreadPoolBuilder::new()
+                    .num_threads(threads.unwrap_or_else(num_cpus::get))
+                    .build()
+                    .map_err(LadduError::from)?
+                    .install(|| {
+                        self.0
+                            .evaluate_gradient_batch(&parameters, &indices)
+                            .iter()
+                            .map(|grad| grad.data.as_vec().to_vec())
+                            .collect::<Vec<Vec<Complex<Float>>>>()
+                    }),
+            )
+            .map_err(LadduError::NumpyError)?)
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(PyArray2::from_vec2(
+                py,
+                &self
+                    .0
+                    .evaluate_gradient_batch(&parameters, &indices)
+                    .iter()
+                    .map(|grad| grad.data.as_vec().to_vec())
+                    .collect::<Vec<Vec<Complex<Float>>>>(),
+            )
+            .map_err(LadduError::NumpyError)?)
+        }
+    }
 }
 
 /// A class, typically used to allow Amplitudes to take either free parameters or constants as
@@ -876,4 +950,10 @@ pub fn py_parameter(name: &str) -> PyParameterLike {
 #[pyfunction(name = "constant")]
 pub fn py_constant(value: Float) -> PyParameterLike {
     PyParameterLike(constant(value))
+}
+
+/// A amplitude used only for internal testing which evaluates (p0 + i * p1) * event.p4s[0].e
+#[pyfunction(name = "TestAmplitude")]
+pub fn py_test_amplitude(name: &str, re: PyParameterLike, im: PyParameterLike) -> PyAmplitude {
+    PyAmplitude(TestAmplitude::new(name, re.0, im.0))
 }

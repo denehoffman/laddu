@@ -78,6 +78,12 @@ impl PyVec3 {
             Err(PyTypeError::new_err("Unsupported operand type for -"))
         }
     }
+    fn __mul__(&self, other: Float) -> Self {
+        Self(self.0 * other)
+    }
+    fn __rmul__(&self, other: Float) -> Self {
+        Self(self.0 * other)
+    }
     fn __neg__(&self) -> PyResult<Self> {
         Ok(Self(-self.0))
     }
@@ -373,6 +379,12 @@ impl PyVec4 {
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for -"))
         }
+    }
+    fn __mul__(&self, other: Float) -> Self {
+        Self(self.0 * other)
+    }
+    fn __rmul__(&self, other: Float) -> Self {
+        Self(self.0 * other)
     }
     fn __neg__(&self) -> PyResult<Self> {
         Ok(Self(-self.0))

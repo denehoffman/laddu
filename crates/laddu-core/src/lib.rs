@@ -4,8 +4,7 @@
 #![warn(clippy::perf, clippy::style, missing_docs)]
 #![allow(clippy::excessive_precision)]
 
-use ganesh::swarms::{Particle, SwarmPositionInitializer};
-use ganesh::{Point, Swarm};
+use ganesh::core::{MCMCSummary, MinimizationSummary};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
@@ -280,11 +279,6 @@ pub use amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 
-// Re-exports
-pub use ganesh::{Bound, Ensemble, Status};
-pub use nalgebra::DVector;
-pub use num::Complex;
-
 /// A floating-point number type (defaults to [`f64`], see `f32` feature).
 #[cfg(not(feature = "f32"))]
 pub type Float = f64;
@@ -396,72 +390,22 @@ impl From<LadduError> for PyErr {
 }
 
 use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    fmt::Debug,
-    fs::File,
-    io::{BufReader, BufWriter},
-    path::Path,
-};
-/// A trait which allows structs with [`Serialize`] and [`Deserialize`](`serde::Deserialize`) to be
-/// written and read from files with a certain set of types/extensions.
-///
-/// Currently, Python's pickle format is supported supported, since it's an easy-to-parse standard
-/// that supports floating point values better that JSON or TOML
+use std::fmt::Debug;
+/// A trait which allows structs with [`Serialize`] and [`Deserialize`](`serde::Deserialize`) to
+/// have a null constructor which Python can fill with data. This allows such structs to be
+/// pickle-able from the Python API.
 pub trait ReadWrite: Serialize + DeserializeOwned {
     /// Create a null version of the object which acts as a shell into which Python's `pickle` module
     /// can load data. This generally shouldn't be used to construct the struct in regular code.
     fn create_null() -> Self;
-    /// Save a [`serde`]-object to a file path, using the extension to determine the file format
-    fn save_as<T: AsRef<str>>(&self, file_path: T) -> Result<(), LadduError> {
-        let expanded_path = shellexpand::full(file_path.as_ref())?;
-        let file_path = Path::new(expanded_path.as_ref());
-        let file = File::create(file_path)?;
-        let mut writer = BufWriter::new(file);
-        serde_pickle::to_writer(&mut writer, self, Default::default())?;
-        Ok(())
-    }
-    /// Load a [`serde`]-object from a file path, using the extension to determine the file format
-    fn load_from<T: AsRef<str>>(file_path: T) -> Result<Self, LadduError> {
-        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
-        serde_pickle::from_reader(reader, Default::default()).map_err(LadduError::from)
+}
+impl ReadWrite for MCMCSummary {
+    fn create_null() -> Self {
+        MCMCSummary::default()
     }
 }
-
-impl ReadWrite for Status {
+impl ReadWrite for MinimizationSummary {
     fn create_null() -> Self {
-        Status::default()
-    }
-}
-impl ReadWrite for Ensemble {
-    fn create_null() -> Self {
-        Ensemble::new(Vec::default())
-    }
-}
-impl ReadWrite for Point {
-    fn create_null() -> Self {
-        Point::default()
-    }
-}
-impl ReadWrite for Particle {
-    fn create_null() -> Self {
-        Particle::default()
-    }
-}
-impl ReadWrite for Swarm {
-    fn create_null() -> Self {
-        Swarm::new(SwarmPositionInitializer::Zero {
-            n_particles: 0,
-            n_dimensions: 0,
-        })
-    }
-}
-impl ReadWrite for Model {
-    fn create_null() -> Self {
-        Model {
-            manager: Manager::default(),
-            expression: Expression::default(),
-        }
+        MinimizationSummary::default()
     }
 }

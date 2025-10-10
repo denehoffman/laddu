@@ -22,14 +22,14 @@ from loguru import logger
 import laddu as ld
 
 
-# This custom observer differs from the one provided by `laddu`. Rather than tracing the
+# This custom terminator differs from the one provided by `laddu`. Rather than tracing the
 # walker positions and calculating the IAT, this first projects the current walker positions
 # onto the two constituent waves and uses those to calculate a different IAT. This converges
 # better because there is an implicit symmetry in the problem (only the absolute phase between
 # the waves matters, not the sign of that phase) so walkers can bounce between two equivalent
 # positions in the fit space which are very separate in the parameter space. It also
-# demonstrates how to write and use a custom observer.
-class CustomAutocorrelationObserver(ld.MCMCObserver):
+# demonstrates how to write and use a custom terminator.
+class CustomAutocorrelationTerminator(ld.MCMCTerminator):
     def __init__(
         self,
         nll: ld.NLL,
@@ -48,7 +48,9 @@ class CustomAutocorrelationObserver(ld.MCMCObserver):
         self.s0s = []
         self.d2s = []
 
-    def callback(self, step: int, ensemble: ld.Ensemble) -> tuple[ld.Ensemble, bool]:
+    def check_for_termination(
+        self, step: int, ensemble: ld.EnsembleStatus
+    ) -> ld.ControlFlow:
         latest_step = ensemble.get_chain()[:, -1, :]
         tot = []
         s0s = []
@@ -95,9 +97,9 @@ class CustomAutocorrelationObserver(ld.MCMCObserver):
                 abs(self.latest_tau - tau) / tau < self.dact
             )
             self.latest_tau = tau
-            return (ensemble, converged)  # type: ignore
-
-        return (ensemble, False)
+            if converged:
+                return ld.ControlFlow.Break
+        return ld.ControlFlow.Continue
 
 
 def main() -> None:
@@ -204,9 +206,11 @@ def main() -> None:
         else:
             p0 = best.x + np.random.normal(0, scale=0.01, size=(100, len(best.x)))
             nll_clone = nll
-            caco = CustomAutocorrelationObserver(nll_clone)
-            aco = ld.AutocorrelationObserver(n_check=10, terminate=False, verbose=True)
-            ensemble = nll.mcmc(p0, 30000, observers=[caco, aco])
+            caco = CustomAutocorrelationTerminator(nll_clone)
+            aco = ld.AutocorrelationTerminator(n_check=10, terminate=False, verbose=True)
+            ensemble = nll.mcmc(
+                p0, method='ess', max_steps=30000, terminators=[caco, aco]
+            )
             tau = caco.latest_tau
             taus = aco.taus
             bin_out = {'ensemble': ensemble, 'tau': tau, 'taus': taus}

@@ -3,7 +3,6 @@ from typing import Literal, overload
 from laddu.amplitudes import Amplitude, ParameterLike
 from laddu.utils.variables import Mass
 
-
 @overload
 def KopfKMatrixF0(
     name: str,

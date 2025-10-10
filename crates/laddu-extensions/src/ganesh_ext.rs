@@ -1,450 +1,628 @@
-use std::sync::Arc;
-
-use fastrand::Rng;
-use ganesh::{
-    algorithms::LBFGSB,
-    observers::{
-        DebugMCMCObserver, DebugObserver, DebugSwarmObserver, MCMCObserver, Observer, SwarmObserver,
-    },
-    samplers::{ESSMove, ESS},
-    swarms::PSO,
-    traits::{Algorithm, MCMCAlgorithm, SwarmAlgorithm},
-    Status, Swarm,
+use crate::{
+    likelihoods::{LikelihoodTerm, StochasticNLL},
+    LikelihoodEvaluator, NLL,
 };
-use laddu_core::{Ensemble, LadduError};
-use parking_lot::RwLock;
+use ganesh::{
+    algorithms::{
+        gradient::{Adam, AdamConfig, GradientStatus, LBFGSBConfig, LBFGSB},
+        gradient_free::{GradientFreeStatus, NelderMead, NelderMeadConfig},
+        mcmc::{AIESConfig, ESSConfig, EnsembleStatus, AIES, ESS},
+        particles::{PSOConfig, SwarmStatus, PSO},
+    },
+    core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
+    traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status},
+};
+use laddu_core::{Float, LadduError};
+use nalgebra::DVector;
 #[cfg(feature = "rayon")]
-use rayon::ThreadPool;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
-struct VerboseObserver {
-    show_step: bool,
-    show_x: bool,
-    show_fx: bool,
-}
-impl VerboseObserver {
-    fn build(self) -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(self))
-    }
+/// A settings wrapper for minimization algorithms
+pub enum MinimizationSettings<P> {
+    /// Settings for the L-BFGS-B algorithm
+    LBFGSB {
+        /// The configuration struct
+        config: LBFGSBConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<LBFGSB, P, GradientStatus, MaybeThreadPool, LadduError, LBFGSBConfig>,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
+    /// Settings for the Adam algorithm
+    Adam {
+        /// The configuration struct
+        config: AdamConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<Adam, P, GradientStatus, MaybeThreadPool, LadduError, AdamConfig>,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
+    /// Settings for the Nelder-Mead algorithm
+    NelderMead {
+        /// The configuration struct
+        config: NelderMeadConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<
+            NelderMead,
+            P,
+            GradientFreeStatus,
+            MaybeThreadPool,
+            LadduError,
+            NelderMeadConfig,
+        >,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
+    /// Settings for the Particle Swarm Optimimization algorithm
+    PSO {
+        /// The configuration struct
+        config: PSOConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<PSO, P, SwarmStatus, MaybeThreadPool, LadduError, PSOConfig>,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
 }
 
-/// A set of options that are used when minimizations are performed.
-pub struct MinimizerOptions {
+/// A settings wrapper for MCMC algorithms
+pub enum MCMCSettings<P> {
+    /// Settings for the Affine Invariant Ensemble Sampler
+    AIES {
+        /// The configuration struct
+        config: AIESConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<AIES, P, EnsembleStatus, MaybeThreadPool, LadduError, AIESConfig>,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
+    /// Settings for the Ensemble Slice Sampler
+    ESS {
+        /// The configuration struct
+        config: ESSConfig,
+        /// Callbacks to apply to the algorithm
+        callbacks: Callbacks<ESS, P, EnsembleStatus, MaybeThreadPool, LadduError, ESSConfig>,
+        /// The number of threads to use (0 will run in single-threaded mode)
+        num_threads: usize,
+    },
+}
+
+/// A wrapper struct which conditionally contains a thread pool if the rayon feature is enabled.
+#[derive(Debug)]
+pub struct MaybeThreadPool {
     #[cfg(feature = "rayon")]
-    pub(crate) algorithm: Box<dyn Algorithm<ThreadPool, LadduError>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) algorithm: Box<dyn Algorithm<(), LadduError>>,
-    #[cfg(feature = "rayon")]
-    pub(crate) observers: Vec<Arc<RwLock<dyn Observer<ThreadPool>>>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) observers: Vec<Arc<RwLock<dyn Observer<()>>>>,
-    pub(crate) max_steps: usize,
-    #[cfg(feature = "rayon")]
-    pub(crate) threads: usize,
+    /// The underlying [`ThreadPool`]
+    pub thread_pool: ThreadPool,
 }
-
-impl Default for MinimizerOptions {
-    fn default() -> Self {
-        Self {
-            algorithm: Box::new(LBFGSB::default()),
-            observers: Default::default(),
-            max_steps: 4000,
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
-        }
-    }
+/// A trait for objects which can be used in multithreaded contexts
+pub trait Threadable {
+    /// Returns a [`MaybeThreadPool`] associated with the object.
+    ///
+    /// # Errors
+    ///
+    /// This will return an error if there is any problem constructing the underlying thread pool.
+    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError>;
 }
-
-impl MinimizerOptions {
-    /// Adds the [`DebugObserver`] to the minimization.
-    pub fn debug(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(DebugObserver::build());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
+impl<P> Threadable for MinimizationSettings<P> {
+    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(MaybeThreadPool {
+                thread_pool: ThreadPoolBuilder::new()
+                    .num_threads(match self {
+                        Self::LBFGSB {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        }
+                        | Self::Adam {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        }
+                        | Self::NelderMead {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        }
+                        | Self::PSO {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        } => *num_threads,
+                    })
+                    .build()
+                    .map_err(LadduError::from)?,
+            })
         }
-    }
-    /// Adds a customizable `VerboseObserver` to the minimization.
-    pub fn verbose(self, show_step: bool, show_x: bool, show_fx: bool) -> Self {
-        let mut observers = self.observers;
-        observers.push(
-            VerboseObserver {
-                show_step,
-                show_x,
-                show_fx,
-            }
-            .build(),
-        );
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
-    /// settings).
-    #[cfg(feature = "rayon")]
-    pub fn with_algorithm<A: Algorithm<ThreadPool, LadduError> + 'static>(
-        self,
-        algorithm: A,
-    ) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: self.observers,
-            max_steps: self.max_steps,
-            threads: self.threads,
-        }
-    }
-
-    /// Set the [`Algorithm`] to be used in the minimization (default: [`LBFGSB`] with default
-    /// settings).
-    #[cfg(not(feature = "rayon"))]
-    pub fn with_algorithm<A: Algorithm<(), LadduError> + 'static>(self, algorithm: A) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: self.observers,
-            max_steps: self.max_steps,
-        }
-    }
-    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    #[cfg(feature = "rayon")]
-    pub fn with_observer(self, observer: Arc<RwLock<dyn Observer<ThreadPool>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-            threads: self.threads,
-        }
-    }
-    /// Add an [`Observer`] to the list of [`Observer`]s used in the minimization.
-    #[cfg(not(feature = "rayon"))]
-    pub fn with_observer(self, observer: Arc<RwLock<dyn Observer<()>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            max_steps: self.max_steps,
-        }
-    }
-
-    /// Set the maximum number of [`Algorithm`] steps for the minimization (default: 4000).
-    pub fn with_max_steps(self, max_steps: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            max_steps,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-
-    /// Set the number of threads to use.
-    #[cfg(feature = "rayon")]
-    pub fn with_threads(self, threads: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            max_steps: self.max_steps,
-            threads,
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(MaybeThreadPool {})
         }
     }
 }
 
-#[cfg(feature = "rayon")]
-impl Observer<ThreadPool> for VerboseObserver {
-    fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ThreadPool) -> bool {
-        if self.show_step {
-            println!("Step: {}", step);
+impl<P> Threadable for MCMCSettings<P> {
+    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(MaybeThreadPool {
+                thread_pool: ThreadPoolBuilder::new()
+                    .num_threads(match self {
+                        Self::AIES {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        }
+                        | Self::ESS {
+                            config: _,
+                            callbacks: _,
+                            num_threads,
+                        } => *num_threads,
+                    })
+                    .build()
+                    .map_err(LadduError::from)?,
+            })
         }
-        if self.show_x {
-            println!("Current Best Position: {}", status.x.transpose());
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(MaybeThreadPool {})
         }
-        if self.show_fx {
-            println!("Current Best Value: {}", status.fx);
-        }
-        false
     }
 }
 
-impl Observer<()> for VerboseObserver {
-    fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
-        if self.show_step {
-            println!("Step: {}", step);
-        }
-        if self.show_x {
-            println!("Current Best Position: {}", status.x.transpose());
-        }
-        if self.show_fx {
-            println!("Current Best Value: {}", status.fx);
-        }
-        false
-    }
-}
-
-struct VerboseMCMCObserver;
-impl VerboseMCMCObserver {
-    fn build() -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(Self))
-    }
-}
-
-#[cfg(feature = "rayon")]
-impl MCMCObserver<ThreadPool> for VerboseMCMCObserver {
-    fn callback(
+#[derive(Copy, Clone)]
+struct LikelihoodTermObserver;
+impl<A, P, S, U, E, C> Observer<A, P, S, U, E, C> for LikelihoodTermObserver
+where
+    A: Algorithm<P, S, U, E, Config = C>,
+    P: LikelihoodTerm,
+    S: Status,
+{
+    fn observe(
         &mut self,
-        step: usize,
-        _ensemble: &mut Ensemble,
-        _thread_pool: &mut ThreadPool,
-    ) -> bool {
-        println!("Step: {}", step);
-        false
+        _current_step: usize,
+        _algorithm: &A,
+        problem: &P,
+        _status: &S,
+        _args: &U,
+        _config: &C,
+    ) {
+        problem.update();
     }
 }
 
-impl MCMCObserver<()> for VerboseMCMCObserver {
-    fn callback(&mut self, step: usize, _ensemble: &mut Ensemble, _user_data: &mut ()) -> bool {
-        println!("Step: {}", step);
-        false
+impl CostFunction<MaybeThreadPool, LadduError> for NLL {
+    fn evaluate(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+        }
     }
 }
-
-/// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
-pub struct MCMCOptions {
-    #[cfg(feature = "rayon")]
-    pub(crate) algorithm: Box<dyn MCMCAlgorithm<ThreadPool, LadduError>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) algorithm: Box<dyn MCMCAlgorithm<(), LadduError>>,
-    #[cfg(feature = "rayon")]
-    pub(crate) observers: Vec<Arc<RwLock<dyn MCMCObserver<ThreadPool>>>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>>,
-    #[cfg(feature = "rayon")]
-    pub(crate) threads: usize,
+impl Gradient<MaybeThreadPool, LadduError> for NLL {
+    fn gradient(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+        }
+    }
 }
-
-impl MCMCOptions {
-    /// Create the default set of [`MCMCOptions`], which cannot be made with a typical [`Default`]
-    /// implementation because it requires an [`Rng`] to be provided.
-    pub fn default_with_rng(rng: Rng) -> Self {
-        let default_ess_moves = [ESSMove::differential(0.9), ESSMove::gaussian(0.1)];
-        Self {
-            algorithm: Box::new(ESS::new(default_ess_moves, rng).with_n_adaptive(100)),
-            observers: Default::default(),
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
+impl LogDensity<MaybeThreadPool, LadduError> for NLL {
+    fn log_density(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(-args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
         }
-    }
-    /// Adds the [`DebugMCMCObserver`] to the minimization.
-    pub fn debug(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(DebugMCMCObserver::build());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-    /// Adds a customizable `VerboseObserver` to the minimization.
-    pub fn verbose(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(VerboseMCMCObserver::build());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-    /// Set the [`MCMCAlgorithm`] to be used in the minimization.
-    #[cfg(feature = "rayon")]
-    pub fn from_algorithm<A: MCMCAlgorithm<ThreadPool, LadduError> + 'static>(
-        algorithm: A,
-    ) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: Default::default(),
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
-        }
-    }
-    /// Set the [`MCMCAlgorithm`] to be used in the minimization.
-    #[cfg(not(feature = "rayon"))]
-    pub fn from_algorithm<A: MCMCAlgorithm<(), LadduError> + 'static>(algorithm: A) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: Default::default(),
-        }
-    }
-    #[cfg(feature = "rayon")]
-    /// Add an [`MCMCObserver`] to the list of [`MCMCObserver`]s used in the minimization.
-    pub fn with_observer(self, observer: Arc<RwLock<dyn MCMCObserver<ThreadPool>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            threads: self.threads,
-        }
-    }
-    #[cfg(not(feature = "rayon"))]
-    /// Add an [`MCMCObserver`] to the list of [`MCMCObserver`]s used in the minimization.
-    pub fn with_observer(self, observer: Arc<RwLock<dyn MCMCObserver<()>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-        }
-    }
-
-    /// Set the number of threads to use.
-    #[cfg(feature = "rayon")]
-    pub fn with_threads(self, threads: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            threads,
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
         }
     }
 }
 
-struct VerboseSwarmObserver;
-impl VerboseSwarmObserver {
-    fn build() -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(Self))
+impl NLL {
+    /// Minimize the [`NLL`] with the algorithm given in the [`MinimizationSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn minimize(
+        &self,
+        settings: MinimizationSettings<Self>,
+    ) -> Result<MinimizationSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        Ok(match settings {
+            MinimizationSettings::LBFGSB {
+                config,
+                callbacks,
+                num_threads: _,
+            } => LBFGSB::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::Adam {
+                config,
+                callbacks,
+                num_threads: _,
+            } => Adam::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::NelderMead {
+                config,
+                callbacks,
+                num_threads: _,
+            } => NelderMead::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::PSO {
+                config,
+                callbacks,
+                num_threads: _,
+            } => PSO::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+        }?
+        .with_parameter_names(self.parameters()))
+    }
+
+    /// Run an MCMC sampling algorithm over the [`NLL`] with the given [`MCMCSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        Ok(match settings {
+            MCMCSettings::AIES {
+                config,
+                callbacks,
+                num_threads: _,
+            } => AIES::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MCMCSettings::ESS {
+                config,
+                callbacks,
+                num_threads: _,
+            } => ESS::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+        }?
+        .with_parameter_names(self.parameters()))
     }
 }
 
-#[cfg(feature = "rayon")]
-impl SwarmObserver<ThreadPool> for VerboseSwarmObserver {
-    fn callback(&mut self, step: usize, _swarm: &mut Swarm, _thread_pool: &mut ThreadPool) -> bool {
-        println!("Step: {}", step);
-        false
+impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
+    fn evaluate(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+        }
+    }
+}
+impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
+    fn gradient(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+        }
+    }
+}
+impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
+    fn log_density(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(-args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+        }
     }
 }
 
-impl SwarmObserver<()> for VerboseSwarmObserver {
-    fn callback(&mut self, step: usize, _swarm: &mut Swarm, _user_data: &mut ()) -> bool {
-        println!("Step: {}", step);
-        false
+impl StochasticNLL {
+    /// Minimize the [`StochasticNLL`] with the algorithm given in the [`MinimizationSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn minimize(
+        &self,
+        settings: MinimizationSettings<Self>,
+    ) -> Result<MinimizationSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        Ok(match settings {
+            MinimizationSettings::LBFGSB {
+                config,
+                callbacks,
+                num_threads: _,
+            } => LBFGSB::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::Adam {
+                config,
+                callbacks,
+                num_threads: _,
+            } => Adam::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::NelderMead {
+                config,
+                callbacks,
+                num_threads: _,
+            } => NelderMead::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::PSO {
+                config,
+                callbacks,
+                num_threads: _,
+            } => PSO::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+        }?
+        .with_parameter_names(self.parameters()))
+    }
+
+    /// Run an MCMC sampling algorithm over the [`StochasticNLL`] with the given [`MCMCSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        Ok(match settings {
+            MCMCSettings::AIES {
+                config,
+                callbacks,
+                num_threads: _,
+            } => AIES::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MCMCSettings::ESS {
+                config,
+                callbacks,
+                num_threads: _,
+            } => ESS::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+        }?
+        .with_parameter_names(self.parameters()))
     }
 }
 
-/// A set of options that are used when Markov Chain Monte Carlo samplings are performed.
-pub struct SwarmOptions {
-    #[cfg(feature = "rayon")]
-    pub(crate) algorithm: Box<dyn SwarmAlgorithm<ThreadPool, LadduError>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) algorithm: Box<dyn SwarmAlgorithm<(), LadduError>>,
-    #[cfg(feature = "rayon")]
-    pub(crate) observers: Vec<Arc<RwLock<dyn SwarmObserver<ThreadPool>>>>,
-    #[cfg(not(feature = "rayon"))]
-    pub(crate) observers: Vec<Arc<RwLock<dyn SwarmObserver<()>>>>,
-    #[cfg(feature = "rayon")]
-    pub(crate) threads: usize,
+impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    fn evaluate(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+        }
+    }
+}
+impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    fn gradient(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<DVector<Float>, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+        }
+    }
+}
+impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    fn log_density(
+        &self,
+        parameters: &DVector<Float>,
+        args: &MaybeThreadPool,
+    ) -> Result<Float, LadduError> {
+        #[cfg(feature = "rayon")]
+        {
+            Ok(-args
+                .thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+        }
+    }
 }
 
-impl SwarmOptions {
-    /// Create the default set of [`SwarmOptions`], which cannot be made with a typical [`Default`]
-    /// implementation because it requires an [`Rng`] to be provided.
-    pub fn default_with_rng(rng: Rng) -> Self {
-        Self {
-            algorithm: Box::new(PSO::new(rng)),
-            observers: Default::default(),
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
-        }
-    }
-    /// Adds the [`DebugSwarmObserver`] to the minimization.
-    pub fn debug(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(DebugSwarmObserver::build());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-    /// Adds a customizable `VerboseObserver` to the minimization.
-    pub fn verbose(self) -> Self {
-        let mut observers = self.observers;
-        observers.push(VerboseSwarmObserver::build());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            #[cfg(feature = "rayon")]
-            threads: self.threads,
-        }
-    }
-    /// Set the [`SwarmAlgorithm`] to be used in the minimization.
-    #[cfg(feature = "rayon")]
-    pub fn from_algorithm<A: SwarmAlgorithm<ThreadPool, LadduError> + 'static>(
-        algorithm: A,
-    ) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: Default::default(),
-            #[cfg(all(feature = "rayon", feature = "num_cpus"))]
-            threads: num_cpus::get(),
-            #[cfg(all(feature = "rayon", not(feature = "num_cpus")))]
-            threads: 0,
-        }
-    }
-    /// Set the [`SwarmAlgorithm`] to be used in the minimization.
-    #[cfg(not(feature = "rayon"))]
-    pub fn from_algorithm<A: SwarmAlgorithm<(), LadduError> + 'static>(algorithm: A) -> Self {
-        Self {
-            algorithm: Box::new(algorithm),
-            observers: Default::default(),
-        }
-    }
-    #[cfg(feature = "rayon")]
-    /// Add an [`SwarmObserver`] to the list of [`SwarmObserver`]s used in the minimization.
-    pub fn with_observer(self, observer: Arc<RwLock<dyn SwarmObserver<ThreadPool>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
-            threads: self.threads,
-        }
-    }
-    #[cfg(not(feature = "rayon"))]
-    /// Add an [`SwarmObserver`] to the list of [`SwarmObserver`]s used in the minimization.
-    pub fn with_observer(self, observer: Arc<RwLock<dyn SwarmObserver<()>>>) -> Self {
-        let mut observers = self.observers;
-        observers.push(observer.clone());
-        Self {
-            algorithm: self.algorithm,
-            observers,
+impl LikelihoodEvaluator {
+    /// Minimize the [`LikelihoodEvaluator`] with the algorithm given in the [`MinimizationSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn minimize(
+        &self,
+        settings: MinimizationSettings<Self>,
+    ) -> Result<MinimizationSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        match settings {
+            MinimizationSettings::LBFGSB {
+                config,
+                callbacks,
+                num_threads: _,
+            } => LBFGSB::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::Adam {
+                config,
+                callbacks,
+                num_threads: _,
+            } => Adam::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::NelderMead {
+                config,
+                callbacks,
+                num_threads: _,
+            } => NelderMead::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MinimizationSettings::PSO {
+                config,
+                callbacks,
+                num_threads: _,
+            } => PSO::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
         }
     }
 
-    /// Set the number of threads to use.
-    #[cfg(feature = "rayon")]
-    pub fn with_threads(self, threads: usize) -> Self {
-        Self {
-            algorithm: self.algorithm,
-            observers: self.observers,
-            threads,
+    /// Run an MCMC sampling algorithm over the [`LikelihoodEvaluator`] with the given [`MCMCSettings`].
+    ///
+    /// # Errors
+    ///
+    /// This method may return an error if there was any problem constructing thread pools or
+    /// evaluating the underlying model.
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+        let mtp = settings.get_pool()?;
+        match settings {
+            MCMCSettings::AIES {
+                config,
+                callbacks,
+                num_threads: _,
+            } => AIES::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
+            MCMCSettings::ESS {
+                config,
+                callbacks,
+                num_threads: _,
+            } => ESS::default().process(
+                self,
+                &mtp,
+                config,
+                callbacks.with_observer(LikelihoodTermObserver),
+            ),
         }
     }
 }
@@ -452,755 +630,1224 @@ impl SwarmOptions {
 /// Python bindings for the [`ganesh`] crate
 #[cfg(feature = "python")]
 pub mod py_ganesh {
-    use super::*;
-    use std::sync::Arc;
+    use std::{ops::ControlFlow, sync::Arc};
 
-    use fastrand::Rng;
+    use super::*;
+
     use ganesh::{
         algorithms::{
-            lbfgsb::LBFGSBErrorMode,
-            nelder_mead::{
+            gradient::{
+                adam::AdamEMATerminator,
+                lbfgsb::{
+                    LBFGSBErrorMode, LBFGSBFTerminator, LBFGSBGTerminator, LBFGSBInfNormGTerminator,
+                },
+            },
+            gradient_free::nelder_mead::{
                 NelderMeadFTerminator, NelderMeadXTerminator, SimplexConstructionMethod,
                 SimplexExpansionMethod,
             },
-            NelderMead, LBFGSB,
+            line_search::{HagerZhangLineSearch, MoreThuenteLineSearch, StrongWolfeLineSearch},
+            mcmc::{
+                integrated_autocorrelation_times, AIESMove, AutocorrelationTerminator, ESSMove,
+                Walker,
+            },
+            particles::{
+                Swarm, SwarmBoundaryMethod, SwarmParticle, SwarmPositionInitializer, SwarmTopology,
+                SwarmUpdateMethod, SwarmVelocityInitializer,
+            },
         },
-        observers::{
-            AutocorrelationObserver, MCMCObserver, Observer, SwarmObserver, TrackingSwarmObserver,
-        },
-        samplers::{
-            aies::WeightedAIESMove, ess::WeightedESSMove, integrated_autocorrelation_times,
-            AIESMove, ESSMove, AIES, ESS,
-        },
-        swarms::{
-            BoundaryMethod, Particle, SwarmPositionInitializer, SwarmVelocityInitializer, Topology,
-            UpdateMethod, PSO,
-        },
-        Point, Status, Swarm,
+        core::{Bounds, CtrlCAbortSignal, DebugObserver, MaxSteps},
+        traits::{Observer, Status, SupportsBounds, SupportsTransform, Terminator},
     };
-    use laddu_core::{DVector, Ensemble, Float, LadduError, ReadWrite};
-    use numpy::{PyArray1, PyArray2, PyArray3};
-    use parking_lot::RwLock;
+    use laddu_core::{Float, LadduError, ReadWrite};
+    use nalgebra::DMatrix;
+    use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
+    use parking_lot::Mutex;
     use pyo3::{
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
-        types::{PyBytes, PyDict, PyList, PyTuple},
+        types::{PyBytes, PyDict, PyList},
     };
 
-    /// The L-BFGS-B Minimizer
-    ///
-    /// Parameters
-    /// ----------
-    /// eps_f_abs : float, optional
-    ///     Set the absolute tolerance on the function value for the termination criteria
-    /// eps_g_abs : float, optional
-    ///     Set the absolute tolerance on the gradient value for the termination criteria
-    /// tol_g_abs : float, optional
-    ///     Set the absolute tolerance on the gradient value for the termination criteria // TODO:
-    ///
-    #[pyclass(name = "LBFGSB", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyLBFGSB {
-        eps_f_abs: Option<Float>,
-        eps_g_abs: Option<Float>,
-        tol_g_abs: Option<Float>,
+    /// A helper trait for parsing Python arguments.
+    pub trait FromPyArgs<A = ()>: Sized {
+        /// Convert the given Python arguments into a [`Self`].
+        fn from_pyargs(args: &A, d: &Bound<PyDict>) -> PyResult<Self>;
     }
-    #[pymethods]
-    impl PyLBFGSB {
-        #[new]
-        #[pyo3(signature=(*, eps_f_abs=None, eps_g_abs=None, tol_g_abs=None))]
-        fn new(
-            eps_f_abs: Option<Float>,
-            eps_g_abs: Option<Float>,
-            tol_g_abs: Option<Float>,
-        ) -> Self {
-            PyLBFGSB {
-                eps_f_abs,
-                eps_g_abs,
-                tol_g_abs,
+    impl FromPyArgs<Vec<Float>> for LBFGSBConfig {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut config = LBFGSBConfig::new(args);
+            if let Some(m) = d.get_item("m")? {
+                let m_int = m.extract()?;
+                config = config.with_memory_limit(m_int);
             }
+            if let Some(flag) = d.get_item("skip_hessian")? {
+                if flag.extract()? {
+                    config = config.with_error_mode(LBFGSBErrorMode::Skip);
+                }
+            }
+            if let Some(linesearch_dict) = d.get_item("line_search")? {
+                config = config.with_line_search(StrongWolfeLineSearch::from_pyargs(
+                    &(),
+                    &linesearch_dict.extract()?,
+                )?);
+            }
+            Ok(config)
         }
     }
-    impl PyLBFGSB {
-        fn get_algorithm<U>(&self, skip_hessian: bool) -> LBFGSB<U, LadduError> {
-            let mut lbfgsb = LBFGSB::default();
-            if let Some(eps_f_abs) = self.eps_f_abs {
-                lbfgsb = lbfgsb.with_eps_f_abs(eps_f_abs);
-            }
-            if let Some(eps_g_abs) = self.eps_g_abs {
-                lbfgsb = lbfgsb.with_eps_g_abs(eps_g_abs);
-            }
-            if let Some(tol_g_abs) = self.tol_g_abs {
-                lbfgsb = lbfgsb.with_tol_g_abs(tol_g_abs);
-            }
-            if skip_hessian {
-                lbfgsb = lbfgsb.with_error_mode(LBFGSBErrorMode::Skip);
-            }
-            lbfgsb
-        }
-    }
-
-    /// Methods to initialize the ``NelderMead`` minimizer's simplex
-    ///
-    #[pyclass(name = "SimplexConstructionMethod", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PySimplexConstructionMethod(SimplexConstructionMethod);
-    #[pymethods]
-    impl PySimplexConstructionMethod {
-        /// Create an orthogonal simplex structure with a given spacing
-        ///
-        /// Parameters
-        /// ----------
-        /// simplex_size : float
-        ///     The spacing between the vertices of the simplex
-        ///
-        /// Returns
-        /// -------
-        /// SimplexConstructionMethod
-        ///
-        /// Notes
-        /// -----
-        /// This will initialize a ``NelderMead`` simplex with a vertex at the initial guess of the
-        /// minimizer in parameter space along with other vertices a distance of ``simplex_size``
-        /// from the initial guess in each positive dimension of the space.
-        ///
-        #[staticmethod]
-        fn orthogonal(simplex_size: Float) -> Self {
-            Self(SimplexConstructionMethod::Orthogonal { simplex_size })
-        }
-        /// Create an simplex structure with the given vertices
-        ///
-        /// Parameters
-        /// ----------
-        /// simplex : list of list of float
-        ///     A list of vertices in the parameter space
-        ///
-        /// Returns
-        /// -------
-        /// SimplexConstructionMethod
-        ///
-        /// Notes
-        /// -----
-        /// This construction method will ignore the initial guess input to the minimizer and will
-        /// instead use the vertices provided. The list of vertices must have a length od ``D+1``
-        /// where ``D`` is the dimensionality of the parameter space.
-        ///
-        #[staticmethod]
-        fn custom(simplex: Vec<Vec<Float>>) -> Self {
-            Self(SimplexConstructionMethod::Custom { simplex })
-        }
-    }
-
-    /// The Nelder-Mead simplex minimizer
-    ///
-    /// The Nedler-Mead algorithm is a gradient-free minimizer which uses a set of evaluations to
-    /// determine the next step to take.
-    ///
-    /// Parameters
-    /// ----------
-    /// eps_x_rel : float, optional
-    ///     The relative tolerance on the parameter space to determine convergence
-    /// eps_x_abs : float, optional
-    ///     The absolute tolerance on the parameter space to determine convergence
-    /// eps_f_rel : float, optional
-    ///     The relative tolerance on the function value to determine convergence
-    /// eps_f_abs : float, optional
-    ///     The absolute tolerance on the function value to determine convergence
-    /// alpha : float, optional
-    ///     The reflection coefficient (default = ``1``, must be greater than zero)
-    /// beta : float, optional
-    ///     The expansion coefficient (default = ``2``, must be greater than one and
-    ///     greater than ``alpha``)
-    /// gamma : float, optional
-    ///     The contraction coefficient (default = ``0.5``, must be strictly between zero and one)
-    /// delta : float, optional
-    ///     The shrink coefficient (default = ``0.5``, must be between zero and one)
-    /// adaptive : int, optional
-    ///     Override any of the coefficients ``alpha``, ``beta``, ``gamma``, and ``delta`` with
-    ///     adaptive versions which scale with the number of parameters (this value should be set
-    ///     to the number of free parameters if used, and setting any coefficient manually will
-    ///     override that value)
-    /// construction_method : SimplexConstructionMethod, optional
-    ///     Specify how to initialize the simplex
-    /// simplex_expansion_method : {"greedy minimization", "greedy expansion"}, optional
-    ///     Specify whether the expansion method should favor minimization or exploration
-    /// terminator_f : {"StdDev", "Amoeba", "Absolute", "None"}, optional
-    ///     Set the termination criteria for the function value
-    /// terminator_x : {"Singer", "Diameter", "Higham", "Rowan", "None"}, optional
-    ///     Set the termination criteria for the simplex positions
-    ///
-    #[pyclass(name = "NelderMead", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyNelderMead {
-        eps_x_rel: Option<Float>,
-        eps_x_abs: Option<Float>,
-        eps_f_rel: Option<Float>,
-        eps_f_abs: Option<Float>,
-        alpha: Option<Float>,
-        beta: Option<Float>,
-        gamma: Option<Float>,
-        delta: Option<Float>,
-        adaptive: Option<usize>,
-        construction_method: Option<SimplexConstructionMethod>,
-        simplex_expansion_method: Option<SimplexExpansionMethod>,
-        terminator_f: Option<NelderMeadFTerminator>,
-        terminator_x: Option<NelderMeadXTerminator>,
-    }
-    #[pymethods]
-    impl PyNelderMead {
-        #[new]
-        #[pyo3(signature=(*, eps_x_rel=None, eps_x_abs=None, eps_f_rel=None, eps_f_abs=None, alpha=None, beta=None, gamma=None, delta=None, adaptive=None, construction_method=None, simplex_expansion_method=None, terminator_f=None, terminator_x=None))]
-        #[allow(clippy::too_many_arguments)]
-        fn new(
-            eps_x_rel: Option<Float>,
-            eps_x_abs: Option<Float>,
-            eps_f_rel: Option<Float>,
-            eps_f_abs: Option<Float>,
-            alpha: Option<Float>,
-            beta: Option<Float>,
-            gamma: Option<Float>,
-            delta: Option<Float>,
-            adaptive: Option<usize>,
-            construction_method: Option<PySimplexConstructionMethod>,
-            simplex_expansion_method: Option<String>,
-            terminator_f: Option<String>,
-            terminator_x: Option<String>,
-        ) -> PyResult<Self> {
-            let construction_method = construction_method.map(|cm| cm.0);
-            let simplex_expansion_method = simplex_expansion_method.map(|sem| {match sem.to_lowercase().as_str() {
-                "greedy minimization" => Ok(SimplexExpansionMethod::GreedyMinimization),
-                "greedy expansion" => Ok(SimplexExpansionMethod::GreedyExpansion),
-                _ => Err(PyTypeError::new_err("Invalid simplex_expansion_method! Valid options are \"greedy minimization\" (default) or \"greedy expansion\".")),
-            }}).transpose()?;
-            let terminator_f=terminator_f.map(|tf| {match tf.to_lowercase().as_str() {
-                "amoeba" => Ok(NelderMeadFTerminator::Amoeba),
-                "absolute" => Ok(NelderMeadFTerminator::Absolute),
-                "stddev" => Ok(NelderMeadFTerminator::StdDev),
-                "none" => Ok(NelderMeadFTerminator::None),
-                _ => Err(PyTypeError::new_err("Invalid terminator_f! Valid options are \"stddev\" (default), \"amoeba\", \"absolute\", or \"none\".")),
-            }}).transpose()?;
-            let terminator_x=terminator_x.map(|tx| {match tx.to_lowercase().as_str() {
-                "diameter" => Ok(NelderMeadXTerminator::Diameter),
-                "higham" => Ok(NelderMeadXTerminator::Higham),
-                "rowan" => Ok(NelderMeadXTerminator::Rowan),
-                "singer" => Ok(NelderMeadXTerminator::Singer),
-                "none" => Ok(NelderMeadXTerminator::None),
-                _ => Err(PyTypeError::new_err("Invalid terminator_x! Valid options are \"singer\" (default), \"diameter\", \"higham\", \"rowan\", or \"none\".")),
-            }}).transpose()?;
-            Ok(PyNelderMead {
-                eps_x_rel,
-                eps_x_abs,
-                eps_f_rel,
-                eps_f_abs,
-                alpha,
-                beta,
-                gamma,
-                delta,
-                adaptive,
-                construction_method,
-                simplex_expansion_method,
-                terminator_f,
-                terminator_x,
-            })
-        }
-    }
-    impl PyNelderMead {
-        fn get_algorithm(&self, skip_hessian: bool) -> NelderMead {
-            let mut nm = NelderMead::default();
-            if let Some(eps_x_rel) = self.eps_x_rel {
-                nm = nm.with_eps_x_rel(eps_x_rel);
-            }
-            if let Some(eps_x_abs) = self.eps_x_abs {
-                nm = nm.with_eps_x_abs(eps_x_abs);
-            }
-            if let Some(eps_f_rel) = self.eps_f_rel {
-                nm = nm.with_eps_f_rel(eps_f_rel);
-            }
-            if let Some(eps_f_abs) = self.eps_f_abs {
-                nm = nm.with_eps_f_abs(eps_f_abs);
-            }
-            if let Some(adaptive) = self.adaptive {
-                nm = nm.with_adaptive(adaptive);
-            }
-            if let Some(alpha) = self.alpha {
-                nm = nm.with_alpha(alpha);
-            }
-            if let Some(beta) = self.beta {
-                nm = nm.with_beta(beta);
-            }
-            if let Some(gamma) = self.gamma {
-                nm = nm.with_gamma(gamma);
-            }
-            if let Some(delta) = self.delta {
-                nm = nm.with_delta(delta);
-            }
-            if let Some(construction_method) = self.construction_method.clone() {
-                nm = nm.with_construction_method(construction_method);
-            }
-            if let Some(simplex_expansion_method) = self.simplex_expansion_method.clone() {
-                nm = nm.with_expansion_method(simplex_expansion_method);
-            }
-            if let Some(terminator_f) = self.terminator_f.clone() {
-                nm = nm.with_terminator_f(terminator_f);
-            }
-            if let Some(terminator_x) = self.terminator_x.clone() {
-                nm = nm.with_terminator_x(terminator_x);
-            }
-            if skip_hessian {
-                nm = nm.with_no_error_calculation();
-            }
-            nm
-        }
-    }
-
-    /// A weighted AIES move.
-    ///
-    #[pyclass(name = "AIESMove", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyAIESMove(WeightedAIESMove);
-    #[pymethods]
-    impl PyAIESMove {
-        /// Construct a stretch move.
-        ///
-        /// Parameters
-        /// ----------
-        /// weight : float, default=1.0
-        ///     The relative frequency this move should be chosen
-        /// a : float, default=2.0
-        ///     A scaling factor (higher values encourage exploration)
-        ///
-        #[staticmethod]
-        #[pyo3(signature = (weight=1.0, *, a=None))]
-        fn stretch(weight: Option<Float>, a: Option<Float>) -> Self {
-            let weight = weight.unwrap_or(1.0);
-            if let Some(a) = a {
-                Self((AIESMove::Stretch { a }, weight))
+    impl FromPyArgs for StrongWolfeLineSearch {
+        fn from_pyargs(_args: &(), d: &Bound<PyDict>) -> PyResult<Self> {
+            if let Some(method) = d.get_item("method")? {
+                match method
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "morethuente" => {
+                        let mut line_search = MoreThuenteLineSearch::default();
+                        if let Some(max_iterations) = d.get_item("max_iterations")? {
+                            line_search =
+                                line_search.with_max_iterations(max_iterations.extract()?);
+                        }
+                        if let Some(max_zoom) = d.get_item("max_zoom")? {
+                            line_search = line_search.with_max_zoom(max_zoom.extract()?);
+                        }
+                        match (d.get_item("c1")?, d.get_item("c2")?) {
+                            (Some(c1), Some(c2)) => {
+                                line_search = line_search.with_c1_c2(c1.extract()?, c2.extract()?);
+                            }
+                            (Some(c1), None) => {
+                                line_search = line_search.with_c1(c1.extract()?);
+                            }
+                            (None, Some(c2)) => {
+                                line_search = line_search.with_c2(c2.extract()?);
+                            }
+                            (None, None) => {}
+                        }
+                        Ok(StrongWolfeLineSearch::MoreThuente(line_search))
+                    }
+                    "hagerzhang" => {
+                        let mut line_search = HagerZhangLineSearch::default();
+                        if let Some(max_iterations) = d.get_item("max_iterations")? {
+                            line_search =
+                                line_search.with_max_iterations(max_iterations.extract()?);
+                        }
+                        if let Some(max_bisects) = d.get_item("max_bisects")? {
+                            line_search = line_search.with_max_bisects(max_bisects.extract()?);
+                        }
+                        match (d.get_item("delta")?, d.get_item("sigma")?) {
+                            (Some(delta), Some(sigma)) => {
+                                line_search = line_search
+                                    .with_delta_sigma(delta.extract()?, sigma.extract()?);
+                            }
+                            (Some(delta), None) => {
+                                line_search = line_search.with_delta(delta.extract()?);
+                            }
+                            (None, Some(sigma)) => {
+                                line_search = line_search.with_sigma(sigma.extract()?);
+                            }
+                            (None, None) => {}
+                        }
+                        if let Some(epsilon) = d.get_item("epsilon")? {
+                            line_search = line_search.with_epsilon(epsilon.extract()?);
+                        }
+                        if let Some(theta) = d.get_item("theta")? {
+                            line_search = line_search.with_theta(theta.extract()?);
+                        }
+                        if let Some(gamma) = d.get_item("gamma")? {
+                            line_search = line_search.with_gamma(gamma.extract()?);
+                        }
+                        Ok(StrongWolfeLineSearch::HagerZhang(line_search))
+                    }
+                    _ => Err(PyTypeError::new_err(format!(
+                        "Invalid line search method: {}",
+                        method
+                    ))),
+                }
             } else {
-                Self(AIESMove::stretch(weight))
+                Err(PyTypeError::new_err("Line search method not specified"))
             }
         }
-        /// Construct a walk move.
-        ///
-        /// Parameters
-        /// ----------
-        /// weight : float, default=1.0
-        ///     The relative frequency this move should be chosen
-        ///
-        #[staticmethod]
-        #[pyo3(signature = (weight=1.0))]
-        fn walk(weight: Option<Float>) -> Self {
-            let weight = weight.unwrap_or(1.0);
-            Self(AIESMove::walk(weight))
+    }
+    impl<P> FromPyArgs
+        for Callbacks<LBFGSB, P, GradientStatus, MaybeThreadPool, LadduError, LBFGSBConfig>
+    where
+        P: Gradient<MaybeThreadPool, LadduError>,
+    {
+        fn from_pyargs(_args: &(), d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut callbacks = Callbacks::empty();
+            if let Some(eps_f) = d.get_item("eps_f")? {
+                if let Some(eps_abs) = eps_f.extract()? {
+                    callbacks = callbacks.with_terminator(LBFGSBFTerminator { eps_abs });
+                } else {
+                    callbacks = callbacks.with_terminator(LBFGSBFTerminator::default());
+                }
+            } else {
+                callbacks = callbacks.with_terminator(LBFGSBFTerminator::default());
+            }
+            if let Some(eps_g) = d.get_item("eps_g")? {
+                if let Some(eps_abs) = eps_g.extract()? {
+                    callbacks = callbacks.with_terminator(LBFGSBGTerminator { eps_abs });
+                } else {
+                    callbacks = callbacks.with_terminator(LBFGSBGTerminator::default());
+                }
+            } else {
+                callbacks = callbacks.with_terminator(LBFGSBGTerminator::default());
+            }
+            if let Some(eps_norm_g) = d.get_item("eps_norm_g")? {
+                if let Some(eps_abs) = eps_norm_g.extract()? {
+                    callbacks = callbacks.with_terminator(LBFGSBInfNormGTerminator { eps_abs });
+                } else {
+                    callbacks = callbacks.with_terminator(LBFGSBInfNormGTerminator::default());
+                }
+            } else {
+                callbacks = callbacks.with_terminator(LBFGSBInfNormGTerminator::default());
+            }
+            Ok(callbacks)
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for AdamConfig {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut config = AdamConfig::new(args);
+            if let Some(alpha) = d.get_item("alpha")? {
+                config = config.with_alpha(alpha.extract()?);
+            }
+            if let Some(beta_1) = d.get_item("beta_1")? {
+                config = config.with_beta_1(beta_1.extract()?);
+            }
+            if let Some(beta_2) = d.get_item("beta_2")? {
+                config = config.with_beta_2(beta_2.extract()?);
+            }
+            if let Some(epsilon) = d.get_item("epsilon")? {
+                config = config.with_epsilon(epsilon.extract()?);
+            }
+            Ok(config)
+        }
+    }
+    impl<P> FromPyArgs for Callbacks<Adam, P, GradientStatus, MaybeThreadPool, LadduError, AdamConfig>
+    where
+        P: Gradient<MaybeThreadPool, LadduError>,
+    {
+        fn from_pyargs(_args: &(), d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut callbacks = Callbacks::empty();
+            let mut term = AdamEMATerminator::default();
+            if let Some(beta_c) = d.get_item("beta_c")? {
+                term.beta_c = beta_c.extract()?;
+            }
+            if let Some(eps_loss) = d.get_item("eps_loss")? {
+                term.eps_loss = eps_loss.extract()?;
+            }
+            if let Some(patience) = d.get_item("patience")? {
+                term.patience = patience.extract()?;
+            }
+            callbacks = callbacks.with_terminator(term);
+            Ok(callbacks)
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for NelderMeadConfig {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let construction_method = SimplexConstructionMethod::from_pyargs(args, d)?;
+            let mut config = NelderMeadConfig::new_with_method(construction_method);
+            if let Some(alpha) = d.get_item("alpha")? {
+                config = config.with_alpha(alpha.extract()?);
+            }
+            if let Some(beta) = d.get_item("beta")? {
+                config = config.with_beta(beta.extract()?);
+            }
+            if let Some(gamma) = d.get_item("gamma")? {
+                config = config.with_gamma(gamma.extract()?);
+            }
+            if let Some(delta) = d.get_item("delta")? {
+                config = config.with_delta(delta.extract()?);
+            }
+            if let Some(adaptive) = d.get_item("adaptive")? {
+                if adaptive.extract()? {
+                    config = config.with_adaptive(args.len());
+                }
+            }
+            if let Some(expansion_method) = d.get_item("expansion_method")? {
+                match expansion_method
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "greedyminimization" => {
+                        config = config
+                            .with_expansion_method(SimplexExpansionMethod::GreedyMinimization);
+                        Ok(())
+                    }
+                    "greedyexpansion" => {
+                        config = config
+                            .with_expansion_method(SimplexExpansionMethod::GreedyMinimization);
+                        Ok(())
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid expansion method: {}",
+                        expansion_method
+                    ))),
+                }?
+            }
+            Ok(config)
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for SimplexConstructionMethod {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            if let Some(simplex_construction_method) = d.get_item("simplex_construction_method")? {
+                match simplex_construction_method
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "scaledorthogonal" => {
+                        let orthogonal_multiplier = d
+                            .get_item("orthogonal_multiplier")?
+                            .map(|v| v.extract())
+                            .transpose()?
+                            .unwrap_or(1.05);
+                        let orthogonal_zero_step = d
+                            .get_item("orthogonal_zero_step")?
+                            .map(|v| v.extract())
+                            .transpose()?
+                            .unwrap_or(0.00025);
+                        return Ok(SimplexConstructionMethod::custom_scaled_orthogonal(
+                            args,
+                            orthogonal_multiplier,
+                            orthogonal_zero_step,
+                        ));
+                    }
+                    "orthogonal" => {
+                        let simplex_size = d
+                            .get_item("simplex_size")?
+                            .map(|v| v.extract())
+                            .transpose()?
+                            .unwrap_or(1.0);
+                        return Ok(SimplexConstructionMethod::custom_orthogonal(
+                            args,
+                            simplex_size,
+                        ));
+                    }
+                    "custom" => {
+                        if let Some(other_simplex_points) = d.get_item("simplex")? {
+                            let mut simplex = Vec::with_capacity(args.len() + 1);
+                            simplex[0] = DVector::from_vec(args.clone());
+                            let others = other_simplex_points.extract::<Vec<Vec<Float>>>()?; // TODO: numpy arrays
+                            if others.len() != args.len() {
+                                return Err(PyValueError::new_err(format!(
+                                    "Expected {} additional simplex points, got {}.",
+                                    args.len(),
+                                    others.len()
+                                )));
+                            }
+                            simplex.extend(others.iter().map(|x| DVector::from_vec(x.clone())));
+                            return Ok(SimplexConstructionMethod::custom(simplex));
+                        } else {
+                            return Err(PyValueError::new_err("Simplex must be specified when using the 'custom' simplex_construction_method."));
+                        }
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid simplex_construction_method: {}",
+                            simplex_construction_method
+                        )))
+                    }
+                }
+            } else {
+                Ok(SimplexConstructionMethod::scaled_orthogonal(args))
+            }
+        }
+    }
+    impl<P> FromPyArgs
+        for Callbacks<
+            NelderMead,
+            P,
+            GradientFreeStatus,
+            MaybeThreadPool,
+            LadduError,
+            NelderMeadConfig,
+        >
+    where
+        P: CostFunction<MaybeThreadPool, LadduError>,
+    {
+        fn from_pyargs(_args: &(), d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut callbacks = Callbacks::empty();
+            let eps_f = if let Some(eps_f) = d.get_item("eps_f")? {
+                eps_f.extract()?
+            } else {
+                Float::EPSILON.powf(0.25)
+            };
+            if let Some(f_term) = d.get_item("f_terminator")? {
+                match f_term
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "amoeba" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadFTerminator::Amoeba { eps_rel: eps_f });
+                    }
+                    "absolute" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadFTerminator::Absolute { eps_abs: eps_f });
+                    }
+                    "stddev" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadFTerminator::StdDev { eps_abs: eps_f });
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid f_terminator: {}",
+                        f_term
+                    )))?,
+                }
+            } else {
+                callbacks =
+                    callbacks.with_terminator(NelderMeadFTerminator::StdDev { eps_abs: eps_f });
+            }
+            let eps_x = if let Some(eps_x) = d.get_item("eps_x")? {
+                eps_x.extract()?
+            } else {
+                Float::EPSILON.powf(0.25)
+            };
+            if let Some(x_term) = d.get_item("x_terminator")? {
+                match x_term
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "diameter" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadXTerminator::Diameter { eps_abs: eps_x });
+                    }
+                    "higham" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadXTerminator::Higham { eps_rel: eps_x });
+                    }
+                    "rowan" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadXTerminator::Rowan { eps_rel: eps_x });
+                    }
+                    "singer" => {
+                        callbacks = callbacks
+                            .with_terminator(NelderMeadXTerminator::Singer { eps_rel: eps_x });
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid x_terminator: {}",
+                        x_term
+                    )))?,
+                }
+            } else {
+                callbacks =
+                    callbacks.with_terminator(NelderMeadXTerminator::Singer { eps_rel: eps_x });
+            }
+            Ok(callbacks)
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for SwarmPositionInitializer {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            if let Some(swarm_position_initializer) = d.get_item("swarm_position_initializer")? {
+                match swarm_position_initializer
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "randominlimits" => {
+                        if let (Some(swarm_position_bounds), Some(swarm_size)) = (
+                            d.get_item("swarm_position_bounds")?,
+                            d.get_item("swarm_size")?,
+                        ) {
+                            return Ok(SwarmPositionInitializer::RandomInLimits {
+                                bounds: swarm_position_bounds.extract()?,
+                                n_particles: swarm_size.extract()?,
+                            });
+                        } else {
+                            return Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'randominlimits' swarm_position_initializer."));
+                        }
+                    }
+                    "latinhypercube" => {
+                        if let (Some(swarm_position_bounds), Some(swarm_size)) = (
+                            d.get_item("swarm_position_bounds")?,
+                            d.get_item("swarm_size")?,
+                        ) {
+                            return Ok(SwarmPositionInitializer::LatinHypercube {
+                                bounds: swarm_position_bounds.extract()?,
+                                n_particles: swarm_size.extract()?,
+                            });
+                        } else {
+                            return Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'latinhypercube' swarm_position_initializer."));
+                        }
+                    }
+                    "custom" => {
+                        if let Some(swarm) = d.get_item("swarm")? {
+                            return Ok(SwarmPositionInitializer::Custom(
+                                swarm
+                                    .extract::<Vec<Vec<Float>>>()?
+                                    .iter()
+                                    .chain(vec![args].into_iter())
+                                    .map(|x| DVector::from_vec(x.clone()))
+                                    .collect(), // TODO: numpy arrays?
+                            ));
+                        } else {
+                            return Err(PyValueError::new_err("The swarm must be specified when using the 'custom' swarm_position_initializer."));
+                        }
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid swarm_position_initializer: {}",
+                            swarm_position_initializer
+                        )));
+                    }
+                }
+            } else {
+                return Err(PyValueError::new_err(
+                    "The swarm_position_initializer must be specified for the PSO algorithm.",
+                ));
+            }
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for Swarm {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let swarm_position_initializer = SwarmPositionInitializer::from_pyargs(args, d)?;
+            let mut swarm = Swarm::new(swarm_position_initializer);
+            if let Some(swarm_topology_str) = d.get_item("swarm_topology")? {
+                match swarm_topology_str
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "global" => {
+                        swarm = swarm.with_topology(SwarmTopology::Global);
+                    }
+                    "ring" => {
+                        swarm = swarm.with_topology(SwarmTopology::Ring);
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid swarm_topology: {}",
+                            swarm_topology_str
+                        )))
+                    }
+                }
+            }
+            if let Some(swarm_update_method_str) = d.get_item("swarm_update_method")? {
+                match swarm_update_method_str
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "sync" | "synchronous" => {
+                        swarm = swarm.with_update_method(SwarmUpdateMethod::Synchronous);
+                    }
+                    "async" | "asynchronous" => {
+                        swarm = swarm.with_update_method(SwarmUpdateMethod::Asynchronous);
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid swarm_update_method: {}",
+                            swarm_update_method_str
+                        )))
+                    }
+                }
+            }
+            if let Some(swarm_boundary_method_str) = d.get_item("swarm_boundary_method")? {
+                match swarm_boundary_method_str
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "inf" => {
+                        swarm = swarm.with_boundary_method(SwarmBoundaryMethod::Inf);
+                    }
+                    "shr" => {
+                        swarm = swarm.with_boundary_method(SwarmBoundaryMethod::Shr);
+                    }
+                    _ => {
+                        return Err(PyValueError::new_err(format!(
+                            "Invalid swarm_boundary_method: {}",
+                            swarm_boundary_method_str
+                        )))
+                    }
+                }
+            }
+            if let Some(swarm_velocity_bounds) = d.get_item("swarm_velocity_bounds")? {
+                swarm = swarm.with_velocity_initializer(SwarmVelocityInitializer::RandomInLimits(
+                    swarm_velocity_bounds.extract()?,
+                ));
+            }
+            Ok(swarm)
+        }
+    }
+    impl FromPyArgs<Vec<Float>> for PSOConfig {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let swarm = Swarm::from_pyargs(args, d)?;
+            let mut config = PSOConfig::new(swarm);
+            if let Some(omega) = d.get_item("omega")? {
+                config = config.with_omega(omega.extract()?);
+            }
+            if let Some(c1) = d.get_item("c1")? {
+                config = config.with_c1(c1.extract()?);
+            }
+            if let Some(c2) = d.get_item("c2")? {
+                config = config.with_c2(c2.extract()?);
+            }
+            Ok(config)
+        }
+    }
+    impl<P> FromPyArgs<Vec<Float>> for MinimizationSettings<P>
+    where
+        P: Gradient<MaybeThreadPool, LadduError>,
+    {
+        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
+                .get_item("bounds")?
+                .map(|bounds| bounds.extract::<Vec<(Option<Float>, Option<Float>)>>())
+                .transpose()?
+                .map(|bounds| {
+                    bounds
+                        .into_iter()
+                        .map(ganesh::traits::boundlike::Bound::from)
+                        .collect()
+                });
+            let num_threads = d
+                .get_item("threads")?
+                .map(|t| t.extract())
+                .transpose()?
+                .unwrap_or(0);
+            let add_debug = d
+                .get_item("debug")?
+                .map(|d| d.extract())
+                .transpose()?
+                .unwrap_or(false);
+            let observers = if let Some(observers) = d.get_item("observers")? {
+                if let Ok(observers) = observers.downcast::<PyList>() {
+                    observers.into_iter().map(|observer| {
+                        if let Ok(observer) = observer.extract::<MinimizationObserver>() {
+                            Ok(observer)
+                        } else {
+                            Err(PyValueError::new_err("The observers must be either a single MinimizationObserver or a list of MinimizationObservers."))
+                        }
+                    }).collect::<PyResult<Vec<MinimizationObserver>>>()?
+                } else if let Ok(observer) = observers.extract::<MinimizationObserver>() {
+                    vec![observer]
+                } else {
+                    return Err(PyValueError::new_err("The observers must be either a single MinimizationObserver or a list of MinimizationObservers."));
+                }
+            } else {
+                vec![]
+            };
+            let terminators = if let Some(terminators) = d.get_item("terminators")? {
+                if let Ok(terminators) = terminators.downcast::<PyList>() {
+                    terminators.into_iter().map(|terminator| {
+                    if let Ok(terminator) = terminator.extract::<MinimizationTerminator>() {
+                        Ok(terminator)
+                    } else {
+                        Err(PyValueError::new_err("The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators."))
+                        }
+                    }).collect::<PyResult<Vec<MinimizationTerminator>>>()?
+                } else if let Ok(terminator) = terminators.extract::<MinimizationTerminator>() {
+                    vec![terminator]
+                } else {
+                    return Err(PyValueError::new_err("The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators."));
+                }
+            } else {
+                vec![]
+            };
+            let max_steps: Option<usize> = d
+                .get_item("max_steps")?
+                .map(|ms| ms.extract())
+                .transpose()?;
+            let settings: Bound<PyDict> = d
+                .get_item("settings")?
+                .map(|settings| settings.extract())
+                .transpose()?
+                .unwrap_or_else(|| PyDict::new(d.py()));
+            if let Some(method) = d.get_item("method")? {
+                match method
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "lbfgsb" => {
+                        let mut config = LBFGSBConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            config = config.with_bounds(bounds);
+                        }
+                        let mut callbacks = Callbacks::from_pyargs(&(), &settings)?;
+                        if add_debug {
+                            callbacks = callbacks.with_observer(DebugObserver);
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MinimizationSettings::LBFGSB {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    "adam" => {
+                        let mut config = AdamConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            config = config.with_transform(&Bounds::from(bounds))
+                        }
+                        let mut callbacks = Callbacks::from_pyargs(&(), &settings)?;
+                        if add_debug {
+                            callbacks = callbacks.with_observer(DebugObserver);
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MinimizationSettings::Adam {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    "neldermead" => {
+                        let mut config = NelderMeadConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            config = config.with_bounds(bounds);
+                        }
+                        let mut callbacks = Callbacks::from_pyargs(&(), &settings)?;
+                        if add_debug {
+                            callbacks = callbacks.with_observer(DebugObserver);
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MinimizationSettings::NelderMead {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    "pso" => {
+                        let mut config = PSOConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            if let Some(use_transform) = settings.get_item("use_transform")? {
+                                if use_transform.extract()? {
+                                    config = config.with_transform(&Bounds::from(bounds))
+                                } else {
+                                    config = config.with_bounds(bounds)
+                                }
+                            } else {
+                                config = config.with_bounds(bounds)
+                            }
+                        }
+                        let mut callbacks = Callbacks::empty();
+                        if add_debug {
+                            return Err(PyValueError::new_err(
+                                "The debug setting is not yet supported for PSO",
+                            ));
+                            // callbacks = callbacks.with_observer(DebugObserver);
+                            // TODO: SwarmStatus needs to impl Debug
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MinimizationSettings::PSO {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid minimizer: {}",
+                        method
+                    ))),
+                }
+            } else {
+                Err(PyValueError::new_err("No method specified"))
+            }
         }
     }
 
-    /// Construct an Affine Invariant Ensemble Sampler (AIES).
-    ///
-    /// Parameters
-    /// ----------
-    /// moves : list of AIESMove
-    ///     The set of moves to randomly draw from at each step
-    ///
-    #[pyclass(name = "AIES", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyAIES(Vec<PyAIESMove>);
-    #[pymethods]
-    impl PyAIES {
-        #[new]
-        fn new(moves: Vec<PyAIESMove>) -> Self {
-            Self(moves)
-        }
-    }
-    impl PyAIES {
-        fn get_algorithm(&self, rng: Rng) -> AIES {
-            AIES::new(
-                self.0
-                    .iter()
-                    .map(|m| m.0)
-                    .collect::<Vec<WeightedAIESMove>>(),
-                rng,
-            )
+    impl FromPyArgs<Vec<DVector<Float>>> for AIESConfig {
+        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut config = AIESConfig::new(args.to_vec());
+            if let Some(moves) = d.get_item("moves")? {
+                let moves_list = moves.downcast::<PyList>()?;
+                let mut aies_moves = vec![];
+                for mcmc_move in moves_list {
+                    if let Ok(default_move) = mcmc_move.extract::<(String, Float)>() {
+                        match default_move
+                            .0
+                            .to_lowercase()
+                            .trim()
+                            .replace("-", "")
+                            .replace(" ", "")
+                            .as_str()
+                        {
+                            "stretch" => aies_moves.push(AIESMove::stretch(default_move.1)),
+                            "walk" => aies_moves.push(AIESMove::walk(default_move.1)),
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid AIES move: {}",
+                                    default_move.0
+                                )))
+                            }
+                        }
+                    } else if let Ok(custom_move) =
+                        mcmc_move.extract::<(String, Bound<PyDict>, Float)>()
+                    {
+                        match custom_move
+                            .0
+                            .to_lowercase()
+                            .trim()
+                            .replace("-", "")
+                            .replace(" ", "")
+                            .as_str()
+                        {
+                            "stretch" => aies_moves.push((
+                                AIESMove::Stretch {
+                                    a: custom_move
+                                        .1
+                                        .get_item("a")?
+                                        .map(|val| val.extract())
+                                        .transpose()?
+                                        .unwrap_or(2.0),
+                                },
+                                custom_move.2,
+                            )),
+                            "walk" => aies_moves.push(AIESMove::walk(custom_move.2)),
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid AIES move: {}",
+                                    custom_move.0
+                                )))
+                            }
+                        }
+                    } else {
+                        return Err(PyValueError::new_err("The 'moves' argument must be a list of (str, float) or (str, dict, float) tuples!"));
+                    }
+                }
+                config = config.with_moves(aies_moves);
+            }
+            Ok(config)
         }
     }
 
-    /// A weighted ESS move.
-    ///
-    #[pyclass(name = "ESSMove", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyESSMove(WeightedESSMove);
-    #[pymethods]
-    impl PyESSMove {
-        /// Construct a differential move.
-        ///
-        /// Parameters
-        /// ----------
-        /// weight : float, default=1.0
-        ///     The relative frequency this move should be chosen
-        ///
-        #[staticmethod]
-        #[pyo3(signature = (weight=1.0))]
-        fn differential(weight: Option<Float>) -> Self {
-            let weight = weight.unwrap_or(1.0);
-            Self(ESSMove::differential(weight))
-        }
-        /// Construct a Gaussian move.
-        ///
-        /// Parameters
-        /// ----------
-        /// weight : float, default=1.0
-        ///     The relative frequency this move should be chosen
-        ///
-        #[staticmethod]
-        #[pyo3(signature = (weight=1.0))]
-        fn gaussian(weight: Option<Float>) -> Self {
-            let weight = weight.unwrap_or(1.0);
-            Self(ESSMove::gaussian(weight))
-        }
-        /// Construct a global move.
-        ///
-        /// Parameters
-        /// ----------
-        /// weight : float, default=1.0
-        ///     The relative frequency this move should be chosen
-        /// scale : float, optional
-        ///     The rescaling factor to apply for jumps within the same mode (larger values promote
-        ///     larger jumps, the default is ``1.0``)
-        /// rescale_cov : float, optional
-        ///     The rescaling factor to apply to the covariance matrix for jumps between modes (larger values promote
-        ///     jumping, the default is ``0.001``)
-        /// n_components : int, optional
-        ///     The number of components to use in the Dirichlet Process Bayesian Gaussian Mixture
-        ///     model (defaults to ``5``)
-        ///
-        #[staticmethod]
-        #[pyo3(signature = (weight=1.0, *, scale=None, rescale_cov=None, n_components=None))]
-        fn global_move(
-            weight: Option<Float>,
-            scale: Option<Float>,
-            rescale_cov: Option<Float>,
-            n_components: Option<usize>,
-        ) -> Self {
-            let weight = weight.unwrap_or(1.0);
-            Self(ESSMove::global(weight, scale, rescale_cov, n_components))
+    impl FromPyArgs<Vec<DVector<Float>>> for ESSConfig {
+        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let mut config = ESSConfig::new(args.to_vec());
+            if let Some(moves) = d.get_item("moves")? {
+                let moves_list = moves.downcast::<PyList>()?;
+                let mut ess_moves = vec![];
+                for mcmc_move in moves_list {
+                    if let Ok(default_move) = mcmc_move.extract::<(String, Float)>() {
+                        match default_move
+                            .0
+                            .to_lowercase()
+                            .trim()
+                            .replace("-", "")
+                            .replace(" ", "")
+                            .as_str()
+                        {
+                            "differential" => ess_moves.push(ESSMove::differential(default_move.1)),
+                            "gaussian" => ess_moves.push(ESSMove::gaussian(default_move.1)),
+                            "global" => {
+                                ess_moves.push(ESSMove::global(default_move.1, None, None, None))
+                            }
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid ESS move: {}",
+                                    default_move.0
+                                )))
+                            }
+                        }
+                    } else if let Ok(custom_move) =
+                        mcmc_move.extract::<(String, Bound<PyDict>, Float)>()
+                    {
+                        match custom_move
+                            .0
+                            .to_lowercase()
+                            .trim()
+                            .replace("-", "")
+                            .replace(" ", "")
+                            .as_str()
+                        {
+                            "differential" => ess_moves.push(ESSMove::differential(custom_move.2)),
+                            "gaussian" => ess_moves.push(ESSMove::gaussian(custom_move.2)),
+                            "global" => ess_moves.push(ESSMove::global(
+                                custom_move.2,
+                                custom_move
+                                    .1
+                                    .get_item("scale")?
+                                    .map(|value| value.extract())
+                                    .transpose()?,
+                                custom_move
+                                    .1
+                                    .get_item("rescale_cov")?
+                                    .map(|value| value.extract())
+                                    .transpose()?,
+                                custom_move
+                                    .1
+                                    .get_item("n_components")?
+                                    .map(|value| value.extract())
+                                    .transpose()?,
+                            )),
+                            _ => {
+                                return Err(PyValueError::new_err(format!(
+                                    "Invalid ESS move: {}",
+                                    custom_move.0
+                                )))
+                            }
+                        }
+                    } else {
+                        return Err(PyValueError::new_err("The 'moves' argument must be a list of (str, float) or (str, dict, float) tuples!"));
+                    }
+                }
+                config = config.with_moves(ess_moves)
+            }
+            if let Some(n_adaptive) = d.get_item("n_adaptive")? {
+                config = config.with_n_adaptive(n_adaptive.extract()?);
+            }
+            if let Some(mu) = d.get_item("mu")? {
+                config = config.with_mu(mu.extract()?);
+            }
+            if let Some(max_steps) = d.get_item("max_steps")? {
+                config = config.with_max_steps(max_steps.extract()?);
+            }
+            Ok(config)
         }
     }
 
-    /// Construct an Ensemble Slice Sampler (ESS).
-    ///
-    /// Parameters
-    /// ----------
-    /// moves : list of ESSMove
-    ///     The set of moves to randomly draw from at each step
-    /// n_adaptive : int, optional
-    ///     The number of adaptive moves to perform at the start of sampling (defaults to ``0``)
-    /// max_steps : int, optional
-    ///     The maximum number of expansions/contractions to perform at each step (defaults to
-    ///     ``10000``)
-    /// mu : float, optional
-    ///     The adaptive scaling parameter (defaults to ``1.0``)
-    ///
-    #[pyclass(name = "ESS", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyESS {
-        moves: Vec<PyESSMove>,
-        n_adaptive: Option<usize>,
-        max_steps: Option<usize>,
-        mu: Option<Float>,
-    }
-    #[pymethods]
-    impl PyESS {
-        #[new]
-        #[pyo3(signature = (moves, *, n_adaptive=None, max_steps=None, mu=None))]
-        fn new(
-            moves: Vec<PyESSMove>,
-            n_adaptive: Option<usize>,
-            max_steps: Option<usize>,
-            mu: Option<Float>,
-        ) -> Self {
-            Self {
-                moves,
-                n_adaptive,
-                max_steps,
-                mu,
+    impl<P> FromPyArgs<Vec<DVector<Float>>> for MCMCSettings<P>
+    where
+        P: LogDensity<MaybeThreadPool, LadduError>,
+    {
+        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+            let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
+                .get_item("bounds")?
+                .map(|bounds| bounds.extract::<Vec<(Option<Float>, Option<Float>)>>())
+                .transpose()?
+                .map(|bounds| {
+                    bounds
+                        .into_iter()
+                        .map(ganesh::traits::boundlike::Bound::from)
+                        .collect()
+                });
+            let num_threads = d
+                .get_item("threads")?
+                .map(|t| t.extract())
+                .transpose()?
+                .unwrap_or(0);
+            let add_debug = d
+                .get_item("debug")?
+                .map(|d| d.extract())
+                .transpose()?
+                .unwrap_or(false);
+            let observers = if let Some(observers) = d.get_item("observers")? {
+                if let Ok(observers) = observers.downcast::<PyList>() {
+                    observers.into_iter().map(|observer| {
+                        if let Ok(observer) = observer.extract::<MCMCObserver>() {
+                            Ok(observer)
+                        } else {
+                            Err(PyValueError::new_err("The observers must be either a single MCMCObserver or a list of MCMCObservers."))
+                        }
+                    }).collect::<PyResult<Vec<MCMCObserver>>>()?
+                } else if let Ok(observer) = observers.extract::<MCMCObserver>() {
+                    vec![observer]
+                } else {
+                    return Err(PyValueError::new_err("The observers must be either a single MCMCObserver or a list of MCMCObservers."));
+                }
+            } else {
+                vec![]
+            };
+            let terminators = if let Some(terminators) = d.get_item("terminators")? {
+                if let Ok(terminators) = terminators.downcast::<PyList>() {
+                    terminators
+                        .into_iter()
+                        .map(|terminator| {
+                            if let Ok(terminator) =
+                                terminator.extract::<PyAutocorrelationTerminator>()
+                            {
+                                Ok(PythonMCMCTerminator::Autocorrelation(terminator))
+                            }
+                            else if let Ok(terminator) = terminator.extract::<MCMCTerminator>() {
+                                Ok(PythonMCMCTerminator::UserDefined(terminator))
+                            } else {
+                                Err(PyValueError::new_err("The terminators must be either a single MCMCTerminator or a list of MCMCTerminators."))
+                            }
+                        })
+                        .collect::<PyResult<Vec<PythonMCMCTerminator>>>()?
+                } else if let Ok(terminator) = terminators.extract::<PyAutocorrelationTerminator>()
+                {
+                    vec![PythonMCMCTerminator::Autocorrelation(terminator)]
+                } else if let Ok(terminator) = terminators.extract::<MCMCTerminator>() {
+                    vec![PythonMCMCTerminator::UserDefined(terminator)]
+                } else {
+                    return Err(PyValueError::new_err("The terminators must be either a single MCMCTerminator or a list of MCMCTerminators."));
+                }
+            } else {
+                vec![]
+            };
+            let max_steps: Option<usize> = d
+                .get_item("max_steps")?
+                .map(|ms| ms.extract())
+                .transpose()?;
+            let settings: Bound<PyDict> = d
+                .get_item("settings")?
+                .map(|settings| settings.extract())
+                .transpose()?
+                .unwrap_or_else(|| PyDict::new(d.py()));
+            if let Some(method) = d.get_item("method")? {
+                match method
+                    .extract::<String>()?
+                    .to_lowercase()
+                    .trim()
+                    .replace("-", "")
+                    .replace(" ", "")
+                    .as_str()
+                {
+                    "aies" => {
+                        let mut config = AIESConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            config = config.with_transform(&Bounds::from(bounds))
+                        }
+                        let mut callbacks = Callbacks::empty();
+                        if add_debug {
+                            callbacks = callbacks.with_observer(DebugObserver);
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MCMCSettings::AIES {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    "ess" => {
+                        let mut config = ESSConfig::from_pyargs(args, &settings)?;
+                        if let Some(bounds) = bounds {
+                            config = config.with_transform(&Bounds::from(bounds))
+                        }
+                        let mut callbacks = Callbacks::empty();
+                        if add_debug {
+                            callbacks = callbacks.with_observer(DebugObserver);
+                        }
+                        if let Some(max_steps) = max_steps {
+                            callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                        }
+                        for observer in observers {
+                            callbacks = callbacks.with_observer(observer);
+                        }
+                        for terminator in terminators {
+                            callbacks = callbacks.with_terminator(terminator);
+                        }
+                        callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                        Ok(MCMCSettings::ESS {
+                            config,
+                            callbacks,
+                            num_threads,
+                        })
+                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid MCMC algorithm: {}",
+                        method
+                    ))),
+                }
+            } else {
+                Err(PyValueError::new_err("No method specified"))
             }
-        }
-    }
-    impl PyESS {
-        fn get_algorithm(&self, rng: Rng) -> ESS {
-            let mut ess = ESS::new(
-                self.moves
-                    .iter()
-                    .map(|m| m.0)
-                    .collect::<Vec<WeightedESSMove>>(),
-                rng,
-            );
-            if let Some(n_adaptive) = self.n_adaptive {
-                ess = ess.with_n_adaptive(n_adaptive)
-            }
-            if let Some(max_steps) = self.max_steps {
-                ess = ess.with_max_steps(max_steps)
-            }
-            if let Some(mu) = self.mu {
-                ess = ess.with_mu(mu)
-            }
-            ess
         }
     }
 
-    /// A class which defines the initial position of a Swarm
+    enum MinimizationStatus {
+        GradientStatus(Arc<Mutex<GradientStatus>>),
+        GradientFreeStatus(Arc<Mutex<GradientFreeStatus>>),
+        SwarmStatus(Arc<Mutex<SwarmStatus>>),
+    }
+    impl MinimizationStatus {
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            match self {
+                Self::GradientStatus(gradient_status) => {
+                    gradient_status.lock().x.as_slice().to_pyarray(py)
+                }
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().x.as_slice().to_pyarray(py)
+                }
+                Self::SwarmStatus(swarm_status) => {
+                    swarm_status.lock().gbest.x.as_slice().to_pyarray(py)
+                }
+            }
+        }
+        fn fx(&self) -> Float {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().fx,
+                Self::GradientFreeStatus(gradient_free_status) => gradient_free_status.lock().fx,
+                Self::SwarmStatus(swarm_status) => swarm_status.lock().gbest.fx.unwrap(),
+            }
+        }
+        fn message(&self) -> String {
+            match self {
+                Self::GradientStatus(gradient_status) => {
+                    gradient_status.lock().message().to_string()
+                }
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().message().to_string()
+                }
+                Self::SwarmStatus(swarm_status) => swarm_status.lock().message().to_string(),
+            }
+        }
+        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().err.clone(),
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().err.clone()
+                }
+                Self::SwarmStatus(_) => None,
+            }
+            .map(|e| e.as_slice().to_pyarray(py))
+        }
+        fn n_f_evals(&self) -> usize {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().n_f_evals,
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().n_f_evals
+                }
+                Self::SwarmStatus(swarm_status) => swarm_status.lock().n_f_evals,
+            }
+        }
+        fn n_g_evals(&self) -> usize {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().n_g_evals,
+                Self::GradientFreeStatus(_) => 0,
+                Self::SwarmStatus(_) => 0,
+            }
+        }
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().cov.clone(),
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().cov.clone()
+                }
+                Self::SwarmStatus(_) => None,
+            }
+            .map(|cov| cov.to_pyarray(py))
+        }
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().hess.clone(),
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().hess.clone()
+                }
+                Self::SwarmStatus(_) => None,
+            }
+            .map(|hess| hess.to_pyarray(py))
+        }
+        fn converged(&self) -> bool {
+            match self {
+                Self::GradientStatus(gradient_status) => gradient_status.lock().converged(),
+                Self::GradientFreeStatus(gradient_free_status) => {
+                    gradient_free_status.lock().converged()
+                }
+                Self::SwarmStatus(swarm_status) => swarm_status.lock().converged(),
+            }
+        }
+        fn swarm(&self) -> Option<PySwarm> {
+            match self {
+                Self::GradientStatus(_) | Self::GradientFreeStatus(_) => None,
+                Self::SwarmStatus(swarm_status) => Some(PySwarm(swarm_status.lock().swarm.clone())),
+            }
+        }
+    }
+
+    /// A swarm of particles used in particle swarm optimization.
     ///
-    #[pyclass(name = "SwarmPositionInitializer", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PySwarmPositionInitializer(SwarmPositionInitializer);
+    #[pyclass(name = "Swarm", module = "laddu")]
+    pub struct PySwarm(Swarm);
+
     #[pymethods]
-    impl PySwarmPositionInitializer {
-        /// Construct a swarm with all particles at the origin.
-        ///
-        /// Parameters
-        /// ----------
-        /// n_particles : int
-        ///     The number of particles to create
-        /// n_dimensions : int
-        ///     The dimension of the parameter space
+    impl PySwarm {
+        /// The particles in the swarm.
         ///
         /// Returns
         /// -------
-        /// SwarmPositionInitializer
+        /// list of SwarmParticle
         ///
-        #[staticmethod]
-        fn zero(n_particles: usize, n_dimensions: usize) -> Self {
-            Self(SwarmPositionInitializer::Zero {
-                n_particles,
-                n_dimensions,
-            })
-        }
-        /// Construct a swarm of random particles in the given limits.
-        ///
-        /// Parameters
-        /// ----------
-        /// n_particles : int
-        ///     The number of particles to create
-        /// limits: list of tuple of float
-        ///     A list of lower and upper limit pairs for each dimension of the parameter space
-        ///
-        /// Returns
-        /// -------
-        /// SwarmPositionInitializer
-        ///
-        #[staticmethod]
-        fn random_in_limits(n_particles: usize, limits: Vec<(Float, Float)>) -> Self {
-            Self(SwarmPositionInitializer::RandomInLimits {
-                n_particles,
-                limits,
-            })
-        }
-        /// Construct a swarm of particles at the given positions.
-        ///
-        /// Parameters
-        /// ----------
-        /// positions: array_like or list of list of float
-        ///     A list of particle positions
-        ///
-        /// Returns
-        /// -------
-        /// SwarmPositionInitializer
-        ///
-        #[staticmethod]
-        fn custom(positions: Vec<Vec<Float>>) -> Self {
-            Self(SwarmPositionInitializer::Custom(
-                positions.into_iter().map(DVector::from_vec).collect(),
-            ))
-        }
-        /// Construct a swarm of random particles in the given limits, using Latin Hypercube
-        /// sampling to distribute the particles.
-        ///
-        /// Parameters
-        /// ----------
-        /// n_particles : int
-        ///     The number of particles to create
-        /// limits: list of tuple of float
-        ///     A list of lower and upper limit pairs for each dimension of the parameter space
-        ///
-        /// Returns
-        /// -------
-        /// SwarmPositionInitializer
-        ///
-        #[staticmethod]
-        fn latin_hypercube(n_particles: usize, limits: Vec<(Float, Float)>) -> Self {
-            Self(SwarmPositionInitializer::LatinHypercube {
-                n_particles,
-                limits,
-            })
+        #[getter]
+        fn particles(&self) -> Vec<PySwarmParticle> {
+            self.0
+                .get_particles()
+                .into_iter()
+                .map(PySwarmParticle)
+                .collect()
         }
     }
 
-    /// A class which defines the initial velocity of a Swarm
+    /// A particle in a swarm used in particle swarm optimization.
     ///
-    #[pyclass(name = "SwarmVelocityInitializer", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PySwarmVelocityInitializer(SwarmVelocityInitializer);
-    #[pymethods]
-    impl PySwarmVelocityInitializer {
-        /// Initialize all particle velocities to zero.
-        ///
-        /// Returns
-        /// -------
-        /// SwarmVelocityInitializer
-        ///
-        #[staticmethod]
-        fn zero() -> Self {
-            Self(SwarmVelocityInitializer::Zero)
-        }
-        /// Initialize particle velocities to random values in the given limits.
-        ///
-        /// Parameters
-        /// ----------
-        /// limits: list of tuple of float
-        ///     A list of lower and upper limit pairs for each dimension of the parameter space
-        ///
-        /// Returns
-        /// -------
-        /// SwarmVelocityInitializer
-        ///
-        #[staticmethod]
-        fn random_in_limits(limits: Vec<(Float, Float)>) -> Self {
-            Self(SwarmVelocityInitializer::RandomInLimits(limits))
-        }
-    }
-
-    /// A standard Particle Swarm Optimization (PSO) algorithm.
-    ///
-    /// Parameters
-    /// ----------
-    /// omega : float, optional
-    ///     The inertial weight (defaults to ``0.8``)
-    /// c1 : float, optional
-    ///     The cognitive weight (defaults to ``0.1``)
-    /// c2 : float, optional
-    ///     The social weight (defaults to ``0.1``)
-    /// topology : {"global", "ring"}, optional
-    ///     The swarm topology to use (defaults to ``"global"``)
-    /// update_method : {"sync", "async"}, optional
-    ///     The update method to use (defaults to ``"sync"``)
-    ///
-    /// Returns
-    /// -------
-    /// PSO
-    ///
-    #[pyclass(name = "PSO", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyPSO {
-        omega: Option<Float>,
-        c1: Option<Float>,
-        c2: Option<Float>,
-        topology: Option<Topology>,
-        update_method: Option<UpdateMethod>,
-    }
-    #[pymethods]
-    impl PyPSO {
-        #[new]
-        #[pyo3(signature=(*, omega=None, c1=None, c2=None, topology=None, update_method=None))]
-        #[allow(clippy::too_many_arguments)]
-        fn new(
-            omega: Option<Float>,
-            c1: Option<Float>,
-            c2: Option<Float>,
-            topology: Option<String>,
-            update_method: Option<String>,
-        ) -> PyResult<Self> {
-            Ok(Self {
-                omega,
-                c1,
-                c2,
-                topology: topology
-                    .map(|t| match t.to_lowercase().as_str() {
-                        "global" => Ok(Topology::Global),
-                        "ring" => Ok(Topology::Ring),
-                        _ => Err(PyTypeError::new_err(
-                            "Invalid topology! Valid options are \"global\" (default) or \"ring\".",
-                        )),
-                    })
-                    .transpose()?,
-                update_method: update_method
-                    .map(|u| match u.to_lowercase().as_str() {
-                        "sync" => Ok(UpdateMethod::Synchronous),
-                        "async" => Ok(UpdateMethod::Asynchronous),
-                        _ => Err(PyTypeError::new_err(
-                            "Invalid update_method! Valid options are \"sync\" (default), or \"async\".",
-                        )),
-                    }).transpose()?,
-            })
-        }
-    }
-    impl PyPSO {
-        fn get_algorithm(&self, rng: Rng) -> PSO {
-            let mut pso = PSO::new(rng);
-            if let Some(omega) = self.omega {
-                pso = pso.with_omega(omega);
-            }
-            if let Some(c1) = self.c1 {
-                pso = pso.with_c1(c1);
-            }
-            if let Some(c2) = self.c2 {
-                pso = pso.with_c2(c2);
-            }
-            if let Some(topology) = self.topology {
-                pso = pso.with_topology(topology);
-            }
-            if let Some(update_method) = self.update_method {
-                pso = pso.with_update_method(update_method);
-            }
-            pso
-        }
-    }
-
-    /// A user implementation of [`Observer`](`crate::ganesh::observers::Observer`) from Python
-    #[pyclass]
-    #[pyo3(name = "Observer")]
-    pub struct PyObserver(Py<PyAny>);
+    #[pyclass(name = "SwarmParticle", module = "laddu")]
+    pub struct PySwarmParticle(SwarmParticle);
 
     #[pymethods]
-    impl PyObserver {
-        #[new]
-        fn new(observer: Py<PyAny>) -> Self {
-            Self(observer)
-        }
-    }
-
-    /// A user implementation of [`MCMCObserver`](`crate::ganesh::observers::MCMCObserver`) from Python
-    #[pyclass]
-    #[pyo3(name = "MCMCObserver")]
-    pub struct PyMCMCObserver(Py<PyAny>);
-
-    #[pymethods]
-    impl PyMCMCObserver {
-        #[new]
-        fn new(observer: Py<PyAny>) -> Self {
-            Self(observer)
-        }
-    }
-
-    /// A user implementation of [`SwarmObserver`](`crate::ganesh::observers::SwarmObserver`) from Python
-    #[pyclass]
-    #[pyo3(name = "SwarmObserver")]
-    pub struct PySwarmObserver(Py<PyAny>);
-
-    #[pymethods]
-    impl PySwarmObserver {
-        #[new]
-        fn new(observer: Py<PyAny>) -> Self {
-            Self(observer)
-        }
-    }
-
-    /// The status/result of a minimization
-    ///
-    #[pyclass(name = "Status", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyStatus(pub Status);
-    #[pymethods]
-    impl PyStatus {
-        /// The current best position in parameter space
+    impl PySwarmParticle {
+        /// The position of the particle.
         ///
         /// Returns
         /// -------
@@ -1208,9 +1855,88 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice(py, self.0.x.as_slice())
+            self.0.position.x.as_slice().to_pyarray(py)
         }
-        /// The uncertainty on each parameter (``None`` if it wasn't calculated)
+        /// The evaluation of the objective function at the particle's position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
+        #[getter]
+        fn fx(&self) -> Float {
+            self.0.position.fx.unwrap()
+        }
+        /// The best position found by the particle.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn x_best<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            self.0.best.x.as_slice().to_pyarray(py)
+        }
+        /// The evaluation of the objective function at the particle's best position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
+        #[getter]
+        fn fx_best(&self) -> Float {
+            self.0.best.fx.unwrap()
+        }
+        /// The velocity vector of the particle.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            self.0.velocity.as_slice().to_pyarray(py)
+        }
+    }
+
+    /// The intermediate status used to inform the user of the current state of a minimization algorithm.
+    ///
+    #[pyclass(name = "MinimizationStatus", module = "laddu")]
+    pub struct PyMinimizationStatus(MinimizationStatus);
+
+    #[pymethods]
+    impl PyMinimizationStatus {
+        /// The current best position of the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            self.0.x(py)
+        }
+        /// The current value of the objective function at the best position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
+        #[getter]
+        fn fx(&self) -> Float {
+            self.0.fx()
+        }
+        /// A message indicating the current state of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
+        #[getter]
+        fn message(&self) -> String {
+            self.0.message()
+        }
+        /// The current error estimate at the best position. May be None for algorithms that do not estimate errors.
         ///
         /// Returns
         /// -------
@@ -1218,12 +1944,106 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
-            self.0
-                .err
-                .clone()
-                .map(|err| PyArray1::from_slice(py, err.as_slice()))
+            self.0.err(py)
         }
-        /// The initial position at the start of the minimization
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
+        #[getter]
+        fn n_f_evals(&self) -> usize {
+            self.0.n_f_evals()
+        }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
+        #[getter]
+        fn n_g_evals(&self) -> usize {
+            self.0.n_g_evals()
+        }
+        /// The covariance matrix of the best position. May be None for algorithms that do not estimate errors.
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
+        #[getter]
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.cov(py)
+        }
+        /// The Hessian matrix of the best position. May be None for algorithms that do not estimate errors.
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
+        #[getter]
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+            self.0.hess(py)
+        }
+        #[getter]
+        fn converged(&self) -> bool {
+            self.0.converged()
+        }
+        /// The swarm of particles used in swarm-based optimization algorithms. May be None for algorithms that do not use a swarm.
+        ///
+        /// Returns
+        /// -------
+        /// Swarm or None
+        ///
+        #[getter]
+        fn swarm(&self) -> Option<PySwarm> {
+            self.0.swarm()
+        }
+    }
+
+    /// A summary of the results of a minimization.
+    ///
+    #[pyclass(name = "MinimizationSummary", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyMinimizationSummary(pub MinimizationSummary);
+
+    #[pymethods]
+    impl PyMinimizationSummary {
+        /// Bounds which were used during the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// list of tuple of floats or None
+        ///
+        #[getter]
+        fn bounds(&self) -> Option<Vec<(Float, Float)>> {
+            self.0
+                .clone()
+                .bounds
+                .map(|bs| bs.iter().map(|b| b.0.as_floats()).collect())
+        }
+        /// Names of each parameter used in the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// list of str
+        ///
+        #[getter]
+        fn parameter_names(&self) -> Vec<String> {
+            self.0.parameter_names.clone().unwrap_or_default()
+        }
+        /// The status at the end of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
+        #[getter]
+        fn message(&self) -> String {
+            self.0.message.clone()
+        }
+        /// The starting position of the minimizer.
         ///
         /// Returns
         /// -------
@@ -1231,9 +2051,29 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice(py, self.0.x0.as_slice())
+            self.0.x0.as_slice().to_pyarray(py)
         }
-        /// The optimized value of the objective function
+        /// The best position found by the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            self.0.x.as_slice().to_pyarray(py)
+        }
+        /// The uncertainty associated with each parameter (may be zeros if no uncertainty was estimated or nan if the covariance matrix was not positive definite).
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
+        #[getter]
+        fn std<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+            self.0.std.as_slice().to_pyarray(py)
+        }
+        /// The value of the objective function at the best position found by the minimizer.
         ///
         /// Returns
         /// -------
@@ -1243,72 +2083,27 @@ pub mod py_ganesh {
         fn fx(&self) -> Float {
             self.0.fx
         }
-        /// The covariance matrix (``None`` if it wasn't calculated)
+        /// The number of objective function evaluations performed.
         ///
         /// Returns
         /// -------
-        /// array_like or None
-        ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
+        /// int
         ///
         #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
-            self.0
-                .cov
-                .clone()
-                .map(|cov| {
-                    Ok(PyArray2::from_vec2(
-                        py,
-                        &cov.row_iter()
-                            .map(|row| row.iter().cloned().collect())
-                            .collect::<Vec<Vec<Float>>>(),
-                    )
-                    .map_err(LadduError::NumpyError)?)
-                })
-                .transpose()
+        fn cost_evals(&self) -> usize {
+            self.0.cost_evals
         }
-        /// The Hessian matrix (``None`` if it wasn't calculated)
+        /// The number of gradient function evaluations performed.
         ///
         /// Returns
         /// -------
-        /// array_like or None
-        ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
+        /// int
         ///
         #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray2<Float>>>> {
-            self.0
-                .hess
-                .clone()
-                .map(|hess| {
-                    Ok(PyArray2::from_vec2(
-                        py,
-                        &hess
-                            .row_iter()
-                            .map(|row| row.iter().cloned().collect())
-                            .collect::<Vec<Vec<Float>>>(),
-                    )
-                    .map_err(LadduError::NumpyError)?)
-                })
-                .transpose()
+        fn gradient_evals(&self) -> usize {
+            self.0.gradient_evals
         }
-        /// A status message from the optimizer at the end of the algorithm
-        ///
-        /// Returns
-        /// -------
-        /// str
-        ///
-        #[getter]
-        fn message(&self) -> String {
-            self.0.message.clone()
-        }
-        /// The state of the optimizer's convergence conditions
+        /// True if the minimization algorithm has converged.
         ///
         /// Returns
         /// -------
@@ -1318,20 +2113,329 @@ pub mod py_ganesh {
         fn converged(&self) -> bool {
             self.0.converged
         }
-        /// Parameter bounds which were applied to the fitting algorithm
+        /// The covariance matrix of the best position (may contain zeros if the algorithm did not estimate a Hessian).
         ///
         /// Returns
         /// -------
-        /// list of Bound or None
+        /// array_like
         ///
         #[getter]
-        fn bounds(&self) -> Option<Vec<PyBound>> {
-            self.0
-                .bounds
-                .clone()
-                .map(|bounds| bounds.iter().map(|bound| PyBound(*bound)).collect())
+        fn covariance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<Float>> {
+            self.0.covariance.to_pyarray(py)
         }
-        /// The number of times the objective function was evaluated
+        fn __str__(&self) -> String {
+            self.0.to_string()
+        }
+        #[new]
+        fn new() -> Self {
+            Self(MinimizationSummary::create_null())
+        }
+        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+            Ok(PyBytes::new(
+                py,
+                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
+                    .map_err(LadduError::EncodeError)?
+                    .as_slice(),
+            ))
+        }
+        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
+            *self = Self(
+                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
+                    .map_err(LadduError::DecodeError)?
+                    .0,
+            );
+            Ok(())
+        }
+    }
+
+    /// An enum used by a terminator to continue or stop an algorithm.
+    ///
+    #[pyclass(eq, eq_int, name = "ControlFlow", module = "laddu")]
+    #[derive(PartialEq, Clone)]
+    pub enum PyControlFlow {
+        /// Continue running the algorithm.
+        Continue = 0,
+        /// Terminate the algorithm.
+        Break = 1,
+    }
+
+    impl From<PyControlFlow> for ControlFlow<()> {
+        fn from(v: PyControlFlow) -> Self {
+            match v {
+                PyControlFlow::Continue => ControlFlow::Continue(()),
+                PyControlFlow::Break => ControlFlow::Break(()),
+            }
+        }
+    }
+
+    /// An [`Observer`] which can be used to monitor the progress of a minimization.
+    ///
+    /// This should be paired with a Python object which has an `observe` method
+    /// that takes the current step and a [`PyMinimizationStatus`] as arguments.
+    #[derive(Clone)]
+    pub struct MinimizationObserver(Arc<Py<PyAny>>);
+    impl FromPyObject<'_> for MinimizationObserver {
+        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(MinimizationObserver(Arc::new(ob.clone().unbind())))
+        }
+    }
+    impl<A, P, C> Observer<A, P, GradientStatus, MaybeThreadPool, LadduError, C>
+        for MinimizationObserver
+    where
+        A: Algorithm<P, GradientStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn observe(
+            &mut self,
+            current_step: usize,
+            _algorithm: &A,
+            _problem: &P,
+            status: &GradientStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) {
+            Python::attach(|py| {
+                self.0
+                    .bind(py)
+                    .call_method1(
+                        "observe",
+                        (
+                            current_step,
+                            PyMinimizationStatus(MinimizationStatus::GradientStatus(Arc::new(
+                                Mutex::new(status.clone()),
+                            ))),
+                        ),
+                    )
+                    .expect("Error calling observe");
+            })
+        }
+    }
+    impl<A, P, C> Observer<A, P, GradientFreeStatus, MaybeThreadPool, LadduError, C>
+        for MinimizationObserver
+    where
+        A: Algorithm<P, GradientFreeStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn observe(
+            &mut self,
+            current_step: usize,
+            _algorithm: &A,
+            _problem: &P,
+            status: &GradientFreeStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) {
+            Python::attach(|py| {
+                self.0
+                    .bind(py)
+                    .call_method1(
+                        "observe",
+                        (
+                            current_step,
+                            PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(Arc::new(
+                                Mutex::new(status.clone()),
+                            ))),
+                        ),
+                    )
+                    .expect("Error calling observe");
+            })
+        }
+    }
+    impl<A, P, C> Observer<A, P, SwarmStatus, MaybeThreadPool, LadduError, C> for MinimizationObserver
+    where
+        A: Algorithm<P, SwarmStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn observe(
+            &mut self,
+            current_step: usize,
+            _algorithm: &A,
+            _problem: &P,
+            status: &SwarmStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) {
+            Python::attach(|py| {
+                self.0
+                    .bind(py)
+                    .call_method1(
+                        "observe",
+                        (
+                            current_step,
+                            PyMinimizationStatus(MinimizationStatus::SwarmStatus(Arc::new(
+                                Mutex::new(status.clone()),
+                            ))),
+                        ),
+                    )
+                    .expect("Error calling observe");
+            })
+        }
+    }
+
+    /// An [`Terminator`] which can be used to monitor the progress of a minimization.
+    ///
+    /// This should be paired with a Python object which has an `check_for_termination` method
+    /// that takes the current step and a [`PyMinimizationStatus`] as arguments and returns a
+    /// [`PyControlFlow`].
+    #[derive(Clone)]
+    pub struct MinimizationTerminator(Arc<Py<PyAny>>);
+
+    impl FromPyObject<'_> for MinimizationTerminator {
+        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(MinimizationTerminator(Arc::new(ob.clone().unbind())))
+        }
+    }
+
+    impl<A, P, C> Terminator<A, P, GradientStatus, MaybeThreadPool, LadduError, C>
+        for MinimizationTerminator
+    where
+        A: Algorithm<P, GradientStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn check_for_termination(
+            &mut self,
+            current_step: usize,
+            _algorithm: &mut A,
+            _problem: &P,
+            status: &mut GradientStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) -> ControlFlow<()> {
+            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
+                let py_status = Py::new(
+                    py,
+                    PyMinimizationStatus(MinimizationStatus::GradientStatus(
+                        wrapped_status.clone(),
+                    )),
+                )?;
+                let ret = self
+                    .0
+                    .bind(py)
+                    .call_method1("check_for_termination", (current_step, py_status))
+                    .expect("Error calling check_for_termination");
+                {
+                    let mut guard = wrapped_status.lock();
+                    std::mem::swap(status, &mut *guard);
+                }
+                let cf: PyControlFlow = ret.extract()?;
+                Ok(cf.into())
+            })
+            .unwrap_or(ControlFlow::Continue(()))
+        }
+    }
+    impl<A, P, C> Terminator<A, P, GradientFreeStatus, MaybeThreadPool, LadduError, C>
+        for MinimizationTerminator
+    where
+        A: Algorithm<P, GradientFreeStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn check_for_termination(
+            &mut self,
+            current_step: usize,
+            _algorithm: &mut A,
+            _problem: &P,
+            status: &mut GradientFreeStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) -> ControlFlow<()> {
+            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
+                let py_status = Py::new(
+                    py,
+                    PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(
+                        wrapped_status.clone(),
+                    )),
+                )?;
+                let ret = self
+                    .0
+                    .bind(py)
+                    .call_method1("check_for_termination", (current_step, py_status))
+                    .expect("Error calling check_for_termination");
+                {
+                    let mut guard = wrapped_status.lock();
+                    std::mem::swap(status, &mut *guard);
+                }
+                let cf: PyControlFlow = ret.extract()?;
+                Ok(cf.into())
+            })
+            .unwrap_or(ControlFlow::Continue(()))
+        }
+    }
+    impl<A, P, C> Terminator<A, P, SwarmStatus, MaybeThreadPool, LadduError, C>
+        for MinimizationTerminator
+    where
+        A: Algorithm<P, SwarmStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn check_for_termination(
+            &mut self,
+            current_step: usize,
+            _algorithm: &mut A,
+            _problem: &P,
+            status: &mut SwarmStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) -> ControlFlow<()> {
+            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
+                let py_status = Py::new(
+                    py,
+                    PyMinimizationStatus(MinimizationStatus::SwarmStatus(wrapped_status.clone())),
+                )?;
+                let ret = self
+                    .0
+                    .bind(py)
+                    .call_method1("check_for_termination", (current_step, py_status))
+                    .expect("Error calling check_for_termination");
+                {
+                    let mut guard = wrapped_status.lock();
+                    std::mem::swap(status, &mut *guard);
+                }
+                let cf: PyControlFlow = ret.extract()?;
+                Ok(cf.into())
+            })
+            .unwrap_or(ControlFlow::Continue(()))
+        }
+    }
+
+    /// A walker in an MCMC ensemble.
+    ///
+    #[pyclass(name = "Walker", module = "laddu")]
+    pub struct PyWalker(pub Walker);
+
+    #[pymethods]
+    impl PyWalker {
+        /// The dimension of the walker's space (n_steps, n_variables)
+        ///
+        /// Returns
+        /// -------
+        /// tuple of int
+        #[getter]
+        fn dimension(&self) -> (usize, usize) {
+            self.0.dimension()
+        }
+        /// Retrieve the latest point and the latest objective value of the Walker.
+        ///
+        fn get_latest<'py>(&self, py: Python<'py>) -> (Bound<'py, PyArray1<Float>>, Float) {
+            let point = self.0.get_latest();
+            let lock = point.read();
+            (lock.x.clone().as_slice().to_pyarray(py), lock.fx_checked())
+        }
+    }
+
+    /// The intermediate status used to inform the user of the current state of an MCMC algorithm.
+    ///
+    #[pyclass(name = "EnsembleStatus", module = "laddu")]
+    pub struct PyEnsembleStatus(Arc<Mutex<EnsembleStatus>>);
+
+    #[pymethods]
+    impl PyEnsembleStatus {
+        /// A message indicating the current state of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
+        #[getter]
+        fn message(&self) -> String {
+            self.0.lock().message().to_string()
+        }
+        /// The number of objective function evaluations performed.
         ///
         /// Returns
         /// -------
@@ -1339,9 +2443,9 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn n_f_evals(&self) -> usize {
-            self.0.n_f_evals
+            self.0.lock().n_f_evals
         }
-        /// The number of times the gradient of the objective function was evaluated
+        /// The number of gradient function evaluations performed.
         ///
         /// Returns
         /// -------
@@ -1349,538 +2453,121 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn n_g_evals(&self) -> usize {
-            self.0.n_g_evals
+            self.0.lock().n_g_evals
         }
-        fn __str__(&self) -> String {
-            self.0.to_string()
-        }
-        fn __repr__(&self) -> String {
-            format!("{:?}", self.0)
-        }
-        /// Save the fit result to a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the new file (overwrites if the file exists!)
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to write the file
-        ///
-        fn save_as(&self, path: &str) -> PyResult<()> {
-            self.0.save_as(path)?;
-            Ok(())
-        }
-        /// Load a fit result from a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file
+        /// The walkers in the ensemble.
         ///
         /// Returns
         /// -------
-        /// Status
-        ///     The fit result contained in the file
+        /// list of Walker
         ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to read the file
-        ///
-        #[staticmethod]
-        fn load_from(path: &str) -> PyResult<Self> {
-            Ok(PyStatus(Status::load_from(path)?))
+        #[getter]
+        fn walkers(&self) -> Vec<PyWalker> {
+            self.0
+                .lock()
+                .walkers
+                .iter()
+                .map(|w| PyWalker(w.clone()))
+                .collect()
         }
-        #[new]
-        fn new() -> Self {
-            PyStatus(Status::create_null())
-        }
-        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(
-                py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
-                    .as_slice(),
-            ))
-        }
-        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyStatus(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
-            Ok(())
-        }
-        /// Converts a Status into a Python dictionary
+        /// The dimension of the ensemble `(n_walkers, n_steps, n_variables)`.
         ///
         /// Returns
         /// -------
-        /// dict
+        /// tuple of int
         ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
-        ///
-        fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-            let dict = PyDict::new(py);
-            dict.set_item("x", self.x(py))?;
-            dict.set_item("err", self.err(py))?;
-            dict.set_item("x0", self.x0(py))?;
-            dict.set_item("fx", self.fx())?;
-            dict.set_item("cov", self.cov(py)?)?;
-            dict.set_item("hess", self.hess(py)?)?;
-            dict.set_item("message", self.message())?;
-            dict.set_item("converged", self.converged())?;
-            dict.set_item("bounds", self.bounds())?;
-            dict.set_item("n_f_evals", self.n_f_evals())?;
-            dict.set_item("n_g_evals", self.n_g_evals())?;
-            Ok(dict)
-        }
-    }
-
-    /// An ensemble of MCMC walkers
-    ///
-    #[pyclass(name = "Ensemble", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyEnsemble(pub Ensemble);
-    #[pymethods]
-    impl PyEnsemble {
-        /// The dimension of the Ensemble ``(n_walkers, n_steps, n_variables)``
         #[getter]
         fn dimension(&self) -> (usize, usize, usize) {
-            self.0.dimension()
+            self.0.lock().dimension()
         }
-        /// Get the contents of the Ensemble
+
+        /// Retrieve the chain of the MCMC sampling.
         ///
         /// Parameters
         /// ----------
-        /// burn: int, default = 0
-        ///     The number of steps to burn from the beginning of each walker's history
-        /// thin: int, default = 1
-        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
-        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
         ///
         /// Returns
         /// -------
-        /// array_like
-        ///     An array with dimension ``(n_walkers, n_steps, n_parameters)``
+        /// chain : array of shape (n_steps, n_variables, n_walkers)
         ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
-        ///
-        #[pyo3(signature = (*, burn = 0, thin = 1))]
+        #[pyo3(signature = (*, burn = None, thin = None))]
         fn get_chain<'py>(
             &self,
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
         ) -> PyResult<Bound<'py, PyArray3<Float>>> {
-            let chain = self.0.get_chain(burn, thin);
-            Ok(PyArray3::from_vec3(
-                py,
-                &chain
-                    .iter()
-                    .map(|walker| {
-                        walker
-                            .iter()
-                            .map(|step| step.data.as_vec().to_vec())
-                            .collect()
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(LadduError::NumpyError)?)
+            let vec_chain: Vec<Vec<Vec<Float>>> = self
+                .0
+                .lock()
+                .get_chain(burn, thin)
+                .iter()
+                .map(|steps| steps.iter().map(|p| p.as_slice().to_vec()).collect())
+                .collect();
+            Ok(PyArray3::from_vec3(py, &vec_chain)?)
         }
-        /// Get the contents of the Ensemble, flattened over walkers
+
+        /// Retrieve the chain of the MCMC sampling, flattened over walkers.
         ///
         /// Parameters
         /// ----------
-        /// burn: int, default = 0
-        ///     The number of steps to burn from the beginning of each walker's history
-        /// thin: int, default = 1
-        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
-        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
         ///
         /// Returns
         /// -------
-        /// array_like
-        ///     An array with dimension ``(n_steps, n_parameters)``
+        /// flat_chain : array of shape (n_steps * n_walkers, n_variables)
         ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
-        ///
-        #[pyo3(signature = (*, burn = 0, thin = 1))]
+        #[pyo3(signature = (*, burn = None, thin = None))]
         fn get_flat_chain<'py>(
             &self,
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> PyResult<Bound<'py, PyArray2<Float>>> {
-            let chain = self.0.get_flat_chain(burn, thin);
-            Ok(PyArray2::from_vec2(
-                py,
-                &chain
-                    .iter()
-                    .map(|step| step.data.as_vec().to_vec())
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(LadduError::NumpyError)?)
-        }
-        /// Save the ensemble to a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file (overwrites if the file exists!)
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to write the file
-        ///
-        fn save_as(&self, path: &str) -> PyResult<()> {
-            self.0.save_as(path)?;
-            Ok(())
-        }
-        /// Load an ensemble from a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file
-        ///
-        /// Returns
-        /// -------
-        /// Ensemble
-        ///     The ensemble contained in the file
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to read the file
-        ///
-        #[staticmethod]
-        fn load_from(path: &str) -> PyResult<Self> {
-            Ok(PyEnsemble(Ensemble::load_from(path)?))
-        }
-        #[new]
-        fn new() -> Self {
-            PyEnsemble(Ensemble::create_null())
-        }
-        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(
-                py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
-                    .as_slice(),
-            ))
-        }
-        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyEnsemble(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
-            Ok(())
-        }
-        /// Calculate the integrated autocorrelation time for each parameter according to
-        /// [Karamanis]_
-        ///
-        /// Parameters
-        /// ----------
-        /// c : float, default = 7.0
-        ///     The size of the window used in the autowindowing algorithm by [Sokal]_
-        /// burn: int, default = 0
-        ///     The number of steps to burn from the beginning of each walker's history
-        /// thin: int, default = 1
-        ///     The number of steps to discard after burn-in (``1`` corresponds to no thinning,
-        ///     ``2`` discards every other step, ``3`` discards every third, and so on)
-        ///
-        #[pyo3(signature = (*, c=7.0, burn=0, thin=1))]
-        fn get_integrated_autocorrelation_times<'py>(
-            &self,
-            py: Python<'py>,
-            c: Option<Float>,
-            burn: Option<usize>,
-            thin: Option<usize>,
-        ) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice(
-                py,
-                self.0
-                    .get_integrated_autocorrelation_times(c, burn, thin)
-                    .as_slice(),
-            )
+        ) -> Bound<'py, PyArray2<Float>> {
+            DMatrix::from_columns(&self.0.lock().get_flat_chain(burn, thin))
+                .transpose()
+                .to_pyarray(py)
         }
     }
 
-    /// A point in parameter space with a position and value.
+    /// A summary of the results of an MCMC sampling.
     ///
-    #[pyclass(name = "Point", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyPoint(pub Point);
-    #[pymethods]
-    impl PyPoint {
-        /// The position of the point in parameter space
-        ///
-        /// Returns
-        /// -------
-        /// array_like
-        ///
-        #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice(py, self.0.get_x().as_slice())
-        }
-        /// The evaluation of the point
-        ///
-        /// Returns
-        /// -------
-        /// float
-        ///
-        #[getter]
-        fn fx(&self) -> Float {
-            self.0.get_fx()
-        }
-        /// Save the Point to a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file (overwrites if the file exists!)
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to write the file
-        ///
-        fn save_as(&self, path: &str) -> PyResult<()> {
-            self.0.save_as(path)?;
-            Ok(())
-        }
-        /// Load a Point from a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file
-        ///
-        /// Returns
-        /// -------
-        /// Point
-        ///     The Point contained in the file
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to read the file
-        ///
-        #[staticmethod]
-        fn load_from(path: &str) -> PyResult<Self> {
-            Ok(PyPoint(Point::load_from(path)?))
-        }
-        #[new]
-        fn new() -> Self {
-            PyPoint(Point::create_null())
-        }
-        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(
-                py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
-                    .as_slice(),
-            ))
-        }
-        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyPoint(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
-            Ok(())
-        }
-    }
+    #[pyclass(name = "MCMCSummary", module = "laddu")]
+    pub struct PyMCMCSummary(pub MCMCSummary);
 
-    /// A particle in parameter space with a position, velocity, and best position.
-    ///
-    #[pyclass(name = "Particle", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PyParticle(pub Particle);
     #[pymethods]
-    impl PyParticle {
-        /// The position of the particle
+    impl PyMCMCSummary {
+        /// Bounds which were used during the MCMC sampling.
         ///
         /// Returns
         /// -------
-        /// Point
+        /// list of tuple of floats or None
         ///
         #[getter]
-        fn position(&self) -> PyPoint {
-            PyPoint(self.0.position.clone())
-        }
-        /// The velocity of the particle
-        ///
-        /// Returns
-        /// -------
-        /// array_like
-        ///
-        #[getter]
-        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            PyArray1::from_slice(py, self.0.velocity.as_slice())
-        }
-        /// The best position the particle has found
-        ///
-        /// Returns
-        /// -------
-        /// Point
-        ///
-        #[getter]
-        fn best(&self) -> PyPoint {
-            PyPoint(self.0.best.clone())
-        }
-        /// Save the Particle to a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file (overwrites if the file exists!)
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to write the file
-        ///
-        fn save_as(&self, path: &str) -> PyResult<()> {
-            self.0.save_as(path)?;
-            Ok(())
-        }
-        /// Load a Particle from a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the file
-        ///
-        /// Returns
-        /// -------
-        /// Particle
-        ///     The Particle contained in the file
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to read the file
-        ///
-        #[staticmethod]
-        fn load_from(path: &str) -> PyResult<Self> {
-            Ok(PyParticle(Particle::load_from(path)?))
-        }
-        #[new]
-        fn new() -> Self {
-            PyParticle(Particle::create_null())
-        }
-        fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-            Ok(PyBytes::new(
-                py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
-                    .as_slice(),
-            ))
-        }
-        fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PyParticle(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
-            Ok(())
-        }
-    }
-
-    /// A particle swarm used in particle-swarm-optimization-like algorithms
-    ///
-    /// Parameters
-    /// ----------
-    /// position_initializer : PositionInitializer
-    ///     The method for setting the initial position of the swarm
-    /// velocity_initializer : VelocityInitializer, optional
-    ///     The method for setting the initial velocity of the swarm (defaults to setting all
-    ///     velocities to zero)
-    /// boundary_method : {"inf", "shr", "transform"}, optional
-    ///     Specifies the boundary method to use if bounds are specified (defaults to "inf")
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If the boundary method given is not a valid method
-    ///
-    #[pyclass(name = "Swarm", module = "laddu")]
-    #[derive(Clone)]
-    pub struct PySwarm(pub Swarm);
-    #[pymethods]
-    impl PySwarm {
-        #[new]
-        #[pyo3(signature = (position_initializer, *, velocity_initializer=None, boundary_method=None))]
-        fn new(
-            position_initializer: PySwarmPositionInitializer,
-            velocity_initializer: Option<PySwarmVelocityInitializer>,
-            boundary_method: Option<String>,
-        ) -> PyResult<Self> {
-            let mut swarm = Swarm::new(position_initializer.0);
-            if let Some(velocity_initializer) = velocity_initializer {
-                swarm = swarm.with_velocity_initializer(velocity_initializer.0);
-            }
-            if let Some(boundary_method) = boundary_method {
-                swarm = swarm.with_boundary_method(match boundary_method.to_lowercase().as_str() {
-                        "inf" => Ok(BoundaryMethod::Inf),
-                        "shr" => Ok(BoundaryMethod::Shr),
-                        "transform" => Ok(BoundaryMethod::Transform),
-                        _ => Err(PyTypeError::new_err(
-                            "Invalid boundary_method! Valid options are \"inf\" (default), \"shr\", or \"transform\".",
-                        )),
-                    }?);
-            }
-            Ok(PySwarm(swarm))
-        }
-        /// The dimension of the parameter space
-        ///
-        /// Returns
-        /// -------
-        /// int
-        ///
-        #[getter]
-        fn dimension(&self) -> usize {
-            self.0.dimension
-        }
-        /// A list of the particles in the swarm
-        ///
-        /// Returns
-        /// -------
-        /// list of laddu.Particle
-        ///
-        #[getter]
-        fn particles(&self) -> Vec<PyParticle> {
+        fn bounds(&self) -> Option<Vec<(Float, Float)>> {
             self.0
-                .particles
-                .iter()
-                .map(|p| PyParticle(p.clone()))
-                .collect()
+                .clone()
+                .bounds
+                .map(|bs| bs.iter().map(|b| b.0.as_floats()).collect())
         }
-        /// The global best position found by the Swarm
+        /// Names of each parameter used in the MCMC sampling.
         ///
         /// Returns
         /// -------
-        /// laddu.Point
+        /// list of str
+        ///
         #[getter]
-        fn gbest(&self) -> PyPoint {
-            PyPoint(self.0.gbest.clone())
+        fn parameter_names(&self) -> Vec<String> {
+            self.0.parameter_names.clone().unwrap_or_default()
         }
-        /// A status message from the optimizer at the end of the algorithm
+        /// The status at the end of the MCMC sampling.
         ///
         /// Returns
         /// -------
@@ -1890,7 +2577,27 @@ pub mod py_ganesh {
         fn message(&self) -> String {
             self.0.message.clone()
         }
-        /// The state of the optimizer's convergence conditions
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
+        #[getter]
+        fn cost_evals(&self) -> usize {
+            self.0.cost_evals
+        }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
+        #[getter]
+        fn gradient_evals(&self) -> usize {
+            self.0.gradient_evals
+        }
+        /// True if the MCMC algorithm has converged.
         ///
         /// Returns
         /// -------
@@ -1900,65 +2607,74 @@ pub mod py_ganesh {
         fn converged(&self) -> bool {
             self.0.converged
         }
-        /// Parameter bounds which were applied to the swarm algorithm
+        /// The dimension of the ensemble `(n_walkers, n_steps, n_variables)`.
         ///
         /// Returns
         /// -------
-        /// list of Bound or None
+        /// tuple of int
         ///
         #[getter]
-        fn bounds(&self) -> Option<Vec<PyBound>> {
-            self.0
-                .bounds
-                .clone()
-                .map(|bounds| bounds.iter().map(|bound| PyBound(*bound)).collect())
+        fn dimension(&self) -> (usize, usize, usize) {
+            self.0.dimension
         }
-        fn __str__(&self) -> String {
-            self.0.to_string()
-        }
-        fn __repr__(&self) -> String {
-            if self.0.particles.is_empty() {
-                "Swarm(uninitialized)".to_string()
-            } else {
-                format!("Swarm({} particles)", self.0.particles.len())
-            }
-        }
-        /// Save the Swarm to a file
+
+        /// Retrieve the chain of the MCMC sampling.
         ///
         /// Parameters
         /// ----------
-        /// path : str
-        ///     The path of the file (overwrites if the file exists!)
-        ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to write the file
-        ///
-        fn save_as(&self, path: &str) -> PyResult<()> {
-            self.0.save_as(path)?;
-            Ok(())
-        }
-        /// Load a Swarm from a file
-        ///
-        /// Parameters
-        /// ----------
-        /// path : str
-        ///     The path of the existing fit file
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
         ///
         /// Returns
         /// -------
-        /// Swarm
-        ///     The fit result contained in the file
+        /// chain : array of shape (n_steps, n_variables, n_walkers)
         ///
-        /// Raises
-        /// ------
-        /// IOError
-        ///     If anything fails when trying to read the file
+        #[pyo3(signature = (*, burn = None, thin = None))]
+        fn get_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
+            let vec_chain: Vec<Vec<Vec<Float>>> = self
+                .0
+                .get_chain(burn, thin)
+                .iter()
+                .map(|steps| steps.iter().map(|p| p.as_slice().to_vec()).collect())
+                .collect();
+            Ok(PyArray3::from_vec3(py, &vec_chain)?)
+        }
+
+        /// Retrieve the chain of the MCMC sampling, flattened over walkers.
         ///
-        #[staticmethod]
-        fn load_from(path: &str) -> PyResult<Self> {
-            Ok(PySwarm(Swarm::load_from(path)?))
+        /// Parameters
+        /// ----------
+        /// burn : int, optional
+        ///     The number of steps to discard from the beginning of the chain.
+        /// thin : int, optional
+        ///     The number of steps to skip between samples.
+        ///
+        /// Returns
+        /// -------
+        /// flat_chain : array of shape (n_steps * n_walkers, n_variables)
+        ///
+        #[pyo3(signature = (*, burn = None, thin = None))]
+        fn get_flat_chain<'py>(
+            &self,
+            py: Python<'py>,
+            burn: Option<usize>,
+            thin: Option<usize>,
+        ) -> Bound<'py, PyArray2<Float>> {
+            DMatrix::from_columns(&self.0.get_flat_chain(burn, thin))
+                .transpose()
+                .to_pyarray(py)
+        }
+
+        #[new]
+        fn new() -> Self {
+            Self(MCMCSummary::create_null())
         }
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
@@ -1969,33 +2685,141 @@ pub mod py_ganesh {
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = PySwarm(
+            *self = Self(
                 bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
                     .map_err(LadduError::DecodeError)?
                     .0,
             );
             Ok(())
         }
-        /// Converts a Swarm into a Python dictionary
-        ///
-        /// Returns
-        /// -------
-        /// dict
-        ///
-        /// Raises
-        /// ------
-        /// Exception
-        ///     If there was a problem creating the resulting ``numpy`` array
-        ///
-        fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-            let dict = PyDict::new(py);
-            dict.set_item("dimension", self.dimension())?;
-            dict.set_item("particles", self.particles())?;
-            dict.set_item("gbest", self.gbest())?;
-            dict.set_item("message", self.message())?;
-            dict.set_item("converged", self.converged())?;
-            dict.set_item("bounds", self.bounds())?;
-            Ok(dict)
+    }
+
+    /// An [`Observer`] which can be used to monitor the progress of an MCMC algorithm.
+    ///
+    /// This should be paired with a Python object which has an `observe` method
+    /// that takes the current step and a [`PyEnsembleStatus`] as arguments.
+    #[derive(Clone)]
+    pub struct MCMCObserver(Arc<Py<PyAny>>);
+
+    impl FromPyObject<'_> for MCMCObserver {
+        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(MCMCObserver(Arc::new(ob.clone().unbind())))
+        }
+    }
+
+    impl<A, P, C> Observer<A, P, EnsembleStatus, MaybeThreadPool, LadduError, C> for MCMCObserver
+    where
+        A: Algorithm<P, EnsembleStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn observe(
+            &mut self,
+            current_step: usize,
+            _algorithm: &A,
+            _problem: &P,
+            status: &EnsembleStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) {
+            Python::attach(|py| {
+                self.0
+                    .bind(py)
+                    .call_method1(
+                        "observe",
+                        (
+                            current_step,
+                            PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
+                        ),
+                    )
+                    .expect("Error calling observe");
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    enum PythonMCMCTerminator {
+        UserDefined(MCMCTerminator),
+        Autocorrelation(PyAutocorrelationTerminator),
+    }
+
+    impl<A, P, C> Terminator<A, P, EnsembleStatus, MaybeThreadPool, LadduError, C>
+        for PythonMCMCTerminator
+    where
+        A: Algorithm<P, EnsembleStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn check_for_termination(
+            &mut self,
+            current_step: usize,
+            algorithm: &mut A,
+            problem: &P,
+            status: &mut EnsembleStatus,
+            args: &MaybeThreadPool,
+            config: &C,
+        ) -> ControlFlow<()> {
+            match self {
+                Self::UserDefined(mcmcterminator) => mcmcterminator.check_for_termination(
+                    current_step,
+                    algorithm,
+                    problem,
+                    status,
+                    args,
+                    config,
+                ),
+                Self::Autocorrelation(py_autocorrelation_terminator) => {
+                    py_autocorrelation_terminator.0.check_for_termination(
+                        current_step,
+                        algorithm,
+                        problem,
+                        status,
+                        args,
+                        config,
+                    )
+                }
+            }
+        }
+    }
+    /// A [`Terminator`] which can be used to monitor the progress of an MCMC algorithm.
+    ///
+    /// This should be paired with a Python object which has an `check_for_termination` method
+    /// that takes the current step and a [`PyEnsembleStatus`] as arguments and returns a
+    /// [`PyControlFlow`].
+    #[derive(Clone)]
+    pub struct MCMCTerminator(Arc<Py<PyAny>>);
+
+    impl FromPyObject<'_> for MCMCTerminator {
+        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(MCMCTerminator(Arc::new(ob.clone().unbind())))
+        }
+    }
+
+    impl<A, P, C> Terminator<A, P, EnsembleStatus, MaybeThreadPool, LadduError, C> for MCMCTerminator
+    where
+        A: Algorithm<P, EnsembleStatus, MaybeThreadPool, LadduError, Config = C>,
+    {
+        fn check_for_termination(
+            &mut self,
+            current_step: usize,
+            _algorithm: &mut A,
+            _problem: &P,
+            status: &mut EnsembleStatus,
+            _args: &MaybeThreadPool,
+            _config: &C,
+        ) -> ControlFlow<()> {
+            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
+                let py_status = Py::new(py, PyEnsembleStatus(wrapped_status.clone()))?;
+                let ret = self
+                    .0
+                    .bind(py)
+                    .call_method1("check_for_termination", (current_step, py_status))
+                    .expect("Error calling check_for_termination");
+                {
+                    let mut guard = wrapped_status.lock();
+                    std::mem::swap(status, &mut *guard);
+                }
+                let cf: PyControlFlow = ret.extract()?;
+                Ok(cf.into())
+            })
+            .unwrap_or(ControlFlow::Continue(()))
         }
     }
 
@@ -2007,555 +2831,91 @@ pub mod py_ganesh {
     /// x : array_like
     ///     An array of dimension ``(n_walkers, n_steps, n_parameters)``
     /// c : float, default = 7.0
-    ///     The size of the window used in the autowindowing algorithm by [Sokal]_
-    ///
+    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
+    ///     size of 7.0 is used.
     ///
     /// .. rubric:: References
     ///
-    /// .. [Karamanis] Karamanis, M., & Beutler, F. (2020). Ensemble slice sampling: Parallel, black-box and gradient-free inference for correlated & multimodal distributions. arXiv Preprint arXiv: 2002. 06212.
-    ///
-    /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In C. DeWitt-Morette, P. Cartier, & A. Folacci (Eds.), Functional Integration: Basics and Applications (pp. 131–192). doi:10.1007/978-1-4899-0319-8_6
+    /// .. [Karamanis] Karamanis, M., & Beutler, F. (2021). Ensemble slice sampling. Statistics and Computing, 31(5). https://doi.org/10.1007/s11222-021-10038-2
+    /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In NATO ASI Series (pp. 131–192). Springer US. https://doi.org/10.1007/978-1-4899-0319-8_6
     ///
     #[pyfunction(name = "integrated_autocorrelation_times")]
-    #[pyo3(signature = (x, *, c=7.0))]
-    pub fn py_integrated_autocorrelation_times(
-        py: Python<'_>,
-        x: Vec<Vec<Vec<Float>>>,
+    #[pyo3(signature = (samples, *, c=None))]
+    pub fn py_integrated_autocorrelation_times<'py>(
+        py: Python<'py>,
+        samples: Vec<Vec<Vec<Float>>>,
         c: Option<Float>,
-    ) -> Bound<'_, PyArray1<Float>> {
-        let x: Vec<Vec<DVector<Float>>> = x
+    ) -> Bound<'py, PyArray1<Float>> {
+        let samples: Vec<Vec<DVector<Float>>> = samples
             .into_iter()
-            .map(|y| y.into_iter().map(DVector::from_vec).collect())
+            .map(|v| v.into_iter().map(|p| DVector::from_vec(p)).collect())
             .collect();
-        PyArray1::from_slice(py, integrated_autocorrelation_times(x, c).as_slice())
+        integrated_autocorrelation_times(samples, c)
+            .as_slice()
+            .to_pyarray(py)
     }
 
-    /// An obsever which can check the integrated autocorrelation time of the ensemble and
-    /// terminate if convergence conditions are met
+    /// A terminator for MCMC algorithms that monitors autocorrelation according to [Karamanis]_.
     ///
     /// Parameters
     /// ----------
-    /// n_check : int, default = 50
-    ///     How often (in number of steps) to check this observer
-    /// n_tau_threshold : int, default = 50
-    ///     The number of mean integrated autocorrelation times needed to terminate
-    /// dtau_threshold : float, default = 0.01
-    ///     The threshold for the absolute change in integrated autocorrelation time (Δτ/τ)
-    /// discard : float, default = 0.5
-    ///     The fraction of steps to discard from the beginning of the chain before analysis
-    /// terminate : bool, default = True
-    ///     Set to ``False`` to forego termination even if the chains converge
-    /// c : float, default = 7.0
-    ///     The size of the window used in the autowindowing algorithm by [Sokal]_
-    /// verbose : bool, default = False
-    ///     Set to ``True`` to print out details at each check
+    /// n_check : int, default=50
+    ///     Number of steps to take between autocorrelation checks.
+    /// n_taus_threshold : int, default=50
+    ///     Convergence may be achieved if the number of steps exceeds this value times the current
+    ///     mean autocorrelation time.
+    /// dtau_threshold : float, default=0.01
+    ///     The minimum change in mean autocorrelation time required to consider convergence.
+    /// discard : float, default=0.5
+    ///     The fraction of the chain to discard when calculating autocorrelation times.
+    /// terminate : bool, default=True
+    ///     If set to False, the terminator will act like an observer and only store
+    ///     autocorrelation times.
+    /// sokal_window : float, default=None
+    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
+    ///     size of 7.0 is used.
+    /// verbose : bool, default=False
+    ///     Print autocorrelation information at each check step.
     ///
-    #[pyclass(name = "AutocorrelationObserver", module = "laddu")]
-    pub struct PyAutocorrelationObserver(Arc<RwLock<AutocorrelationObserver>>);
+    #[pyclass(name = "AutocorrelationTerminator", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyAutocorrelationTerminator(Arc<Mutex<AutocorrelationTerminator>>);
 
     #[pymethods]
-    impl PyAutocorrelationObserver {
+    impl PyAutocorrelationTerminator {
         #[new]
-        #[pyo3(signature = (*, n_check=50, n_taus_threshold=50, dtau_threshold=0.01, discard=0.5, terminate=true, c=7.0, verbose=false))]
+        #[pyo3(signature = (*, n_check = 50, n_taus_threshold = 50, dtau_threshold = 0.01, discard = 0.5, terminate = true, sokal_window = None, verbose = false))]
         fn new(
             n_check: usize,
             n_taus_threshold: usize,
             dtau_threshold: Float,
             discard: Float,
             terminate: bool,
-            c: Float,
+            sokal_window: Option<Float>,
             verbose: bool,
         ) -> Self {
-            Self(
-                AutocorrelationObserver::default()
-                    .with_n_check(n_check)
-                    .with_n_taus_threshold(n_taus_threshold)
-                    .with_dtau_threshold(dtau_threshold)
-                    .with_discard(discard)
-                    .with_terminate(terminate)
-                    .with_sokal_window(c)
-                    .with_verbose(verbose)
-                    .build(),
-            )
+            let mut act = AutocorrelationTerminator::default()
+                .with_n_check(n_check)
+                .with_n_taus_threshold(n_taus_threshold)
+                .with_dtau_threshold(dtau_threshold)
+                .with_discard(discard)
+                .with_terminate(terminate)
+                .with_verbose(verbose);
+            if let Some(sokal_window) = sokal_window {
+                act = act.with_sokal_window(sokal_window)
+            }
+            Self(act.build())
         }
-        /// The integrated autocorrelation times observed at each checking step
+
+        /// A list of autocorrelation times for each parameter.
+        ///
+        /// Returns
+        /// -------
+        /// taus : array_like
         ///
         #[getter]
         fn taus<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
-            let taus = self.0.read().taus.clone();
-            PyArray1::from_vec(py, taus)
+            self.0.lock().taus.to_pyarray(py)
         }
-    }
-
-    /// A SwarmObserver that tracks the swarm history.
-    ///
-    #[pyclass(name = "TrackingSwarmObserver")]
-    #[derive(Clone)]
-    pub struct PyTrackingSwarmObserver(Arc<RwLock<TrackingSwarmObserver>>);
-    #[pymethods]
-    impl PyTrackingSwarmObserver {
-        /// The history of the swarm
-        ///
-        /// Each element is a list of particles representing the position of the swarm at the given
-        /// step.
-        ///
-        /// Returns
-        /// -------
-        /// list of list of Particle
-        ///
-        #[getter]
-        fn history(&self) -> Vec<Vec<PyParticle>> {
-            self.0
-                .read()
-                .history
-                .iter()
-                .map(|s| s.iter().map(|p| PyParticle(p.clone())).collect())
-                .collect()
-        }
-        /// The history of the best swarm position
-        ///
-        /// Returns
-        /// -------
-        /// list of Point
-        ///
-        #[getter]
-        fn best_history(&self) -> Vec<PyPoint> {
-            self.0
-                .read()
-                .best_history
-                .iter()
-                .map(|p| PyPoint(p.clone()))
-                .collect()
-        }
-    }
-
-    /// A class representing a lower and upper bound on a free parameter
-    ///
-    #[pyclass]
-    #[derive(Clone)]
-    #[pyo3(name = "Bound")]
-    pub struct PyBound(laddu_core::Bound);
-    #[pymethods]
-    impl PyBound {
-        /// The lower bound
-        ///
-        /// Returns
-        /// -------
-        /// float
-        ///
-        #[getter]
-        fn lower(&self) -> Float {
-            self.0.lower()
-        }
-        /// The upper bound
-        ///
-        /// Returns
-        /// -------
-        /// float
-        ///
-        #[getter]
-        fn upper(&self) -> Float {
-            self.0.upper()
-        }
-    }
-
-    impl Observer<()> for PyObserver {
-        fn callback(&mut self, step: usize, status: &mut Status, _user_data: &mut ()) -> bool {
-            let (new_status, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PyStatus(status.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
-                let new_status = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
-                    .extract::<PyStatus>()
-                    .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_status, result)
-            });
-            *status = new_status;
-            result
-        }
-    }
-
-    #[cfg(feature = "rayon")]
-    impl Observer<ThreadPool> for PyObserver {
-        fn callback(
-            &mut self,
-            step: usize,
-            status: &mut Status,
-            _thread_pool: &mut ThreadPool,
-        ) -> bool {
-            let (new_status, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PyStatus(status.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!");
-                let new_status = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
-                    .extract::<PyStatus>()
-                    .expect("The first item returned from \"callback\" must be a \"laddu.Status\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[laddu.Status, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_status, result)
-            });
-            *status = new_status;
-            result
-        }
-    }
-    impl FromPyObject<'_> for PyObserver {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(PyObserver(ob.clone().into()))
-        }
-    }
-    impl MCMCObserver<()> for PyMCMCObserver {
-        fn callback(&mut self, step: usize, ensemble: &mut Ensemble, _user_data: &mut ()) -> bool {
-            let (new_ensemble, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!");
-                let new_status = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
-                    .extract::<PyEnsemble>()
-                    .expect("The first item returned from \"callback\" must be a \"Ensemble\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_status, result)
-            });
-            *ensemble = new_ensemble;
-            result
-        }
-    }
-    #[cfg(feature = "rayon")]
-    impl MCMCObserver<ThreadPool> for PyMCMCObserver {
-        fn callback(
-            &mut self,
-            step: usize,
-            ensemble: &mut Ensemble,
-            _thread_pool: &mut ThreadPool,
-        ) -> bool {
-            let (new_ensemble, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PyEnsemble(ensemble.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!");
-                let new_status = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
-                    .extract::<PyEnsemble>()
-                    .expect("The first item returned from \"callback\" must be a \"Ensemble\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[Ensemble, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_status, result)
-            });
-            *ensemble = new_ensemble;
-            result
-        }
-    }
-
-    impl FromPyObject<'_> for PyMCMCObserver {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(PyMCMCObserver(ob.clone().into()))
-        }
-    }
-
-    impl SwarmObserver<()> for PySwarmObserver {
-        fn callback(&mut self, step: usize, swarm: &mut Swarm, _user_data: &mut ()) -> bool {
-            let (new_swarm, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PySwarm(swarm.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!");
-                let new_swarm = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
-                    .extract::<PySwarm>()
-                    .expect("The first item returned from \"callback\" must be a \"Swarm\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_swarm, result)
-            });
-            *swarm = new_swarm;
-            result
-        }
-    }
-
-    #[cfg(feature = "rayon")]
-    impl SwarmObserver<ThreadPool> for PySwarmObserver {
-        fn callback(
-            &mut self,
-            step: usize,
-            swarm: &mut Swarm,
-            _thread_pool: &mut ThreadPool,
-        ) -> bool {
-            let (new_swarm, result) = Python::with_gil(|py| {
-                let res = self
-                    .0
-                    .bind(py)
-                    .call_method("callback", (step, PySwarm(swarm.clone())), None)
-                    .unwrap_or_else(|err| {
-                        err.print(py);
-                        panic!("Python error encountered!");
-                    });
-                let res_tuple = res
-                    .downcast::<PyTuple>()
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!");
-                let new_warm = res_tuple
-                    .get_item(0)
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
-                    .extract::<PySwarm>()
-                    .expect("The first item returned from \"callback\" must be a \"Swarm\"!")
-                    .0;
-                let result = res_tuple
-                    .get_item(1)
-                    .expect("\"callback\" method should return a \"tuple[Swarm, bool]\"!")
-                    .extract::<bool>()
-                    .expect("The second item returned from \"callback\" must be a \"bool\"!");
-                (new_warm, result)
-            });
-            *swarm = new_swarm;
-            result
-        }
-    }
-    impl FromPyObject<'_> for PySwarmObserver {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(PySwarmObserver(ob.clone().into()))
-        }
-    }
-
-    #[cfg(feature = "python")]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn py_parse_minimizer_options(
-        opt_method: Option<Bound<'_, PyAny>>,
-        opt_observers: Option<Bound<'_, PyAny>>,
-        max_steps: usize,
-        debug: bool,
-        verbose: bool,
-        show_step: bool,
-        show_x: bool,
-        show_fx: bool,
-        skip_hessian: bool,
-        opt_threads: Option<usize>,
-    ) -> PyResult<MinimizerOptions> {
-        let mut options = MinimizerOptions::default();
-        let mut observers: Vec<Arc<RwLock<PyObserver>>> = Vec::default();
-        if let Some(pyany_observers) = opt_observers {
-            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
-                for item in observer_list.iter() {
-                    let observer = item.extract::<PyObserver>()?;
-                    observers.push(Arc::new(RwLock::new(observer)));
-                }
-            } else if let Ok(single_observer) = pyany_observers.extract::<PyObserver>() {
-                observers.push(Arc::new(RwLock::new(single_observer)));
-            } else {
-                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single Observer or a list of Observers!"));
-            }
-            for observer in observers {
-                options = options.with_observer(observer);
-            }
-        }
-        if let Some(method) = opt_method {
-            if let Ok(algorithm) = method.extract::<PyLBFGSB>() {
-                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian))
-            } else if let Ok(algorithm) = method.extract::<PyNelderMead>() {
-                options = options.with_algorithm(algorithm.get_algorithm(skip_hessian))
-            } else {
-                return Err(PyValueError::new_err(
-                    "Invalid \"method\": Valid methods include 'LBFGSB', 'NelderMead'.".to_string(),
-                ));
-            }
-        }
-        #[cfg(feature = "rayon")]
-        {
-            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
-        }
-        if debug {
-            options = options.debug();
-        }
-        if verbose {
-            options = options.verbose(show_step, show_x, show_fx);
-        }
-        options = options.with_max_steps(max_steps);
-        Ok(options)
-    }
-
-    #[cfg(feature = "python")]
-    pub(crate) fn py_parse_mcmc_options(
-        opt_method: Option<Bound<'_, PyAny>>,
-        opt_observers: Option<Bound<'_, PyAny>>,
-        debug: bool,
-        verbose: bool,
-        opt_threads: Option<usize>,
-        rng: Rng,
-    ) -> PyResult<MCMCOptions> {
-        let mut options = if let Some(method) = opt_method {
-            if let Ok(algorithm) = method.extract::<PyAIES>() {
-                MCMCOptions::from_algorithm(algorithm.get_algorithm(rng))
-            } else if let Ok(algorithm) = method.extract::<PyESS>() {
-                MCMCOptions::from_algorithm(algorithm.get_algorithm(rng))
-            } else {
-                return Err(PyValueError::new_err(
-                    "Invalid \"method\": Valid methods include 'ESS', and 'AIES'.".to_string(),
-                ));
-            }
-        } else {
-            MCMCOptions::default_with_rng(rng)
-        };
-        #[cfg(feature = "rayon")]
-        let mut observers: Vec<Arc<RwLock<dyn MCMCObserver<ThreadPool>>>> = Vec::default();
-        #[cfg(not(feature = "rayon"))]
-        let mut observers: Vec<Arc<RwLock<dyn MCMCObserver<()>>>> = Vec::default();
-        if let Some(pyany_observers) = opt_observers {
-            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
-                for item in observer_list.iter() {
-                    if let Ok(observer) = item.extract::<PyMCMCObserver>() {
-                        observers.push(Arc::new(RwLock::new(observer)));
-                    } else if let Ok(observer) = item.downcast::<PyAutocorrelationObserver>() {
-                        observers.push(observer.borrow().0.clone());
-                    }
-                }
-            } else if let Ok(single_observer) = pyany_observers.extract::<PyMCMCObserver>() {
-                observers.push(Arc::new(RwLock::new(single_observer)));
-            } else if let Ok(single_observer) =
-                pyany_observers.downcast::<PyAutocorrelationObserver>()
-            {
-                observers.push(single_observer.borrow().0.clone());
-            } else {
-                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single MCMCObserver or a list of MCMCObservers!"));
-            }
-            for observer in observers {
-                options = options.with_observer(observer);
-            }
-        }
-        #[cfg(feature = "rayon")]
-        {
-            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
-        }
-        if debug {
-            options = options.debug();
-        }
-        if verbose {
-            options = options.verbose();
-        }
-        Ok(options)
-    }
-
-    #[cfg(feature = "python")]
-    pub(crate) fn py_parse_swarm_options(
-        opt_method: Option<Bound<'_, PyAny>>,
-        opt_observers: Option<Bound<'_, PyAny>>,
-        debug: bool,
-        verbose: bool,
-        opt_threads: Option<usize>,
-        rng: Rng,
-    ) -> PyResult<SwarmOptions> {
-        let mut options = if let Some(method) = opt_method {
-            if let Ok(algorithm) = method.extract::<PyPSO>() {
-                SwarmOptions::from_algorithm(algorithm.get_algorithm(rng))
-            } else {
-                return Err(PyValueError::new_err(
-                    "Invalid \"method\": Valid methods include 'PSO'.".to_string(),
-                ));
-            }
-        } else {
-            SwarmOptions::default_with_rng(rng)
-        };
-        #[cfg(feature = "rayon")]
-        let mut observers: Vec<Arc<RwLock<dyn SwarmObserver<ThreadPool>>>> = Vec::default();
-        #[cfg(not(feature = "rayon"))]
-        let mut observers: Vec<Arc<RwLock<dyn SwarmObserver<()>>>> = Vec::default();
-        if let Some(pyany_observers) = opt_observers {
-            if let Ok(observer_list) = pyany_observers.downcast::<PyList>() {
-                for item in observer_list.iter() {
-                    if let Ok(observer) = item.extract::<PySwarmObserver>() {
-                        observers.push(Arc::new(RwLock::new(observer)));
-                    } else if let Ok(observer) = item.downcast::<PyTrackingSwarmObserver>() {
-                        observers.push(observer.borrow().0.clone());
-                    }
-                }
-            } else if let Ok(single_observer) = pyany_observers.extract::<PySwarmObserver>() {
-                observers.push(Arc::new(RwLock::new(single_observer)));
-            } else if let Ok(single_observer) =
-                pyany_observers.downcast::<PyTrackingSwarmObserver>()
-            {
-                observers.push(single_observer.borrow().0.clone());
-            } else {
-                return Err(PyTypeError::new_err("The keyword argument \"observers\" must either be a single SwarmObserver or a list of SwarmObservers!"));
-            }
-            for observer in observers {
-                options = options.with_observer(observer);
-            }
-        }
-        #[cfg(feature = "rayon")]
-        {
-            options = options.with_threads(opt_threads.unwrap_or_else(num_cpus::get));
-        }
-        if debug {
-            options = options.debug();
-        }
-        if verbose {
-            options = options.verbose();
-        }
-        Ok(options)
     }
 }

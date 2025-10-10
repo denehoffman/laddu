@@ -33,7 +33,7 @@ def test_four_momentum_basics() -> None:
     assert p.beta.pz == 0.5
     assert p.m2 == 50.0
     assert p.m == np.sqrt(50.0)
-    assert repr(p) == "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
+    assert repr(p) == '[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]'
 
 
 def test_three_momentum_basics() -> None:
