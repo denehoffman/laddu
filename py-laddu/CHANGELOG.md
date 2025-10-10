@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4](https://github.com/denehoffman/laddu/compare/py-laddu-v0.9.3...py-laddu-v0.9.4) - 2025-10-10
+
+### Other
+
+- Stochastic NLLs and `ganesh` update ([#87](https://github.com/denehoffman/laddu/pull/87))
+
 ## [0.9.3](https://github.com/denehoffman/laddu/compare/py-laddu-v0.9.2...py-laddu-v0.9.3) - 2025-08-08
 
 ### Added

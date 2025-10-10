@@ -45,11 +45,11 @@ shellexpand = "3.1.1"
 thiserror = "2.0.17"
 typetag = "0.2.21"
 
-laddu = { version = "0.9.3", path = "crates/laddu" }
-laddu-core = { version = "0.9.1", path = "crates/laddu-core" }
-laddu-amplitudes = { version = "0.10.2", path = "crates/laddu-amplitudes" }
-laddu-extensions = { version = "0.9.1", path = "crates/laddu-extensions" }
-laddu-python = { version = "0.9.1", path = "crates/laddu-python" }
+laddu = { version = "0.9.4", path = "crates/laddu" }
+laddu-core = { version = "0.10.0", path = "crates/laddu-core" }
+laddu-amplitudes = { version = "0.10.3", path = "crates/laddu-amplitudes" }
+laddu-extensions = { version = "0.10.0", path = "crates/laddu-extensions" }
+laddu-python = { version = "0.9.2", path = "crates/laddu-python" }
 
 [profile.release]
 lto = "thin"
