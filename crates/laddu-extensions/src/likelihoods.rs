@@ -1935,11 +1935,11 @@ impl PyNLL {
     ///     If True, the exact Hessian will not be calculated.
     /// line_search : dict
     ///     Settings for the line search (see next section).
-    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    /// eps_f : float, default=`MACH_EPS^(1/2)`
     ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    /// eps_g : float, default=`MACH_EPS^(1/3)`
     ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float : default=1e-5
+    /// eps_norm_g : float, default=1e-5
     ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
     ///
     /// Line Search
@@ -2204,11 +2204,6 @@ impl PyNLL {
 /// This evaluator operates on a subset of the data, which may improve performance for large
 /// datasets at the cost of adding noise to the likelihood.
 ///
-/// Attributes
-/// ----------
-/// nll: NLL
-///     The NLL term containing the underlying model and evaluators
-///
 /// Notes
 /// -----
 /// See the `NLL.to_stochastic` method for details.
@@ -2220,6 +2215,12 @@ pub struct PyStochasticNLL(pub StochasticNLL);
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyStochasticNLL {
+    /// The NLL term containing the underlying model and evaluators
+    ///
+    /// Returns
+    /// -------
+    /// NLL
+    ///
     #[getter]
     fn nll(&self) -> PyNLL {
         PyNLL(Box::new(self.0.nll.clone()))
@@ -2274,11 +2275,11 @@ impl PyStochasticNLL {
     ///     If True, the exact Hessian will not be calculated.
     /// line_search : dict
     ///     Settings for the line search (see next section).
-    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    /// eps_f : float, default=`MACH_EPS^(1/2)`
     ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    /// eps_g : float, default=`MACH_EPS^(1/3)`
     ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float : default=1e-5
+    /// eps_norm_g : float, default=1e-5
     ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
     ///
     /// Line Search
@@ -3360,11 +3361,11 @@ impl PyLikelihoodEvaluator {
     ///     If True, the exact Hessian will not be calculated.
     /// line_search : dict
     ///     Settings for the line search (see next section).
-    /// eps_f : float : default=`MACH_EPS^(1/2)`
+    /// eps_f : float,  default=`MACH_EPS^(1/2)`
     ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float : default=`MACH_EPS^(1/3)`
+    /// eps_g : float, default=`MACH_EPS^(1/3)`
     ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float : default=1e-5
+    /// eps_norm_g : float, default=1e-5
     ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
     ///
     /// Line Search

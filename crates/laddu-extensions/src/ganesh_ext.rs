@@ -1819,16 +1819,17 @@ pub mod py_ganesh {
 
     /// A swarm of particles used in particle swarm optimization.
     ///
-    /// Attributes
-    /// ----------
-    /// particles : list of SwarmParticle
-    ///     The particles in the swarm.
-    ///
     #[pyclass(name = "Swarm", module = "laddu")]
     pub struct PySwarm(Swarm);
 
     #[pymethods]
     impl PySwarm {
+        /// The particles in the swarm.
+        ///
+        /// Returns
+        /// -------
+        /// list of SwarmParticle
+        ///
         #[getter]
         fn particles(&self) -> Vec<PySwarmParticle> {
             self.0
@@ -1841,40 +1842,57 @@ pub mod py_ganesh {
 
     /// A particle in a swarm used in particle swarm optimization.
     ///
-    /// Attributes
-    /// ----------
-    /// x : array_like
-    ///     The position of the particle.
-    /// fx : float
-    ///     The evaluation of the objective function at the particle's position.
-    /// x_best : array_like
-    ///     The best position found by the particle.
-    /// fx_best : float
-    ///     The evaluation of the objective function at the particle's best position.
-    /// velocity : array_like
-    ///     The velocity vector of the particle.
-    ///
     #[pyclass(name = "SwarmParticle", module = "laddu")]
     pub struct PySwarmParticle(SwarmParticle);
 
     #[pymethods]
     impl PySwarmParticle {
+        /// The position of the particle.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.position.x.as_slice().to_pyarray(py)
         }
+        /// The evaluation of the objective function at the particle's position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn fx(&self) -> Float {
             self.0.position.fx.unwrap()
         }
+        /// The best position found by the particle.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x_best<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.best.x.as_slice().to_pyarray(py)
         }
+        /// The evaluation of the objective function at the particle's best position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn fx_best(&self) -> Float {
             self.0.best.fx.unwrap()
         }
+        /// The velocity vector of the particle.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.velocity.as_slice().to_pyarray(py)
@@ -1883,62 +1901,87 @@ pub mod py_ganesh {
 
     /// The intermediate status used to inform the user of the current state of a minimization algorithm.
     ///
-    /// Attributes
-    /// ----------
-    /// x : array_like
-    ///     The current best position of the minimizer.
-    /// fx : array_like
-    ///     The current value of the objective function at the best position.
-    /// message : str
-    ///     A message indicating the current state of the minimization.
-    /// err : array_like or None
-    ///     The current error estimate at the best position. May be None for algorithms that do not estimate errors.
-    /// n_f_evals : int
-    ///     The number of objective function evaluations performed.
-    /// n_g_evals : int
-    ///     The number of gradient function evaluations performed.
-    /// cov : array_like or None
-    ///     The covariance matrix of the best position. May be None for algorithms that do not estimate errors.
-    /// hess : array_like or None
-    ///     The Hessian matrix of the best position. May be None for algorithms that do not estimate errors.
-    /// swarm : Swarm or None
-    ///     The swarm of particles used in swarm-based optimization algorithms. May be None for algorithms that do not use a swarm.
-    /// converged : bool
-    ///     True if the minimization algorithm has converged.
-    ///
     #[pyclass(name = "MinimizationStatus", module = "laddu")]
     pub struct PyMinimizationStatus(MinimizationStatus);
 
     #[pymethods]
     impl PyMinimizationStatus {
+        /// The current best position of the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.x(py)
         }
+        /// The current value of the objective function at the best position.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn fx(&self) -> Float {
             self.0.fx()
         }
+        /// A message indicating the current state of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
         #[getter]
         fn message(&self) -> String {
             self.0.message()
         }
+        /// The current error estimate at the best position. May be None for algorithms that do not estimate errors.
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
             self.0.err(py)
         }
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_f_evals(&self) -> usize {
             self.0.n_f_evals()
         }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_g_evals(&self) -> usize {
             self.0.n_g_evals()
         }
+        /// The covariance matrix of the best position. May be None for algorithms that do not estimate errors.
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.cov(py)
         }
+        /// The Hessian matrix of the best position. May be None for algorithms that do not estimate errors.
+        ///
+        /// Returns
+        /// -------
+        /// array_like or None
+        ///
         #[getter]
         fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
             self.0.hess(py)
@@ -1947,6 +1990,12 @@ pub mod py_ganesh {
         fn converged(&self) -> bool {
             self.0.converged()
         }
+        /// The swarm of particles used in swarm-based optimization algorithms. May be None for algorithms that do not use a swarm.
+        ///
+        /// Returns
+        /// -------
+        /// Swarm or None
+        ///
         #[getter]
         fn swarm(&self) -> Option<PySwarm> {
             self.0.swarm()
@@ -1955,37 +2004,18 @@ pub mod py_ganesh {
 
     /// A summary of the results of a minimization.
     ///
-    /// Attributes
-    /// ----------
-    /// bounds : list of tuple of floats or None
-    ///     Bounds which were used during the minimization.
-    /// parameter_names : list of str
-    ///     Names of each parameter used in the minimization.
-    /// message : str
-    ///     The status at the end of the minimization.
-    /// x0 : array_like
-    ///     The starting position of the minimizer.
-    /// x : array_like
-    ///     The best position found by the minimizer.
-    /// fx : float
-    ///     The value of the objective function at the best position found by the minimizer.
-    /// std : array_like
-    ///     The uncertainty associated with each parameter (may be zeros if no uncertainty was estimated or nan if the covariance matrix was not positive definite).
-    /// cost_evals : int
-    ///     The number of objective function evaluations performed.
-    /// gradient_evals : int
-    ///     The number of gradient function evaluations performed.
-    /// converged : bool
-    ///     True if the minimization algorithm has converged.
-    /// covariance : array_like
-    ///     The covariance matrix of the best position (may contain zeros if the algorithm did not estimate a Hessian).
-    ///
     #[pyclass(name = "MinimizationSummary", module = "laddu")]
     #[derive(Clone)]
     pub struct PyMinimizationSummary(pub MinimizationSummary);
 
     #[pymethods]
     impl PyMinimizationSummary {
+        /// Bounds which were used during the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// list of tuple of floats or None
+        ///
         #[getter]
         fn bounds(&self) -> Option<Vec<(Float, Float)>> {
             self.0
@@ -1993,42 +2023,102 @@ pub mod py_ganesh {
                 .bounds
                 .map(|bs| bs.iter().map(|b| b.0.as_floats()).collect())
         }
+        /// Names of each parameter used in the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// list of str
+        ///
         #[getter]
         fn parameter_names(&self) -> Vec<String> {
             self.0.parameter_names.clone().unwrap_or_default()
         }
+        /// The status at the end of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
         #[getter]
         fn message(&self) -> String {
             self.0.message.clone()
         }
+        /// The starting position of the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.x0.as_slice().to_pyarray(py)
         }
+        /// The best position found by the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.x.as_slice().to_pyarray(py)
         }
+        /// The uncertainty associated with each parameter (may be zeros if no uncertainty was estimated or nan if the covariance matrix was not positive definite).
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn std<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.std.as_slice().to_pyarray(py)
         }
+        /// The value of the objective function at the best position found by the minimizer.
+        ///
+        /// Returns
+        /// -------
+        /// float
+        ///
         #[getter]
         fn fx(&self) -> Float {
             self.0.fx
         }
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn cost_evals(&self) -> usize {
             self.0.cost_evals
         }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn gradient_evals(&self) -> usize {
             self.0.gradient_evals
         }
+        /// True if the minimization algorithm has converged.
+        ///
+        /// Returns
+        /// -------
+        /// bool
+        ///
         #[getter]
         fn converged(&self) -> bool {
             self.0.converged
         }
+        /// The covariance matrix of the best position (may contain zeros if the algorithm did not estimate a Hessian).
+        ///
+        /// Returns
+        /// -------
+        /// array_like
+        ///
         #[getter]
         fn covariance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<Float>> {
             self.0.covariance.to_pyarray(py)
@@ -2305,16 +2395,16 @@ pub mod py_ganesh {
 
     /// A walker in an MCMC ensemble.
     ///
-    /// Attributes
-    /// ----------
-    /// dimension : (int, int)
-    ///     The dimension of the walker's space (n_steps, n_variables)
-    ///
     #[pyclass(name = "Walker", module = "laddu")]
     pub struct PyWalker(pub Walker);
 
     #[pymethods]
     impl PyWalker {
+        /// The dimension of the walker's space (n_steps, n_variables)
+        ///
+        /// Returns
+        /// -------
+        /// tuple of int
         #[getter]
         fn dimension(&self) -> (usize, usize) {
             self.0.dimension()
@@ -2330,36 +2420,47 @@ pub mod py_ganesh {
 
     /// The intermediate status used to inform the user of the current state of an MCMC algorithm.
     ///
-    /// Attributes
-    /// ----------
-    /// message : str
-    ///     A message indicating the current state of the minimization.
-    /// n_f_evals : int
-    ///     The number of objective function evaluations performed.
-    /// n_g_evals : int
-    ///     The number of gradient function evaluations performed.
-    /// walkers : list of Walker
-    ///     The walkers in the ensemble.
-    /// dimension : tuple of `(n_walkers, n_steps, n_variables)`
-    ///     The dimension of the ensemble.
-    ///
     #[pyclass(name = "EnsembleStatus", module = "laddu")]
     pub struct PyEnsembleStatus(Arc<Mutex<EnsembleStatus>>);
 
     #[pymethods]
     impl PyEnsembleStatus {
+        /// A message indicating the current state of the minimization.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
         #[getter]
         fn message(&self) -> String {
             self.0.lock().message().to_string()
         }
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_f_evals(&self) -> usize {
             self.0.lock().n_f_evals
         }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn n_g_evals(&self) -> usize {
             self.0.lock().n_g_evals
         }
+        /// The walkers in the ensemble.
+        ///
+        /// Returns
+        /// -------
+        /// list of Walker
+        ///
         #[getter]
         fn walkers(&self) -> Vec<PyWalker> {
             self.0
@@ -2369,6 +2470,12 @@ pub mod py_ganesh {
                 .map(|w| PyWalker(w.clone()))
                 .collect()
         }
+        /// The dimension of the ensemble `(n_walkers, n_steps, n_variables)`.
+        ///
+        /// Returns
+        /// -------
+        /// tuple of int
+        ///
         #[getter]
         fn dimension(&self) -> (usize, usize, usize) {
             self.0.lock().dimension()
@@ -2432,28 +2539,17 @@ pub mod py_ganesh {
 
     /// A summary of the results of an MCMC sampling.
     ///
-    /// Attributes
-    /// ----------
-    /// bounds : list of tuple of floats or None
-    ///     Bounds which were used during the MCMC sampling.
-    /// parameter_names : list of str
-    ///     Names of each parameter used in the MCMC sampling.
-    /// message : str
-    ///     The status at the end of the MCMC sampling.
-    /// cost_evals : int
-    ///     The number of objective function evaluations performed.
-    /// gradient_evals : int
-    ///     The number of gradient function evaluations performed.
-    /// converged : bool
-    ///     True if the MCMC algorithm has converged.
-    /// dimension : tuple of `(n_walkers, n_steps, n_variables)`
-    ///     The dimension of the ensemble.
-    ///
     #[pyclass(name = "MCMCSummary", module = "laddu")]
     pub struct PyMCMCSummary(pub MCMCSummary);
 
     #[pymethods]
     impl PyMCMCSummary {
+        /// Bounds which were used during the MCMC sampling.
+        ///
+        /// Returns
+        /// -------
+        /// list of tuple of floats or None
+        ///
         #[getter]
         fn bounds(&self) -> Option<Vec<(Float, Float)>> {
             self.0
@@ -2461,27 +2557,62 @@ pub mod py_ganesh {
                 .bounds
                 .map(|bs| bs.iter().map(|b| b.0.as_floats()).collect())
         }
+        /// Names of each parameter used in the MCMC sampling.
+        ///
+        /// Returns
+        /// -------
+        /// list of str
+        ///
         #[getter]
         fn parameter_names(&self) -> Vec<String> {
             self.0.parameter_names.clone().unwrap_or_default()
         }
+        /// The status at the end of the MCMC sampling.
+        ///
+        /// Returns
+        /// -------
+        /// str
+        ///
         #[getter]
         fn message(&self) -> String {
             self.0.message.clone()
         }
+        /// The number of objective function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn cost_evals(&self) -> usize {
             self.0.cost_evals
         }
+        /// The number of gradient function evaluations performed.
+        ///
+        /// Returns
+        /// -------
+        /// int
+        ///
         #[getter]
         fn gradient_evals(&self) -> usize {
             self.0.gradient_evals
         }
+        /// True if the MCMC algorithm has converged.
+        ///
+        /// Returns
+        /// -------
+        /// bool
+        ///
         #[getter]
         fn converged(&self) -> bool {
             self.0.converged
         }
-
+        /// The dimension of the ensemble `(n_walkers, n_steps, n_variables)`.
+        ///
+        /// Returns
+        /// -------
+        /// tuple of int
+        ///
         #[getter]
         fn dimension(&self) -> (usize, usize, usize) {
             self.0.dimension
@@ -2746,11 +2877,6 @@ pub mod py_ganesh {
     /// verbose : bool, default=False
     ///     Print autocorrelation information at each check step.
     ///
-    /// Attributes
-    /// ----------
-    /// taus : array_like
-    ///     A list of autocorrelation times for each parameter.
-    ///
     #[pyclass(name = "AutocorrelationTerminator", module = "laddu")]
     #[derive(Clone)]
     pub struct PyAutocorrelationTerminator(Arc<Mutex<AutocorrelationTerminator>>);
@@ -2781,6 +2907,12 @@ pub mod py_ganesh {
             Self(act.build())
         }
 
+        /// A list of autocorrelation times for each parameter.
+        ///
+        /// Returns
+        /// -------
+        /// taus : array_like
+        ///
         #[getter]
         fn taus<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
             self.0.lock().taus.to_pyarray(py)
