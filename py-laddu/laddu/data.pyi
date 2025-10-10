@@ -4,7 +4,6 @@ from typing import Any, overload
 import numpy as np
 import pandas as pd
 import polars as pl
-import pyarrow as pa
 from numpy.typing import NDArray
 
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
@@ -80,10 +79,6 @@ class Dataset:
     @staticmethod
     def from_polars(
         data: pl.DataFrame, rest_frame_indices: list[int] | None = None
-    ) -> Dataset: ...
-    @staticmethod
-    def from_arrow(
-        data: pa.Table, rest_frame_indices: list[int] | None = None
     ) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam

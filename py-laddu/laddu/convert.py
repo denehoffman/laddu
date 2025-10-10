@@ -17,8 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-import pyarrow as pa
-import pyarrow.parquet as pq
+import polars as pl
 import uproot
 from docopt import docopt
 
@@ -114,8 +113,8 @@ def save_as_parquet(
 
     columns['weight'] = weight
 
-    data = pa.table(columns)
-    pq.write_table(data, str(output_path))
+    dataframe = pl.DataFrame(columns)
+    dataframe.write_parquet(str(output_path))
 
 
 def convert_from_amptools(
