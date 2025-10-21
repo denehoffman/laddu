@@ -16,20 +16,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  clippy:
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-      - name: Install OpenMPI
+      - name: Install deps (OpenMPI, clang)
         run: |
           sudo apt update
           sudo apt install -y clang libopenmpi-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -D warnings
+
+  build-check-test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (OpenMPI, clang)
+        run: |
+          sudo apt update
+          sudo apt install -y clang libopenmpi-dev
+
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
+
       - name: Run checks
         run: cargo hack check --rust-version --each-feature --no-dev-deps
+
       - name: Build
         run: cargo build --verbose
+
       - name: Run tests
         run: cargo hack test --verbose --each-feature
