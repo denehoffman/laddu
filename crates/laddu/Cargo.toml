@@ -33,6 +33,10 @@ rayon = { workspace = true }
 name = "kmatrix_benchmark"
 harness = false
 
+[[bench]]
+name = "zlm_benchmark"
+harness = false
+
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]
