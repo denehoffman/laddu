@@ -4,18 +4,17 @@ use approx::{AbsDiffEq, RelativeEq};
 use auto_ops::{impl_op_ex, impl_op_ex_commutative};
 use nalgebra::{Vector3, Vector4};
 
-use crate::Float;
 use serde::{Deserialize, Serialize};
 
 /// A vector with three components
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec3 {
     /// The x-component of the vector
-    pub x: Float,
+    pub x: f64,
     /// The y-component of the vector
-    pub y: Float,
+    pub y: f64,
     /// The z-component of the vector
-    pub z: Float,
+    pub z: f64,
 }
 
 impl Display for Vec3 {
@@ -25,21 +24,21 @@ impl Display for Vec3 {
 }
 
 impl AbsDiffEq for Vec3 {
-    type Epsilon = <Float as approx::AbsDiffEq>::Epsilon;
+    type Epsilon = <f64 as approx::AbsDiffEq>::Epsilon;
 
     fn default_epsilon() -> Self::Epsilon {
-        Float::default_epsilon()
+        f64::default_epsilon()
     }
 
     fn abs_diff_eq(&self, other: &Self, epsilon: Self::Epsilon) -> bool {
-        Float::abs_diff_eq(&self.x, &other.x, epsilon)
-            && Float::abs_diff_eq(&self.y, &other.y, epsilon)
-            && Float::abs_diff_eq(&self.z, &other.z, epsilon)
+        f64::abs_diff_eq(&self.x, &other.x, epsilon)
+            && f64::abs_diff_eq(&self.y, &other.y, epsilon)
+            && f64::abs_diff_eq(&self.z, &other.z, epsilon)
     }
 }
 impl RelativeEq for Vec3 {
     fn default_max_relative() -> Self::Epsilon {
-        Float::default_max_relative()
+        f64::default_max_relative()
     }
 
     fn relative_eq(
@@ -48,26 +47,26 @@ impl RelativeEq for Vec3 {
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
     ) -> bool {
-        Float::relative_eq(&self.x, &other.x, epsilon, max_relative)
-            && Float::relative_eq(&self.y, &other.y, epsilon, max_relative)
-            && Float::relative_eq(&self.z, &other.z, epsilon, max_relative)
+        f64::relative_eq(&self.x, &other.x, epsilon, max_relative)
+            && f64::relative_eq(&self.y, &other.y, epsilon, max_relative)
+            && f64::relative_eq(&self.z, &other.z, epsilon, max_relative)
     }
 }
 
-impl From<Vec3> for Vector3<Float> {
+impl From<Vec3> for Vector3<f64> {
     fn from(value: Vec3) -> Self {
         Vector3::new(value.x, value.y, value.z)
     }
 }
 
-impl From<Vector3<Float>> for Vec3 {
-    fn from(value: Vector3<Float>) -> Self {
+impl From<Vector3<f64>> for Vec3 {
+    fn from(value: Vector3<f64>) -> Self {
         Vec3::new(value.x, value.y, value.z)
     }
 }
 
-impl From<Vec<Float>> for Vec3 {
-    fn from(value: Vec<Float>) -> Self {
+impl From<Vec<f64>> for Vec3 {
+    fn from(value: Vec<f64>) -> Self {
         Self {
             x: value[0],
             y: value[1],
@@ -76,14 +75,14 @@ impl From<Vec<Float>> for Vec3 {
     }
 }
 
-impl From<Vec3> for Vec<Float> {
+impl From<Vec3> for Vec<f64> {
     fn from(value: Vec3) -> Self {
         vec![value.x, value.y, value.z]
     }
 }
 
-impl From<[Float; 3]> for Vec3 {
-    fn from(value: [Float; 3]) -> Self {
+impl From<[f64; 3]> for Vec3 {
+    fn from(value: [f64; 3]) -> Self {
         Self {
             x: value[0],
             y: value[1],
@@ -92,7 +91,7 @@ impl From<[Float; 3]> for Vec3 {
     }
 }
 
-impl From<Vec3> for [Float; 3] {
+impl From<Vec3> for [f64; 3] {
     fn from(value: Vec3) -> Self {
         [value.x, value.y, value.z]
     }
@@ -106,7 +105,7 @@ impl Default for Vec3 {
 
 impl Vec3 {
     /// Create a new 3-vector from its components
-    pub fn new(x: Float, y: Float, z: Float) -> Self {
+    pub fn new(x: f64, y: f64, z: f64) -> Self {
         Vec3 { x, y, z }
     }
 
@@ -147,33 +146,33 @@ impl Vec3 {
     }
 
     /// Momentum in the x-direction
-    pub fn px(&self) -> Float {
+    pub fn px(&self) -> f64 {
         self.x
     }
 
     /// Momentum in the y-direction
-    pub fn py(&self) -> Float {
+    pub fn py(&self) -> f64 {
         self.y
     }
 
     /// Momentum in the z-direction
-    pub fn pz(&self) -> Float {
+    pub fn pz(&self) -> f64 {
         self.z
     }
 
     /// Create a [`Vec4`] with this vector as the 3-momentum and the given mass
-    pub fn with_mass(&self, mass: Float) -> Vec4 {
-        let e = Float::sqrt(mass.powi(2) + self.mag2());
+    pub fn with_mass(&self, mass: f64) -> Vec4 {
+        let e = f64::sqrt(mass.powi(2) + self.mag2());
         Vec4::new(self.px(), self.py(), self.pz(), e)
     }
 
     /// Create a [`Vec4`] with this vector as the 3-momentum and the given energy
-    pub fn with_energy(&self, energy: Float) -> Vec4 {
+    pub fn with_energy(&self, energy: f64) -> Vec4 {
         Vec4::new(self.px(), self.py(), self.pz(), energy)
     }
 
     /// Compute the dot product of this [`Vec3`] and another
-    pub fn dot(&self, other: &Vec3) -> Float {
+    pub fn dot(&self, other: &Vec3) -> f64 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
@@ -187,28 +186,28 @@ impl Vec3 {
     }
 
     /// The magnitude of the vector
-    pub fn mag(&self) -> Float {
-        Float::sqrt(self.mag2())
+    pub fn mag(&self) -> f64 {
+        f64::sqrt(self.mag2())
     }
 
     /// The squared magnitude of the vector
-    pub fn mag2(&self) -> Float {
+    pub fn mag2(&self) -> f64 {
         self.dot(self)
     }
 
     /// The cosine of the polar angle $`\theta`$
-    pub fn costheta(&self) -> Float {
+    pub fn costheta(&self) -> f64 {
         self.z / self.mag()
     }
 
     /// The polar angle $`\theta`$
-    pub fn theta(&self) -> Float {
-        Float::acos(self.costheta())
+    pub fn theta(&self) -> f64 {
+        f64::acos(self.costheta())
     }
 
     /// The azimuthal angle $`\phi`$
-    pub fn phi(&self) -> Float {
-        Float::atan2(self.y, self.x)
+    pub fn phi(&self) -> f64 {
+        f64::atan2(self.y, self.x)
     }
 
     /// Create a unit vector in the same direction as this [`Vec3`]
@@ -232,22 +231,22 @@ impl std::iter::Sum<Vec3> for Vec3 {
 impl_op_ex!(+ |a: &Vec3, b: &Vec3| -> Vec3 { Vec3::new(a.x + b.x, a.y + b.y, a.z + b.z) });
 impl_op_ex!(-|a: &Vec3, b: &Vec3| -> Vec3 { Vec3::new(a.x - b.x, a.y - b.y, a.z - b.z) });
 impl_op_ex!(-|a: &Vec3| -> Vec3 { Vec3::new(-a.x, -a.y, -a.z) });
-impl_op_ex_commutative!(+ |a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x + b, a.y + b, a.z + b) });
-impl_op_ex_commutative!(-|a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x - b, a.y - b, a.z - b) });
-impl_op_ex_commutative!(*|a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x * b, a.y * b, a.z * b) });
-impl_op_ex!(/ |a: &Vec3, b: &Float| -> Vec3 { Vec3::new(a.x / b, a.y / b, a.z / b) });
+impl_op_ex_commutative!(+ |a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x + b, a.y + b, a.z + b) });
+impl_op_ex_commutative!(-|a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x - b, a.y - b, a.z - b) });
+impl_op_ex_commutative!(*|a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x * b, a.y * b, a.z * b) });
+impl_op_ex!(/ |a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x / b, a.y / b, a.z / b) });
 
 /// A vector with four components (a Lorentz vector)
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec4 {
     /// The x-component of the vector
-    pub x: Float,
+    pub x: f64,
     /// The y-component of the vector
-    pub y: Float,
+    pub y: f64,
     /// The z-component of the vector
-    pub z: Float,
+    pub z: f64,
     /// The t-component of the vector
-    pub t: Float,
+    pub t: f64,
 }
 
 impl Display for Vec4 {
@@ -261,22 +260,22 @@ impl Display for Vec4 {
 }
 
 impl AbsDiffEq for Vec4 {
-    type Epsilon = <Float as approx::AbsDiffEq>::Epsilon;
+    type Epsilon = <f64 as approx::AbsDiffEq>::Epsilon;
 
     fn default_epsilon() -> Self::Epsilon {
-        Float::default_epsilon()
+        f64::default_epsilon()
     }
 
     fn abs_diff_eq(&self, other: &Self, epsilon: Self::Epsilon) -> bool {
-        Float::abs_diff_eq(&self.x, &other.x, epsilon)
-            && Float::abs_diff_eq(&self.y, &other.y, epsilon)
-            && Float::abs_diff_eq(&self.z, &other.z, epsilon)
-            && Float::abs_diff_eq(&self.t, &other.t, epsilon)
+        f64::abs_diff_eq(&self.x, &other.x, epsilon)
+            && f64::abs_diff_eq(&self.y, &other.y, epsilon)
+            && f64::abs_diff_eq(&self.z, &other.z, epsilon)
+            && f64::abs_diff_eq(&self.t, &other.t, epsilon)
     }
 }
 impl RelativeEq for Vec4 {
     fn default_max_relative() -> Self::Epsilon {
-        Float::default_max_relative()
+        f64::default_max_relative()
     }
 
     fn relative_eq(
@@ -285,27 +284,27 @@ impl RelativeEq for Vec4 {
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
     ) -> bool {
-        Float::relative_eq(&self.x, &other.x, epsilon, max_relative)
-            && Float::relative_eq(&self.y, &other.y, epsilon, max_relative)
-            && Float::relative_eq(&self.z, &other.z, epsilon, max_relative)
-            && Float::relative_eq(&self.t, &other.t, epsilon, max_relative)
+        f64::relative_eq(&self.x, &other.x, epsilon, max_relative)
+            && f64::relative_eq(&self.y, &other.y, epsilon, max_relative)
+            && f64::relative_eq(&self.z, &other.z, epsilon, max_relative)
+            && f64::relative_eq(&self.t, &other.t, epsilon, max_relative)
     }
 }
 
-impl From<Vec4> for Vector4<Float> {
+impl From<Vec4> for Vector4<f64> {
     fn from(value: Vec4) -> Self {
         Vector4::new(value.x, value.y, value.z, value.t)
     }
 }
 
-impl From<Vector4<Float>> for Vec4 {
-    fn from(value: Vector4<Float>) -> Self {
+impl From<Vector4<f64>> for Vec4 {
+    fn from(value: Vector4<f64>) -> Self {
         Vec4::new(value.x, value.y, value.z, value.w)
     }
 }
 
-impl From<Vec<Float>> for Vec4 {
-    fn from(value: Vec<Float>) -> Self {
+impl From<Vec<f64>> for Vec4 {
+    fn from(value: Vec<f64>) -> Self {
         Self {
             x: value[0],
             y: value[1],
@@ -315,14 +314,14 @@ impl From<Vec<Float>> for Vec4 {
     }
 }
 
-impl From<Vec4> for Vec<Float> {
+impl From<Vec4> for Vec<f64> {
     fn from(value: Vec4) -> Self {
         vec![value.x, value.y, value.z, value.t]
     }
 }
 
-impl From<[Float; 4]> for Vec4 {
-    fn from(value: [Float; 4]) -> Self {
+impl From<[f64; 4]> for Vec4 {
+    fn from(value: [f64; 4]) -> Self {
         Self {
             x: value[0],
             y: value[1],
@@ -332,7 +331,7 @@ impl From<[Float; 4]> for Vec4 {
     }
 }
 
-impl From<Vec4> for [Float; 4] {
+impl From<Vec4> for [f64; 4] {
     fn from(value: Vec4) -> Self {
         [value.x, value.y, value.z, value.t]
     }
@@ -340,27 +339,27 @@ impl From<Vec4> for [Float; 4] {
 
 impl Vec4 {
     /// Create a new 4-vector from its components
-    pub fn new(x: Float, y: Float, z: Float, t: Float) -> Self {
+    pub fn new(x: f64, y: f64, z: f64, t: f64) -> Self {
         Vec4 { x, y, z, t }
     }
 
     /// Momentum in the x-direction
-    pub fn px(&self) -> Float {
+    pub fn px(&self) -> f64 {
         self.x
     }
 
     /// Momentum in the y-direction
-    pub fn py(&self) -> Float {
+    pub fn py(&self) -> f64 {
         self.y
     }
 
     /// Momentum in the z-direction
-    pub fn pz(&self) -> Float {
+    pub fn pz(&self) -> f64 {
         self.z
     }
 
     /// The energy of the 4-vector
-    pub fn e(&self) -> Float {
+    pub fn e(&self) -> f64 {
         self.t
     }
 
@@ -370,10 +369,10 @@ impl Vec4 {
     }
 
     /// The $`\gamma`$ factor $`\frac{1}{\sqrt{1 - \beta^2}}`$.
-    pub fn gamma(&self) -> Float {
+    pub fn gamma(&self) -> f64 {
         let beta = self.beta();
         let b2 = beta.dot(&beta);
-        1.0 / Float::sqrt(1.0 - b2)
+        1.0 / f64::sqrt(1.0 - b2)
     }
 
     /// The $`\vec{\beta}`$ vector $`\frac{\vec{p}}{E}`$.
@@ -382,12 +381,12 @@ impl Vec4 {
     }
 
     /// The invariant mass corresponding to this 4-momentum
-    pub fn m(&self) -> Float {
+    pub fn m(&self) -> f64 {
         self.mag()
     }
 
     /// The squared invariant mass corresponding to this 4-momentum
-    pub fn m2(&self) -> Float {
+    pub fn m2(&self) -> f64 {
         self.mag2()
     }
 
@@ -404,19 +403,19 @@ impl Vec4 {
     }
 
     /// The magnitude of the vector (with $`---+`$ signature).
-    pub fn mag(&self) -> Float {
-        Float::sqrt(self.mag2())
+    pub fn mag(&self) -> f64 {
+        f64::sqrt(self.mag2())
     }
 
     /// The squared magnitude of the vector (with $`---+`$ signature).
-    pub fn mag2(&self) -> Float {
+    pub fn mag2(&self) -> f64 {
         self.t * self.t - (self.x * self.x + self.y * self.y + self.z * self.z)
     }
 
     /// Gives the vector boosted along a $`\vec{\beta}`$ vector.
     pub fn boost(&self, beta: &Vec3) -> Self {
         let b2 = beta.dot(beta);
-        let gamma = 1.0 / Float::sqrt(1.0 - b2);
+        let gamma = 1.0 / f64::sqrt(1.0 - b2);
         let p3 = self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self.t);
         Vec4::new(p3.x, p3.y, p3.z, gamma * (self.t + beta.dot(&self.vec3())))
     }
@@ -436,14 +435,10 @@ impl_op_ex!(-|a: &Vec4, b: &Vec4| -> Vec4 {
     Vec4::new(a.x - b.x, a.y - b.y, a.z - b.z, a.t - b.t)
 });
 impl_op_ex!(-|a: &Vec4| -> Vec4 { Vec4::new(-a.x, -a.y, -a.z, a.t) });
-impl_op_ex_commutative!(+ |a: &Vec4, b: &Float| -> Vec4 { Vec4::new(a.x + b, a.y + b, a.z + b, a.t) });
-impl_op_ex_commutative!(-|a: &Vec4, b: &Float| -> Vec4 {
-    Vec4::new(a.x - b, a.y - b, a.z - b, a.t)
-});
-impl_op_ex_commutative!(*|a: &Vec4, b: &Float| -> Vec4 {
-    Vec4::new(a.x * b, a.y * b, a.z * b, a.t)
-});
-impl_op_ex!(/ |a: &Vec4, b: &Float| -> Vec4 { Vec4::new(a.x / b, a.y / b, a.z / b, a.t) });
+impl_op_ex_commutative!(+ |a: &Vec4, b: &f64| -> Vec4 { Vec4::new(a.x + b, a.y + b, a.z + b, a.t) });
+impl_op_ex_commutative!(-|a: &Vec4, b: &f64| -> Vec4 { Vec4::new(a.x - b, a.y - b, a.z - b, a.t) });
+impl_op_ex_commutative!(*|a: &Vec4, b: &f64| -> Vec4 { Vec4::new(a.x * b, a.y * b, a.z * b, a.t) });
+impl_op_ex!(/ |a: &Vec4, b: &f64| -> Vec4 { Vec4::new(a.x / b, a.y / b, a.z / b, a.t) });
 
 impl<'a> std::iter::Sum<&'a Vec4> for Vec4 {
     fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
@@ -475,7 +470,7 @@ mod tests {
     #[test]
     fn test_vec_vector_conversion() {
         let v = Vec3::new(1.0, 2.0, 3.0);
-        let vector3: Vec<Float> = v.into();
+        let vector3: Vec<f64> = v.into();
         assert_eq!(vector3[0], 1.0);
         assert_eq!(vector3[1], 2.0);
         assert_eq!(vector3[2], 3.0);
@@ -484,7 +479,7 @@ mod tests {
         assert_eq!(v_from_vec, v);
 
         let v = Vec4::new(1.0, 2.0, 3.0, 4.0);
-        let vector4: Vec<Float> = v.into();
+        let vector4: Vec<f64> = v.into();
         assert_eq!(vector4[0], 1.0);
         assert_eq!(vector4[1], 2.0);
         assert_eq!(vector4[2], 3.0);
@@ -500,21 +495,21 @@ mod tests {
         let v: Vec3 = arr.into();
         assert_eq!(v, Vec3::new(1.0, 2.0, 3.0));
 
-        let back_to_array: [Float; 3] = v.into();
+        let back_to_array: [f64; 3] = v.into();
         assert_eq!(back_to_array, arr);
 
         let arr = [1.0, 2.0, 3.0, 4.0];
         let v: Vec4 = arr.into();
         assert_eq!(v, Vec4::new(1.0, 2.0, 3.0, 4.0));
 
-        let back_to_array: [Float; 4] = v.into();
+        let back_to_array: [f64; 4] = v.into();
         assert_eq!(back_to_array, arr);
     }
 
     #[test]
     fn test_vec_nalgebra_conversion() {
         let v = Vec3::new(1.0, 2.0, 3.0);
-        let vector3: Vector3<Float> = v.into();
+        let vector3: Vector3<f64> = v.into();
         assert_eq!(vector3.x, 1.0);
         assert_eq!(vector3.y, 2.0);
         assert_eq!(vector3.z, 3.0);
@@ -523,7 +518,7 @@ mod tests {
         assert_eq!(v_from_vec, v);
 
         let v = Vec4::new(1.0, 2.0, 3.0, 4.0);
-        let vector4: Vector4<Float> = v.into();
+        let vector4: Vector4<f64> = v.into();
         assert_eq!(vector4.x, 1.0);
         assert_eq!(vector4.y, 2.0);
         assert_eq!(vector4.z, 3.0);
@@ -578,7 +573,7 @@ mod tests {
         assert_relative_eq!(p.beta().y, 0.4);
         assert_relative_eq!(p.beta().z, 0.5);
         assert_relative_eq!(p.m2(), 50.0);
-        assert_relative_eq!(p.m(), Float::sqrt(50.0));
+        assert_relative_eq!(p.m(), f64::sqrt(50.0));
         assert_eq!(
             format!("{}", p.to_p4_string()),
             "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
@@ -607,16 +602,16 @@ mod tests {
         assert_eq!(p3_view.py(), 4.0);
         assert_eq!(p3_view.pz(), 5.0);
         assert_relative_eq!(p3_view.mag2(), 50.0);
-        assert_relative_eq!(p3_view.mag(), Float::sqrt(50.0));
-        assert_relative_eq!(p3_view.costheta(), 5.0 / Float::sqrt(50.0));
-        assert_relative_eq!(p3_view.theta(), Float::acos(5.0 / Float::sqrt(50.0)));
-        assert_relative_eq!(p3_view.phi(), Float::atan2(4.0, 3.0));
+        assert_relative_eq!(p3_view.mag(), f64::sqrt(50.0));
+        assert_relative_eq!(p3_view.costheta(), 5.0 / f64::sqrt(50.0));
+        assert_relative_eq!(p3_view.theta(), f64::acos(5.0 / f64::sqrt(50.0)));
+        assert_relative_eq!(p3_view.phi(), f64::atan2(4.0, 3.0));
         assert_relative_eq!(
             p3_view.unit(),
             Vec3::new(
-                3.0 / Float::sqrt(50.0),
-                4.0 / Float::sqrt(50.0),
-                5.0 / Float::sqrt(50.0)
+                3.0 / f64::sqrt(50.0),
+                4.0 / f64::sqrt(50.0),
+                5.0 / f64::sqrt(50.0)
             )
         );
         assert_relative_eq!(p3_view.cross(&q3_view), Vec3::new(47.4, -16.8, -15.0));
@@ -645,7 +640,7 @@ mod tests {
     fn test_boost() {
         let p0 = Vec4::new(0.0, 0.0, 0.0, 1.0);
         assert_relative_eq!(p0.gamma(), 1.0);
-        let p0 = Vec4::new(Float::sqrt(3.0) / 2.0, 0.0, 0.0, 1.0);
+        let p0 = Vec4::new(f64::sqrt(3.0) / 2.0, 0.0, 0.0, 1.0);
         assert_relative_eq!(p0.gamma(), 2.0);
         let p1 = Vec4::new(3.0, 4.0, 5.0, 10.0);
         let p2 = Vec4::new(3.4, 2.3, 1.2, 9.0);
@@ -653,22 +648,22 @@ mod tests {
         assert_relative_eq!(
             p1_boosted.e(),
             8.157632144622882,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
         assert_relative_eq!(
             p1_boosted.px(),
             -0.6489200627053444,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
         assert_relative_eq!(
             p1_boosted.py(),
             1.5316128987581492,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
         assert_relative_eq!(
             p1_boosted.pz(),
             3.712145860221643,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 }

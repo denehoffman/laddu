@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::Event,
@@ -8,7 +6,7 @@ use laddu_core::{
         functions::{blatt_weisskopf, breakup_momentum},
         variables::{Mass, Variable},
     },
-    Float, LadduError, PI,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -16,9 +14,11 @@ use laddu_python::{
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::f64::consts::PI;
 
 /// A relativistic Breit-Wigner [`Amplitude`], parameterized as follows:
 /// ```math
@@ -77,7 +77,7 @@ impl Amplitude for BreitWigner {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex64 {
         let mass = self.resonance_mass.value(event);
         let mass0 = parameters.get(self.pid_mass).abs();
         let width0 = parameters.get(self.pid_width).abs();
@@ -88,9 +88,9 @@ impl Amplitude for BreitWigner {
         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = Float::sqrt(mass0 * width0 / PI);
-        let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex::from(f * n) / d
+        let n = f64::sqrt(mass0 * width0 / PI);
+        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+        Complex64::from(f * n) / d
     }
 
     fn compute_gradient(
@@ -98,7 +98,7 @@ impl Amplitude for BreitWigner {
         parameters: &Parameters,
         event: &Event,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let mut indices = Vec::with_capacity(2);
         if let ParameterID::Parameter(index) = self.pid_mass {
@@ -192,8 +192,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
-        assert_relative_eq!(result[0].re, 1.45856917, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 1.4107341, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 1.45856917, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 1.4107341, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -217,9 +217,9 @@ mod tests {
         dbg!(Mass::new([2, 3]).value_on(&dataset));
 
         let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
-        assert_relative_eq!(result[0][0].re, -2.410585, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -1.8880913, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][1].re, 1.0467031, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][1].im, 1.3683612, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -2.410585, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].im, -1.8880913, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][1].re, 1.0467031, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][1].im, 1.3683612, epsilon = f64::EPSILON.cbrt());
     }
 }

@@ -5,9 +5,9 @@ use laddu_core::{
         ParameterLike, TestAmplitude,
     },
     traits::ReadWrite,
-    Float, LadduError,
+    LadduError,
 };
-use num::Complex;
+use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,
@@ -712,9 +712,9 @@ impl PyEvaluator {
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
-        parameters: Vec<Float>,
+        parameters: Vec<f64>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<Complex<Float>>>> {
+    ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
             Ok(PyArray1::from_slice(
@@ -756,10 +756,10 @@ impl PyEvaluator {
     fn evaluate_batch<'py>(
         &self,
         py: Python<'py>,
-        parameters: Vec<Float>,
+        parameters: Vec<f64>,
         indices: Vec<usize>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<Complex<Float>>>> {
+    ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
             Ok(PyArray1::from_slice(
@@ -803,9 +803,9 @@ impl PyEvaluator {
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
-        parameters: Vec<Float>,
+        parameters: Vec<f64>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray2<Complex<Float>>>> {
+    ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
             Ok(PyArray2::from_vec2(
@@ -819,7 +819,7 @@ impl PyEvaluator {
                             .evaluate_gradient(&parameters)
                             .iter()
                             .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex<Float>>>>()
+                            .collect::<Vec<Vec<Complex64>>>()
                     }),
             )
             .map_err(LadduError::NumpyError)?)
@@ -833,7 +833,7 @@ impl PyEvaluator {
                     .evaluate_gradient(&parameters)
                     .iter()
                     .map(|grad| grad.data.as_vec().to_vec())
-                    .collect::<Vec<Vec<Complex<Float>>>>(),
+                    .collect::<Vec<Vec<Complex64>>>(),
             )
             .map_err(LadduError::NumpyError)?)
         }
@@ -864,10 +864,10 @@ impl PyEvaluator {
     fn evaluate_gradient_batch<'py>(
         &self,
         py: Python<'py>,
-        parameters: Vec<Float>,
+        parameters: Vec<f64>,
         indices: Vec<usize>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray2<Complex<Float>>>> {
+    ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
             Ok(PyArray2::from_vec2(
@@ -881,7 +881,7 @@ impl PyEvaluator {
                             .evaluate_gradient_batch(&parameters, &indices)
                             .iter()
                             .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex<Float>>>>()
+                            .collect::<Vec<Vec<Complex64>>>()
                     }),
             )
             .map_err(LadduError::NumpyError)?)
@@ -895,7 +895,7 @@ impl PyEvaluator {
                     .evaluate_gradient_batch(&parameters, &indices)
                     .iter()
                     .map(|grad| grad.data.as_vec().to_vec())
-                    .collect::<Vec<Vec<Complex<Float>>>>(),
+                    .collect::<Vec<Vec<Complex64>>>(),
             )
             .map_err(LadduError::NumpyError)?)
         }
@@ -948,7 +948,7 @@ pub fn py_parameter(name: &str) -> PyParameterLike {
 ///     An object that can be used as the input for many Amplitude constructors
 ///
 #[pyfunction(name = "constant")]
-pub fn py_constant(value: Float) -> PyParameterLike {
+pub fn py_constant(value: f64) -> PyParameterLike {
     PyParameterLike(constant(value))
 }
 

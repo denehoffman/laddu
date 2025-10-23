@@ -9,7 +9,7 @@ use laddu::{
         enums::{Frame, Sign},
         variables::{Angles, Polarization},
     },
-    ComplexScalar, Float, Scalar,
+    ComplexScalar, Scalar,
 };
 
 use rayon::ThreadPoolBuilder;
@@ -87,12 +87,7 @@ fn zlm_benchmark(c: &mut Criterion) {
                 let mut rng = fastrand::Rng::new();
                 b.iter_batched(
                     || {
-                        #[cfg(feature = "f32")]
-                        let p: Vec<Float> = (0..evaluator.parameters().len())
-                            .map(|_| rng.f32_range(-100.0..100.0))
-                            .collect();
-                        #[cfg(not(feature = "f32"))]
-                        let p: Vec<Float> = (0..evaluator.parameters().len())
+                        let p: Vec<f64> = (0..evaluator.parameters().len())
                             .map(|_| rng.f64_range(-100.0..100.0))
                             .collect();
                         p

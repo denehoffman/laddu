@@ -6,7 +6,7 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Float, LadduError, Polarization, Sign,
+    LadduError, Polarization, Sign,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -14,7 +14,7 @@ use laddu_python::{
     utils::variables::{PyAngles, PyPolarization},
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -75,24 +75,24 @@ impl Amplitude for Zlm {
         );
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
-        let phase = Complex::new(Float::cos(-pol_angle), Float::sin(-pol_angle));
+        let phase = Complex64::new(f64::cos(-pol_angle), f64::sin(-pol_angle));
         let zlm = ylm * phase;
         cache.store_complex_scalar(
             self.csid,
             match self.r {
-                Sign::Positive => Complex::new(
-                    Float::sqrt(1.0 + pgamma) * zlm.re,
-                    Float::sqrt(1.0 - pgamma) * zlm.im,
+                Sign::Positive => Complex64::new(
+                    f64::sqrt(1.0 + pgamma) * zlm.re,
+                    f64::sqrt(1.0 - pgamma) * zlm.im,
                 ),
-                Sign::Negative => Complex::new(
-                    Float::sqrt(1.0 - pgamma) * zlm.re,
-                    Float::sqrt(1.0 + pgamma) * zlm.im,
+                Sign::Negative => Complex64::new(
+                    f64::sqrt(1.0 - pgamma) * zlm.re,
+                    f64::sqrt(1.0 + pgamma) * zlm.im,
                 ),
             },
         );
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
@@ -101,7 +101,7 @@ impl Amplitude for Zlm {
         _parameters: &Parameters,
         _event: &Event,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -202,11 +202,11 @@ impl Amplitude for PolPhase {
     fn precompute(&self, event: &Event, cache: &mut Cache) {
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
-        let phase = Complex::new(Float::cos(2.0 * pol_angle), Float::sin(2.0 * pol_angle));
+        let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));
         cache.store_complex_scalar(self.csid, pgamma * phase);
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
@@ -215,7 +215,7 @@ impl Amplitude for PolPhase {
         _parameters: &Parameters,
         _event: &Event,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -281,8 +281,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.04284127, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.23859638, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.04284127, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, -0.23859638, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -316,8 +316,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, -0.28729145, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.25724039, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, -0.28729145, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, -0.25724039, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]

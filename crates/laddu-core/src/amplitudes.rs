@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{Dataset, Event},
     resources::{Cache, Parameters, Resources},
-    Float, LadduError, ParameterID, ReadWrite,
+    LadduError, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -31,7 +31,7 @@ pub enum ParameterLike {
     /// A named free parameter.
     Parameter(String),
     /// A constant value.
-    Constant(Float),
+    Constant(f64),
     /// An uninitialized parameter-like structure (typically used as the value given in an
     /// [`Amplitude`] constructor before the [`Amplitude::register`] method is called).
     #[default]
@@ -44,7 +44,7 @@ pub fn parameter(name: &str) -> ParameterLike {
 }
 
 /// Shorthand for generating a constant value (which acts like a fixed parameter).
-pub fn constant(value: Float) -> ParameterLike {
+pub fn constant(value: f64) -> ParameterLike {
     ParameterLike::Constant(value)
 }
 
@@ -96,7 +96,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`Cache`] are more like key-value storage accessed by
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs.
-    fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<Float>;
+    fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<f64>;
 
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
     /// by a particular [`Event`] and set of [`Parameters`]. See those structs, as well as
@@ -118,7 +118,7 @@ pub trait Amplitude: DynClone + Send + Sync {
         parameters: &Parameters,
         event: &Event,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex<f64>>,
     ) {
         self.central_difference_with_indices(
             &Vec::from_iter(0..parameters.len()),
@@ -140,13 +140,13 @@ pub trait Amplitude: DynClone + Send + Sync {
         parameters: &Parameters,
         event: &Event,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex<f64>>,
     ) {
         let x = parameters.parameters.to_owned();
         let constants = parameters.constants.to_owned();
-        let h: DVector<Float> = x
+        let h: DVector<f64> = x
             .iter()
-            .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+            .map(|&xi: &f64| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
             .collect::<Vec<_>>()
             .into();
         for i in indices {
@@ -162,15 +162,12 @@ pub trait Amplitude: DynClone + Send + Sync {
 }
 
 /// Utility function to calculate a central finite difference gradient.
-pub fn central_difference<F: Fn(&[Float]) -> Float>(
-    parameters: &[Float],
-    func: F,
-) -> DVector<Float> {
+pub fn central_difference<F: Fn(&[f64]) -> f64>(parameters: &[f64], func: F) -> DVector<f64> {
     let mut gradient = DVector::zeros(parameters.len());
     let x = parameters.to_owned();
-    let h: DVector<Float> = x
+    let h: DVector<f64> = x
         .iter()
-        .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+        .map(|&xi| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
         .collect::<Vec<_>>()
         .into();
     for i in 0..parameters.len() {
@@ -189,11 +186,11 @@ dyn_clone::clone_trait_object!(Amplitude);
 
 /// A helper struct that contains the value of each amplitude for a particular event
 #[derive(Debug)]
-pub struct AmplitudeValues(pub Vec<Complex<Float>>);
+pub struct AmplitudeValues(pub Vec<Complex<f64>>);
 
 /// A helper struct that contains the gradient of each amplitude for a particular event
 #[derive(Debug)]
-pub struct GradientValues(pub usize, pub Vec<DVector<Complex<Float>>>);
+pub struct GradientValues(pub usize, pub Vec<DVector<Complex<f64>>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
@@ -351,7 +348,7 @@ impl Expression {
     ///
     /// This method parses the underlying [`Expression`] but doesn't actually calculate the values
     /// from the [`Amplitude`]s themselves.
-    pub fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
+    pub fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<f64> {
         match self {
             Expression::Amp(aid) => amplitude_values.0[aid.1],
             Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
@@ -375,7 +372,7 @@ impl Expression {
         &self,
         amplitude_values: &AmplitudeValues,
         gradient_values: &GradientValues,
-    ) -> DVector<Complex<Float>> {
+    ) -> DVector<Complex<f64>> {
         match self {
             Expression::Amp(aid) => gradient_values.1[aid.1].clone(),
             Expression::Add(a, b) => {
@@ -623,7 +620,7 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
-    pub fn evaluate_local(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex<f64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -692,14 +689,10 @@ impl Evaluator {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
     #[cfg(feature = "mpi")]
-    fn evaluate_mpi(
-        &self,
-        parameters: &[Float],
-        world: &SimpleCommunicator,
-    ) -> Vec<Complex<Float>> {
+    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> Vec<Complex<f64>> {
         let local_evaluation = self.evaluate_local(parameters);
         let n_events = self.dataset.n_events();
-        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; n_events];
+        let mut buffer: Vec<Complex<f64>> = vec![Complex::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
@@ -710,7 +703,7 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -722,11 +715,7 @@ impl Evaluator {
 
     /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
     /// than all events in the total dataset.
-    pub fn evaluate_batch_local(
-        &self,
-        parameters: &[Float],
-        indices: &[usize],
-    ) -> Vec<Complex<Float>> {
+    pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex<f64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -808,11 +797,11 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_batch_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<Complex<Float>> {
-        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; indices.len()];
+    ) -> Vec<Complex<f64>> {
+        let mut buffer: Vec<Complex<f64>> = vec![Complex::ZERO; indices.len()];
         let (counts, displs, locals) = self
             .dataset
             .get_counts_displs_locals_from_indices(indices, world);
@@ -826,7 +815,7 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. See also [`Expression::evaluate`].
-    pub fn evaluate_batch(&self, parameters: &[Float], indices: &[usize]) -> Vec<Complex<Float>> {
+    pub fn evaluate_batch(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -843,7 +832,7 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
-    pub fn evaluate_gradient_local(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+    pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex<f64>>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -949,14 +938,14 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_gradient_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex<f64>>> {
         let flattened_local_evaluation = self
             .evaluate_gradient_local(parameters)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
-            .collect::<Vec<Complex<Float>>>();
+            .collect::<Vec<Complex<f64>>>();
         let n_events = self.dataset.n_events();
         let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         let mut flattened_result_buffer = vec![Complex::ZERO; n_events * parameters.len()];
@@ -974,7 +963,7 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex<f64>>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -988,9 +977,9 @@ impl Evaluator {
     /// of events rather than all events in the total dataset.
     pub fn evaluate_gradient_batch_local(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex<f64>>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -1107,10 +1096,10 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_gradient_batch_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex<f64>>> {
         let (counts, displs, locals) = self
             .dataset
             .get_flattened_counts_displs_locals_from_indices(indices, parameters.len(), world);
@@ -1118,7 +1107,7 @@ impl Evaluator {
             .evaluate_gradient_batch_local(parameters, &locals)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
-            .collect::<Vec<Complex<Float>>>();
+            .collect::<Vec<Complex<f64>>>();
         let mut flattened_result_buffer = vec![Complex::ZERO; indices.len() * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
@@ -1137,9 +1126,9 @@ impl Evaluator {
     /// for free parameters. See also [`Expression::evaluate_gradient`].
     pub fn evaluate_gradient_batch(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex<f64>>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -1182,7 +1171,7 @@ impl Amplitude for TestAmplitude {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<f64> {
         Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
     }
 
@@ -1191,7 +1180,7 @@ impl Amplitude for TestAmplitude {
         _parameters: &Parameters,
         event: &Event,
         _cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex<f64>>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid_re {
             gradient[ind] = Complex::ONE * event.p4s[0].e();
@@ -1210,7 +1199,7 @@ mod tests {
     use crate::{
         data::Event,
         resources::{Cache, ParameterID, Parameters, Resources},
-        Float, LadduError,
+        LadduError,
     };
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
@@ -1245,12 +1234,7 @@ mod tests {
             resources.register_amplitude(&self.name)
         }
 
-        fn compute(
-            &self,
-            parameters: &Parameters,
-            _event: &Event,
-            _cache: &Cache,
-        ) -> Complex<Float> {
+        fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<f64> {
             Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
         }
 
@@ -1259,7 +1243,7 @@ mod tests {
             _parameters: &Parameters,
             _event: &Event,
             _cache: &Cache,
-            gradient: &mut DVector<Complex<Float>>,
+            gradient: &mut DVector<Complex<f64>>,
         ) {
             if let ParameterID::Parameter(ind) = self.pid_re {
                 gradient[ind] = Complex::ONE;

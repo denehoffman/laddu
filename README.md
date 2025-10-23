@@ -98,8 +98,10 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 ```rust
 use laddu::{
    ParameterLike, Event, Cache, Resources, Mass,
-   ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+   ParameterID, Parameters, LadduError, AmplitudeID,
 };
+use num::complex::Complex64;
+use std::f64::consts::PI;
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 use laddu::{Deserialize, Serialize, typetag};
@@ -149,7 +151,7 @@ impl Amplitude for MyBreitWigner {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex64 {
         let mass = self.resonance_mass.value(event);
         let mass0 = parameters.get(self.pid_mass);
         let width0 = parameters.get(self.pid_width);
@@ -160,9 +162,9 @@ impl Amplitude for MyBreitWigner {
         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = Float::sqrt(mass0 * width0 / PI);
-        let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex::from(f * n) / d
+        let n = f64::sqrt(mass0 * width0 / PI);
+        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+        Complex64::from(f * n) / d
     }
 }
 ```

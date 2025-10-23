@@ -4,7 +4,7 @@ use laddu_core::{
     data::Event,
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -12,7 +12,7 @@ use laddu_python::{
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SVector};
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -113,9 +113,9 @@ impl Amplitude for KopfKMatrixPi1 {
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
-            Complex::new(
+            Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
                 parameters.get(self.couplings_indices_imag[i]),
             )
@@ -130,7 +130,7 @@ impl Amplitude for KopfKMatrixPi1 {
         _parameters: &Parameters,
         _event: &Event,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
@@ -139,7 +139,7 @@ impl Amplitude for KopfKMatrixPi1 {
             gradient[index] = internal_gradient[0];
         }
         if let ParameterID::Parameter(index) = self.couplings_indices_imag[0] {
-            gradient[index] = Complex::<Float>::I * internal_gradient[0];
+            gradient[index] = Complex64::I * internal_gradient[0];
         }
     }
 }
@@ -224,8 +224,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
-        assert_relative_eq!(result[0].re, -0.11017586, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.26387172, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, -0.11017586, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.26387172, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -242,12 +242,8 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 
-        assert_relative_eq!(
-            result[0][0].re,
-            -14.7987174,
-            epsilon = Float::EPSILON.cbrt()
-        );
-        assert_relative_eq!(result[0][0].im, -5.8430094, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -14.7987174, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].im, -5.8430094, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
     }

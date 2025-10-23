@@ -13,7 +13,7 @@ use crate::{
         enums::{Channel, Frame},
         vectors::Vec3,
     },
-    Float, LadduError,
+    LadduError,
 };
 
 use auto_ops::impl_op_ex;
@@ -25,7 +25,7 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
-    fn value(&self, event: &Event) -> Float;
+    fn value(&self, event: &Event) -> f64;
 
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`] (non-MPI version).
@@ -34,11 +34,11 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
-    fn value_on_local(&self, dataset: &Dataset) -> Vec<Float> {
+    fn value_on_local(&self, dataset: &Dataset) -> Vec<f64> {
         #[cfg(feature = "rayon")]
-        let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
+        let local_values: Vec<f64> = dataset.events.par_iter().map(|e| self.value(e)).collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
+        let local_values: Vec<f64> = dataset.events.iter().map(|e| self.value(e)).collect();
         local_values
     }
 
@@ -50,10 +50,10 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     #[cfg(feature = "mpi")]
-    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> Vec<Float> {
+    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> Vec<f64> {
         let local_weights = self.value_on_local(dataset);
         let n_events = dataset.n_events();
-        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
@@ -64,7 +64,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
 
     /// This method distributes the [`Variable::value`] method over each [`Event`] in a
     /// [`Dataset`].
-    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
+    fn value_on(&self, dataset: &Dataset) -> Vec<f64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -75,7 +75,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self == val`
-    fn eq(&self, val: Float) -> VariableExpression
+    fn eq(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -83,7 +83,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self < val`
-    fn lt(&self, val: Float) -> VariableExpression
+    fn lt(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -91,7 +91,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self > val`
-    fn gt(&self, val: Float) -> VariableExpression
+    fn gt(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -99,7 +99,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self >= val`
-    fn ge(&self, val: Float) -> VariableExpression
+    fn ge(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -107,7 +107,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self <= val`
-    fn le(&self, val: Float) -> VariableExpression
+    fn le(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -116,15 +116,15 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
 }
 dyn_clone::clone_trait_object!(Variable);
 
-/// Expressions which can be used to compare [`Variable`]s to [`Float`]s.
+/// Expressions which can be used to compare [`Variable`]s to [`f64`]s.
 #[derive(Clone, Debug)]
 pub enum VariableExpression {
     /// Expression which is true when the variable is equal to the float.
-    Eq(Box<dyn Variable>, Float),
+    Eq(Box<dyn Variable>, f64),
     /// Expression which is true when the variable is less than the float.
-    Lt(Box<dyn Variable>, Float),
+    Lt(Box<dyn Variable>, f64),
     /// Expression which is true when the variable is greater than the float.
-    Gt(Box<dyn Variable>, Float),
+    Gt(Box<dyn Variable>, f64),
     /// Expression which is true when both inner expressions are true.
     And(Box<VariableExpression>, Box<VariableExpression>),
     /// Expression which is true when either inner expression is true.
@@ -188,9 +188,9 @@ impl_op_ex!(! |exp: &VariableExpression| -> VariableExpression{ not(exp) });
 
 #[derive(Debug)]
 enum Opcode {
-    PushEq(usize, Float),
-    PushLt(usize, Float),
-    PushGt(usize, Float),
+    PushEq(usize, f64),
+    PushLt(usize, f64),
+    PushGt(usize, f64),
     And,
     Or,
     Not,
@@ -312,7 +312,7 @@ impl Display for Mass {
 }
 #[typetag::serde]
 impl Variable for Mass {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         event.get_p4_sum(&self.0).m()
     }
 }
@@ -374,7 +374,7 @@ impl Default for CosTheta {
 }
 #[typetag::serde]
 impl Variable for CosTheta {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         let beam = event.p4s[self.beam];
         let recoil = event.get_p4_sum(&self.recoil);
         let daughter = event.get_p4_sum(&self.daughter);
@@ -466,7 +466,7 @@ impl Default for Phi {
 }
 #[typetag::serde]
 impl Variable for Phi {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         let beam = event.p4s[self.beam];
         let recoil = event.get_p4_sum(&self.recoil);
         let daughter = event.get_p4_sum(&self.daughter);
@@ -580,11 +580,11 @@ impl PolAngle {
 }
 #[typetag::serde]
 impl Variable for PolAngle {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         let beam = event.p4s[self.beam];
         let recoil = event.get_p4_sum(&self.recoil);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
-        Float::atan2(
+        f64::atan2(
             y.dot(&event.aux[self.beam_polarization]),
             beam.vec3()
                 .unit()
@@ -615,7 +615,7 @@ impl PolMagnitude {
 }
 #[typetag::serde]
 impl Variable for PolMagnitude {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         event.aux[self.beam_polarization].mag()
     }
 }
@@ -732,7 +732,7 @@ impl Mandelstam {
 
 #[typetag::serde]
 impl Variable for Mandelstam {
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         match self.channel {
             Channel::S => match self.missing {
                 None | Some(3) | Some(4) => {
@@ -797,7 +797,7 @@ mod tests {
         assert_relative_eq!(
             mass.value(&event),
             1.37437863,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -814,7 +814,7 @@ mod tests {
         assert_relative_eq!(
             costheta.value(&event),
             -0.4611175,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -834,7 +834,7 @@ mod tests {
         assert_relative_eq!(
             phi.value(&event),
             -2.65746258,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -854,7 +854,7 @@ mod tests {
         assert_relative_eq!(
             costheta.value(&event),
             0.09198832,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -865,7 +865,7 @@ mod tests {
         assert_relative_eq!(
             phi.value(&event),
             -2.71391319,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -876,12 +876,12 @@ mod tests {
         assert_relative_eq!(
             angles.costheta.value(&event),
             -0.4611175,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
         assert_relative_eq!(
             angles.phi.value(&event),
             -2.65746258,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -901,7 +901,7 @@ mod tests {
         assert_relative_eq!(
             pol_angle.value(&event),
             1.93592989,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -921,7 +921,7 @@ mod tests {
         assert_relative_eq!(
             pol_magnitude.value(&event),
             0.38562805,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -941,12 +941,12 @@ mod tests {
         assert_relative_eq!(
             polarization.pol_angle.value(&event),
             1.93592989,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
         assert_relative_eq!(
             polarization.pol_magnitude.value(&event),
             0.38562805,
-            epsilon = Float::EPSILON.sqrt()
+            epsilon = f64::EPSILON.sqrt()
         );
     }
 
@@ -968,23 +968,11 @@ mod tests {
         let sp = Mandelstam::new([], [0], [1], [2, 3], Channel::S).unwrap();
         let tp = Mandelstam::new([], [0], [1], [2, 3], Channel::T).unwrap();
         let up = Mandelstam::new([], [0], [1], [2, 3], Channel::U).unwrap();
-        assert_relative_eq!(
-            s.value(&event),
-            18.50401105,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        assert_relative_eq!(s.value(&event), 18.50401105, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(s.value(&event), sp.value(&event),);
-        assert_relative_eq!(
-            t.value(&event),
-            -0.19222859,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        assert_relative_eq!(t.value(&event), -0.19222859, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(t.value(&event), tp.value(&event),);
-        assert_relative_eq!(
-            u.value(&event),
-            -14.40419893,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        assert_relative_eq!(u.value(&event), -14.40419893, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(u.value(&event), up.value(&event),);
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
@@ -1014,6 +1002,6 @@ mod tests {
 
         let values = mass.value_on(&dataset);
         assert_eq!(values.len(), 1);
-        assert_relative_eq!(values[0], 1.37437863, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(values[0], 1.37437863, epsilon = f64::EPSILON.sqrt());
     }
 }

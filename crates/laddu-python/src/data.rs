@@ -1,8 +1,5 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
-use laddu_core::{
-    data::{open, open_boosted_to_rest_frame_of, BinnedDataset, Dataset, Event},
-    Float,
-};
+use laddu_core::data::{open, open_boosted_to_rest_frame_of, BinnedDataset, Dataset, Event};
 use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyTypeError},
@@ -42,7 +39,7 @@ impl PyEvent {
     fn new(
         p4s: Vec<PyVec4>,
         aux: Vec<PyVec3>,
-        weight: Float,
+        weight: f64,
         rest_frame_indices: Option<Vec<usize>>,
     ) -> Self {
         let event = Event {
@@ -75,7 +72,7 @@ impl PyEvent {
     /// The weight of this event relative to others in a Dataset
     ///
     #[getter]
-    fn get_weight(&self) -> Float {
+    fn get_weight(&self) -> f64 {
         self.0.weight
     }
     /// Get the sum of the four-momenta within the event at the given indices
@@ -119,7 +116,7 @@ impl PyEvent {
     /// -------
     /// float
     ///
-    fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<Float> {
+    fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<f64> {
         Ok(self.0.evaluate(&variable.extract::<PyVariable>()?))
     }
 }
@@ -202,7 +199,7 @@ impl PyDataset {
     ///     The sum of all Event weights
     ///
     #[getter]
-    fn n_events_weighted(&self) -> Float {
+    fn n_events_weighted(&self) -> f64 {
         self.0.n_events_weighted()
     }
     /// The weights associated with the Dataset
@@ -213,7 +210,7 @@ impl PyDataset {
     ///     A ``numpy`` array of Event weights
     ///
     #[getter]
-    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights())
     }
     /// The internal list of Events stored in the Dataset
@@ -281,7 +278,7 @@ impl PyDataset {
         &self,
         variable: Bound<'_, PyAny>,
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
     ) -> PyResult<PyBinnedDataset> {
         let py_variable = variable.extract::<PyVariable>()?;
         Ok(PyBinnedDataset(self.0.bin_by(py_variable, bins, range)))
@@ -348,7 +345,7 @@ impl PyDataset {
         &self,
         py: Python<'py>,
         variable: Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray1<Float>>> {
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         Ok(PyArray1::from_slice(
             py,
             &self.0.evaluate(&variable.extract::<PyVariable>()?),
@@ -381,13 +378,13 @@ impl PyBinnedDataset {
     /// The minimum and maximum values of the binning Variable used to create this BinnedDataset
     ///
     #[getter]
-    fn range(&self) -> (Float, Float) {
+    fn range(&self) -> (f64, f64) {
         self.0.range()
     }
     /// The edges of each bin in the BinnedDataset
     ///
     #[getter]
-    fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+    fn edges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.edges())
     }
     fn __getitem__(&self, index: usize) -> PyResult<PyDataset> {

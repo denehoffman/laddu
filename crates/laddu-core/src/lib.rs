@@ -279,22 +279,6 @@ pub use amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 
-/// A floating-point number type (defaults to [`f64`], see `f32` feature).
-#[cfg(not(feature = "f32"))]
-pub type Float = f64;
-
-/// A floating-point number type (defaults to [`f64`], see `f32` feature).
-#[cfg(feature = "f32")]
-pub type Float = f32;
-
-/// The mathematical constant $`\pi`$.
-#[cfg(not(feature = "f32"))]
-pub const PI: Float = std::f64::consts::PI;
-
-/// The mathematical constant $`\pi`$.
-#[cfg(feature = "f32")]
-pub const PI: Float = std::f32::consts::PI;
-
 /// The error type used by all `laddu` internal methods
 #[derive(Error, Debug)]
 pub enum LadduError {

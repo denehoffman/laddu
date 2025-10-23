@@ -40,7 +40,6 @@ harness = false
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]
-f32 = ["laddu-core/f32", "laddu-amplitudes/f32", "laddu-extensions/f32"]
 python = [
   "laddu-core/python",
   "laddu-amplitudes/python",

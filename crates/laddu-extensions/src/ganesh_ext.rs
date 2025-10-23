@@ -12,7 +12,7 @@ use ganesh::{
     core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status},
 };
-use laddu_core::{Float, LadduError};
+use laddu_core::LadduError;
 use nalgebra::DVector;
 #[cfg(feature = "rayon")]
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -194,9 +194,9 @@ where
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
     fn evaluate(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -212,9 +212,9 @@ impl CostFunction<MaybeThreadPool, LadduError> for NLL {
 impl Gradient<MaybeThreadPool, LadduError> for NLL {
     fn gradient(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
+    ) -> Result<DVector<f64>, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -230,9 +230,9 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
 impl LogDensity<MaybeThreadPool, LadduError> for NLL {
     fn log_density(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -340,9 +340,9 @@ impl NLL {
 impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
     fn evaluate(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -358,9 +358,9 @@ impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
 impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
     fn gradient(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
+    ) -> Result<DVector<f64>, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -376,9 +376,9 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
 impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
     fn log_density(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -486,9 +486,9 @@ impl StochasticNLL {
 impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     fn evaluate(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -504,9 +504,9 @@ impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
 impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     fn gradient(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<Float>, LadduError> {
+    ) -> Result<DVector<f64>, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -522,9 +522,9 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
 impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     fn log_density(
         &self,
-        parameters: &DVector<Float>,
+        parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<Float, LadduError> {
+    ) -> Result<f64, LadduError> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -659,7 +659,7 @@ pub mod py_ganesh {
         core::{Bounds, CtrlCAbortSignal, DebugObserver, MaxSteps},
         traits::{Observer, Status, SupportsBounds, SupportsTransform, Terminator},
     };
-    use laddu_core::{Float, LadduError, ReadWrite};
+    use laddu_core::{LadduError, ReadWrite};
     use nalgebra::DMatrix;
     use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
     use parking_lot::Mutex;
@@ -674,8 +674,8 @@ pub mod py_ganesh {
         /// Convert the given Python arguments into a [`Self`].
         fn from_pyargs(args: &A, d: &Bound<PyDict>) -> PyResult<Self>;
     }
-    impl FromPyArgs<Vec<Float>> for LBFGSBConfig {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for LBFGSBConfig {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = LBFGSBConfig::new(args);
             if let Some(m) = d.get_item("m")? {
                 let m_int = m.extract()?;
@@ -809,8 +809,8 @@ pub mod py_ganesh {
             Ok(callbacks)
         }
     }
-    impl FromPyArgs<Vec<Float>> for AdamConfig {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for AdamConfig {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = AdamConfig::new(args);
             if let Some(alpha) = d.get_item("alpha")? {
                 config = config.with_alpha(alpha.extract()?);
@@ -847,8 +847,8 @@ pub mod py_ganesh {
             Ok(callbacks)
         }
     }
-    impl FromPyArgs<Vec<Float>> for NelderMeadConfig {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for NelderMeadConfig {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let construction_method = SimplexConstructionMethod::from_pyargs(args, d)?;
             let mut config = NelderMeadConfig::new_with_method(construction_method);
             if let Some(alpha) = d.get_item("alpha")? {
@@ -896,8 +896,8 @@ pub mod py_ganesh {
             Ok(config)
         }
     }
-    impl FromPyArgs<Vec<Float>> for SimplexConstructionMethod {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for SimplexConstructionMethod {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             if let Some(simplex_construction_method) = d.get_item("simplex_construction_method")? {
                 match simplex_construction_method
                     .extract::<String>()?
@@ -939,7 +939,7 @@ pub mod py_ganesh {
                         if let Some(other_simplex_points) = d.get_item("simplex")? {
                             let mut simplex = Vec::with_capacity(args.len() + 1);
                             simplex[0] = DVector::from_vec(args.clone());
-                            let others = other_simplex_points.extract::<Vec<Vec<Float>>>()?; // TODO: numpy arrays
+                            let others = other_simplex_points.extract::<Vec<Vec<f64>>>()?; // TODO: numpy arrays
                             if others.len() != args.len() {
                                 return Err(PyValueError::new_err(format!(
                                     "Expected {} additional simplex points, got {}.",
@@ -982,7 +982,7 @@ pub mod py_ganesh {
             let eps_f = if let Some(eps_f) = d.get_item("eps_f")? {
                 eps_f.extract()?
             } else {
-                Float::EPSILON.powf(0.25)
+                f64::EPSILON.powf(0.25)
             };
             if let Some(f_term) = d.get_item("f_terminator")? {
                 match f_term
@@ -1017,7 +1017,7 @@ pub mod py_ganesh {
             let eps_x = if let Some(eps_x) = d.get_item("eps_x")? {
                 eps_x.extract()?
             } else {
-                Float::EPSILON.powf(0.25)
+                f64::EPSILON.powf(0.25)
             };
             if let Some(x_term) = d.get_item("x_terminator")? {
                 match x_term
@@ -1056,8 +1056,8 @@ pub mod py_ganesh {
             Ok(callbacks)
         }
     }
-    impl FromPyArgs<Vec<Float>> for SwarmPositionInitializer {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for SwarmPositionInitializer {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             if let Some(swarm_position_initializer) = d.get_item("swarm_position_initializer")? {
                 match swarm_position_initializer
                     .extract::<String>()?
@@ -1097,7 +1097,7 @@ pub mod py_ganesh {
                         if let Some(swarm) = d.get_item("swarm")? {
                             return Ok(SwarmPositionInitializer::Custom(
                                 swarm
-                                    .extract::<Vec<Vec<Float>>>()?
+                                    .extract::<Vec<Vec<f64>>>()?
                                     .iter()
                                     .chain(vec![args].into_iter())
                                     .map(|x| DVector::from_vec(x.clone()))
@@ -1121,8 +1121,8 @@ pub mod py_ganesh {
             }
         }
     }
-    impl FromPyArgs<Vec<Float>> for Swarm {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for Swarm {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let swarm_position_initializer = SwarmPositionInitializer::from_pyargs(args, d)?;
             let mut swarm = Swarm::new(swarm_position_initializer);
             if let Some(swarm_topology_str) = d.get_item("swarm_topology")? {
@@ -1202,8 +1202,8 @@ pub mod py_ganesh {
             Ok(swarm)
         }
     }
-    impl FromPyArgs<Vec<Float>> for PSOConfig {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<f64>> for PSOConfig {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let swarm = Swarm::from_pyargs(args, d)?;
             let mut config = PSOConfig::new(swarm);
             if let Some(omega) = d.get_item("omega")? {
@@ -1218,14 +1218,14 @@ pub mod py_ganesh {
             Ok(config)
         }
     }
-    impl<P> FromPyArgs<Vec<Float>> for MinimizationSettings<P>
+    impl<P> FromPyArgs<Vec<f64>> for MinimizationSettings<P>
     where
         P: Gradient<MaybeThreadPool, LadduError>,
     {
-        fn from_pyargs(args: &Vec<Float>, d: &Bound<PyDict>) -> PyResult<Self> {
+        fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
             let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
                 .get_item("bounds")?
-                .map(|bounds| bounds.extract::<Vec<(Option<Float>, Option<Float>)>>())
+                .map(|bounds| bounds.extract::<Vec<(Option<f64>, Option<f64>)>>())
                 .transpose()?
                 .map(|bounds| {
                     bounds
@@ -1418,14 +1418,14 @@ pub mod py_ganesh {
         }
     }
 
-    impl FromPyArgs<Vec<DVector<Float>>> for AIESConfig {
-        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<DVector<f64>>> for AIESConfig {
+        fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = AIESConfig::new(args.to_vec());
             if let Some(moves) = d.get_item("moves")? {
                 let moves_list = moves.downcast::<PyList>()?;
                 let mut aies_moves = vec![];
                 for mcmc_move in moves_list {
-                    if let Ok(default_move) = mcmc_move.extract::<(String, Float)>() {
+                    if let Ok(default_move) = mcmc_move.extract::<(String, f64)>() {
                         match default_move
                             .0
                             .to_lowercase()
@@ -1444,7 +1444,7 @@ pub mod py_ganesh {
                             }
                         }
                     } else if let Ok(custom_move) =
-                        mcmc_move.extract::<(String, Bound<PyDict>, Float)>()
+                        mcmc_move.extract::<(String, Bound<PyDict>, f64)>()
                     {
                         match custom_move
                             .0
@@ -1483,14 +1483,14 @@ pub mod py_ganesh {
         }
     }
 
-    impl FromPyArgs<Vec<DVector<Float>>> for ESSConfig {
-        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+    impl FromPyArgs<Vec<DVector<f64>>> for ESSConfig {
+        fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = ESSConfig::new(args.to_vec());
             if let Some(moves) = d.get_item("moves")? {
                 let moves_list = moves.downcast::<PyList>()?;
                 let mut ess_moves = vec![];
                 for mcmc_move in moves_list {
-                    if let Ok(default_move) = mcmc_move.extract::<(String, Float)>() {
+                    if let Ok(default_move) = mcmc_move.extract::<(String, f64)>() {
                         match default_move
                             .0
                             .to_lowercase()
@@ -1512,7 +1512,7 @@ pub mod py_ganesh {
                             }
                         }
                     } else if let Ok(custom_move) =
-                        mcmc_move.extract::<(String, Bound<PyDict>, Float)>()
+                        mcmc_move.extract::<(String, Bound<PyDict>, f64)>()
                     {
                         match custom_move
                             .0
@@ -1568,14 +1568,14 @@ pub mod py_ganesh {
         }
     }
 
-    impl<P> FromPyArgs<Vec<DVector<Float>>> for MCMCSettings<P>
+    impl<P> FromPyArgs<Vec<DVector<f64>>> for MCMCSettings<P>
     where
         P: LogDensity<MaybeThreadPool, LadduError>,
     {
-        fn from_pyargs(args: &Vec<DVector<Float>>, d: &Bound<PyDict>) -> PyResult<Self> {
+        fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
             let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
                 .get_item("bounds")?
-                .map(|bounds| bounds.extract::<Vec<(Option<Float>, Option<Float>)>>())
+                .map(|bounds| bounds.extract::<Vec<(Option<f64>, Option<f64>)>>())
                 .transpose()?
                 .map(|bounds| {
                     bounds
@@ -1723,7 +1723,7 @@ pub mod py_ganesh {
         SwarmStatus(Arc<Mutex<SwarmStatus>>),
     }
     impl MinimizationStatus {
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             match self {
                 Self::GradientStatus(gradient_status) => {
                     gradient_status.lock().x.as_slice().to_pyarray(py)
@@ -1736,7 +1736,7 @@ pub mod py_ganesh {
                 }
             }
         }
-        fn fx(&self) -> Float {
+        fn fx(&self) -> f64 {
             match self {
                 Self::GradientStatus(gradient_status) => gradient_status.lock().fx,
                 Self::GradientFreeStatus(gradient_free_status) => gradient_free_status.lock().fx,
@@ -1754,7 +1754,7 @@ pub mod py_ganesh {
                 Self::SwarmStatus(swarm_status) => swarm_status.lock().message().to_string(),
             }
         }
-        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
+        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
             match self {
                 Self::GradientStatus(gradient_status) => gradient_status.lock().err.clone(),
                 Self::GradientFreeStatus(gradient_free_status) => {
@@ -1780,7 +1780,7 @@ pub mod py_ganesh {
                 Self::SwarmStatus(_) => 0,
             }
         }
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             match self {
                 Self::GradientStatus(gradient_status) => gradient_status.lock().cov.clone(),
                 Self::GradientFreeStatus(gradient_free_status) => {
@@ -1790,7 +1790,7 @@ pub mod py_ganesh {
             }
             .map(|cov| cov.to_pyarray(py))
         }
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             match self {
                 Self::GradientStatus(gradient_status) => gradient_status.lock().hess.clone(),
                 Self::GradientFreeStatus(gradient_free_status) => {
@@ -1854,7 +1854,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.position.x.as_slice().to_pyarray(py)
         }
         /// The evaluation of the objective function at the particle's position.
@@ -1864,7 +1864,7 @@ pub mod py_ganesh {
         /// float
         ///
         #[getter]
-        fn fx(&self) -> Float {
+        fn fx(&self) -> f64 {
             self.0.position.fx.unwrap()
         }
         /// The best position found by the particle.
@@ -1874,7 +1874,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn x_best<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x_best<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.best.x.as_slice().to_pyarray(py)
         }
         /// The evaluation of the objective function at the particle's best position.
@@ -1884,7 +1884,7 @@ pub mod py_ganesh {
         /// float
         ///
         #[getter]
-        fn fx_best(&self) -> Float {
+        fn fx_best(&self) -> f64 {
             self.0.best.fx.unwrap()
         }
         /// The velocity vector of the particle.
@@ -1894,7 +1894,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.velocity.as_slice().to_pyarray(py)
         }
     }
@@ -1913,7 +1913,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.x(py)
         }
         /// The current value of the objective function at the best position.
@@ -1923,7 +1923,7 @@ pub mod py_ganesh {
         /// float
         ///
         #[getter]
-        fn fx(&self) -> Float {
+        fn fx(&self) -> f64 {
             self.0.fx()
         }
         /// A message indicating the current state of the minimization.
@@ -1943,7 +1943,7 @@ pub mod py_ganesh {
         /// array_like or None
         ///
         #[getter]
-        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<Float>>> {
+        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
             self.0.err(py)
         }
         /// The number of objective function evaluations performed.
@@ -1973,7 +1973,7 @@ pub mod py_ganesh {
         /// array_like or None
         ///
         #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             self.0.cov(py)
         }
         /// The Hessian matrix of the best position. May be None for algorithms that do not estimate errors.
@@ -1983,7 +1983,7 @@ pub mod py_ganesh {
         /// array_like or None
         ///
         #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Float>>> {
+        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             self.0.hess(py)
         }
         #[getter]
@@ -2017,7 +2017,7 @@ pub mod py_ganesh {
         /// list of tuple of floats or None
         ///
         #[getter]
-        fn bounds(&self) -> Option<Vec<(Float, Float)>> {
+        fn bounds(&self) -> Option<Vec<(f64, f64)>> {
             self.0
                 .clone()
                 .bounds
@@ -2050,7 +2050,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x0<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.x0.as_slice().to_pyarray(py)
         }
         /// The best position found by the minimizer.
@@ -2060,7 +2060,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.x.as_slice().to_pyarray(py)
         }
         /// The uncertainty associated with each parameter (may be zeros if no uncertainty was estimated or nan if the covariance matrix was not positive definite).
@@ -2070,7 +2070,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn std<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn std<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.std.as_slice().to_pyarray(py)
         }
         /// The value of the objective function at the best position found by the minimizer.
@@ -2080,7 +2080,7 @@ pub mod py_ganesh {
         /// float
         ///
         #[getter]
-        fn fx(&self) -> Float {
+        fn fx(&self) -> f64 {
             self.0.fx
         }
         /// The number of objective function evaluations performed.
@@ -2120,7 +2120,7 @@ pub mod py_ganesh {
         /// array_like
         ///
         #[getter]
-        fn covariance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<Float>> {
+        fn covariance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
             self.0.covariance.to_pyarray(py)
         }
         fn __str__(&self) -> String {
@@ -2411,7 +2411,7 @@ pub mod py_ganesh {
         }
         /// Retrieve the latest point and the latest objective value of the Walker.
         ///
-        fn get_latest<'py>(&self, py: Python<'py>) -> (Bound<'py, PyArray1<Float>>, Float) {
+        fn get_latest<'py>(&self, py: Python<'py>) -> (Bound<'py, PyArray1<f64>>, f64) {
             let point = self.0.get_latest();
             let lock = point.read();
             (lock.x.clone().as_slice().to_pyarray(py), lock.fx_checked())
@@ -2500,8 +2500,8 @@ pub mod py_ganesh {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
-            let vec_chain: Vec<Vec<Vec<Float>>> = self
+        ) -> PyResult<Bound<'py, PyArray3<f64>>> {
+            let vec_chain: Vec<Vec<Vec<f64>>> = self
                 .0
                 .lock()
                 .get_chain(burn, thin)
@@ -2530,7 +2530,7 @@ pub mod py_ganesh {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray2<Float>> {
+        ) -> Bound<'py, PyArray2<f64>> {
             DMatrix::from_columns(&self.0.lock().get_flat_chain(burn, thin))
                 .transpose()
                 .to_pyarray(py)
@@ -2551,7 +2551,7 @@ pub mod py_ganesh {
         /// list of tuple of floats or None
         ///
         #[getter]
-        fn bounds(&self) -> Option<Vec<(Float, Float)>> {
+        fn bounds(&self) -> Option<Vec<(f64, f64)>> {
             self.0
                 .clone()
                 .bounds
@@ -2637,8 +2637,8 @@ pub mod py_ganesh {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> PyResult<Bound<'py, PyArray3<Float>>> {
-            let vec_chain: Vec<Vec<Vec<Float>>> = self
+        ) -> PyResult<Bound<'py, PyArray3<f64>>> {
+            let vec_chain: Vec<Vec<Vec<f64>>> = self
                 .0
                 .get_chain(burn, thin)
                 .iter()
@@ -2666,7 +2666,7 @@ pub mod py_ganesh {
             py: Python<'py>,
             burn: Option<usize>,
             thin: Option<usize>,
-        ) -> Bound<'py, PyArray2<Float>> {
+        ) -> Bound<'py, PyArray2<f64>> {
             DMatrix::from_columns(&self.0.get_flat_chain(burn, thin))
                 .transpose()
                 .to_pyarray(py)
@@ -2843,10 +2843,10 @@ pub mod py_ganesh {
     #[pyo3(signature = (samples, *, c=None))]
     pub fn py_integrated_autocorrelation_times<'py>(
         py: Python<'py>,
-        samples: Vec<Vec<Vec<Float>>>,
-        c: Option<Float>,
-    ) -> Bound<'py, PyArray1<Float>> {
-        let samples: Vec<Vec<DVector<Float>>> = samples
+        samples: Vec<Vec<Vec<f64>>>,
+        c: Option<f64>,
+    ) -> Bound<'py, PyArray1<f64>> {
+        let samples: Vec<Vec<DVector<f64>>> = samples
             .into_iter()
             .map(|v| v.into_iter().map(|p| DVector::from_vec(p)).collect())
             .collect();
@@ -2888,10 +2888,10 @@ pub mod py_ganesh {
         fn new(
             n_check: usize,
             n_taus_threshold: usize,
-            dtau_threshold: Float,
-            discard: Float,
+            dtau_threshold: f64,
+            discard: f64,
             terminate: bool,
-            sokal_window: Option<Float>,
+            sokal_window: Option<f64>,
             verbose: bool,
         ) -> Self {
             let mut act = AutocorrelationTerminator::default()
@@ -2914,7 +2914,7 @@ pub mod py_ganesh {
         /// taus : array_like
         ///
         #[getter]
-        fn taus<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+        fn taus<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             self.0.lock().taus.to_pyarray(py)
         }
     }

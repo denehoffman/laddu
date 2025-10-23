@@ -3,7 +3,7 @@ use laddu_core::{
     data::Event,
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
-    Float, LadduError, Mandelstam, Mass, ScalarID, PI,
+    LadduError, Mandelstam, Mass, ScalarID,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -11,10 +11,11 @@ use laddu_python::{
     utils::variables::{PyMandelstam, PyMass},
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::f64::consts::PI;
 
 /// An [`Amplitude`] describing the phase space factor given in Equation A4 [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
@@ -86,7 +87,7 @@ impl Amplitude for PhaseSpaceFactor {
         cache.store_scalar(self.sid, term.sqrt());
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         cache.get_scalar(self.sid).into()
     }
 
@@ -95,7 +96,7 @@ impl Amplitude for PhaseSpaceFactor {
         _parameters: &Parameters,
         _event: &Event,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -192,8 +193,8 @@ mod tests {
         println!("{}", resonance_mass.value(&dataset[0]));
         println!("{}", mandelstam_s.value(&dataset[0]));
 
-        assert_relative_eq!(result[0].re, 0.0000702838, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.0000702838, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]

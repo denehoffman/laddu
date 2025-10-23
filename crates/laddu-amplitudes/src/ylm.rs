@@ -6,12 +6,12 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ impl Amplitude for Ylm {
         );
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
@@ -69,7 +69,7 @@ impl Amplitude for Ylm {
         _parameters: &Parameters,
         _event: &Event,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -127,8 +127,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.27133944, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.14268971, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.27133944, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.14268971, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]

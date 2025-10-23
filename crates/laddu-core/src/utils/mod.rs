@@ -1,5 +1,3 @@
-use crate::Float;
-
 /// Useful enumerations for various frames and variables common in particle physics analyses.
 pub mod enums;
 /// Standard special functions like spherical harmonics and momentum definitions.
@@ -15,10 +13,10 @@ pub mod vectors;
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_index`]
-pub fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
-    let bin_width = (range.1 - range.0) / (bins as Float);
+pub fn get_bin_edges(bins: usize, range: (f64, f64)) -> Vec<f64> {
+    let bin_width = (range.1 - range.0) / (bins as f64);
     (0..=bins)
-        .map(|i| range.0 + (i as Float * bin_width))
+        .map(|i| range.0 + (i as f64 * bin_width))
         .collect()
 }
 
@@ -28,9 +26,9 @@ pub fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_edges`]
-pub fn get_bin_index(value: Float, bins: usize, range: (Float, Float)) -> Option<usize> {
+pub fn get_bin_index(value: f64, bins: usize, range: (f64, f64)) -> Option<usize> {
     if value >= range.0 && value < range.1 {
-        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_width = (range.1 - range.0) / bins as f64;
         let bin_index = ((value - range.0) / bin_width).floor() as usize;
         Some(bin_index.min(bins - 1))
     } else {
@@ -40,18 +38,18 @@ pub fn get_bin_index(value: Float, bins: usize, range: (Float, Float)) -> Option
 
 /// A simple struct which represents a histogram
 pub struct Histogram {
-    /// The number of counts in each bin (can be [`Float`]s since these might be weighted counts)
-    pub counts: Vec<Float>,
+    /// The number of counts in each bin (can be `f64`s since these might be weighted counts)
+    pub counts: Vec<f64>,
     /// The edges of each bin (length is one greater than `counts`)
-    pub bin_edges: Vec<Float>,
+    pub bin_edges: Vec<f64>,
 }
 
 /// A method which creates a histogram from some data by binning it with evenly spaced `bins` within
 /// the given `range`
-pub fn histogram<T: AsRef<[Float]>>(
+pub fn histogram<T: AsRef<[f64]>>(
     values: T,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     weights: Option<T>,
 ) -> Histogram {
     assert!(bins > 0, "Number of bins must be greater than zero!");

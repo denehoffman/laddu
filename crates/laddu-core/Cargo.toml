@@ -50,7 +50,6 @@ harness = false
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-f32 = ["ganesh/f32"]
 python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]

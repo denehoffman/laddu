@@ -4,7 +4,7 @@ use laddu_core::{
     data::Event,
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -12,29 +12,29 @@ use laddu_python::{
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::array;
 
-const G_F2: SMatrix<Float, 4, 4> = matrix![
+const G_F2: SMatrix<f64, 4, 4> = matrix![
      0.40033,  0.01820, -0.06709, -0.49924;
      0.15479,  0.17300,  0.22941,  0.19295;
     -0.08900,  0.32393, -0.43133,  0.27975;
     -0.00113,  0.15256,  0.23721, -0.03987
 ];
 
-const C_F2: SMatrix<Float, 4, 4> = matrix![
+const C_F2: SMatrix<f64, 4, 4> = matrix![
     -0.04319,  0.00000,  0.00984,  0.01028;
      0.00000,  0.00000,  0.00000,  0.00000;
      0.00984,  0.00000, -0.07344,  0.05533;
      0.01028,  0.00000,  0.05533, -0.05183
 ];
 
-const M_F2: SVector<Float, 4> = vector![1.15299, 1.48359, 1.72923, 1.96700];
+const M_F2: SVector<f64, 4> = vector![1.15299, 1.48359, 1.72923, 1.96700];
 
-const COV_F2: SMatrix<Float, 36, 36> = matrix![
+const COV_F2: SMatrix<f64, 36, 36> = matrix![
     0.00000000000000, -0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, -0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000;
     -0.00000000000000, 0.00000000000001, 0.00000000022965, 0.00000000000000, -0.00000000001878, -0.00000000000016, -0.00000000065337, 0.00000000000000, 0.00000000000000, -0.00000000003574, 0.00000000091495, 0.00000000000000, -0.00000000001447, -0.00000000032942, -0.00000000086530, 0.00000000000000, -0.00000000000433, 0.00000000000000, -0.00000000001051, -0.00000000002961, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000283, -0.00000000007379, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000005678, 0.00000000000248, 0.00000000002691, -0.00000000020470, 0.00000000000000;
     0.00000000000000, 0.00000000022965, 0.00020810475177, 0.00000000000000, -0.00002017796231, 0.00000000778406, -0.00048546523204, 0.00000000000000, -0.00000000000630, 0.00010221652645, 0.00051663367454, 0.00000000000000, -0.00000509806086, -0.00015222017267, -0.00112613397259, 0.00000000000000, 0.00000135971725, 0.00000000000000, 0.00000080623080, -0.00001338578863, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000617047714, -0.00000991268602, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00001724685959, 0.00000287435535, -0.00001001652618, -0.00007549764696, 0.00000000000000;
@@ -170,9 +170,9 @@ impl Amplitude for KopfKMatrixF2 {
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
-            Complex::new(
+            Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
                 parameters.get(self.couplings_indices_imag[i]),
             )
@@ -187,7 +187,7 @@ impl Amplitude for KopfKMatrixF2 {
         _parameters: &Parameters,
         _event: &Event,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
@@ -197,7 +197,7 @@ impl Amplitude for KopfKMatrixF2 {
                 gradient[index] = internal_gradient[i];
             }
             if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
-                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+                gradient[index] = Complex64::I * internal_gradient[i];
             }
         }
     }
@@ -308,8 +308,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0].re, 0.02523304, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.39712393, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.02523304, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.39712393, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -337,20 +337,20 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0][0].re, -0.3078948, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, 0.3808689, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -0.3078948, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].im, 0.3808689, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.4290085, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 0.0799660, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].re, 0.4290085, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].im, 0.0799660, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
-        assert_relative_eq!(result[0][4].re, 0.1657487, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][4].im, -0.0041382, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][4].re, 0.1657487, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][4].im, -0.0041382, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][5].re, -result[0][4].im);
         assert_relative_eq!(result[0][5].im, result[0][4].re);
-        assert_relative_eq!(result[0][6].re, 0.0594691, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][6].im, 0.1143819, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][6].re, 0.0594691, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][6].im, 0.1143819, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][7].re, -result[0][6].im);
         assert_relative_eq!(result[0][7].im, result[0][6].re);
     }

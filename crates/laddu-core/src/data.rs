@@ -24,7 +24,7 @@ use crate::{
         variables::{Variable, VariableExpression},
         vectors::{Vec3, Vec4},
     },
-    Float, LadduError,
+    LadduError,
 };
 
 const P4_PREFIX: &str = "p4_";
@@ -62,7 +62,7 @@ pub struct Event {
     /// A list of auxiliary vectors which can be used to store data like particle polarization.
     pub aux: Vec<Vec3>,
     /// The weight given to the event.
-    pub weight: Float,
+    pub weight: f64,
 }
 
 impl Display for Event {
@@ -102,7 +102,7 @@ impl Event {
         }
     }
     /// Evaluate a [`Variable`] on an [`Event`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Float {
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         variable.value(self)
     }
 }
@@ -372,7 +372,7 @@ impl Dataset {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
-    pub fn weights_local(&self) -> Vec<Float> {
+    pub fn weights_local(&self) -> Vec<f64> {
         #[cfg(feature = "rayon")]
         return self.events.par_iter().map(|e| e.weight).collect();
         #[cfg(not(feature = "rayon"))]
@@ -386,10 +386,10 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     #[cfg(feature = "mpi")]
-    pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<Float> {
+    pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<f64> {
         let local_weights = self.weights_local();
         let n_events = self.n_events();
-        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
@@ -399,7 +399,7 @@ impl Dataset {
     }
 
     /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    pub fn weights(&self) -> Vec<Float> {
+    pub fn weights(&self) -> Vec<f64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -415,13 +415,13 @@ impl Dataset {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
-    pub fn n_events_weighted_local(&self) -> Float {
+    pub fn n_events_weighted_local(&self) -> f64 {
         #[cfg(feature = "rayon")]
         return self
             .events
             .par_iter()
             .map(|e| e.weight)
-            .parallel_sum_with_accumulator::<Klein<Float>>();
+            .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         return self.events.iter().map(|e| e.weight).sum();
     }
@@ -432,20 +432,20 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> Float {
-        let mut n_events_weighted_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
+    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> f64 {
+        let mut n_events_weighted_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
         let n_events_weighted_local = self.n_events_weighted_local();
         world.all_gather_into(&n_events_weighted_local, &mut n_events_weighted_partitioned);
         #[cfg(feature = "rayon")]
         return n_events_weighted_partitioned
             .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<Float>>();
+            .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         return n_events_weighted_partitioned.iter().sum();
     }
 
     /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    pub fn n_events_weighted(&self) -> Float {
+    pub fn n_events_weighted(&self) -> f64 {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -568,11 +568,11 @@ impl Dataset {
 
     /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
     /// given `range`.
-    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (f64, f64)) -> BinnedDataset
     where
         V: Variable,
     {
-        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_width = (range.1 - range.0) / bins as f64;
         let bin_edges = get_bin_edges(bins, range);
         #[cfg(feature = "rayon")]
         let evaluated: Vec<(usize, &Arc<Event>)> = self
@@ -648,7 +648,7 @@ impl Dataset {
         }
     }
     /// Evaluate a [`Variable`] on every event in the [`Dataset`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Vec<Float> {
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> Vec<f64> {
         variable.value_on(self)
     }
 }
@@ -681,28 +681,28 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         let px = batch
             .column_by_name(&format!("{}{}_Px", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         let py = batch
             .column_by_name(&format!("{}{}_Py", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         let pz = batch
             .column_by_name(&format!("{}{}_Pz", P4_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         p4s.push(Vec4::new(px, py, pz, e));
     }
 
@@ -714,21 +714,21 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         let y = batch
             .column_by_name(&format!("{}{}_y", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         let z = batch
             .column_by_name(&format!("{}{}_z", AUX_PREFIX, i))
             .unwrap()
             .as_any()
             .downcast_ref::<Float32Array>()
             .unwrap()
-            .value(row) as Float;
+            .value(row) as f64;
         aux.push(Vec3::new(x, y, z));
     }
 
@@ -737,7 +737,7 @@ fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
         .as_any()
         .downcast_ref::<Float32Array>()
         .unwrap()
-        .value(row) as Float;
+        .value(row) as f64;
 
     Event { p4s, aux, weight }
 }
@@ -835,7 +835,7 @@ pub fn open_boosted_to_rest_frame_of<T: AsRef<str>, I: AsRef<[usize]> + Sync>(
 /// A list of [`Dataset`]s formed by binning [`Event`]s by some [`Variable`].
 pub struct BinnedDataset {
     datasets: Vec<Arc<Dataset>>,
-    edges: Vec<Float>,
+    edges: Vec<f64>,
 }
 
 impl Index<usize> for BinnedDataset {
@@ -873,12 +873,12 @@ impl BinnedDataset {
     }
 
     /// Returns a list of the bin edges that were used to form the [`BinnedDataset`].
-    pub fn edges(&self) -> Vec<Float> {
+    pub fn edges(&self) -> Vec<f64> {
         self.edges.clone()
     }
 
     /// Returns the range that was used to form the [`BinnedDataset`].
-    pub fn range(&self) -> (Float, Float) {
+    pub fn range(&self) -> (f64, f64) {
         (self.edges[0], self.edges[self.n_bins()])
     }
 }
@@ -913,9 +913,9 @@ mod tests {
         let event = test_event();
         let event_boosted = event.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = event_boosted.get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -988,11 +988,7 @@ mod tests {
 
         let filtered = dataset.filter(&expression);
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(
-            mass.value(&filtered[0]),
-            0.5,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        assert_relative_eq!(mass.value(&filtered[0]), 0.5, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -1000,9 +996,9 @@ mod tests {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -1036,7 +1032,7 @@ mod tests {
         }
         #[typetag::serde]
         impl Variable for BeamEnergy {
-            fn value(&self, event: &Event) -> Float {
+            fn value(&self, event: &Event) -> f64 {
                 event.p4s[0].e()
             }
         }

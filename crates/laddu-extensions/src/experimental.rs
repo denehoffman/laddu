@@ -1,5 +1,5 @@
 use laddu_core::LadduError;
-use laddu_core::{traits::Variable, utils::histogram, Float};
+use laddu_core::{traits::Variable, utils::histogram};
 use nalgebra::DVector;
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
@@ -29,12 +29,12 @@ use pyo3::prelude::*;
 #[derive(Clone)]
 pub struct BinnedGuideTerm {
     nll: Box<NLL>,
-    values: Vec<Float>,
+    values: Vec<f64>,
     amplitude_sets: Vec<Vec<String>>,
     bins: usize,
-    range: (Float, Float),
-    count_sets: Vec<Vec<Float>>,
-    error_sets: Vec<Vec<Float>>,
+    range: (f64, f64),
+    count_sets: Vec<Vec<f64>>,
+    error_sets: Vec<Vec<f64>>,
 }
 
 impl BinnedGuideTerm {
@@ -50,14 +50,14 @@ impl BinnedGuideTerm {
         V: Variable + 'static,
         L: AsRef<str>,
         T: AsRef<[L]>,
-        U: AsRef<[Float]>,
-        E: AsRef<[Float]>,
+        U: AsRef<[f64]>,
+        E: AsRef<[f64]>,
     >(
         nll: Box<NLL>,
         variable: &V,
         amplitude_sets: &[T],
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
         count_sets: &[U],
         error_sets: Option<&[E]>,
     ) -> Box<Self> {
@@ -66,8 +66,8 @@ impl BinnedGuideTerm {
             .iter()
             .map(|t| t.as_ref().iter().map(|s| s.as_ref().to_string()).collect())
             .collect();
-        let count_sets: Vec<Vec<Float>> = count_sets.iter().map(|f| f.as_ref().to_vec()).collect();
-        let error_sets: Vec<Vec<Float>> = if let Some(error_sets) = error_sets {
+        let count_sets: Vec<Vec<f64>> = count_sets.iter().map(|f| f.as_ref().to_vec()).collect();
+        let error_sets: Vec<Vec<f64>> = if let Some(error_sets) = error_sets {
             error_sets.iter().map(|f| f.as_ref().to_vec()).collect()
         } else {
             count_sets
@@ -90,7 +90,7 @@ impl BinnedGuideTerm {
 }
 
 impl LikelihoodTerm for BinnedGuideTerm {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
         let mut result = 0.0;
         for ((counts, errors), amplitudes) in self
             .count_sets
@@ -101,7 +101,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
             let weights = self.nll.project_with(parameters, amplitudes, None).unwrap();
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
             // TODO: handle entries where e == 0
-            let chisqr: Float = eval_hist
+            let chisqr: f64 = eval_hist
                 .counts
                 .iter()
                 .zip(counts.iter())
@@ -117,9 +117,9 @@ impl LikelihoodTerm for BinnedGuideTerm {
         self.nll.parameters()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         let mut gradient = DVector::zeros(parameters.len());
-        let bin_width = (self.range.1 - self.range.0) / self.bins as Float;
+        let bin_width = (self.range.1 - self.range.0) / self.bins as f64;
         for ((counts, errors), amplitudes) in self
             .count_sets
             .iter()
@@ -131,7 +131,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
                 .project_gradient_with(parameters, amplitudes, None)
                 .unwrap();
             let mut eval_counts = vec![0.0; self.bins];
-            let mut eval_count_gradient: Vec<DVector<Float>> =
+            let mut eval_count_gradient: Vec<DVector<f64>> =
                 vec![DVector::zeros(parameters.len()); self.bins];
 
             for (j, &value) in self.values.iter().enumerate() {
@@ -193,9 +193,9 @@ pub fn py_binned_guide_term(
     variable: Bound<'_, PyAny>,
     amplitude_sets: Vec<Vec<String>>,
     bins: usize,
-    range: (Float, Float),
-    count_sets: Vec<Vec<Float>>,
-    error_sets: Option<Vec<Vec<Float>>>,
+    range: (f64, f64),
+    count_sets: Vec<Vec<f64>>,
+    error_sets: Option<Vec<Vec<f64>>>,
 ) -> PyResult<PyLikelihoodTerm> {
     let variable = variable.extract::<PyVariable>()?;
     Ok(PyLikelihoodTerm(BinnedGuideTerm::new(
@@ -236,8 +236,8 @@ pub fn py_binned_guide_term(
 #[derive(Clone)]
 pub struct Regularizer<const P: usize> {
     parameters: Vec<String>,
-    lambda: Float,
-    weights: Vec<Float>,
+    lambda: f64,
+    weights: Vec<f64>,
 }
 
 impl<const P: usize> Regularizer<P> {
@@ -251,19 +251,19 @@ impl<const P: usize> Regularizer<P> {
     /// This method will return a [`LadduError`] if the number of parameters and weights are not equal.
     pub fn new<T, U, F>(
         parameters: T,
-        lambda: Float,
+        lambda: f64,
         weights: Option<F>,
     ) -> Result<Box<Self>, LadduError>
     where
         T: IntoIterator<Item = U>,
         U: AsRef<str>,
-        F: AsRef<[Float]>,
+        F: AsRef<[f64]>,
     {
         let parameters: Vec<String> = parameters
             .into_iter()
             .map(|s| s.as_ref().to_string())
             .collect();
-        let weights: Vec<Float> = weights
+        let weights: Vec<f64> = weights
             .as_ref()
             .map_or(vec![1.0; parameters.len()].as_ref(), AsRef::as_ref)
             .to_vec();
@@ -282,11 +282,11 @@ impl<const P: usize> Regularizer<P> {
 }
 
 impl LikelihoodTerm for Regularizer<1> {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
-        self.lambda * parameters.iter().map(|p| p.abs()).sum::<Float>()
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
+        self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         DVector::from_vec(
             parameters
                 .iter()
@@ -303,16 +303,16 @@ impl LikelihoodTerm for Regularizer<1> {
 }
 
 impl LikelihoodTerm for Regularizer<2> {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
-        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<Float>().sqrt()
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
+        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         let denom = parameters
             .iter()
             .zip(self.weights.iter())
             .map(|(p, w)| w * p.powi(2))
-            .sum::<Float>()
+            .sum::<f64>()
             .sqrt();
         DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom)
     }
@@ -371,9 +371,9 @@ impl LikelihoodTerm for Regularizer<2> {
 #[pyfunction(name = "Regularizer", signature = (parameters, lda, p=1, weights=None))]
 pub fn py_regularizer(
     parameters: Vec<String>,
-    lda: Float,
+    lda: f64,
     p: usize,
-    weights: Option<Vec<Float>>,
+    weights: Option<Vec<f64>>,
 ) -> PyResult<PyLikelihoodTerm> {
     if p == 1 {
         Ok(PyLikelihoodTerm(Regularizer::<1>::new(

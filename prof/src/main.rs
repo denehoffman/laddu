@@ -5,7 +5,7 @@ use laddu::{
         enums::{Frame, Sign},
         variables::{Angles, Polarization},
     },
-    ComplexScalar, Float, Scalar,
+    ComplexScalar, Scalar,
 };
 
 fn main() {
@@ -64,6 +64,6 @@ fn main() {
     let expr = pos_re + pos_im + neg_re + neg_im;
     let model = manager.model(&expr);
     let evaluator = model.load(&ds_data);
-    let p: Vec<Float> = vec![100.0; evaluator.parameters().len()];
+    let p: Vec<f64> = vec![100.0; evaluator.parameters().len()];
     std::hint::black_box(evaluator.evaluate(&p));
 }

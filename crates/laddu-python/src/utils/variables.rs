@@ -6,7 +6,6 @@ use laddu_core::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
         VariableExpression,
     },
-    Float,
 };
 use numpy::PyArray1;
 use pyo3::prelude::*;
@@ -109,7 +108,7 @@ impl PyMass {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -124,22 +123,22 @@ impl PyMass {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -228,7 +227,7 @@ impl PyCosTheta {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -243,22 +242,22 @@ impl PyCosTheta {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -348,7 +347,7 @@ impl PyPhi {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -363,22 +362,22 @@ impl PyPhi {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -506,7 +505,7 @@ impl PyPolAngle {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -521,22 +520,22 @@ impl PyPolAngle {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -583,7 +582,7 @@ impl PyPolMagnitude {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -598,22 +597,22 @@ impl PyPolMagnitude {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -747,7 +746,7 @@ impl PyMandelstam {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
+    fn value(&self, event: &PyEvent) -> f64 {
         self.0.value(&event.0)
     }
     /// All values of this Variable on the given Dataset
@@ -762,22 +761,22 @@ impl PyMandelstam {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
+    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -790,7 +789,7 @@ impl PyMandelstam {
 
 #[typetag::serde]
 impl Variable for PyVariable {
-    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
+    fn value_on(&self, dataset: &Dataset) -> Vec<f64> {
         match self {
             PyVariable::Mass(mass) => mass.0.value_on(dataset),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),
@@ -801,7 +800,7 @@ impl Variable for PyVariable {
         }
     }
 
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &Event) -> f64 {
         match self {
             PyVariable::Mass(mass) => mass.0.value(event),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),
