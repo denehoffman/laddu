@@ -1,0 +1,7 @@
+[package]
+name = "prof"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+laddu = { path = "../crates/laddu" }
