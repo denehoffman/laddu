@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use fastrand_contrib::RngExt;
 use laddu::{
     amplitudes::{
@@ -177,7 +177,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                             .collect();
                         p
                     },
-                    |p| pool.install(|| black_box(nll.evaluate(&p))),
+                    |p| pool.install(|| std::hint::black_box(nll.evaluate(&p))),
                     BatchSize::SmallInput,
                 )
             },

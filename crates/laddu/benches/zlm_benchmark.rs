@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use fastrand_contrib::RngExt;
 use laddu::{
     amplitudes::{parameter, zlm::Zlm, Manager},
@@ -97,7 +97,7 @@ fn zlm_benchmark(c: &mut Criterion) {
                             .collect();
                         p
                     },
-                    |p| pool.install(|| black_box(evaluator.evaluate(&p))),
+                    |p| pool.install(|| std::hint::black_box(evaluator.evaluate(&p))),
                     BatchSize::SmallInput,
                 )
             },
