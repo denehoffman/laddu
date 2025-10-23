@@ -76,7 +76,7 @@ def main():
 
     xs = [r['time_ms'] for r in rows]
     ys = [r['total_B'] for r in rows]
-    ys_heap = [r['heap_B'] for r in rows]
+    # ys_heap = [r['heap_B'] for r in rows]
     ys_stack = [r['stacks_B'] for r in rows]
     peak_y = ys[peak_idx]
 
@@ -84,17 +84,17 @@ def main():
     byte = ureg.parse_units('B')
     reduced_units = (peak_y * byte).to_compact().units
     ys = [(v * byte).to(reduced_units).magnitude for v in ys]
-    ys_heap = [(v * byte).to(reduced_units).magnitude for v in ys_heap]
+    # ys_heap = [(v * byte).to(reduced_units).magnitude for v in ys_heap]
     ys_stack = [(v * byte).to(reduced_units).magnitude for v in ys_stack]
     peak_y = (peak_y * byte).to(reduced_units).magnitude
 
     plt.figure()
-    plt.title('Heap usage over time (Massif)')
+    plt.title('Memory usage over time (Massif)')
     plt.xlabel('Time (ms)')
-    plt.ylabel(f'Total memory usage ({reduced_units:~L})')
+    plt.ylabel(f'Total memory usage $({reduced_units:~L})$')
     plt.plot(xs, ys, color='k', label='total')
-    plt.plot(xs, ys_heap, color='b', label='heap')
-    plt.plot(xs, ys_stack, color='r', label='stack')
+    plt.fill_between(xs, 0, ys_stack, color='r', label='stack', alpha=0.4)
+    plt.fill_between(xs, ys_stack, ys, color='b', label='heap', alpha=0.4)
     plt.axhline(peak_y, ls=':', color='k', label=f'peak: ${peak_y * reduced_units:~L}$')
     plt.legend()
     plt.tight_layout()
