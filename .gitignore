@@ -195,3 +195,5 @@ perf.*
 *.pkl
 
 .bacon-locations
+
+massif.out
