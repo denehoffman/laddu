@@ -55,7 +55,7 @@ pub mod mpi {
         if let Some(world) = crate::mpi::get_world() {
             world.rank() == ROOT_RANK
         } else {
-            false
+            true
         }
     }
 
