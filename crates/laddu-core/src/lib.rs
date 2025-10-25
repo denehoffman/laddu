@@ -191,6 +191,9 @@ pub mod mpi {
             unflattened_len: usize,
             internal_len: usize,
         ) -> (Vec<i32>, Vec<i32>);
+
+        /// Yields the (start, count) for the current rank given a total number of items TODO:
+        fn get_range(&self, total: usize) -> (usize, usize);
     }
 
     impl LadduMPI for SimpleCommunicator {
@@ -244,6 +247,20 @@ pub mod mpi {
                 };
             }
             (counts, displs)
+        }
+
+        fn get_range(&self, total: usize) -> (usize, usize) {
+            let base = total / self.size() as usize;
+            let rem = total % self.size() as usize;
+            if (self.rank() as usize) < rem {
+                let count = base + 1;
+                let state = self.rank() as usize * count;
+                (start, count)
+            } else {
+                let count = base;
+                let start = rem * (base + 1) + (self.rank() as usize - rem) * base;
+                (start, count)
+            }
         }
     }
 }
