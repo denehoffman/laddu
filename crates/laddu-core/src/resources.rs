@@ -1,15 +1,10 @@
-use std::{array, collections::HashMap};
-
+use crate::{LadduError, LadduResult};
 use indexmap::IndexSet;
 use nalgebra::{SMatrix, SVector};
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-
-use crate::{
-    amplitudes::{AmplitudeID, ParameterLike},
-    LadduError,
-};
+use std::{array, collections::HashMap};
 
 /// This struct holds references to the constants and free parameters used in the fit so that they
 /// may be obtained from their corresponding [`ParameterID`].

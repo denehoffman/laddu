@@ -14,10 +14,11 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    data::{Dataset, Event},
-    resources::{Cache, Parameters, Resources},
-    LadduError, ParameterID, ReadWrite,
+    data::Dataset,
+    resources::{Cache, ParameterID, Parameters, Resources},
+    LadduError, ReadWrite,
 };
+use polars::prelude::*;
 
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
@@ -66,27 +67,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// store them in a [`Cache`]. These values can only depend on the data in an [`Event`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
     /// to make a functioning [`Amplitude`].
-    #[allow(unused_variables)]
-    fn precompute(&self, event: &Event, cache: &mut Cache) {}
-    /// Evaluates [`Amplitude::precompute`] over ever [`Event`] in a [`Dataset`].
-    #[cfg(feature = "rayon")]
-    fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events
-            .par_iter()
-            .zip(resources.caches.par_iter_mut())
-            .for_each(|(event, cache)| {
-                self.precompute(event, cache);
-            })
-    }
-    /// Evaluates [`Amplitude::precompute`] over ever [`Event`] in a [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events
-            .iter()
-            .zip(resources.caches.iter_mut())
-            .for_each(|(event, cache)| self.precompute(event, cache))
+    fn precompute(&self) -> Vec<Expr> {
+        vec![]
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
     /// calculated value for a particular [`Event`] and set of [`Parameters`]. See those
@@ -96,7 +78,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`Cache`] are more like key-value storage accessed by
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs.
-    fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<f64>;
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> f64;
 
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
     /// by a particular [`Event`] and set of [`Parameters`]. See those structs, as well as
@@ -116,14 +98,12 @@ pub trait Amplitude: DynClone + Send + Sync {
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        event: &Event,
         cache: &Cache,
         gradient: &mut DVector<Complex<f64>>,
     ) {
         self.central_difference_with_indices(
             &Vec::from_iter(0..parameters.len()),
             parameters,
-            event,
             cache,
             gradient,
         )
@@ -138,7 +118,6 @@ pub trait Amplitude: DynClone + Send + Sync {
         &self,
         indices: &[usize],
         parameters: &Parameters,
-        event: &Event,
         cache: &Cache,
         gradient: &mut DVector<Complex<f64>>,
     ) {
@@ -154,8 +133,8 @@ pub trait Amplitude: DynClone + Send + Sync {
             let mut x_minus = x.clone();
             x_plus[*i] += h[*i];
             x_minus[*i] -= h[*i];
-            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), event, cache);
-            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), event, cache);
+            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), cache);
+            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), cache);
             gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
         }
     }
@@ -1193,545 +1172,545 @@ impl Amplitude for TestAmplitude {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::{test_dataset, test_event};
-
-    use super::*;
-    use crate::{
-        data::Event,
-        resources::{Cache, ParameterID, Parameters, Resources},
-        LadduError,
-    };
-    use approx::assert_relative_eq;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Clone, Serialize, Deserialize)]
-    pub struct ComplexScalar {
-        name: String,
-        re: ParameterLike,
-        pid_re: ParameterID,
-        im: ParameterLike,
-        pid_im: ParameterID,
-    }
-
-    impl ComplexScalar {
-        pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
-            Self {
-                name: name.to_string(),
-                re,
-                pid_re: Default::default(),
-                im,
-                pid_im: Default::default(),
-            }
-            .into()
-        }
-    }
-
-    #[typetag::serde]
-    impl Amplitude for ComplexScalar {
-        fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
-            self.pid_re = resources.register_parameter(&self.re);
-            self.pid_im = resources.register_parameter(&self.im);
-            resources.register_amplitude(&self.name)
-        }
-
-        fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<f64> {
-            Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
-        }
-
-        fn compute_gradient(
-            &self,
-            _parameters: &Parameters,
-            _event: &Event,
-            _cache: &Cache,
-            gradient: &mut DVector<Complex<f64>>,
-        ) {
-            if let ParameterID::Parameter(ind) = self.pid_re {
-                gradient[ind] = Complex::ONE;
-            }
-            if let ParameterID::Parameter(ind) = self.pid_im {
-                gradient[ind] = Complex::I;
-            }
-        }
-    }
-
-    #[test]
-    fn test_batch_evaluation() {
-        let mut manager = Manager::default();
-        let amp = TestAmplitude::new("test", parameter("real"), parameter("imag"));
-        let aid = manager.register(amp).unwrap();
-        let mut event1 = test_event();
-        event1.p4s[0].t = 10.0;
-        let mut event2 = test_event();
-        event2.p4s[0].t = 11.0;
-        let mut event3 = test_event();
-        event3.p4s[0].t = 12.0;
-        let dataset = Arc::new(Dataset {
-            events: vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
-        });
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-        let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], Complex::new(1.1, 2.2) * 10.0);
-        assert_eq!(result[1], Complex::new(1.1, 2.2) * 12.0);
-        let result_grad = evaluator.evaluate_gradient_batch(&[1.1, 2.2], &[0, 2]);
-        assert_eq!(result_grad.len(), 2);
-        assert_eq!(result_grad[0][0], Complex::new(10.0, 0.0));
-        assert_eq!(result_grad[0][1], Complex::new(0.0, 10.0));
-        assert_eq!(result_grad[1][0], Complex::new(12.0, 0.0));
-        assert_eq!(result_grad[1][1], Complex::new(0.0, 12.0));
-    }
-
-    #[test]
-    fn test_constant_amplitude() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("constant", constant(2.0), constant(3.0));
-        let aid = manager.register(amp).unwrap();
-        let dataset = Arc::new(Dataset {
-            events: vec![Arc::new(test_event())],
-        });
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-        let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(2.0, 3.0));
-    }
-
-    #[test]
-    fn test_parametric_amplitude() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new(
-            "parametric",
-            parameter("test_param_re"),
-            parameter("test_param_im"),
-        );
-        let aid = manager.register(amp).unwrap();
-        let dataset = Arc::new(test_dataset());
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-        let result = evaluator.evaluate(&[2.0, 3.0]);
-        assert_eq!(result[0], Complex::new(2.0, 3.0));
-    }
-
-    #[test]
-    fn test_expression_operations() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("const1", constant(2.0), constant(0.0));
-        let amp2 = ComplexScalar::new("const2", constant(0.0), constant(1.0));
-        let amp3 = ComplexScalar::new("const3", constant(3.0), constant(4.0));
-
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-        let aid3 = manager.register(amp3).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-
-        // Test (amp) addition
-        let expr_add = &aid1 + &aid2;
-        let model_add = manager.model(&expr_add);
-        let eval_add = model_add.load(&dataset);
-        let result_add = eval_add.evaluate(&[]);
-        assert_eq!(result_add[0], Complex::new(2.0, 1.0));
-
-        // Test (amp) subtraction
-        let expr_sub = &aid1 - &aid2;
-        let model_sub = manager.model(&expr_sub);
-        let eval_sub = model_sub.load(&dataset);
-        let result_sub = eval_sub.evaluate(&[]);
-        assert_eq!(result_sub[0], Complex::new(2.0, -1.0));
-
-        // Test (amp) multiplication
-        let expr_mul = &aid1 * &aid2;
-        let model_mul = manager.model(&expr_mul);
-        let eval_mul = model_mul.load(&dataset);
-        let result_mul = eval_mul.evaluate(&[]);
-        assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
-
-        // Test (amp) division
-        let expr_div = &aid1 / &aid3;
-        let model_div = manager.model(&expr_div);
-        let eval_div = model_div.load(&dataset);
-        let result_div = eval_div.evaluate(&[]);
-        assert_eq!(result_div[0], Complex::new(6.0 / 25.0, -8.0 / 25.0));
-
-        // Test (amp) neg
-        let expr_neg = -&aid3;
-        let model_neg = manager.model(&expr_neg);
-        let eval_neg = model_neg.load(&dataset);
-        let result_neg = eval_neg.evaluate(&[]);
-        assert_eq!(result_neg[0], Complex::new(-3.0, -4.0));
-
-        // Test (expr) addition
-        let expr_add2 = &expr_add + &expr_mul;
-        let model_add2 = manager.model(&expr_add2);
-        let eval_add2 = model_add2.load(&dataset);
-        let result_add2 = eval_add2.evaluate(&[]);
-        assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
-
-        // Test (expr) subtraction
-        let expr_sub2 = &expr_add - &expr_mul;
-        let model_sub2 = manager.model(&expr_sub2);
-        let eval_sub2 = model_sub2.load(&dataset);
-        let result_sub2 = eval_sub2.evaluate(&[]);
-        assert_eq!(result_sub2[0], Complex::new(2.0, -1.0));
-
-        // Test (expr) multiplication
-        let expr_mul2 = &expr_add * &expr_mul;
-        let model_mul2 = manager.model(&expr_mul2);
-        let eval_mul2 = model_mul2.load(&dataset);
-        let result_mul2 = eval_mul2.evaluate(&[]);
-        assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
-
-        // Test (expr) division
-        let expr_div2 = &expr_add / &expr_add2;
-        let model_div2 = manager.model(&expr_div2);
-        let eval_div2 = model_div2.load(&dataset);
-        let result_div2 = eval_div2.evaluate(&[]);
-        assert_eq!(result_div2[0], Complex::new(7.0 / 13.0, -4.0 / 13.0));
-
-        // Test (expr) neg
-        let expr_neg2 = -&expr_mul2;
-        let model_neg2 = manager.model(&expr_neg2);
-        let eval_neg2 = model_neg2.load(&dataset);
-        let result_neg2 = eval_neg2.evaluate(&[]);
-        assert_eq!(result_neg2[0], Complex::new(2.0, -4.0));
-
-        // Test (amp) real
-        let expr_real = aid3.real();
-        let model_real = manager.model(&expr_real);
-        let eval_real = model_real.load(&dataset);
-        let result_real = eval_real.evaluate(&[]);
-        assert_eq!(result_real[0], Complex::new(3.0, 0.0));
-
-        // Test (expr) real
-        let expr_mul2_real = expr_mul2.real();
-        let model_mul2_real = manager.model(&expr_mul2_real);
-        let eval_mul2_real = model_mul2_real.load(&dataset);
-        let result_mul2_real = eval_mul2_real.evaluate(&[]);
-        assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
-
-        // Test (amp) imag
-        let expr_imag = aid3.imag();
-        let model_imag = manager.model(&expr_imag);
-        let eval_imag = model_imag.load(&dataset);
-        let result_imag = eval_imag.evaluate(&[]);
-        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
-
-        // Test (expr) imag
-        let expr_mul2_imag = expr_mul2.imag();
-        let model_mul2_imag = manager.model(&expr_mul2_imag);
-        let eval_mul2_imag = model_mul2_imag.load(&dataset);
-        let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
-        assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
-
-        // Test (amp) conj
-        let expr_conj = aid3.conj();
-        let model_conj = manager.model(&expr_conj);
-        let eval_conj = model_conj.load(&dataset);
-        let result_conj = eval_conj.evaluate(&[]);
-        assert_eq!(result_conj[0], Complex::new(3.0, -4.0));
-
-        // Test (expr) conj
-        let expr_mul2_conj = expr_mul2.conj();
-        let model_mul2_conj = manager.model(&expr_mul2_conj);
-        let eval_mul2_conj = model_mul2_conj.load(&dataset);
-        let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
-        assert_eq!(result_mul2_conj[0], Complex::new(-2.0, -4.0));
-
-        // Test (amp) norm_sqr
-        let expr_norm = aid1.norm_sqr();
-        let model_norm = manager.model(&expr_norm);
-        let eval_norm = model_norm.load(&dataset);
-        let result_norm = eval_norm.evaluate(&[]);
-        assert_eq!(result_norm[0], Complex::new(4.0, 0.0));
-
-        // Test (expr) norm_sqr
-        let expr_mul2_norm = expr_mul2.norm_sqr();
-        let model_mul2_norm = manager.model(&expr_mul2_norm);
-        let eval_mul2_norm = model_mul2_norm.load(&dataset);
-        let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
-        assert_eq!(result_mul2_norm[0], Complex::new(20.0, 0.0));
-    }
-
-    #[test]
-    fn test_amplitude_activation() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("const1", constant(1.0), constant(0.0));
-        let amp2 = ComplexScalar::new("const2", constant(2.0), constant(0.0));
-
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = &aid1 + &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        // Test initial state (all active)
-        let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(3.0, 0.0));
-
-        // Test deactivation
-        evaluator.deactivate("const1").unwrap();
-        let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(2.0, 0.0));
-
-        // Test isolation
-        evaluator.isolate("const1").unwrap();
-        let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(1.0, 0.0));
-
-        // Test reactivation
-        evaluator.activate_all();
-        let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(3.0, 0.0));
-    }
-
-    #[test]
-    fn test_gradient() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new(
-            "parametric_1",
-            parameter("test_param_re_1"),
-            parameter("test_param_im_1"),
-        );
-        let amp2 = ComplexScalar::new(
-            "parametric_2",
-            parameter("test_param_re_2"),
-            parameter("test_param_im_2"),
-        );
-
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-        let dataset = Arc::new(test_dataset());
-        let params = vec![2.0, 3.0, 4.0, 5.0];
-
-        let expr = &aid1 + &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 1.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-        assert_relative_eq!(gradient[0][1].re, 0.0);
-        assert_relative_eq!(gradient[0][1].im, 1.0);
-        assert_relative_eq!(gradient[0][2].re, 1.0);
-        assert_relative_eq!(gradient[0][2].im, 0.0);
-        assert_relative_eq!(gradient[0][3].re, 0.0);
-        assert_relative_eq!(gradient[0][3].im, 1.0);
-
-        let expr = &aid1 - &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 1.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-        assert_relative_eq!(gradient[0][1].re, 0.0);
-        assert_relative_eq!(gradient[0][1].im, 1.0);
-        assert_relative_eq!(gradient[0][2].re, -1.0);
-        assert_relative_eq!(gradient[0][2].im, 0.0);
-        assert_relative_eq!(gradient[0][3].re, 0.0);
-        assert_relative_eq!(gradient[0][3].im, -1.0);
-
-        let expr = &aid1 * &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 4.0);
-        assert_relative_eq!(gradient[0][0].im, 5.0);
-        assert_relative_eq!(gradient[0][1].re, -5.0);
-        assert_relative_eq!(gradient[0][1].im, 4.0);
-        assert_relative_eq!(gradient[0][2].re, 2.0);
-        assert_relative_eq!(gradient[0][2].im, 3.0);
-        assert_relative_eq!(gradient[0][3].re, -3.0);
-        assert_relative_eq!(gradient[0][3].im, 2.0);
-
-        let expr = &aid1 / &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 4.0 / 41.0);
-        assert_relative_eq!(gradient[0][0].im, -5.0 / 41.0);
-        assert_relative_eq!(gradient[0][1].re, 5.0 / 41.0);
-        assert_relative_eq!(gradient[0][1].im, 4.0 / 41.0);
-        assert_relative_eq!(gradient[0][2].re, -102.0 / 1681.0);
-        assert_relative_eq!(gradient[0][2].im, 107.0 / 1681.0);
-        assert_relative_eq!(gradient[0][3].re, -107.0 / 1681.0);
-        assert_relative_eq!(gradient[0][3].im, -102.0 / 1681.0);
-
-        let expr = -(&aid1 * &aid2);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, -4.0);
-        assert_relative_eq!(gradient[0][0].im, -5.0);
-        assert_relative_eq!(gradient[0][1].re, 5.0);
-        assert_relative_eq!(gradient[0][1].im, -4.0);
-        assert_relative_eq!(gradient[0][2].re, -2.0);
-        assert_relative_eq!(gradient[0][2].im, -3.0);
-        assert_relative_eq!(gradient[0][3].re, 3.0);
-        assert_relative_eq!(gradient[0][3].im, -2.0);
-
-        let expr = (&aid1 * &aid2).real();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 4.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-        assert_relative_eq!(gradient[0][1].re, -5.0);
-        assert_relative_eq!(gradient[0][1].im, 0.0);
-        assert_relative_eq!(gradient[0][2].re, 2.0);
-        assert_relative_eq!(gradient[0][2].im, 0.0);
-        assert_relative_eq!(gradient[0][3].re, -3.0);
-        assert_relative_eq!(gradient[0][3].im, 0.0);
-
-        let expr = (&aid1 * &aid2).imag();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 5.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-        assert_relative_eq!(gradient[0][1].re, 4.0);
-        assert_relative_eq!(gradient[0][1].im, 0.0);
-        assert_relative_eq!(gradient[0][2].re, 3.0);
-        assert_relative_eq!(gradient[0][2].im, 0.0);
-        assert_relative_eq!(gradient[0][3].re, 2.0);
-        assert_relative_eq!(gradient[0][3].im, 0.0);
-
-        let expr = (&aid1 * &aid2).conj();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 4.0);
-        assert_relative_eq!(gradient[0][0].im, -5.0);
-        assert_relative_eq!(gradient[0][1].re, -5.0);
-        assert_relative_eq!(gradient[0][1].im, -4.0);
-        assert_relative_eq!(gradient[0][2].re, 2.0);
-        assert_relative_eq!(gradient[0][2].im, -3.0);
-        assert_relative_eq!(gradient[0][3].re, -3.0);
-        assert_relative_eq!(gradient[0][3].im, -2.0);
-
-        let expr = (&aid1 * &aid2).norm_sqr();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        assert_relative_eq!(gradient[0][0].re, 164.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-        assert_relative_eq!(gradient[0][1].re, 246.0);
-        assert_relative_eq!(gradient[0][1].im, 0.0);
-        assert_relative_eq!(gradient[0][2].re, 104.0);
-        assert_relative_eq!(gradient[0][2].im, 0.0);
-        assert_relative_eq!(gradient[0][3].re, 130.0);
-        assert_relative_eq!(gradient[0][3].im, 0.0);
-    }
-
-    #[test]
-    fn test_zeros_and_ones() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
-        let aid = manager.register(amp).unwrap();
-        let dataset = Arc::new(test_dataset());
-        let expr = (aid * Expression::One + Expression::Zero).norm_sqr();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-
-        let params = vec![2.0];
-        let value = evaluator.evaluate(&params);
-        let gradient = evaluator.evaluate_gradient(&params);
-
-        // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the value should be x^2 + 4
-        assert_relative_eq!(value[0].re, 8.0);
-        assert_relative_eq!(value[0].im, 0.0);
-
-        // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the derivative should be 2x
-        assert_relative_eq!(gradient[0][0].re, 4.0);
-        assert_relative_eq!(gradient[0][0].im, 0.0);
-    }
-
-    #[test]
-    fn test_parameter_registration() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
-
-        let aid = manager.register(amp).unwrap();
-        let parameters = manager.parameters();
-        let model = manager.model(&aid.into());
-        let model_parameters = model.parameters();
-        assert_eq!(parameters.len(), 1);
-        assert_eq!(parameters[0], "test_param_re");
-        assert_eq!(model_parameters.len(), 1);
-        assert_eq!(model_parameters[0], "test_param_re");
-    }
-
-    #[test]
-    fn test_duplicate_amplitude_registration() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("same_name", constant(1.0), constant(0.0));
-        let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0));
-        manager.register(amp1).unwrap();
-        assert!(manager.register(amp2).is_err());
-    }
-
-    #[test]
-    fn test_tree_printing() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new(
-            "parametric_1",
-            parameter("test_param_re_1"),
-            parameter("test_param_im_1"),
-        );
-        let amp2 = ComplexScalar::new(
-            "parametric_2",
-            parameter("test_param_re_2"),
-            parameter("test_param_im_2"),
-        );
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-        let expr = &aid1.real() + &aid2.conj().imag() + Expression::One * -Expression::Zero
-            - Expression::Zero / Expression::One
-            + (&aid1 * &aid2).norm_sqr();
-        assert_eq!(
-            expr.to_string(),
-            "+
-├─ -
-│  ├─ +
-│  │  ├─ +
-│  │  │  ├─ Re
-│  │  │  │  └─ parametric_1(id=0)
-│  │  │  └─ Im
-│  │  │     └─ *
-│  │  │        └─ parametric_2(id=1)
-│  │  └─ ×
-│  │     ├─ 1
-│  │     └─ -
-│  │        └─ 0
-│  └─ ÷
-│     ├─ 0
-│     └─ 1
-└─ NormSqr
-   └─ ×
-      ├─ parametric_1(id=0)
-      └─ parametric_2(id=1)
-"
-        );
-    }
+    //     use crate::data::{test_dataset, test_event};
+    //
+    //     use super::*;
+    //     use crate::{
+    //         data::Event,
+    //         resources::{Cache, ParameterID, Parameters, Resources},
+    //         LadduError,
+    //     };
+    //     use approx::assert_relative_eq;
+    //     use serde::{Deserialize, Serialize};
+    //
+    //     #[derive(Clone, Serialize, Deserialize)]
+    //     pub struct ComplexScalar {
+    //         name: String,
+    //         re: ParameterLike,
+    //         pid_re: ParameterID,
+    //         im: ParameterLike,
+    //         pid_im: ParameterID,
+    //     }
+    //
+    //     impl ComplexScalar {
+    //         pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
+    //             Self {
+    //                 name: name.to_string(),
+    //                 re,
+    //                 pid_re: Default::default(),
+    //                 im,
+    //                 pid_im: Default::default(),
+    //             }
+    //             .into()
+    //         }
+    //     }
+    //
+    //     #[typetag::serde]
+    //     impl Amplitude for ComplexScalar {
+    //         fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    //             self.pid_re = resources.register_parameter(&self.re);
+    //             self.pid_im = resources.register_parameter(&self.im);
+    //             resources.register_amplitude(&self.name)
+    //         }
+    //
+    //         fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<f64> {
+    //             Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+    //         }
+    //
+    //         fn compute_gradient(
+    //             &self,
+    //             _parameters: &Parameters,
+    //             _event: &Event,
+    //             _cache: &Cache,
+    //             gradient: &mut DVector<Complex<f64>>,
+    //         ) {
+    //             if let ParameterID::Parameter(ind) = self.pid_re {
+    //                 gradient[ind] = Complex::ONE;
+    //             }
+    //             if let ParameterID::Parameter(ind) = self.pid_im {
+    //                 gradient[ind] = Complex::I;
+    //             }
+    //         }
+    //     }
+    //
+    //     #[test]
+    //     fn test_batch_evaluation() {
+    //         let mut manager = Manager::default();
+    //         let amp = TestAmplitude::new("test", parameter("real"), parameter("imag"));
+    //         let aid = manager.register(amp).unwrap();
+    //         let mut event1 = test_event();
+    //         event1.p4s[0].t = 10.0;
+    //         let mut event2 = test_event();
+    //         event2.p4s[0].t = 11.0;
+    //         let mut event3 = test_event();
+    //         event3.p4s[0].t = 12.0;
+    //         let dataset = Arc::new(Dataset {
+    //             events: vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+    //         });
+    //         let expr = Expression::Amp(aid);
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //         let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
+    //         assert_eq!(result.len(), 2);
+    //         assert_eq!(result[0], Complex::new(1.1, 2.2) * 10.0);
+    //         assert_eq!(result[1], Complex::new(1.1, 2.2) * 12.0);
+    //         let result_grad = evaluator.evaluate_gradient_batch(&[1.1, 2.2], &[0, 2]);
+    //         assert_eq!(result_grad.len(), 2);
+    //         assert_eq!(result_grad[0][0], Complex::new(10.0, 0.0));
+    //         assert_eq!(result_grad[0][1], Complex::new(0.0, 10.0));
+    //         assert_eq!(result_grad[1][0], Complex::new(12.0, 0.0));
+    //         assert_eq!(result_grad[1][1], Complex::new(0.0, 12.0));
+    //     }
+    //
+    //     #[test]
+    //     fn test_constant_amplitude() {
+    //         let mut manager = Manager::default();
+    //         let amp = ComplexScalar::new("constant", constant(2.0), constant(3.0));
+    //         let aid = manager.register(amp).unwrap();
+    //         let dataset = Arc::new(Dataset {
+    //             events: vec![Arc::new(test_event())],
+    //         });
+    //         let expr = Expression::Amp(aid);
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //         let result = evaluator.evaluate(&[]);
+    //         assert_eq!(result[0], Complex::new(2.0, 3.0));
+    //     }
+    //
+    //     #[test]
+    //     fn test_parametric_amplitude() {
+    //         let mut manager = Manager::default();
+    //         let amp = ComplexScalar::new(
+    //             "parametric",
+    //             parameter("test_param_re"),
+    //             parameter("test_param_im"),
+    //         );
+    //         let aid = manager.register(amp).unwrap();
+    //         let dataset = Arc::new(test_dataset());
+    //         let expr = Expression::Amp(aid);
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //         let result = evaluator.evaluate(&[2.0, 3.0]);
+    //         assert_eq!(result[0], Complex::new(2.0, 3.0));
+    //     }
+    //
+    //     #[test]
+    //     fn test_expression_operations() {
+    //         let mut manager = Manager::default();
+    //         let amp1 = ComplexScalar::new("const1", constant(2.0), constant(0.0));
+    //         let amp2 = ComplexScalar::new("const2", constant(0.0), constant(1.0));
+    //         let amp3 = ComplexScalar::new("const3", constant(3.0), constant(4.0));
+    //
+    //         let aid1 = manager.register(amp1).unwrap();
+    //         let aid2 = manager.register(amp2).unwrap();
+    //         let aid3 = manager.register(amp3).unwrap();
+    //
+    //         let dataset = Arc::new(test_dataset());
+    //
+    //         // Test (amp) addition
+    //         let expr_add = &aid1 + &aid2;
+    //         let model_add = manager.model(&expr_add);
+    //         let eval_add = model_add.load(&dataset);
+    //         let result_add = eval_add.evaluate(&[]);
+    //         assert_eq!(result_add[0], Complex::new(2.0, 1.0));
+    //
+    //         // Test (amp) subtraction
+    //         let expr_sub = &aid1 - &aid2;
+    //         let model_sub = manager.model(&expr_sub);
+    //         let eval_sub = model_sub.load(&dataset);
+    //         let result_sub = eval_sub.evaluate(&[]);
+    //         assert_eq!(result_sub[0], Complex::new(2.0, -1.0));
+    //
+    //         // Test (amp) multiplication
+    //         let expr_mul = &aid1 * &aid2;
+    //         let model_mul = manager.model(&expr_mul);
+    //         let eval_mul = model_mul.load(&dataset);
+    //         let result_mul = eval_mul.evaluate(&[]);
+    //         assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
+    //
+    //         // Test (amp) division
+    //         let expr_div = &aid1 / &aid3;
+    //         let model_div = manager.model(&expr_div);
+    //         let eval_div = model_div.load(&dataset);
+    //         let result_div = eval_div.evaluate(&[]);
+    //         assert_eq!(result_div[0], Complex::new(6.0 / 25.0, -8.0 / 25.0));
+    //
+    //         // Test (amp) neg
+    //         let expr_neg = -&aid3;
+    //         let model_neg = manager.model(&expr_neg);
+    //         let eval_neg = model_neg.load(&dataset);
+    //         let result_neg = eval_neg.evaluate(&[]);
+    //         assert_eq!(result_neg[0], Complex::new(-3.0, -4.0));
+    //
+    //         // Test (expr) addition
+    //         let expr_add2 = &expr_add + &expr_mul;
+    //         let model_add2 = manager.model(&expr_add2);
+    //         let eval_add2 = model_add2.load(&dataset);
+    //         let result_add2 = eval_add2.evaluate(&[]);
+    //         assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
+    //
+    //         // Test (expr) subtraction
+    //         let expr_sub2 = &expr_add - &expr_mul;
+    //         let model_sub2 = manager.model(&expr_sub2);
+    //         let eval_sub2 = model_sub2.load(&dataset);
+    //         let result_sub2 = eval_sub2.evaluate(&[]);
+    //         assert_eq!(result_sub2[0], Complex::new(2.0, -1.0));
+    //
+    //         // Test (expr) multiplication
+    //         let expr_mul2 = &expr_add * &expr_mul;
+    //         let model_mul2 = manager.model(&expr_mul2);
+    //         let eval_mul2 = model_mul2.load(&dataset);
+    //         let result_mul2 = eval_mul2.evaluate(&[]);
+    //         assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
+    //
+    //         // Test (expr) division
+    //         let expr_div2 = &expr_add / &expr_add2;
+    //         let model_div2 = manager.model(&expr_div2);
+    //         let eval_div2 = model_div2.load(&dataset);
+    //         let result_div2 = eval_div2.evaluate(&[]);
+    //         assert_eq!(result_div2[0], Complex::new(7.0 / 13.0, -4.0 / 13.0));
+    //
+    //         // Test (expr) neg
+    //         let expr_neg2 = -&expr_mul2;
+    //         let model_neg2 = manager.model(&expr_neg2);
+    //         let eval_neg2 = model_neg2.load(&dataset);
+    //         let result_neg2 = eval_neg2.evaluate(&[]);
+    //         assert_eq!(result_neg2[0], Complex::new(2.0, -4.0));
+    //
+    //         // Test (amp) real
+    //         let expr_real = aid3.real();
+    //         let model_real = manager.model(&expr_real);
+    //         let eval_real = model_real.load(&dataset);
+    //         let result_real = eval_real.evaluate(&[]);
+    //         assert_eq!(result_real[0], Complex::new(3.0, 0.0));
+    //
+    //         // Test (expr) real
+    //         let expr_mul2_real = expr_mul2.real();
+    //         let model_mul2_real = manager.model(&expr_mul2_real);
+    //         let eval_mul2_real = model_mul2_real.load(&dataset);
+    //         let result_mul2_real = eval_mul2_real.evaluate(&[]);
+    //         assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
+    //
+    //         // Test (amp) imag
+    //         let expr_imag = aid3.imag();
+    //         let model_imag = manager.model(&expr_imag);
+    //         let eval_imag = model_imag.load(&dataset);
+    //         let result_imag = eval_imag.evaluate(&[]);
+    //         assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+    //
+    //         // Test (expr) imag
+    //         let expr_mul2_imag = expr_mul2.imag();
+    //         let model_mul2_imag = manager.model(&expr_mul2_imag);
+    //         let eval_mul2_imag = model_mul2_imag.load(&dataset);
+    //         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
+    //         assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
+    //
+    //         // Test (amp) conj
+    //         let expr_conj = aid3.conj();
+    //         let model_conj = manager.model(&expr_conj);
+    //         let eval_conj = model_conj.load(&dataset);
+    //         let result_conj = eval_conj.evaluate(&[]);
+    //         assert_eq!(result_conj[0], Complex::new(3.0, -4.0));
+    //
+    //         // Test (expr) conj
+    //         let expr_mul2_conj = expr_mul2.conj();
+    //         let model_mul2_conj = manager.model(&expr_mul2_conj);
+    //         let eval_mul2_conj = model_mul2_conj.load(&dataset);
+    //         let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
+    //         assert_eq!(result_mul2_conj[0], Complex::new(-2.0, -4.0));
+    //
+    //         // Test (amp) norm_sqr
+    //         let expr_norm = aid1.norm_sqr();
+    //         let model_norm = manager.model(&expr_norm);
+    //         let eval_norm = model_norm.load(&dataset);
+    //         let result_norm = eval_norm.evaluate(&[]);
+    //         assert_eq!(result_norm[0], Complex::new(4.0, 0.0));
+    //
+    //         // Test (expr) norm_sqr
+    //         let expr_mul2_norm = expr_mul2.norm_sqr();
+    //         let model_mul2_norm = manager.model(&expr_mul2_norm);
+    //         let eval_mul2_norm = model_mul2_norm.load(&dataset);
+    //         let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
+    //         assert_eq!(result_mul2_norm[0], Complex::new(20.0, 0.0));
+    //     }
+    //
+    //     #[test]
+    //     fn test_amplitude_activation() {
+    //         let mut manager = Manager::default();
+    //         let amp1 = ComplexScalar::new("const1", constant(1.0), constant(0.0));
+    //         let amp2 = ComplexScalar::new("const2", constant(2.0), constant(0.0));
+    //
+    //         let aid1 = manager.register(amp1).unwrap();
+    //         let aid2 = manager.register(amp2).unwrap();
+    //
+    //         let dataset = Arc::new(test_dataset());
+    //         let expr = &aid1 + &aid2;
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         // Test initial state (all active)
+    //         let result = evaluator.evaluate(&[]);
+    //         assert_eq!(result[0], Complex::new(3.0, 0.0));
+    //
+    //         // Test deactivation
+    //         evaluator.deactivate("const1").unwrap();
+    //         let result = evaluator.evaluate(&[]);
+    //         assert_eq!(result[0], Complex::new(2.0, 0.0));
+    //
+    //         // Test isolation
+    //         evaluator.isolate("const1").unwrap();
+    //         let result = evaluator.evaluate(&[]);
+    //         assert_eq!(result[0], Complex::new(1.0, 0.0));
+    //
+    //         // Test reactivation
+    //         evaluator.activate_all();
+    //         let result = evaluator.evaluate(&[]);
+    //         assert_eq!(result[0], Complex::new(3.0, 0.0));
+    //     }
+    //
+    //     #[test]
+    //     fn test_gradient() {
+    //         let mut manager = Manager::default();
+    //         let amp1 = ComplexScalar::new(
+    //             "parametric_1",
+    //             parameter("test_param_re_1"),
+    //             parameter("test_param_im_1"),
+    //         );
+    //         let amp2 = ComplexScalar::new(
+    //             "parametric_2",
+    //             parameter("test_param_re_2"),
+    //             parameter("test_param_im_2"),
+    //         );
+    //
+    //         let aid1 = manager.register(amp1).unwrap();
+    //         let aid2 = manager.register(amp2).unwrap();
+    //         let dataset = Arc::new(test_dataset());
+    //         let params = vec![2.0, 3.0, 4.0, 5.0];
+    //
+    //         let expr = &aid1 + &aid2;
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 1.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //         assert_relative_eq!(gradient[0][1].re, 0.0);
+    //         assert_relative_eq!(gradient[0][1].im, 1.0);
+    //         assert_relative_eq!(gradient[0][2].re, 1.0);
+    //         assert_relative_eq!(gradient[0][2].im, 0.0);
+    //         assert_relative_eq!(gradient[0][3].re, 0.0);
+    //         assert_relative_eq!(gradient[0][3].im, 1.0);
+    //
+    //         let expr = &aid1 - &aid2;
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 1.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //         assert_relative_eq!(gradient[0][1].re, 0.0);
+    //         assert_relative_eq!(gradient[0][1].im, 1.0);
+    //         assert_relative_eq!(gradient[0][2].re, -1.0);
+    //         assert_relative_eq!(gradient[0][2].im, 0.0);
+    //         assert_relative_eq!(gradient[0][3].re, 0.0);
+    //         assert_relative_eq!(gradient[0][3].im, -1.0);
+    //
+    //         let expr = &aid1 * &aid2;
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 4.0);
+    //         assert_relative_eq!(gradient[0][0].im, 5.0);
+    //         assert_relative_eq!(gradient[0][1].re, -5.0);
+    //         assert_relative_eq!(gradient[0][1].im, 4.0);
+    //         assert_relative_eq!(gradient[0][2].re, 2.0);
+    //         assert_relative_eq!(gradient[0][2].im, 3.0);
+    //         assert_relative_eq!(gradient[0][3].re, -3.0);
+    //         assert_relative_eq!(gradient[0][3].im, 2.0);
+    //
+    //         let expr = &aid1 / &aid2;
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 4.0 / 41.0);
+    //         assert_relative_eq!(gradient[0][0].im, -5.0 / 41.0);
+    //         assert_relative_eq!(gradient[0][1].re, 5.0 / 41.0);
+    //         assert_relative_eq!(gradient[0][1].im, 4.0 / 41.0);
+    //         assert_relative_eq!(gradient[0][2].re, -102.0 / 1681.0);
+    //         assert_relative_eq!(gradient[0][2].im, 107.0 / 1681.0);
+    //         assert_relative_eq!(gradient[0][3].re, -107.0 / 1681.0);
+    //         assert_relative_eq!(gradient[0][3].im, -102.0 / 1681.0);
+    //
+    //         let expr = -(&aid1 * &aid2);
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, -4.0);
+    //         assert_relative_eq!(gradient[0][0].im, -5.0);
+    //         assert_relative_eq!(gradient[0][1].re, 5.0);
+    //         assert_relative_eq!(gradient[0][1].im, -4.0);
+    //         assert_relative_eq!(gradient[0][2].re, -2.0);
+    //         assert_relative_eq!(gradient[0][2].im, -3.0);
+    //         assert_relative_eq!(gradient[0][3].re, 3.0);
+    //         assert_relative_eq!(gradient[0][3].im, -2.0);
+    //
+    //         let expr = (&aid1 * &aid2).real();
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 4.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //         assert_relative_eq!(gradient[0][1].re, -5.0);
+    //         assert_relative_eq!(gradient[0][1].im, 0.0);
+    //         assert_relative_eq!(gradient[0][2].re, 2.0);
+    //         assert_relative_eq!(gradient[0][2].im, 0.0);
+    //         assert_relative_eq!(gradient[0][3].re, -3.0);
+    //         assert_relative_eq!(gradient[0][3].im, 0.0);
+    //
+    //         let expr = (&aid1 * &aid2).imag();
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 5.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //         assert_relative_eq!(gradient[0][1].re, 4.0);
+    //         assert_relative_eq!(gradient[0][1].im, 0.0);
+    //         assert_relative_eq!(gradient[0][2].re, 3.0);
+    //         assert_relative_eq!(gradient[0][2].im, 0.0);
+    //         assert_relative_eq!(gradient[0][3].re, 2.0);
+    //         assert_relative_eq!(gradient[0][3].im, 0.0);
+    //
+    //         let expr = (&aid1 * &aid2).conj();
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 4.0);
+    //         assert_relative_eq!(gradient[0][0].im, -5.0);
+    //         assert_relative_eq!(gradient[0][1].re, -5.0);
+    //         assert_relative_eq!(gradient[0][1].im, -4.0);
+    //         assert_relative_eq!(gradient[0][2].re, 2.0);
+    //         assert_relative_eq!(gradient[0][2].im, -3.0);
+    //         assert_relative_eq!(gradient[0][3].re, -3.0);
+    //         assert_relative_eq!(gradient[0][3].im, -2.0);
+    //
+    //         let expr = (&aid1 * &aid2).norm_sqr();
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         assert_relative_eq!(gradient[0][0].re, 164.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //         assert_relative_eq!(gradient[0][1].re, 246.0);
+    //         assert_relative_eq!(gradient[0][1].im, 0.0);
+    //         assert_relative_eq!(gradient[0][2].re, 104.0);
+    //         assert_relative_eq!(gradient[0][2].im, 0.0);
+    //         assert_relative_eq!(gradient[0][3].re, 130.0);
+    //         assert_relative_eq!(gradient[0][3].im, 0.0);
+    //     }
+    //
+    //     #[test]
+    //     fn test_zeros_and_ones() {
+    //         let mut manager = Manager::default();
+    //         let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
+    //         let aid = manager.register(amp).unwrap();
+    //         let dataset = Arc::new(test_dataset());
+    //         let expr = (aid * Expression::One + Expression::Zero).norm_sqr();
+    //         let model = manager.model(&expr);
+    //         let evaluator = model.load(&dataset);
+    //
+    //         let params = vec![2.0];
+    //         let value = evaluator.evaluate(&params);
+    //         let gradient = evaluator.evaluate_gradient(&params);
+    //
+    //         // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the value should be x^2 + 4
+    //         assert_relative_eq!(value[0].re, 8.0);
+    //         assert_relative_eq!(value[0].im, 0.0);
+    //
+    //         // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the derivative should be 2x
+    //         assert_relative_eq!(gradient[0][0].re, 4.0);
+    //         assert_relative_eq!(gradient[0][0].im, 0.0);
+    //     }
+    //
+    //     #[test]
+    //     fn test_parameter_registration() {
+    //         let mut manager = Manager::default();
+    //         let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
+    //
+    //         let aid = manager.register(amp).unwrap();
+    //         let parameters = manager.parameters();
+    //         let model = manager.model(&aid.into());
+    //         let model_parameters = model.parameters();
+    //         assert_eq!(parameters.len(), 1);
+    //         assert_eq!(parameters[0], "test_param_re");
+    //         assert_eq!(model_parameters.len(), 1);
+    //         assert_eq!(model_parameters[0], "test_param_re");
+    //     }
+    //
+    //     #[test]
+    //     fn test_duplicate_amplitude_registration() {
+    //         let mut manager = Manager::default();
+    //         let amp1 = ComplexScalar::new("same_name", constant(1.0), constant(0.0));
+    //         let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0));
+    //         manager.register(amp1).unwrap();
+    //         assert!(manager.register(amp2).is_err());
+    //     }
+    //
+    //     #[test]
+    //     fn test_tree_printing() {
+    //         let mut manager = Manager::default();
+    //         let amp1 = ComplexScalar::new(
+    //             "parametric_1",
+    //             parameter("test_param_re_1"),
+    //             parameter("test_param_im_1"),
+    //         );
+    //         let amp2 = ComplexScalar::new(
+    //             "parametric_2",
+    //             parameter("test_param_re_2"),
+    //             parameter("test_param_im_2"),
+    //         );
+    //         let aid1 = manager.register(amp1).unwrap();
+    //         let aid2 = manager.register(amp2).unwrap();
+    //         let expr = &aid1.real() + &aid2.conj().imag() + Expression::One * -Expression::Zero
+    //             - Expression::Zero / Expression::One
+    //             + (&aid1 * &aid2).norm_sqr();
+    //         assert_eq!(
+    //             expr.to_string(),
+    //             "+
+    // ├─ -
+    // │  ├─ +
+    // │  │  ├─ +
+    // │  │  │  ├─ Re
+    // │  │  │  │  └─ parametric_1(id=0)
+    // │  │  │  └─ Im
+    // │  │  │     └─ *
+    // │  │  │        └─ parametric_2(id=1)
+    // │  │  └─ ×
+    // │  │     ├─ 1
+    // │  │     └─ -
+    // │  │        └─ 0
+    // │  └─ ÷
+    // │     ├─ 0
+    // │     └─ 1
+    // └─ NormSqr
+    //    └─ ×
+    //       ├─ parametric_1(id=0)
+    //       └─ parametric_2(id=1)
+    // "
+    //         );
+    //     }
 }

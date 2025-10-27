@@ -1,10 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use laddu_core::data::open;
+use laddu_core::data::Dataset;
 
 fn open_data_benchmark(c: &mut Criterion) {
     c.bench_function("open benchmark", |b| {
         b.iter(|| {
-            black_box(open("benches/bench.parquet").unwrap());
+            black_box(Dataset::open("benches/bench.parquet").unwrap());
         });
     });
 }

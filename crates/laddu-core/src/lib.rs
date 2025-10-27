@@ -1,7 +1,8 @@
 //! # laddu-core
 //!
 //! This is an internal crate used by `laddu`.
-#![warn(clippy::perf, clippy::style, missing_docs)]
+#![warn(clippy::perf, clippy::style)]
+// #![warn(missing_docs)]
 #![allow(clippy::excessive_precision)]
 
 use ganesh::core::{MCMCSummary, MinimizationSummary};
@@ -30,58 +31,70 @@ use pyo3::PyErr;
 ///
 /// [`finalize_mpi`] must be called to trigger all the methods which clean up the MPI
 /// environment. While these are called by default when the [`Universe`](`mpi::environment::Universe`) is dropped, `laddu` uses a static `Universe` that can be accessed by all of the methods that need it, rather than passing the context to each method. This simplifies the way programs can be converted to use MPI, but means that the `Universe` is not automatically dropped at the end of the program (so it must be dropped manually).
-#[cfg(feature = "mpi")]
 pub mod mpi {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
 
     use lazy_static::lazy_static;
-    use mpi::environment::Universe;
-    use mpi::topology::{Process, SimpleCommunicator};
-    use mpi::traits::Communicator;
+    #[cfg(feature = "mpi")]
+    use mpi::{
+        environment::Universe,
+        topology::{Process, SimpleCommunicator},
+        traits::Communicator,
+    };
     use parking_lot::RwLock;
 
     lazy_static! {
         static ref USE_MPI: AtomicBool = AtomicBool::new(false);
     }
 
-    static MPI_UNIVERSE: OnceLock<RwLock<Option<Universe>>> = OnceLock::new();
+    pub struct MPIState {
+        pub size: usize,
+        pub rank: usize,
+        #[cfg(feature = "mpi")]
+        pub universe: Universe,
+    }
+
+    static MPI_STATE: OnceLock<RwLock<Option<MPIState>>> = OnceLock::new();
 
     /// The default root rank for MPI processes
-    pub const ROOT_RANK: i32 = 0;
+    pub const ROOT_RANK: usize = 0;
 
     /// Check if the current MPI process is the root process
     pub fn is_root() -> bool {
-        if let Some(world) = crate::mpi::get_world() {
-            world.rank() == ROOT_RANK
-        } else {
-            true
-        }
+        crate::mpi::rank() == ROOT_RANK
     }
 
     /// Shortcut method to just get the global MPI communicator without accessing `size` and `rank`
     /// directly
-    pub fn get_world() -> Option<SimpleCommunicator> {
-        if let Some(universe_lock) = MPI_UNIVERSE.get() {
-            if let Some(universe) = &*universe_lock.read() {
-                let world = universe.world();
-                if world.size() == 1 {
-                    return None;
-                }
-                return Some(world);
+    #[cfg(feature = "mpi")]
+    pub fn world() -> Option<SimpleCommunicator> {
+        if let Some(mpi_state_lock) = MPI_STATE.get() {
+            if let Some(mpi_state) = &*mpi_state_lock.read() {
+                return Some(mpi_state.universe.world());
             }
         }
         None
     }
 
     /// Get the rank of the current process
-    pub fn get_rank() -> Option<i32> {
-        get_world().map(|w| w.rank())
+    pub fn rank() -> usize {
+        if let Some(mpi_state_lock) = MPI_STATE.get() {
+            if let Some(mpi_state) = &*mpi_state_lock.read() {
+                return mpi_state.rank;
+            }
+        }
+        ROOT_RANK
     }
 
     /// Get number of available processes/ranks
-    pub fn get_size() -> Option<i32> {
-        get_world().map(|w| w.size())
+    pub fn size() -> usize {
+        if let Some(mpi_state_lock) = MPI_STATE.get() {
+            if let Some(mpi_state) = &*mpi_state_lock.read() {
+                return mpi_state.size;
+            }
+        }
+        1
     }
 
     /// Use the MPI backend
@@ -131,20 +144,27 @@ pub mod mpi {
     pub fn use_mpi(trigger: bool) {
         if trigger {
             USE_MPI.store(true, Ordering::SeqCst);
-            MPI_UNIVERSE.get_or_init(|| {
-                #[cfg(feature = "rayon")]
-                let threading = mpi::Threading::Funneled;
-                #[cfg(not(feature = "rayon"))]
-                let threading = mpi::Threading::Single;
-                let (universe, _threading) = mpi::initialize_with_threading(threading).unwrap();
-                let world = universe.world();
-                if world.size() == 1 {
-                    eprintln!("Warning: MPI is enabled, but only one process is available. MPI will not be used, but single-CPU parallelism may still be used if enabled.");
-                    finalize_mpi();
-                    USE_MPI.store(false, Ordering::SeqCst);
-                    RwLock::new(None)
-                } else {
-                    RwLock::new(Some(universe))
+            MPI_STATE.get_or_init(|| {
+                #[cfg(feature = "mpi")]
+                {
+                    #[cfg(feature = "rayon")]
+                    let threading = mpi::Threading::Funneled;
+                    #[cfg(not(feature = "rayon"))]
+                    let threading = mpi::Threading::Single;
+                    let (universe, _threading) = mpi::initialize_with_threading(threading).unwrap();
+                    let world = universe.world();
+                    RwLock::new(Some(MPIState {
+                        size: world.size() as usize,
+                        rank: world.rank() as usize,
+                        universe,
+                    }))
+                }
+                #[cfg(not(feature = "mpi"))]
+                {
+                    RwLock::new(Some(MPIState {
+                        size: 1,
+                        rank: ROOT_RANK,
+                    }))
                 }
             });
         }
@@ -162,8 +182,8 @@ pub mod mpi {
     /// </div>
     pub fn finalize_mpi() {
         if using_mpi() {
-            let mut universe = MPI_UNIVERSE.get().unwrap().write();
-            *universe = None;
+            let mut mpi_state = MPI_STATE.get().unwrap().write();
+            *mpi_state = None;
         }
     }
 
@@ -172,95 +192,17 @@ pub mod mpi {
         USE_MPI.load(Ordering::SeqCst)
     }
 
-    /// A trait including some useful auxiliary methods for MPI
-    pub trait LadduMPI {
-        /// Get the process at the root rank
-        fn process_at_root(&self) -> Process<'_>;
-        /// Check if the current rank is the root rank
-        fn is_root(&self) -> bool;
-        /// Get the counts/displacements for partitioning a buffer of length
-        /// `buf_len`
-        fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>);
-        /// Get the counts/displacements for partitioning a nested buffer (like
-        /// a [`Vec<Vec<T>>`]). If the internal vectors all have the same length
-        /// `internal_len` and there are `unflattened_len` elements in the
-        /// outer vector, then this will give the correct counts/displacements for a
-        /// flattened version of the nested buffer.
-        fn get_flattened_counts_displs(
-            &self,
-            unflattened_len: usize,
-            internal_len: usize,
-        ) -> (Vec<i32>, Vec<i32>);
-
-        /// Yields the (start, count) for the current rank given a total number of items TODO:
-        fn get_range(&self, total: usize) -> (usize, usize);
-    }
-
-    impl LadduMPI for SimpleCommunicator {
-        fn process_at_root(&self) -> Process<'_> {
-            self.process_at_rank(crate::mpi::ROOT_RANK)
-        }
-
-        fn is_root(&self) -> bool {
-            self.rank() == crate::mpi::ROOT_RANK
-        }
-
-        fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>) {
-            let mut counts = vec![0; self.size() as usize];
-            let mut displs = vec![0; self.size() as usize];
-            let chunk_size = buf_len / self.size() as usize;
-            let surplus = buf_len % self.size() as usize;
-            for i in 0..self.size() as usize {
-                counts[i] = if i < surplus {
-                    chunk_size + 1
-                } else {
-                    chunk_size
-                } as i32;
-                displs[i] = if i == 0 {
-                    0
-                } else {
-                    displs[i - 1] + counts[i - 1]
-                };
-            }
-            (counts, displs)
-        }
-
-        fn get_flattened_counts_displs(
-            &self,
-            unflattened_len: usize,
-            internal_len: usize,
-        ) -> (Vec<i32>, Vec<i32>) {
-            let mut counts = vec![0; self.size() as usize];
-            let mut displs = vec![0; self.size() as usize];
-            let chunk_size = unflattened_len / self.size() as usize;
-            let surplus = unflattened_len % self.size() as usize;
-            for i in 0..self.size() as usize {
-                counts[i] = if i < surplus {
-                    (chunk_size + 1) * internal_len
-                } else {
-                    chunk_size * internal_len
-                } as i32;
-                displs[i] = if i == 0 {
-                    0
-                } else {
-                    displs[i - 1] + counts[i - 1]
-                };
-            }
-            (counts, displs)
-        }
-
-        fn get_range(&self, total: usize) -> (usize, usize) {
-            let base = total / self.size() as usize;
-            let rem = total % self.size() as usize;
-            if (self.rank() as usize) < rem {
-                let count = base + 1;
-                let state = self.rank() as usize * count;
-                (start, count)
-            } else {
-                let count = base;
-                let start = rem * (base + 1) + (self.rank() as usize - rem) * base;
-                (start, count)
-            }
+    pub fn get_range_for_rank(total: usize) -> (usize, usize) {
+        let base = total / crate::mpi::size();
+        let rem = total % crate::mpi::size();
+        if crate::mpi::rank() < rem {
+            let count = base + 1;
+            let start = crate::mpi::rank() * count;
+            (start, count)
+        } else {
+            let count = base;
+            let start = rem * (base + 1) + (crate::mpi::rank() - rem) * base;
+            (start, count)
         }
     }
 }
@@ -278,23 +220,24 @@ pub mod utils;
 /// Useful traits for all crate structs
 pub mod traits {
     pub use crate::amplitudes::Amplitude;
-    pub use crate::utils::variables::Variable;
     pub use crate::ReadWrite;
 }
 
-pub use crate::data::{open, BinnedDataset, Dataset, Event};
-pub use crate::resources::{
-    Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
-    Resources, ScalarID, VectorID,
-};
+pub use crate::data::Dataset;
+// pub use crate::resources::{
+//     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
+//     Resources, ScalarID, VectorID,
+// };
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+    angles, costheta, mandelstam, mass, phi, pol_angle, pol_magnitude, polarization,
 };
 pub use crate::utils::vectors::{Vec3, Vec4};
-pub use amplitudes::{
-    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
-};
+// pub use amplitudes::{
+//     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
+// };
+
+pub type LadduResult<T> = Result<T, LadduError>;
 
 /// The error type used by all `laddu` internal methods
 #[derive(Error, Debug)]
@@ -350,6 +293,9 @@ pub enum LadduError {
     #[cfg(feature = "numpy")]
     #[error("Numpy error: {0}")]
     NumpyError(#[from] numpy::FromVecError),
+    /// An error type for [`polars`]-related operations
+    #[error("Polars error: {0}")]
+    PolarsError(#[from] polars::error::PolarsError),
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
@@ -386,6 +332,7 @@ impl From<LadduError> for PyErr {
             LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
             #[cfg(feature = "numpy")]
             LadduError::NumpyError(_) => PyException::new_err(err_string),
+            LadduError::PolarsError(_) => PyException::new_err(err_string),
         }
     }
 }

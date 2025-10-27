@@ -1,8 +1,11 @@
 use factorial::Factorial;
 use nalgebra::ComplexField;
-use num::{complex::Complex, Integer};
-
+use num::{complex::Complex64, Integer};
+use polars::prelude::*;
 use std::f64::consts::PI;
+
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 fn alp_pos_m(l: usize, m: usize, x: f64) -> f64 {
     let mut p = 1.0;
@@ -32,7 +35,7 @@ fn alp_pos_m(l: usize, m: usize, x: f64) -> f64 {
 
 /// Computes the spherical harmonic $`Y_{\ell}^m(\theta, \phi)`$ (given $`\cos\theta`$). Note that
 /// this formulation includes the Condon-Shortley phase.
-pub fn spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Complex<f64> {
+pub fn spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Complex64 {
     let abs_m = isize::abs(m) as usize;
     let mut res = alp_pos_m(l, abs_m, costheta); // Includes Condon-Shortley phase already
     res *= f64::sqrt(
@@ -44,7 +47,7 @@ pub fn spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Comple
                                                          // (it's just +/-1 so division is the
                                                          // same as multiplication here)
     }
-    Complex::new(
+    Complex64::new(
         res * f64::cos(m as f64 * phi),
         res * f64::sin(m as f64 * phi),
     )
@@ -61,8 +64,8 @@ pub fn chi_minus(s: f64, m1: f64, m2: f64) -> f64 {
 }
 
 /// Computes the phase-space factor $`\rho(s, m_1, m_2) = \sqrt(\chi_+(s, m_1, m_2)\chi_-(s, m_1, m_2))`$
-pub fn rho(s: f64, m1: f64, m2: f64) -> Complex<f64> {
-    let x: Complex<f64> = (chi_plus(s, m1, m2) * chi_minus(s, m1, m2)).into();
+pub fn rho(s: f64, m1: f64, m2: f64) -> Complex64 {
+    let x: Complex64 = (chi_plus(s, m1, m2) * chi_minus(s, m1, m2)).into();
     x.sqrt()
 }
 
@@ -72,13 +75,13 @@ pub fn rho(s: f64, m1: f64, m2: f64) -> Complex<f64> {
 /// Note that this version will always yield a real-valued number.
 pub fn breakup_momentum(m0: f64, m1: f64, m2: f64) -> f64 {
     let s = m0.powi(2);
-    let x: Complex<f64> = (chi_plus(s, m1, m2) * chi_minus(s, m1, m2)).into();
+    let x: Complex64 = (chi_plus(s, m1, m2) * chi_minus(s, m1, m2)).into();
     x.abs().sqrt() * m0 / 2.0
 }
 
 /// Computes the breakup momentum (often denoted $`q`$) for a particle with mass $`m_0`$ decaying
 /// into two particles with masses $`m_1`$ and $`m_2`$: $`\frac{m_0 \rho(m_0^2, m_1, m_2)}{2}`$.
-pub fn complex_breakup_momentum(m0: f64, m1: f64, m2: f64) -> Complex<f64> {
+pub fn complex_breakup_momentum(m0: f64, m1: f64, m2: f64) -> Complex64 {
     rho(f64::powi(m0, 2), m1, m2) * m0 / 2.0
 }
 
@@ -110,11 +113,11 @@ pub fn blatt_weisskopf(m0: f64, m1: f64, m2: f64, l: usize) -> f64 {
 ///
 /// Note that this method uses an impact parameter of $`0.1973\text{GeV}^{-1}`$. Currently, only
 /// values of $`\ell <= 4`$ are implemented.
-pub fn complex_blatt_weisskopf(m0: f64, m1: f64, m2: f64, l: usize) -> Complex<f64> {
+pub fn complex_blatt_weisskopf(m0: f64, m1: f64, m2: f64, l: usize) -> Complex64 {
     let q = complex_breakup_momentum(m0, m1, m2);
     let z = q.powi(2) / 0.1973.powi(2);
     match l {
-        0 => Complex::ONE,
+        0 => Complex64::ONE,
         1 => ((z * 2.0) / (z + 1.0)).sqrt(),
         2 => ((z.powi(2) * 13.0) / ((z - 3.0).powi(2) + z * 9.0)).sqrt(),
         3 => {
@@ -127,10 +130,412 @@ pub fn complex_blatt_weisskopf(m0: f64, m1: f64, m2: f64, l: usize) -> Complex<f
     }
 }
 
+// ---------- shared naming constants ----------
+const RE_SUFFIX: &str = " real";
+const IM_SUFFIX: &str = " imag";
+
+const NAME_CHI_PLUS: &str = "chi_plus";
+const NAME_CHI_MINUS: &str = "chi_minus";
+const NAME_RHO: &str = "rho";
+const NAME_Q: &str = "q";
+
+// ---------- tiny helper ----------
+#[inline]
+fn pack_struct(base: &str, re: Series, im: Series) -> PolarsResult<Column> {
+    debug_assert_eq!(re.len(), im.len());
+    let fields = [re, im];
+    let sc = StructChunked::from_series(base.into(), fields[0].len(), fields.iter())?;
+    Ok(sc.into_series().into())
+}
+
+// ============================================================
+// spherical_harmonic (complex)  base = "Y{l}{m}"
+// ============================================================
+pub fn spherical_harmonic_polars(l: usize, m: isize, costheta: Expr, phi: Expr) -> Expr {
+    let base = format!("Y{}{}", l, m);
+    let base_fn = base.clone();
+    let base_schema = base.clone();
+    let re_name = format!("{base}{RE_SUFFIX}");
+    let im_name = format!("{base}{IM_SUFFIX}");
+    let re_name_fn = re_name.clone();
+    let im_name_fn = im_name.clone();
+
+    map_multiple(
+        move |cols: &mut [Column]| {
+            let ct = cols[0].f64()?;
+            let ph = cols[1].f64()?;
+            if ct.null_count() + ph.null_count() != 0 {
+                polars_bail!(ComputeError: "spherical_harmonic_polars: nulls not supported");
+            }
+            let ct = ct.cont_slice()?;
+            let ph = ph.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..ct.len())
+                .into_par_iter()
+                .map(|i| {
+                    let z = spherical_harmonic(l, m, ct[i], ph[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+            #[cfg(not(feature = "rayon"))]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..ct.len())
+                .into_iter()
+                .map(|i| {
+                    let z = spherical_harmonic(l, m, ct[i], ph[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+
+            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
+            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
+            pack_struct(&base_fn, s_re, s_im)
+        },
+        [costheta, phi],
+        move |_schema, _inputs| {
+            Ok(Field::new(
+                base_schema.clone().into(),
+                DataType::Struct(vec![
+                    Field::new(re_name.clone().into(), DataType::Float64),
+                    Field::new(im_name.clone().into(), DataType::Float64),
+                ]),
+            ))
+        },
+    )
+    .alias(&base)
+}
+
+// ============================================================
+// chi_plus / chi_minus (real)  base = const
+// ============================================================
+pub fn chi_plus_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
+    map_multiple(
+        |cols: &mut [Column]| {
+            let ss = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if ss.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "chi_plus_polars: nulls not supported");
+            }
+            let ss = ss.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let out: Vec<f64> = (0..ss.len())
+                .into_par_iter()
+                .map(|i| chi_plus(ss[i], a[i], b[i]))
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let out: Vec<f64> = (0..ss.len())
+                .into_iter()
+                .map(|i| chi_plus(ss[i], a[i], b[i]))
+                .collect();
+
+            Ok(Float64Chunked::from_vec(NAME_CHI_PLUS.into(), out)
+                .into_series()
+                .into())
+        },
+        [s, m1, m2],
+        |_schema, _inputs| Ok(Field::new(NAME_CHI_PLUS.into(), DataType::Float64)),
+    )
+    .alias(NAME_CHI_PLUS)
+}
+
+pub fn chi_minus_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
+    map_multiple(
+        |cols: &mut [Column]| {
+            let ss = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if ss.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "chi_minus_polars: nulls not supported");
+            }
+            let ss = ss.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let out: Vec<f64> = (0..ss.len())
+                .into_par_iter()
+                .map(|i| chi_minus(ss[i], a[i], b[i]))
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let out: Vec<f64> = (0..ss.len())
+                .into_iter()
+                .map(|i| chi_minus(ss[i], a[i], b[i]))
+                .collect();
+
+            Ok(Float64Chunked::from_vec(NAME_CHI_MINUS.into(), out)
+                .into_series()
+                .into())
+        },
+        [s, m1, m2],
+        |_schema, _inputs| Ok(Field::new(NAME_CHI_MINUS.into(), DataType::Float64)),
+    )
+    .alias(NAME_CHI_MINUS)
+}
+
+// ============================================================
+// rho (complex)  base = const "rho"
+// ============================================================
+pub fn rho_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
+    // const base; dynamic field names derived once
+    let base = NAME_RHO.to_string();
+    let base_fn = base.clone();
+    let base_schema = base.clone();
+    let re_name = format!("{base}{RE_SUFFIX}");
+    let im_name = format!("{base}{IM_SUFFIX}");
+    let re_name_fn = re_name.clone();
+    let im_name_fn = im_name.clone();
+
+    map_multiple(
+        move |cols: &mut [Column]| {
+            let ss = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if ss.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "rho_polars: nulls not supported");
+            }
+            let ss = ss.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..ss.len())
+                .into_par_iter()
+                .map(|i| {
+                    let z = rho(ss[i], a[i], b[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+            #[cfg(not(feature = "rayon"))]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..ss.len())
+                .into_iter()
+                .map(|i| {
+                    let z = rho(ss[i], a[i], b[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+
+            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
+            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
+            pack_struct(&base_fn, s_re, s_im)
+        },
+        [s, m1, m2],
+        move |_schema, _inputs| {
+            Ok(Field::new(
+                base_schema.clone().into(),
+                DataType::Struct(vec![
+                    Field::new(re_name.clone().into(), DataType::Float64),
+                    Field::new(im_name.clone().into(), DataType::Float64),
+                ]),
+            ))
+        },
+    )
+    .alias(&base)
+}
+
+// ============================================================
+// breakup_momentum (real) + complex_breakup_momentum (complex)
+// base = const "q" for both
+// ============================================================
+pub fn breakup_momentum_polars(m0: Expr, m1: Expr, m2: Expr) -> Expr {
+    map_multiple(
+        |cols: &mut [Column]| {
+            let x0 = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if x0.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "breakup_momentum_polars: nulls not supported");
+            }
+            let x0 = x0.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let out: Vec<f64> = (0..x0.len())
+                .into_par_iter()
+                .map(|i| breakup_momentum(x0[i], a[i], b[i]))
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let out: Vec<f64> = (0..x0.len())
+                .into_iter()
+                .map(|i| breakup_momentum(x0[i], a[i], b[i]))
+                .collect();
+
+            Ok(Float64Chunked::from_vec(NAME_Q.into(), out)
+                .into_series()
+                .into())
+        },
+        [m0, m1, m2],
+        |_schema, _inputs| Ok(Field::new(NAME_Q.into(), DataType::Float64)),
+    )
+    .alias(NAME_Q)
+}
+
+pub fn complex_breakup_momentum_polars(m0: Expr, m1: Expr, m2: Expr) -> Expr {
+    // const base; dynamic field names derived once
+    let base = NAME_Q.to_string();
+    let base_fn = base.clone();
+    let base_schema = base.clone();
+    let re_name = format!("{base}{RE_SUFFIX}");
+    let im_name = format!("{base}{IM_SUFFIX}");
+    let re_name_fn = re_name.clone();
+    let im_name_fn = im_name.clone();
+
+    map_multiple(
+        move |cols: &mut [Column]| {
+            let x0 = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if x0.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "complex_breakup_momentum_polars: nulls not supported");
+            }
+            let x0 = x0.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
+                .into_par_iter()
+                .map(|i| {
+                    let z = complex_breakup_momentum(x0[i], a[i], b[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+            #[cfg(not(feature = "rayon"))]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
+                .into_iter()
+                .map(|i| {
+                    let z = complex_breakup_momentum(x0[i], a[i], b[i]);
+                    (z.re, z.im)
+                })
+                .unzip();
+
+            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
+            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
+            pack_struct(&base_fn, s_re, s_im)
+        },
+        [m0, m1, m2],
+        move |_schema, _inputs| {
+            Ok(Field::new(
+                base_schema.clone().into(),
+                DataType::Struct(vec![
+                    Field::new(re_name.clone().into(), DataType::Float64),
+                    Field::new(im_name.clone().into(), DataType::Float64),
+                ]),
+            ))
+        },
+    )
+    .alias(&base)
+}
+
+// ============================================================
+// blatt_weisskopf (real) + complex_blatt_weisskopf (complex)
+// base = "B_l{l}"
+// ============================================================
+pub fn blatt_weisskopf_polars(m0: Expr, m1: Expr, m2: Expr, l: usize) -> Expr {
+    use polars::lazy::dsl::map_multiple;
+
+    let base = format!("B_l{}", l);
+    let base_fn = base.clone(); // used inside compute closure
+    let base_schema = base.clone(); // used inside schema closure
+    let base_alias = base.clone(); // used after map_multiple
+
+    map_multiple(
+        move |cols: &mut [Column]| {
+            let x0 = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if x0.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "blatt_weisskopf_polars: nulls not supported");
+            }
+            let x0 = x0.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let out: Vec<f64> = (0..x0.len())
+                .into_par_iter()
+                .map(|i| blatt_weisskopf(x0[i], a[i], b[i], l))
+                .collect();
+            #[cfg(not(feature = "rayon"))]
+            let out: Vec<f64> = (0..x0.len())
+                .into_iter()
+                .map(|i| blatt_weisskopf(x0[i], a[i], b[i], l))
+                .collect();
+
+            Ok(Float64Chunked::from_vec(base_fn.clone().into(), out)
+                .into_series()
+                .into())
+        },
+        [m0, m1, m2],
+        move |_schema, _inputs| Ok(Field::new(base_schema.clone().into(), DataType::Float64)),
+    )
+    .alias(&base_alias)
+}
+
+pub fn complex_blatt_weisskopf_polars(m0: Expr, m1: Expr, m2: Expr, l: usize) -> Expr {
+    let base = format!("B_l{}", l);
+    let base_fn = base.clone();
+    let base_schema = base.clone();
+    let re_name = format!("{base}{RE_SUFFIX}");
+    let im_name = format!("{base}{IM_SUFFIX}");
+    let re_name_fn = re_name.clone();
+    let im_name_fn = im_name.clone();
+
+    map_multiple(
+        move |cols: &mut [Column]| {
+            let x0 = cols[0].f64()?;
+            let a = cols[1].f64()?;
+            let b = cols[2].f64()?;
+            if x0.null_count() + a.null_count() + b.null_count() != 0 {
+                polars_bail!(ComputeError: "complex_blatt_weisskopf_polars: nulls not supported");
+            }
+            let x0 = x0.cont_slice()?;
+            let a = a.cont_slice()?;
+            let b = b.cont_slice()?;
+
+            #[cfg(feature = "rayon")]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
+                .into_par_iter()
+                .map(|i| {
+                    let z = complex_blatt_weisskopf(x0[i], a[i], b[i], l);
+                    (z.re, z.im)
+                })
+                .unzip();
+            #[cfg(not(feature = "rayon"))]
+            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
+                .into_iter()
+                .map(|i| {
+                    let z = complex_blatt_weisskopf(x0[i], a[i], b[i], l);
+                    (z.re, z.im)
+                })
+                .unzip();
+
+            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
+            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
+            pack_struct(&base_fn, s_re, s_im)
+        },
+        [m0, m1, m2],
+        move |_schema, _inputs| {
+            Ok(Field::new(
+                base_schema.clone().into(),
+                DataType::Struct(vec![
+                    Field::new(re_name.clone().into(), DataType::Float64),
+                    Field::new(im_name.clone().into(), DataType::Float64),
+                ]),
+            ))
+        },
+    )
+    .alias(&base)
+}
+
 #[cfg(test)]
 mod test {
     use approx::assert_relative_eq;
-    use num::complex::Complex;
+    use num::complex::Complex64;
 
     use crate::utils::functions::{
         blatt_weisskopf, breakup_momentum, chi_minus, complex_breakup_momentum, rho,
@@ -148,23 +553,23 @@ mod test {
             for phi in phis {
                 // L = 0
                 let y00 = spherical_harmonic(0, 0, costheta, phi);
-                let y00_true = Complex::from(f64::sqrt(1.0 / (4.0 * PI)));
+                let y00_true = Complex64::from(f64::sqrt(1.0 / (4.0 * PI)));
                 assert_relative_eq!(y00.re, y00_true.re);
                 assert_relative_eq!(y00.im, y00_true.im);
                 // L = 1
                 let y1n1 = spherical_harmonic(1, -1, costheta, phi);
-                let y1n1_true = Complex::from_polar(
+                let y1n1_true = Complex64::from_polar(
                     f64::sqrt(3.0 / (8.0 * PI)) * f64::sin(f64::acos(costheta)),
                     -phi,
                 );
                 assert_relative_eq!(y1n1.re, y1n1_true.re);
                 assert_relative_eq!(y1n1.im, y1n1_true.im);
                 let y10 = spherical_harmonic(1, 0, costheta, phi);
-                let y10_true = Complex::from(f64::sqrt(3.0 / (4.0 * PI)) * costheta);
+                let y10_true = Complex64::from(f64::sqrt(3.0 / (4.0 * PI)) * costheta);
                 assert_relative_eq!(y10.re, y10_true.re);
                 assert_relative_eq!(y10.im, y10_true.im);
                 let y11 = spherical_harmonic(1, 1, costheta, phi);
-                let y11_true = Complex::from_polar(
+                let y11_true = Complex64::from_polar(
                     -f64::sqrt(3.0 / (8.0 * PI)) * f64::sin(f64::acos(costheta)),
                     phi,
                 );
@@ -172,14 +577,14 @@ mod test {
                 assert_relative_eq!(y11.im, y11_true.im);
                 // L = 2
                 let y2n2 = spherical_harmonic(2, -2, costheta, phi);
-                let y2n2_true = Complex::from_polar(
+                let y2n2_true = Complex64::from_polar(
                     f64::sqrt(15.0 / (32.0 * PI)) * f64::sin(f64::acos(costheta)).powi(2),
                     -2.0 * phi,
                 );
                 assert_relative_eq!(y2n2.re, y2n2_true.re);
                 assert_relative_eq!(y2n2.im, y2n2_true.im);
                 let y2n1 = spherical_harmonic(2, -1, costheta, phi);
-                let y2n1_true = Complex::from_polar(
+                let y2n1_true = Complex64::from_polar(
                     f64::sqrt(15.0 / (8.0 * PI)) * f64::sin(f64::acos(costheta)) * costheta,
                     -phi,
                 );
@@ -187,18 +592,18 @@ mod test {
                 assert_relative_eq!(y2n1.im, y2n1_true.im);
                 let y20 = spherical_harmonic(2, 0, costheta, phi);
                 let y20_true =
-                    Complex::from(f64::sqrt(5.0 / (16.0 * PI)) * (3.0 * costheta.powi(2) - 1.0));
+                    Complex64::from(f64::sqrt(5.0 / (16.0 * PI)) * (3.0 * costheta.powi(2) - 1.0));
                 assert_relative_eq!(y20.re, y20_true.re);
                 assert_relative_eq!(y20.im, y20_true.im);
                 let y21 = spherical_harmonic(2, 1, costheta, phi);
-                let y21_true = Complex::from_polar(
+                let y21_true = Complex64::from_polar(
                     -f64::sqrt(15.0 / (8.0 * PI)) * f64::sin(f64::acos(costheta)) * costheta,
                     phi,
                 );
                 assert_relative_eq!(y21.re, y21_true.re);
                 assert_relative_eq!(y21.im, y21_true.im);
                 let y22 = spherical_harmonic(2, 2, costheta, phi);
-                let y22_true = Complex::from_polar(
+                let y22_true = Complex64::from_polar(
                     f64::sqrt(15.0 / (32.0 * PI)) * f64::sin(f64::acos(costheta)).powi(2),
                     2.0 * phi,
                 );

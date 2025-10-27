@@ -36,7 +36,7 @@ numpy = { version = "0.26.0", features = ["nalgebra"] }
 num-traits = "0.2.19"
 parquet = "56.2.0"
 parking_lot = "0.12.5"
-polars = {version = "0.51.0", features = ["lazy", "parquet"]}
+polars = {version = "0.51.0", features = ["lazy", "parquet", "trigonometry", "log", "bigidx", "row_hash", "meta", "abs", "sign"]}
 pyo3 = { version = "0.26.0" }
 rapidhash = { version = "4.1.0" }
 rayon = { version = "1.11.0" }
