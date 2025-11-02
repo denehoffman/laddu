@@ -1,11 +1,15 @@
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
-use laddu_core::utils::functions::{blatt_weisskopf, chi_plus, rho};
-use nalgebra::{Cholesky, DMatrix, DVector, SMatrix, SVector};
+use laddu_core::utils::{
+    functions::{blatt_weisskopf, chi_plus, rho},
+    vectorize,
+};
+use nalgebra::{Cholesky, DMatrix, DVector, SMatrix, SMatrixView, SVector, SVectorView};
 use num::{
     complex::Complex64,
     traits::{ConstOne, FloatConst},
 };
+use polars::prelude::Expr;
 use serde::{Deserialize, Serialize};
 
 fn sample_normal<const PARAMETERS: usize>(
@@ -193,6 +197,14 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
         ikc_inv_mat.row(channel).transpose()
     }
 
+    fn ikc_inv_vec_expr(&self, s: Expr, channel: usize) -> [(Expr, Expr); CHANNELS] {
+        let state = self.clone();
+        vectorize::<SVector<Complex64, CHANNELS>, _, _>("ikc_inv_vec_expr", [s], move |row| {
+            state.ikc_inv_vec(row[0], channel)
+        })
+        .as_cvector()
+    }
+
     fn p_vec_constants(&self, s: f64) -> SMatrix<f64, CHANNELS, RESONANCES> {
         let barrier_mat = self.barrier_mat(s);
         SMatrix::from_fn(|i, a| {
@@ -200,10 +212,20 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
         })
     }
 
+    fn p_vec_constants_expr(&self, s: Expr) -> [[Expr; RESONANCES]; CHANNELS] {
+        let state = self.clone();
+        vectorize::<SMatrix<f64, CHANNELS, RESONANCES>, _, _>(
+            "p_vec_constants_expr",
+            [s],
+            move |row| state.p_vec_constants(row[0]),
+        )
+        .as_matrix()
+    }
+
     fn compute(
         betas: &SVector<Complex64, RESONANCES>,
-        ikc_inv_vec: &SVector<Complex64, CHANNELS>,
-        p_vec_constants: &SMatrix<f64, CHANNELS, RESONANCES>,
+        ikc_inv_vec: &SVectorView<Complex64, CHANNELS>,
+        p_vec_constants: &SMatrixView<f64, CHANNELS, RESONANCES>,
     ) -> Complex64 {
         let p_vec: SVector<Complex64, CHANNELS> = SVector::from_fn(|j, _| {
             (0..RESONANCES)
@@ -214,8 +236,8 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
     }
 
     fn compute_gradient(
-        ikc_inv_vec: &SVector<Complex64, CHANNELS>,
-        p_vec_constants: &SMatrix<f64, CHANNELS, RESONANCES>,
+        ikc_inv_vec: &SVectorView<Complex64, CHANNELS>,
+        p_vec_constants: &SMatrixView<f64, CHANNELS, RESONANCES>,
     ) -> DVector<Complex64> {
         DVector::from_fn(RESONANCES, |a, _| {
             (0..RESONANCES)
@@ -265,16 +287,14 @@ pub use rho::py_kopf_kmatrix_rho;
 #[cfg(test)]
 mod tests {
     // Note: These tests are not exhaustive, they only check one channel
-    use std::sync::Arc;
-
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, mass, parameter, Manager};
 
     #[test]
     fn test_resampled_evaluation() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = mass(["kshort1", "kshort2"]);
         let amp = KopfKMatrixA0::new(
             "a0",
             [
@@ -287,12 +307,12 @@ mod tests {
         );
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]).unwrap();
 
         assert_relative_eq!(result[0].re, -0.84288298, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(result[0].im, -0.01884217, epsilon = f64::EPSILON.sqrt());
@@ -301,7 +321,7 @@ mod tests {
     #[test]
     fn test_resampled_gradient() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = mass(["kshort1", "kshort2"]);
         let amp = KopfKMatrixA0::new(
             "a0",
             [
@@ -314,12 +334,12 @@ mod tests {
         );
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]).unwrap();
 
         assert_relative_eq!(result[0][0].re, 0.3066264, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][0].im, -0.0482575, epsilon = f64::EPSILON.cbrt());

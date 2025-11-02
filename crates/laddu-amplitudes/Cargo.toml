@@ -20,21 +20,29 @@ fastrand-contrib = { workspace = true }
 ganesh = { workspace = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
-pyo3 = { workspace = true, features = [
-  "num-complex",
-  "abi3-py37",
-], optional = true }
+polars = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+pyo3-polars = {workspace = true, optional = true}
 serde = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
 approx = { workspace = true }
+criterion = { workspace = true }
+num_cpus = { workspace = true }
+fastrand = { workspace = true }
+fastrand-contrib = { workspace = true }
+rayon = { workspace = true }
 
 [features]
 default = []
 python = ["laddu-python", "pyo3"]
-pyo3 = ["dep:pyo3"]
+pyo3 = ["dep:pyo3", "dep:pyo3-polars"]
 laddu-python = ["dep:laddu-python"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]
+
+[[bench]]
+name = "zlm_benchmark"
+harness = false

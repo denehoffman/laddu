@@ -15,14 +15,14 @@ use laddu_core::{
     resources::Parameters,
     LadduError,
 };
+#[cfg(feature = "mpi")]
+use mpi::{topology::SimpleCommunicator, traits::CommunicatorCollectives};
 use nalgebra::DVector;
 use num::complex::Complex64;
 
 #[cfg(feature = "mpi")]
-use laddu_core::mpi::LadduMPI;
+use laddu_core::{mpi::LadduMPIExt, LadduResult};
 
-#[cfg(feature = "mpi")]
-use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 use parking_lot::Mutex;
 
 #[cfg(feature = "python")]
@@ -52,10 +52,12 @@ use rayon::ThreadPoolBuilder;
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
     /// Evaluate the term given some input parameters.
-    fn evaluate(&self, parameters: &[f64]) -> f64;
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64>;
     /// Evaluate the gradient of the term given some input parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        central_difference(parameters, |parameters: &[f64]| self.evaluate(parameters))
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        Ok(central_difference(parameters, |parameters: &[f64]| {
+            self.evaluate(parameters)
+        })?)
     }
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
@@ -88,15 +90,19 @@ pub struct NLL {
 impl NLL {
     /// Construct an [`NLL`] from a [`Model`] and two [`Dataset`]s (data and Monte Carlo). This is the equivalent of the [`Model::load`] method,
     /// but for two [`Dataset`]s and a different method of evaluation.
-    pub fn new(model: &Model, ds_data: &Arc<Dataset>, ds_accmc: &Arc<Dataset>) -> Box<Self> {
-        Self {
-            data_evaluator: model.load(ds_data),
-            accmc_evaluator: model.load(ds_accmc),
+    pub fn new(model: &Model, ds_data: &Dataset, ds_accmc: &Dataset) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: model.load(ds_data)?,
+            accmc_evaluator: model.load(ds_accmc)?,
         }
-        .into()
+        .into())
     }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
-    pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
+    pub fn to_stochastic(
+        &self,
+        batch_size: usize,
+        seed: Option<usize>,
+    ) -> LadduResult<StochasticNLL> {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
@@ -148,7 +154,11 @@ impl NLL {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
-    pub fn project_local(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
+    pub fn project_local(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
         let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
@@ -160,21 +170,21 @@ impl NLL {
                 self.accmc_evaluator.evaluate_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
         #[cfg(feature = "rayon")]
         let output: Vec<f64> = result
             .par_iter()
-            .zip(mc_dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
+            .zip(mc_dataset.weights()?.par_iter())
+            .map(|(l, w)| w * l.re / n_mc)
             .collect();
 
         #[cfg(not(feature = "rayon"))]
         let output: Vec<f64> = result
             .iter()
-            .zip(mc_dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
+            .zip(mc_dataset.weights()?.iter())
+            .map(|(l, w)| w * l.re / n_mc)
             .collect();
-        output
+        Ok(output)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -191,20 +201,14 @@ impl NLL {
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Vec<f64> {
+    ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
-            .n_events();
-        let local_projection = self.project_local(parameters, mc_evaluator);
-        let mut buffer: Vec<f64> = vec![0.0; n_events];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
-            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
-        }
-        buffer
+            .n_events()?;
+        let local_projection = self.project_local(parameters, mc_evaluator)?;
+        Ok(world.all_gather_partitioned(&local_projection, n_events, None))
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -220,10 +224,14 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
+    pub fn project(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.project_mpi(parameters, mc_evaluator, &world);
             }
         }
@@ -242,7 +250,7 @@ impl NLL {
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let (mc_dataset, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
@@ -256,36 +264,36 @@ impl NLL {
                 self.accmc_evaluator.evaluate_gradient_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
         #[cfg(feature = "rayon")]
         {
-            (
+            Ok((
                 result
                     .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .zip(mc_dataset.weights()?.par_iter())
+                    .map(|(l, w)| w * l.re / n_mc)
                     .collect(),
                 result_gradient
                     .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .zip(mc_dataset.weights()?.par_iter())
+                    .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                     .collect(),
-            )
+            ))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            (
+            Ok((
                 result
                     .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .zip(mc_dataset.weights()?.par_iter())
+                    .map(|(l, w)| w * l.re / n_mc)
                     .collect(),
                 result_gradient
                     .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .zip(mc_dataset.weights()?.par_iter())
+                    .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                     .collect(),
-            )
+            ))
         }
     }
 
@@ -303,38 +311,29 @@ impl NLL {
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
-            .n_events();
+            .n_events()?;
         let (local_projection, local_gradient_projection) =
-            self.project_gradient_local(parameters, mc_evaluator);
-        let mut projection_result: Vec<f64> = vec![0.0; n_events];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
-            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
-        }
-
+            self.project_gradient_local(parameters, mc_evaluator)?;
+        let projection_result = world.all_gather_partitioned(&local_projection, n_events, None);
         let flattened_local_gradient_projection = local_gradient_projection
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
             .collect::<Vec<f64>>();
-        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
-        let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
-        let mut partitioned_flattened_result_buffer =
-            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
-        world.all_gather_varcount_into(
-            &flattened_local_gradient_projection,
-            &mut partitioned_flattened_result_buffer,
-        );
-        let gradient_projection_result = flattened_result_buffer
+        let gradient_projection_result = world
+            .all_gather_partitioned(
+                &flattened_local_gradient_projection,
+                n_events,
+                Some(parameters.len()),
+            )
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect();
-        (projection_result, gradient_projection_result)
+        Ok((projection_result, gradient_projection_result))
     }
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
@@ -353,10 +352,10 @@ impl NLL {
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.project_gradient_mpi(parameters, mc_evaluator, &world);
             }
         }
@@ -377,24 +376,24 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
-                .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .zip(mc_dataset.weights()?.par_iter())
+                .map(|(l, w)| w * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
-                .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .zip(mc_dataset.weights()?.iter())
+                .map(|(l, w)| w * l.re / n_mc)
                 .collect();
             mc_evaluator.resources.write().active = current_active_mc;
             Ok(output)
@@ -404,18 +403,18 @@ impl NLL {
             self.isolate_many(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
-                .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .zip(mc_dataset.weights()?.par_iter())
+                .map(|(l, w)| w * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
-                .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .zip(mc_dataset.weights()?.iter())
+                .map(|(l, w)| w * l.re / n_mc)
                 .collect();
             self.data_evaluator.resources.write().active = current_active_data;
             self.accmc_evaluator.resources.write().active = current_active_accmc;
@@ -439,20 +438,14 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
-            .n_events();
+            .n_events()?;
         let local_projection = self.project_with_local(parameters, names, mc_evaluator)?;
-        let mut buffer: Vec<f64> = vec![0.0; n_events];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
-            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
-        }
-        Ok(buffer)
+        Ok(world.all_gather_partitioned(&local_projection, n_events, None))
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -476,10 +469,10 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.project_with_mpi(parameters, names, mc_evaluator, &world);
             }
         }
@@ -507,20 +500,20 @@ impl NLL {
             mc_evaluator.isolate_many(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
-            let result_gradient = mc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+            let result_gradient = mc_evaluator.evaluate_gradient(parameters)?;
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
                     result
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .zip(mc_dataset.weights()?.par_iter())
+                        .map(|(l, w)| w * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .zip(mc_dataset.weights()?.par_iter())
+                        .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                         .collect(),
                 )
             };
@@ -529,13 +522,13 @@ impl NLL {
                 (
                     result
                         .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .zip(mc_dataset.weights()?.iter())
+                        .map(|(l, w)| w * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .zip(mc_dataset.weights()?.iter())
+                        .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                         .collect(),
                 )
             };
@@ -547,20 +540,20 @@ impl NLL {
             self.isolate_many(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
-            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters)?;
+            let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
                     result
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .zip(mc_dataset.weights()?.par_iter())
+                        .map(|(l, w)| w * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .zip(mc_dataset.weights()?.par_iter())
+                        .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                         .collect(),
                 )
             };
@@ -569,13 +562,13 @@ impl NLL {
                 (
                     result
                         .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .zip(mc_dataset.weights()?.iter())
+                        .map(|(l, w)| w * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .zip(mc_dataset.weights()?.iter())
+                        .map(|(grad_l, w)| grad_l.map(|g| g.re).scale(w / n_mc))
                         .collect(),
                 )
             };
@@ -602,34 +595,25 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Result<(Vec<f64>, Vec<DVector<f64>>), LadduError> {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
-            .n_events();
+            .n_events()?;
         let (local_projection, local_gradient_projection) =
             self.project_gradient_with_local(parameters, names, mc_evaluator)?;
-        let mut projection_result: Vec<f64> = vec![0.0; n_events];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
-            world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
-        }
-
+        let projection_result = world.all_gather_partitioned(&local_projection, n_events, None);
         let flattened_local_gradient_projection = local_gradient_projection
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
             .collect::<Vec<f64>>();
-        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
-        let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
-        let mut partitioned_flattened_result_buffer =
-            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
-        world.all_gather_varcount_into(
-            &flattened_local_gradient_projection,
-            &mut partitioned_flattened_result_buffer,
-        );
-        let gradient_projection_result = flattened_result_buffer
+        let gradient_projection_result = world
+            .all_gather_partitioned(
+                &flattened_local_gradient_projection,
+                n_events,
+                Some(parameters.len()),
+            )
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect();
@@ -658,69 +642,67 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<(Vec<f64>, Vec<DVector<f64>>), LadduError> {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.project_gradient_with_mpi(parameters, names, mc_evaluator, &world);
             }
         }
         self.project_gradient_with_local(parameters, names, mc_evaluator)
     }
 
-    fn evaluate_local(&self, parameters: &[f64]) -> f64 {
+    fn evaluate_local(&self, parameters: &[f64]) -> LadduResult<f64> {
         let data_result = self.data_evaluator.evaluate_local(parameters);
         let mc_result = self.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
         #[cfg(feature = "rayon")]
         let data_term: f64 = data_result
             .par_iter()
-            .zip(self.data_evaluator.dataset.events.par_iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
+            .zip(self.data_evaluator.dataset.weights()?.par_iter())
+            .map(|(l, w)| w * f64::ln(l.re))
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(feature = "rayon")]
         let mc_term: f64 = mc_result
             .par_iter()
-            .zip(self.accmc_evaluator.dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re)
+            .zip(self.accmc_evaluator.dataset.weights()?.par_iter())
+            .map(|(l, w)| w * l.re)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let data_term: f64 = data_result
             .iter()
-            .zip(self.data_evaluator.dataset.events.iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
+            .zip(self.data_evaluator.dataset.weights()?.iter())
+            .map(|(l, w)| w * f64::ln(l.re))
             .sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let mc_term: f64 = mc_result
             .iter()
-            .zip(self.accmc_evaluator.dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re)
+            .zip(self.accmc_evaluator.dataset.weights()?.iter())
+            .map(|(l, w)| w * l.re)
             .sum_with_accumulator::<Klein<f64>>();
-        -2.0 * (data_term - mc_term / n_mc)
+        Ok(-2.0 * (data_term - mc_term / n_mc))
     }
 
     #[cfg(feature = "mpi")]
-    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
-        let local_evaluation = self.evaluate_local(parameters);
-        let mut buffer: Vec<f64> = vec![0.0; world.size() as usize];
+    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> LadduResult<f64> {
+        let local_evaluation = self.evaluate_local(parameters)?;
+        let mut buffer: Vec<f64> = vec![0.0; laddu_core::mpi::size()];
         world.all_gather_into(&local_evaluation, &mut buffer);
-        buffer.iter().sum()
+        Ok(buffer.iter().sum())
     }
 
-    fn evaluate_gradient_local(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient_local(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let data_resources = self.data_evaluator.resources.read();
+        let data_cache_rows = self.data_evaluator.cache_rows.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.accmc_evaluator.resources.read();
+        let mc_cache_rows = self.accmc_evaluator.cache_rows.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted()?;
         #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = self
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = data_cache_rows
             .par_iter()
-            .zip(data_resources.caches.par_iter())
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
                 self.data_evaluator
@@ -730,11 +712,11 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.data_evaluator
                             .amplitudes
@@ -742,7 +724,7 @@ impl NLL {
                             .zip(data_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&data_parameters, event, cache)
+                                    amp.compute(&data_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -766,13 +748,9 @@ impl NLL {
             .iter()
             .sum(); // TODO: replace with custom implementation of accurate crate's trait
         #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
-            .accmc_evaluator
-            .dataset
-            .events
+        let mc_term: DVector<f64> = mc_cache_rows
             .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
                 self.accmc_evaluator
@@ -782,11 +760,11 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.accmc_evaluator
                             .amplitudes
@@ -794,7 +772,7 @@ impl NLL {
                             .zip(mc_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&mc_parameters, event, cache)
+                                    amp.compute(&mc_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -817,13 +795,9 @@ impl NLL {
             .iter()
             .sum();
         #[cfg(not(feature = "rayon"))]
-        let data_term: DVector<f64> = self
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = data_cache_rows
             .iter()
-            .zip(data_resources.caches.iter())
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
                 self.data_evaluator
@@ -833,11 +807,11 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.data_evaluator
                             .amplitudes
@@ -845,7 +819,7 @@ impl NLL {
                             .zip(data_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&data_parameters, event, cache)
+                                    amp.compute(&data_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -865,15 +839,13 @@ impl NLL {
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = self
-            .accmc_evaluator
-            .dataset
-            .events
+            .collect::<Vec<DVector<f64>>>()
             .iter()
-            .zip(mc_resources.caches.iter())
-            .map(|(event, cache)| {
+            .sum(); // TODO: replace with custom implementation of accurate crate's trait
+        #[cfg(not(feature = "rayon"))]
+        let mc_term: DVector<f64> = mc_cache_rows
+            .iter()
+            .map(|cache_row| {
                 let mut gradient_values =
                     vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
                 self.accmc_evaluator
@@ -883,11 +855,11 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.accmc_evaluator
                             .amplitudes
@@ -895,7 +867,7 @@ impl NLL {
                             .zip(mc_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&mc_parameters, event, cache)
+                                    amp.compute(&mc_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -914,8 +886,10 @@ impl NLL {
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
+            .collect::<Vec<DVector<f64>>>()
+            .iter()
             .sum();
-        -2.0 * (data_term - mc_term / n_mc)
+        Ok(-2.0 * (data_term - mc_term / n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -923,18 +897,18 @@ impl NLL {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let local_evaluation_vec = self
-            .evaluate_gradient_local(parameters)
+            .evaluate_gradient_local(parameters)?
             .data
             .as_vec()
             .to_vec();
-        let mut flattened_result_buffer = vec![0.0; world.size() as usize * parameters.len()];
+        let mut flattened_result_buffer = vec![0.0; laddu_core::mpi::size() * parameters.len()];
         world.all_gather_into(&local_evaluation_vec, &mut flattened_result_buffer);
-        flattened_result_buffer
+        Ok(flattened_result_buffer
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
-            .sum::<DVector<f64>>()
+            .sum::<DVector<f64>>())
     }
 }
 
@@ -960,10 +934,10 @@ impl LikelihoodTerm for NLL {
     /// ```math
     /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
     /// ```
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.evaluate_mpi(parameters, &world);
             }
         }
@@ -975,10 +949,10 @@ impl LikelihoodTerm for NLL {
     /// real part of the given expression (discarding the imaginary part entirely, which
     /// does not matter if expressions are coherent sums wrapped in
     /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.evaluate_gradient_mpi(parameters, &world);
             }
         }
@@ -1005,50 +979,52 @@ impl LikelihoodTerm for StochasticNLL {
     fn parameters(&self) -> Vec<String> {
         self.nll.parameters()
     }
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.evaluate_mpi(parameters, &self.batch_indices.lock(), &world);
             }
         }
+        let data_weights = self.nll.data_evaluator.dataset.weights()?;
         #[cfg(feature = "rayon")]
         let n_data_batch_local = self
             .batch_indices
             .lock()
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = self
             .batch_indices
             .lock()
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .sum_with_accumulator::<Klein<f64>>();
         self.evaluate_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = laddu_core::mpi::get_world() {
+            if let Some(world) = laddu_core::mpi::world() {
                 return self.evaluate_gradient_mpi(parameters, &self.batch_indices.lock(), &world);
             }
         }
+        let data_weights = self.nll.data_evaluator.dataset.weights()?;
         #[cfg(feature = "rayon")]
         let n_data_batch_local = self
             .batch_indices
             .lock()
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = self
             .batch_indices
             .lock()
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .sum_with_accumulator::<Klein<f64>>();
         self.evaluate_gradient_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
     }
@@ -1063,65 +1039,70 @@ impl StochasticNLL {
     /// # See Also
     ///
     /// [`NLL::to_stochastic`]
-    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> Self {
+    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> LadduResult<Self> {
         let mut rng = seed.map_or_else(Rng::new, |seed| Rng::with_seed(seed as u64));
-        let n = nll.data_evaluator.dataset.n_events();
+        let n = nll.data_evaluator.dataset.n_events()?;
         assert!(batch_size > 0 && batch_size <= n);
         let batch_indices = rng.subset(batch_size, n);
-        Self {
+        Ok(Self {
             nll,
             n,
             batch_size,
             batch_indices: Arc::new(Mutex::new(batch_indices)),
             rng: Arc::new(Mutex::new(rng)),
-        }
+        })
     }
     /// Resample the batch indices used in evaluation
     pub fn resample(&self) {
         let mut rng = self.rng.lock();
         *self.batch_indices.lock() = rng.subset(self.batch_size, self.n);
     }
-    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+    fn evaluate_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+        n_data_batch: f64,
+    ) -> LadduResult<f64> {
         let data_result = self
             .nll
             .data_evaluator
             .evaluate_batch_local(parameters, indices);
         let mc_result = self.nll.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted()?;
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted()?;
+        let data_weights = self.nll.data_evaluator.dataset.weights()?;
+        let mc_weights = self.nll.accmc_evaluator.dataset.weights()?;
         #[cfg(feature = "rayon")]
         {
             let data_term: f64 = indices
                 .par_iter()
                 .map(|&i| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
                     let l = data_result[i];
-                    e.weight * l.re.ln()
+                    data_weights[i] * l.re.ln()
                 })
                 .parallel_sum_with_accumulator::<Klein<f64>>();
             let mc_term: f64 = mc_result
                 .par_iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re)
+                .zip(mc_weights.par_iter())
+                .map(|(l, w)| w * l.re)
                 .parallel_sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+            Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc))
         }
         #[cfg(not(feature = "rayon"))]
         {
             let data_term: f64 = indices
                 .iter()
                 .map(|&i| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
                     let l = data_result[i];
-                    e.weight * l.re.ln()
+                    data_weights[i] * l.re.ln()
                 })
                 .sum_with_accumulator::<Klein<f64>>();
             let mc_term: f64 = mc_result
                 .iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re)
+                .zip(mc_weights.iter())
+                .map(|(l, w)| w * l.re)
                 .sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+            Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc))
         }
     }
 
@@ -1131,22 +1112,20 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> f64 {
-        let (_, _, locals) = self
-            .nll
-            .data_evaluator
-            .dataset
-            .get_counts_displs_locals_from_indices(indices, world);
-        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
+    ) -> LadduResult<f64> {
+        let n_events = self.nll.data_evaluator.dataset.n_events()?;
+        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; laddu_core::mpi::size()];
+        let locals = world.locals_from_indices(n_events, indices);
+        let data_weights = self.nll.data_evaluator.dataset.weights()?;
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .sum_with_accumulator::<Klein<f64>>();
         world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
         #[cfg(feature = "rayon")]
@@ -1157,10 +1136,10 @@ impl StochasticNLL {
         let n_data_batch = n_data_batch_partitioned
             .into_iter()
             .sum_with_accumulator::<Klein<f64>>();
-        let local_evaluation = self.evaluate_local(parameters, &locals, n_data_batch);
-        let mut buffer: Vec<f64> = vec![0.0; world.size() as usize];
+        let local_evaluation = self.evaluate_local(parameters, &locals, n_data_batch)?;
+        let mut buffer: Vec<f64> = vec![0.0; laddu_core::mpi::size()];
         world.all_gather_into(&local_evaluation, &mut buffer);
-        buffer.iter().sum()
+        Ok(buffer.iter().sum())
     }
 
     fn evaluate_gradient_local(
@@ -1168,30 +1147,27 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         n_data_batch: f64,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let data_resources = self.nll.data_evaluator.resources.read();
+        let data_cache_rows = self.nll.data_evaluator.cache_rows.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.nll.accmc_evaluator.resources.read();
+        let mc_cache_rows = self.nll.accmc_evaluator.cache_rows.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted()?;
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted()?;
         #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = self
-            .nll
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = data_cache_rows
             .par_iter()
-            .zip(data_resources.caches.par_iter())
             .enumerate()
-            .filter_map(|(i, (event, cache))| {
+            .filter_map(|(i, cache_row)| {
                 if indices.contains(&i) {
-                    Some((event, cache))
+                    Some(cache_row)
                 } else {
                     None
                 }
             })
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.data_evaluator.amplitudes.len()
@@ -1204,11 +1180,11 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.nll
                             .data_evaluator
@@ -1217,7 +1193,7 @@ impl StochasticNLL {
                             .zip(data_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&data_parameters, event, cache)
+                                    amp.compute(&data_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -1242,14 +1218,9 @@ impl StochasticNLL {
             .iter()
             .sum(); // TODO: replace with custom implementation of accurate crate's trait
         #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
-            .nll
-            .accmc_evaluator
-            .dataset
-            .events
+        let mc_term: DVector<f64> = mc_cache_rows
             .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.accmc_evaluator.amplitudes.len()
@@ -1262,11 +1233,11 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.nll
                             .accmc_evaluator
@@ -1275,7 +1246,7 @@ impl StochasticNLL {
                             .zip(mc_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&mc_parameters, event, cache)
+                                    amp.compute(&mc_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -1299,22 +1270,17 @@ impl StochasticNLL {
             .iter()
             .sum();
         #[cfg(not(feature = "rayon"))]
-        let data_term: DVector<f64> = self
-            .nll
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = data_cache_rows
             .iter()
-            .zip(data_resources.caches.iter())
             .enumerate()
-            .filter_map(|(i, (event, cache))| {
+            .filter_map(|(i, cache_row)| {
                 if indices.contains(&i) {
-                    Some((event, cache))
+                    Some(cache_row)
                 } else {
                     None
                 }
             })
-            .map(|(event, cache)| {
+            .map(|cache_row| {
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.data_evaluator.amplitudes.len()
@@ -1327,11 +1293,11 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.nll
                             .data_evaluator
@@ -1340,7 +1306,7 @@ impl StochasticNLL {
                             .zip(data_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&data_parameters, event, cache)
+                                    amp.compute(&data_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -1361,16 +1327,13 @@ impl StochasticNLL {
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = self
-            .nll
-            .accmc_evaluator
-            .dataset
-            .events
+            .collect::<Vec<DVector<f64>>>()
             .iter()
-            .zip(mc_resources.caches.iter())
-            .map(|(event, cache)| {
+            .sum(); // TODO: replace with custom implementation of accurate crate's trait
+        #[cfg(not(feature = "rayon"))]
+        let mc_term: DVector<f64> = mc_cache_rows
+            .iter()
+            .map(|cache_row| {
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.accmc_evaluator.amplitudes.len()
@@ -1383,11 +1346,11 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, &cache_row, grad)
                         }
                     });
                 (
-                    event.weight,
+                    cache_row.get_weight(),
                     AmplitudeValues(
                         self.nll
                             .accmc_evaluator
@@ -1396,7 +1359,7 @@ impl StochasticNLL {
                             .zip(mc_resources.active.iter())
                             .map(|(amp, active)| {
                                 if *active {
-                                    amp.compute(&mc_parameters, event, cache)
+                                    amp.compute(&mc_parameters, &cache_row)
                                 } else {
                                     Complex64::ZERO
                                 }
@@ -1416,8 +1379,10 @@ impl StochasticNLL {
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
+            .collect::<Vec<DVector<f64>>>()
+            .iter()
             .sum();
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -1426,22 +1391,20 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
-        let (_, _, locals) = self
-            .nll
-            .data_evaluator
-            .dataset
-            .get_counts_displs_locals_from_indices(indices, world);
-        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
+    ) -> LadduResult<DVector<f64>> {
+        let n_events = self.nll.data_evaluator.dataset.n_events()?;
+        let locals = world.locals_from_indices(n_events, indices);
+        let data_weights = self.nll.data_evaluator.dataset.weights()?;
+        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; laddu_core::mpi::size()];
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| data_weights[i])
             .sum_with_accumulator::<Klein<f64>>();
         world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
         #[cfg(feature = "rayon")]
@@ -1453,16 +1416,17 @@ impl StochasticNLL {
             .into_iter()
             .sum_with_accumulator::<Klein<f64>>();
         let local_evaluation_vec = self
-            .evaluate_gradient_local(parameters, &locals, n_data_batch)
+            .evaluate_gradient_local(parameters, &locals, n_data_batch)?
             .data
             .as_vec()
             .to_vec();
-        let mut flattened_result_buffer = vec![0.0; world.size() as usize * parameters.len()];
+        let mut flattened_result_buffer =
+            vec![0.0; laddu_core::mpi::size() as usize * parameters.len()];
         world.all_gather_into(&local_evaluation_vec, &mut flattened_result_buffer);
-        flattened_result_buffer
+        Ok(flattened_result_buffer
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
-            .sum::<DVector<f64>>()
+            .sum::<DVector<f64>>())
     }
 }
 
@@ -1487,8 +1451,8 @@ pub struct PyNLL(pub Box<NLL>);
 impl PyNLL {
     #[new]
     #[pyo3(signature = (model, ds_data, ds_accmc))]
-    fn new(model: &PyModel, ds_data: &PyDataset, ds_accmc: &PyDataset) -> Self {
-        Self(NLL::new(&model.0, &ds_data.0, &ds_accmc.0))
+    fn new(model: &PyModel, ds_data: &PyDataset, ds_accmc: &PyDataset) -> PyResult<Self> {
+        Ok(Self(NLL::new(&model.0, &ds_data.0, &ds_accmc.0)?))
     }
     /// The underlying signal dataset used in calculating the NLL
     ///
@@ -1523,8 +1487,8 @@ impl PyNLL {
     /// StochasticNLL
     ///
     #[pyo3(signature = (batch_size, *, seed=None))]
-    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyStochasticNLL {
-        PyStochasticNLL(self.0.to_stochastic(batch_size, seed))
+    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyResult<PyStochasticNLL> {
+        Ok(PyStochasticNLL(self.0.to_stochastic(batch_size, seed)?))
     }
     /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
     ///
@@ -1673,7 +1637,7 @@ impl PyNLL {
                 .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
-                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)))
+                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -1715,7 +1679,7 @@ impl PyNLL {
                     .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
+                    .install(|| self.0.evaluate_gradient(&parameters))?
                     .as_slice(),
             ))
         }
@@ -1772,7 +1736,7 @@ impl PyNLL {
                     .install(|| {
                         self.0
                             .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    })
+                    })?
                     .as_slice(),
             ))
         }
@@ -3123,7 +3087,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         let mut param_buffers: Vec<Vec<f64>> = self
             .likelihood_manager
             .param_counts
@@ -3146,14 +3110,14 @@ impl LikelihoodTerm for LikelihoodEvaluator {
                 .iter()
                 .zip(param_buffers.iter())
                 .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
+                .collect::<LadduResult<_>>()?,
         );
-        self.likelihood_expression.evaluate(&likelihood_values)
+        Ok(self.likelihood_expression.evaluate(&likelihood_values))
     }
 
     /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let mut param_buffers: Vec<Vec<f64>> = self
             .likelihood_manager
             .param_counts
@@ -3176,7 +3140,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
                 .iter()
                 .zip(param_buffers.iter())
                 .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
+                .collect::<LadduResult<_>>()?,
         );
         let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_manager.terms.len())
             .map(|_| DVector::zeros(self.likelihood_manager.param_names.len()))
@@ -3189,14 +3153,15 @@ impl LikelihoodTerm for LikelihoodEvaluator {
             .zip(gradient_buffers.iter_mut())
             .zip(self.likelihood_manager.param_layouts.iter())
         {
-            let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
+            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
             for (term_idx, &buffer_idx) in layout.iter().enumerate() {
                 gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
             }
         }
         let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        self.likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients)
+        Ok(self
+            .likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients))
     }
 }
 
@@ -3247,11 +3212,11 @@ impl PyLikelihoodEvaluator {
                 .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters)))
+                .install(|| self.0.evaluate(&parameters))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(self.0.evaluate(&parameters))
+            self.0.evaluate(&parameters)
         }
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
@@ -3290,7 +3255,7 @@ impl PyLikelihoodEvaluator {
                     .num_threads(threads.unwrap_or(0))
                     .build()
                     .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
+                    .install(|| self.0.evaluate_gradient(&parameters))?
                     .as_slice(),
             ))
         }
@@ -3298,7 +3263,7 @@ impl PyLikelihoodEvaluator {
         {
             Ok(PyArray1::from_slice(
                 py,
-                self.0.evaluate_gradient(&parameters).as_slice(),
+                self.0.evaluate_gradient(&parameters)?.as_slice(),
             ))
         }
     }
@@ -3625,12 +3590,12 @@ impl LikelihoodScalar {
 }
 
 impl LikelihoodTerm for LikelihoodScalar {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        parameters[0]
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        Ok(parameters[0])
     }
 
-    fn evaluate_gradient(&self, _parameters: &[f64]) -> DVector<f64> {
-        DVector::from_vec(vec![1.0])
+    fn evaluate_gradient(&self, _parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        Ok(DVector::from_vec(vec![1.0]))
     }
 
     fn parameters(&self) -> Vec<String> {

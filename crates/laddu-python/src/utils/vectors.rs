@@ -1,588 +1,217 @@
 use laddu_core::{Vec3, Vec4};
-use numpy::PyArray1;
 use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3_polars::PyExpr;
 
-/// A 3-momentum vector formed from Cartesian components.
-///
-/// Parameters
-/// ----------
-/// px, py, pz : float
-///     The Cartesian components of the 3-vector
-///
 #[pyclass(name = "Vec3", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVec3(pub Vec3);
+pub struct PyVec3(Vec3);
+
 #[pymethods]
 impl PyVec3 {
     #[new]
-    fn new(px: f64, py: f64, pz: f64) -> Self {
-        Self(Vec3::new(px, py, pz))
+    fn new(name: String) -> Self {
+        Self(Vec3::new(name))
     }
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(self.0 + other_vec.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
+    fn alias(&self, name: String) -> [PyExpr; 3] {
+        let [x, y, z] = self.0.alias(name);
+        [PyExpr(x), PyExpr(y), PyExpr(z)]
     }
-    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(other_vec.0 + self.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
+    fn x(&self) -> PyExpr {
+        PyExpr(self.0.x())
     }
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(self.0 - other_vec.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Subtraction with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
+    fn y(&self) -> PyExpr {
+        PyExpr(self.0.y())
     }
-    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(other_vec.0 - self.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Subtraction with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
+    fn z(&self) -> PyExpr {
+        PyExpr(self.0.z())
     }
-    fn __mul__(&self, other: f64) -> Self {
-        Self(self.0 * other)
+    fn with_mass(&self, mass: Bound<PyAny>) -> PyResult<PyVec4> {
+        Ok(PyVec4(self.0.with_mass(&mass.extract::<PyExpr>()?.0)))
     }
-    fn __rmul__(&self, other: f64) -> Self {
-        Self(self.0 * other)
+    fn with_energy(&self, energy: Bound<PyAny>) -> PyResult<PyVec4> {
+        Ok(PyVec4(self.0.with_energy(&energy.extract::<PyExpr>()?.0)))
     }
-    fn __neg__(&self) -> PyResult<Self> {
-        Ok(Self(-self.0))
+    fn dot(&self, other: &Self) -> PyExpr {
+        PyExpr(self.0.dot(&other.0))
     }
-    /// Calculate the dot product of two Vec3s.
-    ///
-    /// Parameters
-    /// ----------
-    /// other : Vec3
-    ///     A vector input with which the dot product is taken
-    ///
-    /// Returns
-    /// -------
-    /// float
-    ///     The dot product of this vector and `other`
-    ///
-    pub fn dot(&self, other: Self) -> f64 {
-        self.0.dot(&other.0)
-    }
-    /// Calculate the cross product of two Vec3s.
-    ///
-    /// Parameters
-    /// ----------
-    /// other : Vec3
-    ///     A vector input with which the cross product is taken
-    ///
-    /// Returns
-    /// -------
-    /// Vec3
-    ///     The cross product of this vector and `other`
-    ///
-    fn cross(&self, other: Self) -> Self {
+    fn cross(&self, other: &Self) -> Self {
         Self(self.0.cross(&other.0))
     }
-    /// The magnitude of the 3-vector
-    ///
-    /// .. math:: |\vec{p}| = \sqrt{p_x^2 + p_y^2 + p_z^2}
-    ///
-    #[getter]
-    fn mag(&self) -> f64 {
-        self.0.mag()
+    fn mag2(&self) -> PyExpr {
+        PyExpr(self.0.mag2())
     }
-    /// The squared magnitude of the 3-vector
-    ///
-    /// .. math:: |\vec{p}|^2 = p_x^2 + p_y^2 + p_z^2
-    ///
-    #[getter]
-    fn mag2(&self) -> f64 {
-        self.0.mag2()
+    fn mag(&self) -> PyExpr {
+        PyExpr(self.0.mag())
     }
-    /// The cosine of the polar angle of this vector in spherical coordinates
-    ///
-    /// .. math:: -1 \leq \cos\theta \leq +1
-    ///
-    /// .. math:: \cos\theta = \frac{p_z}{|\vec{p}|}
-    ///
-    #[getter]
-    fn costheta(&self) -> f64 {
-        self.0.costheta()
+    fn costheta(&self) -> PyExpr {
+        PyExpr(self.0.costheta())
     }
-    /// The polar angle of this vector in spherical coordinates
-    ///
-    /// .. math:: 0 \leq \theta \leq \pi
-    ///
-    /// .. math:: \theta = \arccos\left(\frac{p_z}{|\vec{p}|}\right)
-    ///
-    #[getter]
-    fn theta(&self) -> f64 {
-        self.0.theta()
+    fn theta(&self) -> PyExpr {
+        PyExpr(self.0.theta())
     }
-    /// The azimuthal angle of this vector in spherical coordinates
-    ///
-    /// .. math:: 0 \leq \varphi \leq 2\pi
-    ///
-    /// .. math:: \varphi = \text{sgn}(p_y)\arccos\left(\frac{p_x}{\sqrt{p_x^2 + p_y^2}}\right)
-    ///
-    #[getter]
-    fn phi(&self) -> f64 {
-        self.0.phi()
+    fn phi(&self) -> PyExpr {
+        PyExpr(self.0.phi())
     }
-    /// The normalized unit vector pointing in the direction of this vector
-    ///
-    #[getter]
     fn unit(&self) -> Self {
         Self(self.0.unit())
     }
-    /// The x-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.x
-    ///
-    #[getter]
-    fn px(&self) -> f64 {
-        self.0.px()
+    fn add(&self, other: &Self) -> Self {
+        Self(self.0.add(&other.0))
     }
-    /// The x-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.px
-    ///
-    #[getter]
-    fn x(&self) -> f64 {
-        self.0.x
+    fn scalar_add(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.scalar_add(&other.extract::<PyExpr>()?.0)))
+    }
+    fn sub(&self, other: &Self) -> Self {
+        Self(self.0.sub(&other.0))
+    }
+    fn scalar_sub(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.scalar_sub(&other.extract::<PyExpr>()?.0)))
+    }
+    fn scalar_rsub(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.scalar_rsub(&other.extract::<PyExpr>()?.0)))
+    }
+    fn mul(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.mul(&other.extract::<PyExpr>()?.0)))
+    }
+    fn div(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.div(&other.extract::<PyExpr>()?.0)))
+    }
+    fn rdiv(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        // TODO: better error message
+        Ok(Self(self.0.rdiv(&other.extract::<PyExpr>()?.0)))
+    }
+    fn neg(&self) -> Self {
+        Self(self.0.neg())
     }
 
-    /// The y-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.y
-    ///
-    #[getter]
-    fn py(&self) -> f64 {
-        self.0.py()
+    fn __add__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        if other.extract::<PyExpr>().is_ok() {
+            self.scalar_add(other)
+        } else if let Ok(vector) = other.extract::<Self>() {
+            Ok(self.add(&vector))
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Unsupported operand type(s) for +: 'Vec3' and {}",
+                other.get_type().name()?
+            )))
+        }
     }
-    /// The y-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.py
-    ///
-    #[getter]
-    fn y(&self) -> f64 {
-        self.0.y
+    fn __radd__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.__add__(other)
     }
-    /// The z-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.z
-    ///
-    #[getter]
-    fn pz(&self) -> f64 {
-        self.0.pz()
+    fn __sub__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        if other.extract::<PyExpr>().is_ok() {
+            self.scalar_sub(other)
+        } else if let Ok(vector) = other.extract::<Self>() {
+            Ok(self.sub(&vector))
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Unsupported operand type(s) for -: 'Vec3' and {}",
+                other.get_type().name()?
+            )))
+        }
     }
-    /// The z-component of this vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec3.pz
-    ///
-    #[getter]
-    fn z(&self) -> f64 {
-        self.0.z
+    fn __rsub__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        if other.extract::<PyExpr>().is_ok() {
+            self.scalar_rsub(other)
+        } else if let Ok(vector) = other.extract::<Self>() {
+            Ok(vector.sub(self))
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "Unsupported operand type(s) for -: 'Vec3' and {}",
+                other.get_type().name()?
+            )))
+        }
     }
-    /// Convert a 3-vector momentum to a 4-momentum with the given mass.
-    ///
-    /// The mass-energy equivalence is used to compute the energy of the 4-momentum:
-    ///
-    /// .. math:: E = \sqrt{m^2 + p^2}
-    ///
-    /// Parameters
-    /// ----------
-    /// mass: float
-    ///     The mass of the new 4-momentum
-    ///
-    /// Returns
-    /// -------
-    /// Vec4
-    ///     A new 4-momentum with the given mass
-    ///
-    fn with_mass(&self, mass: f64) -> PyVec4 {
-        PyVec4(self.0.with_mass(mass))
+    fn __mul__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.mul(other)
     }
-    /// Convert a 3-vector momentum to a 4-momentum with the given energy.
-    ///
-    /// Parameters
-    /// ----------
-    /// energy: float
-    ///     The mass of the new 4-momentum
-    ///
-    /// Returns
-    /// -------
-    /// Vec4
-    ///     A new 4-momentum with the given energy
-    ///
-    fn with_energy(&self, mass: f64) -> PyVec4 {
-        PyVec4(self.0.with_energy(mass))
+    fn __rmul__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.mul(other)
     }
-    /// Convert the 3-vector to a ``numpy`` array.
-    ///
-    /// Returns
-    /// -------
-    /// numpy_vec: array_like
-    ///     A ``numpy`` array built from the components of this ``Vec3``
-    ///
-    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        PyArray1::from_vec(py, self.0.into())
+    fn __truediv__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.div(other)
     }
-    /// Convert an  array into a 3-vector.
-    ///
-    /// Parameters
-    /// ----------
-    /// array_like
-    ///     An array containing the components of this ``Vec3``
-    ///
-    /// Returns
-    /// -------
-    /// laddu_vec: Vec3
-    ///     A copy of the input array as a ``laddu`` vector
-    ///
-    #[staticmethod]
-    fn from_array(array: Vec<f64>) -> Self {
-        Self::new(array[0], array[1], array[2])
+    fn __rtruediv__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.rdiv(other)
     }
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-    fn __str__(&self) -> String {
-        format!("{}", self.0)
+    fn __neg__(&self) -> Self {
+        self.neg()
     }
 }
 
-/// A 4-momentum vector formed from energy and Cartesian 3-momentum components.
-///
-/// This vector is ordered with energy as the fourth component (:math:`[p_x, p_y, p_z, E]`) and assumes a :math:`(---+)`
-/// signature
-///
-/// Parameters
-/// ----------
-/// px, py, pz : float
-///     The Cartesian components of the 3-vector
-/// e : float
-///     The energy component
-///
-///
 #[pyclass(name = "Vec4", module = "laddu")]
 #[derive(Clone)]
-pub struct PyVec4(pub Vec4);
+pub struct PyVec4(Vec4);
+
 #[pymethods]
 impl PyVec4 {
     #[new]
-    fn new(px: f64, py: f64, pz: f64, e: f64) -> Self {
-        Self(Vec4::new(px, py, pz, e))
+    fn new(name: String) -> Self {
+        Self(Vec4::new(name))
     }
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(self.0 + other_vec.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
+    #[staticmethod]
+    fn sum(constituents: Vec<String>) -> Self {
+        Self(Vec4::sum(constituents))
     }
-    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(other_vec.0 + self.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
+    fn alias(&self, name: String) -> Vec<PyExpr> {
+        self.0
+            .alias(name)
+            .iter()
+            .map(|e| PyExpr(e.clone()))
+            .collect()
     }
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(self.0 - other_vec.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Subtraction with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
+    fn px(&self) -> PyExpr {
+        PyExpr(self.0.px())
     }
-    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        if let Ok(other_vec) = other.extract::<PyRef<Self>>() {
-            Ok(Self(other_vec.0 - self.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(self.clone())
-            } else {
-                Err(PyTypeError::new_err(
-                    "Subtraction with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
+    fn py(&self) -> PyExpr {
+        PyExpr(self.0.py())
     }
-    fn __mul__(&self, other: f64) -> Self {
-        Self(self.0 * other)
+    fn pz(&self) -> PyExpr {
+        PyExpr(self.0.pz())
     }
-    fn __rmul__(&self, other: f64) -> Self {
-        Self(self.0 * other)
+    fn e(&self) -> PyExpr {
+        PyExpr(self.0.e())
     }
-    fn __neg__(&self) -> PyResult<Self> {
-        Ok(Self(-self.0))
-    }
-    /// The magnitude of the 4-vector
-    ///
-    /// .. math:: |p| = \sqrt{E^2 - (p_x^2 + p_y^2 + p_z^2)}
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.m
-    ///
-    #[getter]
-    fn mag(&self) -> f64 {
-        self.0.mag()
-    }
-    /// The squared magnitude of the 4-vector
-    ///
-    /// .. math:: |p|^2 = E^2 - (p_x^2 + p_y^2 + p_z^2)
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.m2
-    ///
-    #[getter]
-    fn mag2(&self) -> f64 {
-        self.0.mag2()
-    }
-    /// The 3-vector part of this 4-vector
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.momentum
-    ///
-    #[getter]
     fn vec3(&self) -> PyVec3 {
         PyVec3(self.0.vec3())
     }
-    /// Boost the given 4-momentum according to a boost velocity.
-    ///
-    /// The resulting 4-momentum is equal to the original boosted to an inertial frame with
-    /// relative velocity :math:`\beta`:
-    ///
-    /// .. math:: \left[\vec{p}'; E'\right] = \left[ \vec{p} + \left(\frac{(\gamma - 1) \vec{p}\cdot\vec{\beta}}{\beta^2} + \gamma E\right)\vec{\beta}; \gamma E + \vec{\beta}\cdot\vec{p} \right]
-    ///
-    /// Parameters
-    /// ----------
-    /// beta : Vec3
-    ///     The relative velocity needed to get to the new frame from the current one
-    ///
-    /// Returns
-    /// -------
-    /// Vec4
-    ///     The boosted 4-momentum
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.beta
-    /// Vec4.gamma
-    ///
-    fn boost(&self, beta: &PyVec3) -> Self {
-        Self(self.0.boost(&beta.0))
-    }
-    /// The energy associated with this vector
-    ///
-    #[getter]
-    fn e(&self) -> f64 {
-        self.0.e()
-    }
-    /// The t-component of this vector
-    ///
-    #[getter]
-    fn t(&self) -> f64 {
-        self.0.t
-    }
-    /// The x-component of this vector
-    ///
-    #[getter]
-    fn px(&self) -> f64 {
-        self.0.px()
-    }
-    /// The x-component of this vector
-    ///
-    #[getter]
-    fn x(&self) -> f64 {
-        self.0.x
-    }
-
-    /// The y-component of this vector
-    ///
-    #[getter]
-    fn py(&self) -> f64 {
-        self.0.py()
-    }
-    /// The y-component of this vector
-    ///
-    #[getter]
-    fn y(&self) -> f64 {
-        self.0.y
-    }
-    /// The z-component of this vector
-    ///
-    #[getter]
-    fn pz(&self) -> f64 {
-        self.0.pz()
-    }
-    /// The z-component of this vector
-    ///
-    #[getter]
-    fn z(&self) -> f64 {
-        self.0.z
-    }
-    /// The 3-momentum part of this 4-momentum
-    ///
-    #[getter]
-    fn momentum(&self) -> PyVec3 {
-        PyVec3(self.0.momentum())
-    }
-    /// The relativistic gamma factor
-    ///
-    /// .. math:: \gamma = \frac{1}{\sqrt{1 - \beta^2}}
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.beta
-    /// Vec4.boost
-    ///
-    #[getter]
-    fn gamma(&self) -> f64 {
-        self.0.gamma()
-    }
-    /// The velocity 3-vector
-    ///
-    /// .. math:: \vec{\beta} = \frac{\vec{p}}{E}
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.gamma
-    /// Vec4.boost
-    ///
-    #[getter]
     fn beta(&self) -> PyVec3 {
         PyVec3(self.0.beta())
     }
-    /// The invariant mass associated with the four-momentum
-    ///
-    /// .. math:: m = \sqrt{E^2 - (p_x^2 + p_y^2 + p_z^2)}
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.mag
-    ///
-    #[getter]
-    fn m(&self) -> f64 {
-        self.0.m()
+    fn gamma(&self) -> PyExpr {
+        PyExpr(self.0.gamma())
     }
-    /// The square of the invariant mass associated with the four-momentum
-    ///
-    /// .. math:: m^2 = E^2 - (p_x^2 + p_y^2 + p_z^2)
-    ///
-    /// See Also
-    /// --------
-    /// Vec4.mag2
-    ///
-    #[getter]
-    fn m2(&self) -> f64 {
-        self.0.m2()
+    fn mag2(&self) -> PyExpr {
+        PyExpr(self.0.mag2())
     }
-    /// Convert the 4-vector to a `numpy` array.
-    ///
-    /// Returns
-    /// -------
-    /// numpy_vec: array_like
-    ///     A ``numpy`` array built from the components of this ``Vec4``
-    ///
-    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        PyArray1::from_vec(py, self.0.into())
+    fn mag(&self) -> PyExpr {
+        PyExpr(self.0.mag())
     }
-    /// Convert an array into a 4-vector.
-    ///
-    /// Parameters
-    /// ----------
-    /// array_like
-    ///     An array containing the components of this ``Vec4``
-    ///
-    /// Returns
-    /// -------
-    /// laddu_vec: Vec4
-    ///     A copy of the input array as a ``laddu`` vector
-    ///
-    #[staticmethod]
-    fn from_array(array: Vec<f64>) -> Self {
-        Self::new(array[0], array[1], array[2], array[3])
+    fn boost(&self, beta: PyVec3) -> Self {
+        Self(self.0.boost(&beta.0))
     }
-    fn __str__(&self) -> String {
-        format!("{}", self.0)
+    fn add(&self, other: &Self) -> Self {
+        Self(self.0.add(&other.0))
     }
-    fn __repr__(&self) -> String {
-        self.0.to_p4_string()
+    fn sub(&self, other: &Self) -> Self {
+        Self(self.0.sub(&other.0))
+    }
+    fn neg(&self) -> Self {
+        Self(self.0.neg())
+    }
+    fn __add__(&self, other: &Self) -> Self {
+        Self(self.0.add(&other.0))
+    }
+    fn __sub__(&self, other: &Self) -> Self {
+        Self(self.0.sub(&other.0))
+    }
+    fn __neg__(&self) -> Self {
+        self.neg()
     }
 }

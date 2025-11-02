@@ -4,8 +4,7 @@ use num::{complex::Complex64, Integer};
 use polars::prelude::*;
 use std::f64::consts::PI;
 
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
+use crate::utils::vectorize;
 
 fn alp_pos_m(l: usize, m: usize, x: f64) -> f64 {
     let mut p = 1.0;
@@ -130,406 +129,64 @@ pub fn complex_blatt_weisskopf(m0: f64, m1: f64, m2: f64, l: usize) -> Complex64
     }
 }
 
-// ---------- shared naming constants ----------
-const RE_SUFFIX: &str = " real";
-const IM_SUFFIX: &str = " imag";
-
-const NAME_CHI_PLUS: &str = "chi_plus";
-const NAME_CHI_MINUS: &str = "chi_minus";
-const NAME_RHO: &str = "rho";
-const NAME_Q: &str = "q";
-
-// ---------- tiny helper ----------
-#[inline]
-fn pack_struct(base: &str, re: Series, im: Series) -> PolarsResult<Column> {
-    debug_assert_eq!(re.len(), im.len());
-    let fields = [re, im];
-    let sc = StructChunked::from_series(base.into(), fields[0].len(), fields.iter())?;
-    Ok(sc.into_series().into())
+pub fn spherical_harmonic_polars(l: usize, m: isize, costheta: Expr, phi: Expr) -> (Expr, Expr) {
+    let base = format!("Y{l}{m}");
+    vectorize::<Complex64, _, _>(base, [costheta, phi], move |row| {
+        spherical_harmonic(l, m, row[0], row[1])
+    })
+    .as_cscalar()
 }
 
-// ============================================================
-// spherical_harmonic (complex)  base = "Y{l}{m}"
-// ============================================================
-pub fn spherical_harmonic_polars(l: usize, m: isize, costheta: Expr, phi: Expr) -> Expr {
-    let base = format!("Y{}{}", l, m);
-    let base_fn = base.clone();
-    let base_schema = base.clone();
-    let re_name = format!("{base}{RE_SUFFIX}");
-    let im_name = format!("{base}{IM_SUFFIX}");
-    let re_name_fn = re_name.clone();
-    let im_name_fn = im_name.clone();
-
-    map_multiple(
-        move |cols: &mut [Column]| {
-            let ct = cols[0].f64()?;
-            let ph = cols[1].f64()?;
-            if ct.null_count() + ph.null_count() != 0 {
-                polars_bail!(ComputeError: "spherical_harmonic_polars: nulls not supported");
-            }
-            let ct = ct.cont_slice()?;
-            let ph = ph.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..ct.len())
-                .into_par_iter()
-                .map(|i| {
-                    let z = spherical_harmonic(l, m, ct[i], ph[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-            #[cfg(not(feature = "rayon"))]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..ct.len())
-                .into_iter()
-                .map(|i| {
-                    let z = spherical_harmonic(l, m, ct[i], ph[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-
-            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
-            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
-            pack_struct(&base_fn, s_re, s_im)
-        },
-        [costheta, phi],
-        move |_schema, _inputs| {
-            Ok(Field::new(
-                base_schema.clone().into(),
-                DataType::Struct(vec![
-                    Field::new(re_name.clone().into(), DataType::Float64),
-                    Field::new(im_name.clone().into(), DataType::Float64),
-                ]),
-            ))
-        },
-    )
-    .alias(&base)
-}
-
-// ============================================================
-// chi_plus / chi_minus (real)  base = const
-// ============================================================
 pub fn chi_plus_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
-    map_multiple(
-        |cols: &mut [Column]| {
-            let ss = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if ss.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "chi_plus_polars: nulls not supported");
-            }
-            let ss = ss.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let out: Vec<f64> = (0..ss.len())
-                .into_par_iter()
-                .map(|i| chi_plus(ss[i], a[i], b[i]))
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let out: Vec<f64> = (0..ss.len())
-                .into_iter()
-                .map(|i| chi_plus(ss[i], a[i], b[i]))
-                .collect();
-
-            Ok(Float64Chunked::from_vec(NAME_CHI_PLUS.into(), out)
-                .into_series()
-                .into())
-        },
-        [s, m1, m2],
-        |_schema, _inputs| Ok(Field::new(NAME_CHI_PLUS.into(), DataType::Float64)),
-    )
-    .alias(NAME_CHI_PLUS)
+    let base = "chi_plus";
+    vectorize::<f64, _, _>(base, [s, m1, m2], move |row| {
+        chi_plus(row[0], row[1], row[2])
+    })
+    .as_scalar()
 }
 
 pub fn chi_minus_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
-    map_multiple(
-        |cols: &mut [Column]| {
-            let ss = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if ss.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "chi_minus_polars: nulls not supported");
-            }
-            let ss = ss.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let out: Vec<f64> = (0..ss.len())
-                .into_par_iter()
-                .map(|i| chi_minus(ss[i], a[i], b[i]))
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let out: Vec<f64> = (0..ss.len())
-                .into_iter()
-                .map(|i| chi_minus(ss[i], a[i], b[i]))
-                .collect();
-
-            Ok(Float64Chunked::from_vec(NAME_CHI_MINUS.into(), out)
-                .into_series()
-                .into())
-        },
-        [s, m1, m2],
-        |_schema, _inputs| Ok(Field::new(NAME_CHI_MINUS.into(), DataType::Float64)),
-    )
-    .alias(NAME_CHI_MINUS)
+    let base = "chi_minus";
+    vectorize::<f64, _, _>(base, [s, m1, m2], move |row| {
+        chi_minus(row[0], row[1], row[2])
+    })
+    .as_scalar()
 }
-
-// ============================================================
-// rho (complex)  base = const "rho"
-// ============================================================
-pub fn rho_polars(s: Expr, m1: Expr, m2: Expr) -> Expr {
-    // const base; dynamic field names derived once
-    let base = NAME_RHO.to_string();
-    let base_fn = base.clone();
-    let base_schema = base.clone();
-    let re_name = format!("{base}{RE_SUFFIX}");
-    let im_name = format!("{base}{IM_SUFFIX}");
-    let re_name_fn = re_name.clone();
-    let im_name_fn = im_name.clone();
-
-    map_multiple(
-        move |cols: &mut [Column]| {
-            let ss = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if ss.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "rho_polars: nulls not supported");
-            }
-            let ss = ss.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..ss.len())
-                .into_par_iter()
-                .map(|i| {
-                    let z = rho(ss[i], a[i], b[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-            #[cfg(not(feature = "rayon"))]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..ss.len())
-                .into_iter()
-                .map(|i| {
-                    let z = rho(ss[i], a[i], b[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-
-            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
-            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
-            pack_struct(&base_fn, s_re, s_im)
-        },
-        [s, m1, m2],
-        move |_schema, _inputs| {
-            Ok(Field::new(
-                base_schema.clone().into(),
-                DataType::Struct(vec![
-                    Field::new(re_name.clone().into(), DataType::Float64),
-                    Field::new(im_name.clone().into(), DataType::Float64),
-                ]),
-            ))
-        },
-    )
-    .alias(&base)
+pub fn rho_polars(s: Expr, m1: Expr, m2: Expr) -> (Expr, Expr) {
+    let base = "rho";
+    vectorize::<Complex64, _, _>(base, [s, m1, m2], move |row| rho(row[0], row[1], row[2]))
+        .as_cscalar()
 }
-
-// ============================================================
-// breakup_momentum (real) + complex_breakup_momentum (complex)
-// base = const "q" for both
-// ============================================================
 pub fn breakup_momentum_polars(m0: Expr, m1: Expr, m2: Expr) -> Expr {
-    map_multiple(
-        |cols: &mut [Column]| {
-            let x0 = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if x0.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "breakup_momentum_polars: nulls not supported");
-            }
-            let x0 = x0.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let out: Vec<f64> = (0..x0.len())
-                .into_par_iter()
-                .map(|i| breakup_momentum(x0[i], a[i], b[i]))
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let out: Vec<f64> = (0..x0.len())
-                .into_iter()
-                .map(|i| breakup_momentum(x0[i], a[i], b[i]))
-                .collect();
-
-            Ok(Float64Chunked::from_vec(NAME_Q.into(), out)
-                .into_series()
-                .into())
-        },
-        [m0, m1, m2],
-        |_schema, _inputs| Ok(Field::new(NAME_Q.into(), DataType::Float64)),
-    )
-    .alias(NAME_Q)
+    let base = "q";
+    vectorize::<f64, _, _>(base, [m0, m1, m2], move |row| {
+        breakup_momentum(row[0], row[1], row[2])
+    })
+    .as_scalar()
 }
 
-pub fn complex_breakup_momentum_polars(m0: Expr, m1: Expr, m2: Expr) -> Expr {
-    // const base; dynamic field names derived once
-    let base = NAME_Q.to_string();
-    let base_fn = base.clone();
-    let base_schema = base.clone();
-    let re_name = format!("{base}{RE_SUFFIX}");
-    let im_name = format!("{base}{IM_SUFFIX}");
-    let re_name_fn = re_name.clone();
-    let im_name_fn = im_name.clone();
-
-    map_multiple(
-        move |cols: &mut [Column]| {
-            let x0 = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if x0.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "complex_breakup_momentum_polars: nulls not supported");
-            }
-            let x0 = x0.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
-                .into_par_iter()
-                .map(|i| {
-                    let z = complex_breakup_momentum(x0[i], a[i], b[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-            #[cfg(not(feature = "rayon"))]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
-                .into_iter()
-                .map(|i| {
-                    let z = complex_breakup_momentum(x0[i], a[i], b[i]);
-                    (z.re, z.im)
-                })
-                .unzip();
-
-            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
-            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
-            pack_struct(&base_fn, s_re, s_im)
-        },
-        [m0, m1, m2],
-        move |_schema, _inputs| {
-            Ok(Field::new(
-                base_schema.clone().into(),
-                DataType::Struct(vec![
-                    Field::new(re_name.clone().into(), DataType::Float64),
-                    Field::new(im_name.clone().into(), DataType::Float64),
-                ]),
-            ))
-        },
-    )
-    .alias(&base)
+pub fn complex_breakup_momentum_polars(m0: Expr, m1: Expr, m2: Expr) -> (Expr, Expr) {
+    let base = "q";
+    vectorize::<Complex64, _, _>(base, [m0, m1, m2], move |row| {
+        complex_breakup_momentum(row[0], row[1], row[2])
+    })
+    .as_cscalar()
 }
 
-// ============================================================
-// blatt_weisskopf (real) + complex_blatt_weisskopf (complex)
-// base = "B_l{l}"
-// ============================================================
 pub fn blatt_weisskopf_polars(m0: Expr, m1: Expr, m2: Expr, l: usize) -> Expr {
-    use polars::lazy::dsl::map_multiple;
-
-    let base = format!("B_l{}", l);
-    let base_fn = base.clone(); // used inside compute closure
-    let base_schema = base.clone(); // used inside schema closure
-    let base_alias = base.clone(); // used after map_multiple
-
-    map_multiple(
-        move |cols: &mut [Column]| {
-            let x0 = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if x0.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "blatt_weisskopf_polars: nulls not supported");
-            }
-            let x0 = x0.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let out: Vec<f64> = (0..x0.len())
-                .into_par_iter()
-                .map(|i| blatt_weisskopf(x0[i], a[i], b[i], l))
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let out: Vec<f64> = (0..x0.len())
-                .into_iter()
-                .map(|i| blatt_weisskopf(x0[i], a[i], b[i], l))
-                .collect();
-
-            Ok(Float64Chunked::from_vec(base_fn.clone().into(), out)
-                .into_series()
-                .into())
-        },
-        [m0, m1, m2],
-        move |_schema, _inputs| Ok(Field::new(base_schema.clone().into(), DataType::Float64)),
-    )
-    .alias(&base_alias)
+    let base = format!("B_l{l}");
+    vectorize::<f64, _, _>(base, [m0, m1, m2], move |row| {
+        blatt_weisskopf(row[0], row[1], row[2], l)
+    })
+    .as_scalar()
 }
 
-pub fn complex_blatt_weisskopf_polars(m0: Expr, m1: Expr, m2: Expr, l: usize) -> Expr {
-    let base = format!("B_l{}", l);
-    let base_fn = base.clone();
-    let base_schema = base.clone();
-    let re_name = format!("{base}{RE_SUFFIX}");
-    let im_name = format!("{base}{IM_SUFFIX}");
-    let re_name_fn = re_name.clone();
-    let im_name_fn = im_name.clone();
-
-    map_multiple(
-        move |cols: &mut [Column]| {
-            let x0 = cols[0].f64()?;
-            let a = cols[1].f64()?;
-            let b = cols[2].f64()?;
-            if x0.null_count() + a.null_count() + b.null_count() != 0 {
-                polars_bail!(ComputeError: "complex_blatt_weisskopf_polars: nulls not supported");
-            }
-            let x0 = x0.cont_slice()?;
-            let a = a.cont_slice()?;
-            let b = b.cont_slice()?;
-
-            #[cfg(feature = "rayon")]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
-                .into_par_iter()
-                .map(|i| {
-                    let z = complex_blatt_weisskopf(x0[i], a[i], b[i], l);
-                    (z.re, z.im)
-                })
-                .unzip();
-            #[cfg(not(feature = "rayon"))]
-            let (re, im): (Vec<f64>, Vec<f64>) = (0..x0.len())
-                .into_iter()
-                .map(|i| {
-                    let z = complex_blatt_weisskopf(x0[i], a[i], b[i], l);
-                    (z.re, z.im)
-                })
-                .unzip();
-
-            let s_re = Float64Chunked::from_vec(re_name_fn.clone().into(), re).into_series();
-            let s_im = Float64Chunked::from_vec(im_name_fn.clone().into(), im).into_series();
-            pack_struct(&base_fn, s_re, s_im)
-        },
-        [m0, m1, m2],
-        move |_schema, _inputs| {
-            Ok(Field::new(
-                base_schema.clone().into(),
-                DataType::Struct(vec![
-                    Field::new(re_name.clone().into(), DataType::Float64),
-                    Field::new(im_name.clone().into(), DataType::Float64),
-                ]),
-            ))
-        },
-    )
-    .alias(&base)
+pub fn complex_blatt_weisskopf_polars(m0: Expr, m1: Expr, m2: Expr, l: usize) -> (Expr, Expr) {
+    let base = format!("B_l{l}");
+    vectorize::<Complex64, _, _>(base, [m0, m1, m2], move |row| {
+        complex_blatt_weisskopf(row[0], row[1], row[2], l)
+    })
+    .as_cscalar()
 }
 
 #[cfg(test)]

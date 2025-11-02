@@ -8,6 +8,7 @@ use laddu_core::{
     LadduError,
 };
 use num::complex::Complex64;
+use numpy::IntoPyArray;
 use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,
@@ -537,8 +538,8 @@ impl PyModel {
     /// expression. These parameters will have no effect on evaluation, but they must be
     /// included in function calls.
     ///
-    fn load(&self, dataset: &PyDataset) -> PyEvaluator {
-        PyEvaluator(self.0.load(&dataset.0))
+    fn load(&self, dataset: &PyDataset) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.load(&dataset.0)?))
     }
     #[new]
     fn new() -> Self {
@@ -717,18 +718,16 @@ impl PyEvaluator {
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate(&parameters)),
-            ))
+            Ok(ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or_default())
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| self.0.evaluate(&parameters))?
+                .into_pyarray(py))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(PyArray1::from_slice(py, &self.0.evaluate(&parameters)))
+            Ok(self.0.evaluate(&parameters)?.into_pyarray(py))
         }
     }
     /// Evaluate the stored Expression over a subset of the stored Dataset
@@ -762,21 +761,19 @@ impl PyEvaluator {
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_batch(&parameters, &indices)),
-            ))
+            Ok(ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or_default())
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| self.0.evaluate_batch(&parameters, &indices))?
+                .into_pyarray(py))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                &self.0.evaluate_batch(&parameters, &indices),
-            ))
+            Ok(self
+                .0
+                .evaluate_batch(&parameters, &indices)?
+                .into_pyarray(py))
         }
     }
     /// Evaluate the gradient of the stored Expression over the stored Dataset
@@ -814,13 +811,10 @@ impl PyEvaluator {
                     .num_threads(threads.unwrap_or_else(num_cpus::get))
                     .build()
                     .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .evaluate_gradient(&parameters)
-                            .iter()
-                            .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex64>>>()
-                    }),
+                    .install(|| self.0.evaluate_gradient(&parameters))?
+                    .iter()
+                    .map(|g| g.data.as_vec().to_vec())
+                    .collect::<Vec<Vec<_>>>(),
             )
             .map_err(LadduError::NumpyError)?)
         }
@@ -830,10 +824,10 @@ impl PyEvaluator {
                 py,
                 &self
                     .0
-                    .evaluate_gradient(&parameters)
+                    .evaluate_gradient(&parameters)?
                     .iter()
-                    .map(|grad| grad.data.as_vec().to_vec())
-                    .collect::<Vec<Vec<Complex64>>>(),
+                    .map(|g| g.data.as_vec().to_vec())
+                    .collect::<Vec<Vec<_>>>(),
             )
             .map_err(LadduError::NumpyError)?)
         }
@@ -876,13 +870,10 @@ impl PyEvaluator {
                     .num_threads(threads.unwrap_or_else(num_cpus::get))
                     .build()
                     .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .evaluate_gradient_batch(&parameters, &indices)
-                            .iter()
-                            .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex64>>>()
-                    }),
+                    .install(|| self.0.evaluate_gradient_batch(&parameters, &indices))?
+                    .iter()
+                    .map(|g| g.data.as_vec().to_vec())
+                    .collect::<Vec<Vec<_>>>(),
             )
             .map_err(LadduError::NumpyError)?)
         }
@@ -892,9 +883,9 @@ impl PyEvaluator {
                 py,
                 &self
                     .0
-                    .evaluate_gradient_batch(&parameters, &indices)
+                    .evaluate_gradient_batch(&parameters, &indices)?
                     .iter()
-                    .map(|grad| grad.data.as_vec().to_vec())
+                    .map(|g| g.data.as_vec().to_vec())
                     .collect::<Vec<Vec<Complex64>>>(),
             )
             .map_err(LadduError::NumpyError)?)

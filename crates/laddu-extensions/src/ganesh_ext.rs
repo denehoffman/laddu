@@ -12,7 +12,7 @@ use ganesh::{
     core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status},
 };
-use laddu_core::LadduError;
+use laddu_core::{LadduError, LadduResult};
 use nalgebra::DVector;
 #[cfg(feature = "rayon")]
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -192,20 +192,15 @@ where
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -214,34 +209,29 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for NLL {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -338,20 +328,15 @@ impl NLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -360,34 +345,29 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -402,7 +382,7 @@ impl StochasticNLL {
     pub fn minimize(
         &self,
         settings: MinimizationSettings<Self>,
-    ) -> Result<MinimizationSummary, LadduError> {
+    ) -> LadduResult<MinimizationSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MinimizationSettings::LBFGSB {
@@ -455,7 +435,7 @@ impl StochasticNLL {
     ///
     /// This method may return an error if there was any problem constructing thread pools or
     /// evaluating the underlying model.
-    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> LadduResult<MCMCSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MCMCSettings::AIES {
@@ -484,20 +464,15 @@ impl StochasticNLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -506,34 +481,29 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -2193,7 +2163,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) {
-            Python::attach(|py| {
+            Python::with_gil(|py| {
                 self.0
                     .bind(py)
                     .call_method1(
@@ -2223,7 +2193,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) {
-            Python::attach(|py| {
+            Python::with_gil(|py| {
                 self.0
                     .bind(py)
                     .call_method1(
@@ -2252,7 +2222,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) {
-            Python::attach(|py| {
+            Python::with_gil(|py| {
                 self.0
                     .bind(py)
                     .call_method1(
@@ -2297,7 +2267,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) -> ControlFlow<()> {
-            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+            Python::with_gil(|py| -> PyResult<ControlFlow<()>> {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,
@@ -2334,7 +2304,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) -> ControlFlow<()> {
-            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+            Python::with_gil(|py| -> PyResult<ControlFlow<()>> {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,
@@ -2371,7 +2341,7 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) -> ControlFlow<()> {
-            Python::attach(|py| -> PyResult<ControlFlow<()>> {
+            Python::with_gil(|py| -> PyResult<ControlFlow<()>> {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,

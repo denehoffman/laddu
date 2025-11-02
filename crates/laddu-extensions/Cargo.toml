@@ -28,16 +28,15 @@ numpy = { workspace = true, optional = true }
 rapidhash = { workspace = true }
 rayon = { workspace = true, optional = true }
 parking_lot = { workspace = true }
-pyo3 = { workspace = true, features = [
-  "num-complex",
-  "abi3-py37",
-], optional = true }
+polars = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+pyo3-polars = { workspace = true, optional = true }
 
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
 python = ["laddu-python", "pyo3", "numpy", "num_cpus"]
-pyo3 = ["dep:pyo3"]
+pyo3 = ["dep:pyo3", "dep:pyo3-polars"]
 laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]
 num_cpus = ["dep:num_cpus"]

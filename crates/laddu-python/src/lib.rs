@@ -168,9 +168,9 @@ pub mod mpi {
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_rank() -> PyResult<Option<i32>> {
+    pub fn rank() -> PyResult<usize> {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::get_rank());
+        return Ok(laddu_core::mpi::rank());
         #[cfg(not(feature = "mpi"))]
         return Err(PyModuleNotFoundError::new_err(
             "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
@@ -186,9 +186,9 @@ pub mod mpi {
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_size() -> PyResult<Option<i32>> {
+    pub fn size() -> PyResult<usize> {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::get_size());
+        return Ok(laddu_core::mpi::size());
         #[cfg(not(feature = "mpi"))]
         return Err(PyModuleNotFoundError::new_err(
             "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",

@@ -1,18 +1,28 @@
 use auto_ops::{impl_op_ex, impl_op_ex_commutative};
 use polars::prelude::*;
 
+#[derive(Clone)]
 pub struct Vec3([Expr; 3]);
+impl From<[Expr; 3]> for Vec3 {
+    fn from(value: [Expr; 3]) -> Self {
+        Self([
+            value[0].clone().cast(DataType::Float64),
+            value[1].clone().cast(DataType::Float64),
+            value[2].clone().cast(DataType::Float64),
+        ])
+    }
+}
 impl Vec3 {
     pub fn new<S: Into<PlSmallStr>>(name: S) -> Self {
         let name: PlSmallStr = name.into();
         Self([
-            col(format!("{}_x", name)),
-            col(format!("{}_y", name)),
-            col(format!("{}_z", name)),
+            col(format!("{}_x", name)).cast(DataType::Float64),
+            col(format!("{}_y", name)).cast(DataType::Float64),
+            col(format!("{}_z", name)).cast(DataType::Float64),
         ])
     }
-    pub fn alias<S: AsRef<str>>(&self, base: S) -> [Expr; 3] {
-        let b = base.as_ref();
+    pub fn alias<S: AsRef<str>>(&self, name: S) -> [Expr; 3] {
+        let b = name.as_ref();
         [
             self.0[0].clone().alias(format!("{b}_x")),
             self.0[1].clone().alias(format!("{b}_y")),
@@ -29,13 +39,13 @@ impl Vec3 {
         self.0[2].clone()
     }
 
-    pub fn with_mass(&self, mass: f64) -> Vec4 {
-        let e = (lit(mass.powi(2)) + self.mag2()).sqrt();
+    pub fn with_mass(&self, mass: &Expr) -> Vec4 {
+        let e = (mass.clone().pow(2) + self.mag2()).sqrt();
         Vec4([self.x(), self.y(), self.z(), e])
     }
 
-    pub fn with_energy(&self, energy: f64) -> Vec4 {
-        Vec4([self.x(), self.y(), self.z(), lit(energy)])
+    pub fn with_energy(&self, energy: &Expr) -> Vec4 {
+        Vec4([self.x(), self.y(), self.z(), energy.clone()])
     }
 
     pub fn dot(&self, other: &Self) -> Expr {
@@ -98,18 +108,32 @@ impl Vec3 {
             self.z() - other.clone(),
         ])
     }
-    pub fn scale(&self, other: &Expr) -> Self {
+    pub fn scalar_rsub(&self, other: &Expr) -> Self {
+        Self([
+            other.clone() - self.x(),
+            other.clone() - self.y(),
+            other.clone() - self.z(),
+        ])
+    }
+    pub fn mul(&self, other: &Expr) -> Self {
         Self([
             self.x() * other.clone(),
             self.y() * other.clone(),
             self.z() * other.clone(),
         ])
     }
-    pub fn unscale(&self, other: &Expr) -> Self {
+    pub fn div(&self, other: &Expr) -> Self {
         Self([
             self.x() / other.clone(),
             self.y() / other.clone(),
             self.z() / other.clone(),
+        ])
+    }
+    pub fn rdiv(&self, other: &Expr) -> Self {
+        Self([
+            other.clone() / self.x(),
+            other.clone() / self.y(),
+            other.clone() / self.z(),
         ])
     }
     pub fn neg(&self) -> Self {
@@ -121,19 +145,32 @@ impl_op_ex!(+ |a: &Vec3, b: &Vec3| -> Vec3 { a.add(b) });
 impl_op_ex!(-|a: &Vec3, b: &Vec3| -> Vec3 { a.sub(b) });
 impl_op_ex!(-|a: &Vec3| -> Vec3 { a.neg() });
 impl_op_ex_commutative!(+ |a: &Vec3, b: &Expr| -> Vec3 { a.scalar_add(b) });
-impl_op_ex_commutative!(-|a: &Vec3, b: &Expr| -> Vec3 { a.scalar_sub(b) });
-impl_op_ex_commutative!(*|a: &Vec3, b: &Expr| -> Vec3 { a.scale(b) });
-impl_op_ex!(/ |a: &Vec3, b: &Expr| -> Vec3 { a.unscale(b) });
+impl_op_ex!(-|a: &Vec3, b: &Expr| -> Vec3 { a.scalar_sub(b) });
+impl_op_ex!(-|a: &Expr, b: &Vec3| -> Vec3 { b.scalar_rsub(a) });
+impl_op_ex_commutative!(*|a: &Vec3, b: &Expr| -> Vec3 { a.mul(b) });
+impl_op_ex!(/ |a: &Vec3, b: &Expr| -> Vec3 { a.div(b) });
+impl_op_ex!(/ |a: &Expr, b: &Vec3| -> Vec3 { b.rdiv(a) });
 
+#[derive(Clone)]
 pub struct Vec4([Expr; 4]);
+impl From<[Expr; 4]> for Vec4 {
+    fn from(value: [Expr; 4]) -> Self {
+        Self([
+            value[0].clone().cast(DataType::Float64),
+            value[1].clone().cast(DataType::Float64),
+            value[2].clone().cast(DataType::Float64),
+            value[3].clone().cast(DataType::Float64),
+        ])
+    }
+}
 impl Vec4 {
     pub fn new<S: Into<PlSmallStr>>(name: S) -> Self {
         let name: PlSmallStr = name.into();
         Self([
-            col(format!("{}_px", name)),
-            col(format!("{}_py", name)),
-            col(format!("{}_pz", name)),
-            col(format!("{}_e", name)),
+            col(format!("{}_px", name)).cast(DataType::Float64),
+            col(format!("{}_py", name)).cast(DataType::Float64),
+            col(format!("{}_pz", name)).cast(DataType::Float64),
+            col(format!("{}_e", name)).cast(DataType::Float64),
         ])
     }
 
@@ -154,8 +191,8 @@ impl Vec4 {
         total
     }
 
-    pub fn alias<S: AsRef<str>>(&self, base: S) -> [Expr; 4] {
-        let b = base.as_ref();
+    pub fn alias<S: AsRef<str>>(&self, name: S) -> [Expr; 4] {
+        let b = name.as_ref();
         [
             self.0[0].clone().alias(format!("{b}_px")),
             self.0[1].clone().alias(format!("{b}_py")),
@@ -180,7 +217,7 @@ impl Vec4 {
         Vec3([self.px(), self.py(), self.pz()])
     }
     pub fn beta(&self) -> Vec3 {
-        self.vec3().unscale(&self.e())
+        self.vec3().div(&self.e())
     }
     pub fn gamma(&self) -> Expr {
         let e = self.e();
@@ -236,144 +273,160 @@ impl_op_ex!(-|a: &Vec4| -> Vec4 { a.neg() });
 
 #[cfg(test)]
 mod tests {
-    // use approx::{assert_abs_diff_eq, assert_relative_eq};
-    // use nalgebra::{Vector3, Vector4};
-    //
-    // use super::*;
-    //
-    // #[test]
-    // fn test_vec_sums() {
-    //     let df = df!(
-    //         "a_x" => [1.0],
-    //         "a_y" => [2.0],
-    //         "a_z" => [3.0],
-    //         "b_x" => [4.0],
-    //         "b_y" => [5.0],
-    //         "b_z" => [6.0],
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_three_to_four_momentum_conversion() {
-    //     let p3 = Vec3::new(1.0, 2.0, 3.0);
-    //     let target_p4 = Vec4::new(1.0, 2.0, 3.0, 10.0);
-    //     let p4_from_mass = p3.with_mass(target_p4.m());
-    //     assert_eq!(target_p4.e(), p4_from_mass.e());
-    //     assert_eq!(target_p4.px(), p4_from_mass.px());
-    //     assert_eq!(target_p4.py(), p4_from_mass.py());
-    //     assert_eq!(target_p4.pz(), p4_from_mass.pz());
-    //     let p4_from_energy = p3.with_energy(target_p4.e());
-    //     assert_eq!(target_p4.e(), p4_from_energy.e());
-    //     assert_eq!(target_p4.px(), p4_from_energy.px());
-    //     assert_eq!(target_p4.py(), p4_from_energy.py());
-    //     assert_eq!(target_p4.pz(), p4_from_energy.pz());
-    // }
-    //
-    // #[test]
-    // fn test_four_momentum_basics() {
-    //     let p = Vec4::new(3.0, 4.0, 5.0, 10.0);
-    //     assert_eq!(p.e(), 10.0);
-    //     assert_eq!(p.px(), 3.0);
-    //     assert_eq!(p.py(), 4.0);
-    //     assert_eq!(p.pz(), 5.0);
-    //     assert_eq!(p.momentum().px(), 3.0);
-    //     assert_eq!(p.momentum().py(), 4.0);
-    //     assert_eq!(p.momentum().pz(), 5.0);
-    //     assert_relative_eq!(p.beta().x, 0.3);
-    //     assert_relative_eq!(p.beta().y, 0.4);
-    //     assert_relative_eq!(p.beta().z, 0.5);
-    //     assert_relative_eq!(p.m2(), 50.0);
-    //     assert_relative_eq!(p.m(), f64::sqrt(50.0));
-    //     assert_eq!(
-    //         format!("{}", p.to_p4_string()),
-    //         "[e = 10.00000; p = (3.00000, 4.00000, 5.00000); m = 7.07107]"
-    //     );
-    //     assert_relative_eq!(Vec3::x().x, 1.0);
-    //     assert_relative_eq!(Vec3::x().y, 0.0);
-    //     assert_relative_eq!(Vec3::x().z, 0.0);
-    //     assert_relative_eq!(Vec3::y().x, 0.0);
-    //     assert_relative_eq!(Vec3::y().y, 1.0);
-    //     assert_relative_eq!(Vec3::y().z, 0.0);
-    //     assert_relative_eq!(Vec3::z().x, 0.0);
-    //     assert_relative_eq!(Vec3::z().y, 0.0);
-    //     assert_relative_eq!(Vec3::z().z, 1.0);
-    //     assert_relative_eq!(Vec3::default().x, 0.0);
-    //     assert_relative_eq!(Vec3::default().y, 0.0);
-    //     assert_relative_eq!(Vec3::default().z, 0.0);
-    // }
-    //
-    // #[test]
-    // fn test_three_momentum_basics() {
-    //     let p = Vec4::new(3.0, 4.0, 5.0, 10.0);
-    //     let q = Vec4::new(1.2, -3.4, 7.6, 0.0);
-    //     let p3_view = p.momentum();
-    //     let q3_view = q.momentum();
-    //     assert_eq!(p3_view.px(), 3.0);
-    //     assert_eq!(p3_view.py(), 4.0);
-    //     assert_eq!(p3_view.pz(), 5.0);
-    //     assert_relative_eq!(p3_view.mag2(), 50.0);
-    //     assert_relative_eq!(p3_view.mag(), f64::sqrt(50.0));
-    //     assert_relative_eq!(p3_view.costheta(), 5.0 / f64::sqrt(50.0));
-    //     assert_relative_eq!(p3_view.theta(), f64::acos(5.0 / f64::sqrt(50.0)));
-    //     assert_relative_eq!(p3_view.phi(), f64::atan2(4.0, 3.0));
-    //     assert_relative_eq!(
-    //         p3_view.unit(),
-    //         Vec3::new(
-    //             3.0 / f64::sqrt(50.0),
-    //             4.0 / f64::sqrt(50.0),
-    //             5.0 / f64::sqrt(50.0)
-    //         )
-    //     );
-    //     assert_relative_eq!(p3_view.cross(&q3_view), Vec3::new(47.4, -16.8, -15.0));
-    // }
-    //
-    // #[test]
-    // fn test_vec_equality() {
-    //     let p = Vec3::new(1.1, 2.2, 3.3);
-    //     let p2 = Vec3::new(1.1 * 2.0, 2.2 * 2.0, 3.3 * 2.0);
-    //     assert_abs_diff_eq!(p * 2.0, p2);
-    //     assert_relative_eq!(p * 2.0, p2);
-    //     let p = Vec4::new(1.1, 2.2, 3.3, 10.0);
-    //     let p2 = Vec4::new(1.1 * 2.0, 2.2 * 2.0, 3.3 * 2.0, 10.0);
-    //     assert_abs_diff_eq!(p * 2.0, p2);
-    //     assert_relative_eq!(p * 2.0, p2);
-    // }
-    //
-    // #[test]
-    // fn test_boost_com() {
-    //     let p = Vec4::new(3.0, 4.0, 5.0, 10.0);
-    //     let zero = p.boost(&-p.beta()).momentum();
-    //     assert_relative_eq!(zero, Vec3::zero());
-    // }
-    //
-    // #[test]
-    // fn test_boost() {
-    //     let p0 = Vec4::new(0.0, 0.0, 0.0, 1.0);
-    //     assert_relative_eq!(p0.gamma(), 1.0);
-    //     let p0 = Vec4::new(f64::sqrt(3.0) / 2.0, 0.0, 0.0, 1.0);
-    //     assert_relative_eq!(p0.gamma(), 2.0);
-    //     let p1 = Vec4::new(3.0, 4.0, 5.0, 10.0);
-    //     let p2 = Vec4::new(3.4, 2.3, 1.2, 9.0);
-    //     let p1_boosted = p1.boost(&-p2.beta());
-    //     assert_relative_eq!(
-    //         p1_boosted.e(),
-    //         8.157632144622882,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    //     assert_relative_eq!(
-    //         p1_boosted.px(),
-    //         -0.6489200627053444,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    //     assert_relative_eq!(
-    //         p1_boosted.py(),
-    //         1.5316128987581492,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    //     assert_relative_eq!(
-    //         p1_boosted.pz(),
-    //         3.712145860221643,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
+    use approx::assert_relative_eq;
+
+    use super::*;
+    use crate::tests::val1;
+
+    /// Add {name}_x,{name}_y,{name}_z (Float64) with literal values to a DataFrame.
+    pub fn add_vec3(df: &mut DataFrame, name: &str, v: [f64; 3]) -> Vec3 {
+        let [x, y, z] = v;
+        df.with_column(Series::new(format!("{}_x", name).into(), &[x]))
+            .unwrap();
+        df.with_column(Series::new(format!("{}_y", name).into(), &[y]))
+            .unwrap();
+        df.with_column(Series::new(format!("{}_z", name).into(), &[z]))
+            .unwrap();
+        Vec3::new(name)
+    }
+
+    /// Add {name}_x,{name}_y,{name}_z,{name}_e (Float64) with literal values to a DataFrame.
+    pub fn add_vec4(df: &mut DataFrame, name: &str, v: [f64; 4]) -> Vec4 {
+        let [px, py, pz, e] = v;
+        df.with_column(Series::new(format!("{}_px", name).into(), &[px]))
+            .unwrap();
+        df.with_column(Series::new(format!("{}_py", name).into(), &[py]))
+            .unwrap();
+        df.with_column(Series::new(format!("{}_pz", name).into(), &[pz]))
+            .unwrap();
+        df.with_column(Series::new(format!("{}_e", name).into(), &[e]))
+            .unwrap();
+        Vec4::new(name)
+    }
+
+    #[test]
+    fn test_vec_sums() {
+        let mut df = DataFrame::empty();
+        let a = add_vec3(&mut df, "a", [1.0, 2.0, 3.0]);
+        let b = add_vec3(&mut df, "b", [4.0, 5.0, 6.0]);
+        let lf = df.lazy();
+        let res = lf.with_columns((a + b).alias("result")).collect().unwrap();
+        assert_eq!(val1(&res, "result_x"), 5.0);
+        assert_eq!(val1(&res, "result_y"), 7.0);
+        assert_eq!(val1(&res, "result_z"), 9.0);
+    }
+    #[test]
+    fn test_three_to_four_momentum_conversion() {
+        let mut df = DataFrame::empty();
+        let p3 = add_vec3(&mut df, "p3", [1.0, 2.0, 3.0]);
+        let target_p4 = add_vec4(&mut df, "target_p4", [1.0, 2.0, 3.0, 10.0]);
+
+        let p4_from_mass = p3.with_mass(&target_p4.mag());
+        let p4_from_energy = p3.with_energy(&target_p4.e());
+        let lf = df.lazy();
+        let res = lf
+            .with_columns(p4_from_mass.alias("p4_from_mass"))
+            .with_columns(p4_from_energy.alias("p4_from_energy"))
+            .collect()
+            .unwrap();
+        assert_eq!(val1(&res, "target_p4_e"), val1(&res, "p4_from_mass_e"));
+        assert_eq!(val1(&res, "target_p4_px"), val1(&res, "p4_from_mass_px"));
+        assert_eq!(val1(&res, "target_p4_py"), val1(&res, "p4_from_mass_py"));
+        assert_eq!(val1(&res, "target_p4_pz"), val1(&res, "p4_from_mass_pz"));
+        assert_eq!(val1(&res, "target_p4_e"), val1(&res, "p4_from_energy_e"));
+        assert_eq!(val1(&res, "target_p4_px"), val1(&res, "p4_from_energy_px"));
+        assert_eq!(val1(&res, "target_p4_py"), val1(&res, "p4_from_energy_py"));
+        assert_eq!(val1(&res, "target_p4_pz"), val1(&res, "p4_from_energy_pz"));
+    }
+    #[test]
+    fn test_four_momentum_basics() {
+        let mut df = DataFrame::empty();
+        let p = add_vec4(&mut df, "p", [3.0, 4.0, 5.0, 10.0]);
+        let lf = df.lazy();
+        let res = lf
+            .with_columns(p.vec3().alias("p"))
+            .with_columns(p.beta().alias("beta"))
+            .with_columns([
+                p.mag().alias("m"),
+                p.mag2().alias("m2"),
+                p.gamma().alias("gamma"),
+            ])
+            .collect()
+            .unwrap();
+        assert_eq!(val1(&res, "p_e"), 10.0);
+        assert_eq!(val1(&res, "p_px"), 3.0);
+        assert_eq!(val1(&res, "p_py"), 4.0);
+        assert_eq!(val1(&res, "p_pz"), 5.0);
+        assert_eq!(val1(&res, "p_x"), 3.0);
+        assert_eq!(val1(&res, "p_y"), 4.0);
+        assert_eq!(val1(&res, "p_z"), 5.0);
+        assert_relative_eq!(val1(&res, "beta_x"), 0.3);
+        assert_relative_eq!(val1(&res, "beta_y"), 0.4);
+        assert_relative_eq!(val1(&res, "beta_z"), 0.5);
+        assert_relative_eq!(val1(&res, "m"), 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "m2"), 50.0);
+        assert_relative_eq!(val1(&res, "gamma"), 2.0_f64.sqrt());
+    }
+    #[test]
+    fn test_three_momentum_basics() {
+        let mut df = DataFrame::empty();
+        let p = add_vec4(&mut df, "p", [3.0, 4.0, 5.0, 10.0]);
+        let q = add_vec4(&mut df, "q", [1.2, -3.4, 7.6, 0.0]);
+        let p3 = p.vec3();
+        let q3 = q.vec3();
+        let lf = df.lazy();
+        let res = lf
+            .with_columns([
+                p3.mag().alias("m"),
+                p3.mag2().alias("m2"),
+                p3.costheta().alias("costheta"),
+                p3.theta().alias("theta"),
+                p3.phi().alias("phi"),
+            ])
+            .with_columns(p3.unit().alias("u3"))
+            .with_columns(p3.cross(&q3).alias("cross"))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(val1(&res, "m"), 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "m2"), 50.0);
+        assert_relative_eq!(val1(&res, "costheta"), 5.0 / 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "theta"), (5.0 / 50.0_f64.sqrt()).acos());
+        assert_relative_eq!(val1(&res, "phi"), 4.0_f64.atan2(3.0));
+        assert_relative_eq!(val1(&res, "u3_x"), 3.0 / 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "u3_y"), 4.0 / 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "u3_z"), 5.0 / 50.0_f64.sqrt());
+        assert_relative_eq!(val1(&res, "cross_x"), 47.4);
+        assert_relative_eq!(val1(&res, "cross_y"), -16.8);
+        assert_relative_eq!(val1(&res, "cross_z"), -15.0);
+    }
+
+    #[test]
+    fn test_boost_com() {
+        let mut df = DataFrame::empty();
+        let p = add_vec4(&mut df, "p", [3.0, 4.0, 5.0, 10.0]);
+        let lf = df.lazy();
+        let res = lf
+            .with_columns(p.boost(&-p.beta()).vec3().alias("zero"))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(val1(&res, "zero_x"), 0.0);
+        assert_relative_eq!(val1(&res, "zero_y"), 0.0);
+        assert_relative_eq!(val1(&res, "zero_z"), 0.0);
+    }
+
+    #[test]
+    fn test_boost() {
+        let mut df = DataFrame::empty();
+        let pa = add_vec4(&mut df, "pa", [3.0, 4.0, 5.0, 10.0]);
+        let pb = add_vec4(&mut df, "pb", [3.4, 2.3, 1.2, 9.0]);
+        let lf = df.lazy();
+        let res = lf
+            .with_columns(pa.boost(&-pb.beta()).alias("boosted"))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(val1(&res, "boosted_e"), 8.157632144622882);
+        assert_relative_eq!(val1(&res, "boosted_px"), -0.6489200627053444);
+        assert_relative_eq!(val1(&res, "boosted_py"), 1.5316128987581492);
+        assert_relative_eq!(val1(&res, "boosted_pz"), 3.712145860221643);
+    }
 }

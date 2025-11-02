@@ -1,14 +1,21 @@
-use laddu::{
-    amplitudes::{parameter, zlm::Zlm, Manager},
+use std::time::Duration;
+
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use fastrand_contrib::RngExt;
+use laddu_amplitudes::{ComplexScalar, Scalar, Zlm};
+use laddu_core::{
+    amplitudes::{parameter, Manager},
     utils::{
         enums::{Frame, Sign},
         variables::{angles, polarization},
     },
-    ComplexScalar, Dataset, Scalar,
+    Dataset,
 };
 
-fn main() {
-    let ds_data = Dataset::open("data.parquet").unwrap();
+use rayon::ThreadPoolBuilder;
+
+fn zlm_benchmark(c: &mut Criterion) {
+    let ds_data = Dataset::open("benches/bench.parquet").unwrap();
 
     let angles = angles(
         "beam",
@@ -62,6 +69,40 @@ fn main() {
     let expr = pos_re + pos_im + neg_re + neg_im;
     let model = manager.model(&expr);
     let evaluator = model.load(&ds_data).unwrap();
-    let p: Vec<f64> = vec![100.0; evaluator.parameters().len()];
-    let _ = std::hint::black_box(evaluator.evaluate(&p));
+    let mut group = c.benchmark_group("Zlm Eval Performance");
+    let n_threads: Vec<usize> = (0..)
+        .map(|x| 1 << x)
+        .take_while(|&p| p <= num_cpus::get())
+        .collect();
+    for threads in n_threads {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threads),
+            &threads,
+            |b, &_threads| {
+                let mut rng = fastrand::Rng::new();
+                b.iter_batched(
+                    || {
+                        let p: Vec<f64> = (0..evaluator.parameters().len())
+                            .map(|_| rng.f64_range(-100.0..100.0))
+                            .collect();
+                        p
+                    },
+                    |p| pool.install(|| std::hint::black_box(evaluator.evaluate(&p))),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+    }
+    group.finish();
 }
+
+criterion_group! {
+    name = benches;
+    config = Criterion::default().measurement_time(Duration::from_secs(30)).sample_size(5000);
+    targets = zlm_benchmark
+}
+criterion_main!(benches);

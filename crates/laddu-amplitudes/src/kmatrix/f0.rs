@@ -1,20 +1,18 @@
 use super::{AdlerZero, FixedKMatrix};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
-    resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
-    LadduError,
+    resources::{CacheRow, ParameterID, Parameters, Resources},
+    ExprID, LadduResult,
 };
 #[cfg(feature = "python")]
-use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
-    utils::variables::PyMass,
-};
+use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
 use num::complex::Complex64;
+use polars::prelude::Expr;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
+use pyo3_polars::PyExpr;
 use serde::{Deserialize, Serialize};
 use std::array;
 
@@ -104,14 +102,14 @@ const COV_F0: SMatrix<f64, 56, 56> = matrix![
 pub struct KopfKMatrixF0 {
     name: String,
     channel: usize,
-    mass: Mass,
+    mass: Expr,
     constants: super::FixedKMatrix<5, 5>,
     couplings_real: [ParameterLike; 5],
     couplings_imag: [ParameterLike; 5],
     couplings_indices_real: [ParameterID; 5],
     couplings_indices_imag: [ParameterID; 5],
-    ikc_cache_index: ComplexVectorID<5>,
-    p_vec_cache_index: MatrixID<5, 5>,
+    ikc_cache_index: ExprID,
+    p_vec_cache_index: ExprID,
 }
 
 impl KopfKMatrixF0 {
@@ -137,7 +135,7 @@ impl KopfKMatrixF0 {
         name: &str,
         couplings: [[ParameterLike; 2]; 5],
         channel: usize,
-        mass: &Mass,
+        mass: &Expr,
         seed: Option<usize>,
     ) -> Box<Self> {
         let mut couplings_real: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
@@ -168,8 +166,8 @@ impl KopfKMatrixF0 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 5],
             couplings_indices_imag: [ParameterID::default(); 5],
-            ikc_cache_index: ComplexVectorID::default(),
-            p_vec_cache_index: MatrixID::default(),
+            ikc_cache_index: Default::default(),
+            p_vec_cache_index: Default::default(),
         }
         .into()
     }
@@ -177,48 +175,43 @@ impl KopfKMatrixF0 {
 
 #[typetag::serde]
 impl Amplitude for KopfKMatrixF0 {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
         }
-        self.ikc_cache_index = resources
-            .register_complex_vector(Some(&format!("KopfKMatrixF0<{}> ikc_vec", self.name)));
-        self.p_vec_cache_index =
-            resources.register_matrix(Some(&format!("KopfKMatrixF0<{}> p_vec", self.name)));
+        let s = self.mass.clone().pow(2);
+        self.ikc_cache_index = resources.register_cvector(
+            format!("KopfKMatrixF0<{}> ikc_vec", self.name).into(),
+            self.constants.ikc_inv_vec_expr(s.clone(), self.channel),
+        )?;
+        self.p_vec_cache_index = resources.register_matrix(
+            format!("KopfKMatrixF0<{}> p_vec", self.name).into(),
+            self.constants.p_vec_constants_expr(s),
+        )?;
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
-        let s = self.mass.value(event).powi(2);
-        cache.store_complex_vector(
-            self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
-        );
-        cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
-    }
-
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache_row: &CacheRow) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
             Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
                 parameters.get(self.couplings_indices_imag[i]),
             )
         });
-        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
-        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let ikc_inv_vec = cache_row.get_cvector::<5>(self.ikc_cache_index);
+        let p_vec_constants = cache_row.get_matrix::<5, 5>(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
-        cache: &Cache,
+        cache_row: &CacheRow,
         gradient: &mut DVector<Complex64>,
     ) {
-        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
-        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let ikc_inv_vec = cache_row.get_cvector::<5>(self.ikc_cache_index);
+        let p_vec_constants = cache_row.get_matrix::<5, 5>(self.p_vec_cache_index);
         let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
         for i in 0..5 {
             if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
@@ -297,31 +290,29 @@ pub fn py_kopf_kmatrix_f0(
     name: &str,
     couplings: [[PyParameterLike; 2]; 5],
     channel: usize,
-    mass: PyMass,
+    mass: Bound<PyAny>,
     seed: Option<usize>,
-) -> PyAmplitude {
-    PyAmplitude(KopfKMatrixF0::new(
+) -> PyResult<PyAmplitude> {
+    Ok(PyAmplitude(KopfKMatrixF0::new(
         name,
         array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
         channel,
-        &mass.0,
+        &mass.extract::<PyExpr>()?.0,
         seed,
-    ))
+    )))
 }
 
 #[cfg(test)]
 mod tests {
     // Note: These tests are not exhaustive, they only check one channel
-    use std::sync::Arc;
-
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, mass, parameter, Manager};
 
     #[test]
     fn test_f0_evaluation() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = mass(["kshort1", "kshort2"]);
         let amp = KopfKMatrixF0::new(
             "f0",
             [
@@ -337,12 +328,14 @@ mod tests {
         );
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+        let result = evaluator
+            .evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+            .unwrap();
 
         assert_relative_eq!(result[0].re, 0.26749455, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(result[0].im, 0.72894511, epsilon = f64::EPSILON.sqrt());
@@ -351,7 +344,7 @@ mod tests {
     #[test]
     fn test_f0_gradient() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = mass(["kshort1", "kshort2"]);
         let amp = KopfKMatrixF0::new(
             "f0",
             [
@@ -367,13 +360,14 @@ mod tests {
         );
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
-        let result =
-            evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+        let result = evaluator
+            .evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+            .unwrap();
 
         assert_relative_eq!(result[0][0].re, -0.0324912, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][0].im, -0.0110734, epsilon = f64::EPSILON.cbrt());
@@ -398,7 +392,7 @@ mod tests {
     }
     #[test]
     fn test_f0_resample() {
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = mass(["kshort1", "kshort2"]);
         let _amp = KopfKMatrixF0::new(
             "f0",
             [

@@ -1,8 +1,9 @@
 use std::{fmt::Display, str::FromStr};
 
+use polars::prelude::PlSmallStr;
 use serde::{Deserialize, Serialize};
 
-use crate::LadduError;
+use crate::{utils::list_to_name, LadduError};
 
 /// Standard reference frames for angular analyses.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +70,172 @@ impl FromStr for Sign {
                 name: s.to_string(),
                 object: "Sign".to_string(),
             }),
+        }
+    }
+}
+
+pub enum Topology {
+    All {
+        p1: Vec<PlSmallStr>,
+        p2: Vec<PlSmallStr>,
+        p3: Vec<PlSmallStr>,
+        p4: Vec<PlSmallStr>,
+    },
+    MissingP1 {
+        p2: Vec<PlSmallStr>,
+        p3: Vec<PlSmallStr>,
+        p4: Vec<PlSmallStr>,
+    },
+    MissingP2 {
+        p1: Vec<PlSmallStr>,
+        p3: Vec<PlSmallStr>,
+        p4: Vec<PlSmallStr>,
+    },
+    MissingP3 {
+        p1: Vec<PlSmallStr>,
+        p2: Vec<PlSmallStr>,
+        p4: Vec<PlSmallStr>,
+    },
+    MissingP4 {
+        p1: Vec<PlSmallStr>,
+        p2: Vec<PlSmallStr>,
+        p3: Vec<PlSmallStr>,
+    },
+}
+
+impl Display for Topology {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Topology::All { p1, p2, p3, p4 } => write!(
+                f,
+                "Topology::All(p1: [{}], p2: [{}], p3: [{}], p4: [{}])",
+                list_to_name(p1),
+                list_to_name(p2),
+                list_to_name(p3),
+                list_to_name(p4)
+            ),
+            Topology::MissingP1 { p2, p3, p4 } => write!(
+                f,
+                "Topology::MissingP1(p2: [{}], p3: [{}], p4: [{}])",
+                list_to_name(p2),
+                list_to_name(p3),
+                list_to_name(p4)
+            ),
+            Topology::MissingP2 { p1, p3, p4 } => write!(
+                f,
+                "Topology::MissingP2(p1: [{}], p3: [{}], p4: [{}])",
+                list_to_name(p1),
+                list_to_name(p3),
+                list_to_name(p4)
+            ),
+            Topology::MissingP3 { p1, p2, p4 } => write!(
+                f,
+                "Topology::MissingP3(p1: [{}], p2: [{}], p4: [{}])",
+                list_to_name(p1),
+                list_to_name(p2),
+                list_to_name(p4)
+            ),
+            Topology::MissingP4 { p1, p2, p3 } => write!(
+                f,
+                "Topology::MissingP4(p1: [{}], p2: [{}], p3: [{}])",
+                list_to_name(p1),
+                list_to_name(p2),
+                list_to_name(p3)
+            ),
+        }
+    }
+}
+
+impl Topology {
+    #[inline]
+    fn to_vecs<P, S>(xs: P) -> Vec<PlSmallStr>
+    where
+        P: IntoIterator<Item = S>,
+        S: Into<PlSmallStr>,
+    {
+        xs.into_iter().map(|s| s.into()).collect()
+    }
+
+    pub fn all<P1, S1, P2, S2, P3, S3, P4, S4>(p1: P1, p2: P2, p3: P3, p4: P4) -> Self
+    where
+        P1: IntoIterator<Item = S1>,
+        S1: Into<PlSmallStr>,
+        P2: IntoIterator<Item = S2>,
+        S2: Into<PlSmallStr>,
+        P3: IntoIterator<Item = S3>,
+        S3: Into<PlSmallStr>,
+        P4: IntoIterator<Item = S4>,
+        S4: Into<PlSmallStr>,
+    {
+        Self::All {
+            p1: Self::to_vecs(p1),
+            p2: Self::to_vecs(p2),
+            p3: Self::to_vecs(p3),
+            p4: Self::to_vecs(p4),
+        }
+    }
+
+    pub fn missing_p1<P2, S2, P3, S3, P4, S4>(p2: P2, p3: P3, p4: P4) -> Self
+    where
+        P2: IntoIterator<Item = S2>,
+        S2: Into<PlSmallStr>,
+        P3: IntoIterator<Item = S3>,
+        S3: Into<PlSmallStr>,
+        P4: IntoIterator<Item = S4>,
+        S4: Into<PlSmallStr>,
+    {
+        Self::MissingP1 {
+            p2: Self::to_vecs(p2),
+            p3: Self::to_vecs(p3),
+            p4: Self::to_vecs(p4),
+        }
+    }
+
+    pub fn missing_p2<P1, S1, P3, S3, P4, S4>(p1: P1, p3: P3, p4: P4) -> Self
+    where
+        P1: IntoIterator<Item = S1>,
+        S1: Into<PlSmallStr>,
+        P3: IntoIterator<Item = S3>,
+        S3: Into<PlSmallStr>,
+        P4: IntoIterator<Item = S4>,
+        S4: Into<PlSmallStr>,
+    {
+        Self::MissingP2 {
+            p1: Self::to_vecs(p1),
+            p3: Self::to_vecs(p3),
+            p4: Self::to_vecs(p4),
+        }
+    }
+
+    pub fn missing_p3<P1, S1, P2, S2, P4, S4>(p1: P1, p2: P2, p4: P4) -> Self
+    where
+        P1: IntoIterator<Item = S1>,
+        S1: Into<PlSmallStr>,
+        P2: IntoIterator<Item = S2>,
+        S2: Into<PlSmallStr>,
+        P4: IntoIterator<Item = S4>,
+        S4: Into<PlSmallStr>,
+    {
+        Self::MissingP3 {
+            p1: Self::to_vecs(p1),
+            p2: Self::to_vecs(p2),
+            p4: Self::to_vecs(p4),
+        }
+    }
+
+    pub fn missing_p4<P1, S1, P2, S2, P3, S3>(p1: P1, p2: P2, p3: P3) -> Self
+    where
+        P1: IntoIterator<Item = S1>,
+        S1: Into<PlSmallStr>,
+        P2: IntoIterator<Item = S2>,
+        S2: Into<PlSmallStr>,
+        P3: IntoIterator<Item = S3>,
+        S3: Into<PlSmallStr>,
+    {
+        Self::MissingP4 {
+            p1: Self::to_vecs(p1),
+            p2: Self::to_vecs(p2),
+            p3: Self::to_vecs(p3),
         }
     }
 }

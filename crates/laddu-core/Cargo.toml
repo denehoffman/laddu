@@ -29,10 +29,8 @@ numpy = { workspace = true, optional = true }
 parquet = { workspace = true }
 parking_lot = { workspace = true }
 polars = { workspace = true }
-pyo3 = { workspace = true, features = [
-  "num-complex",
-  "abi3-py37",
-], optional = true }
+polars-arrow = {workspace = true }
+pyo3 = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true }
 serde-pickle = { workspace = true }

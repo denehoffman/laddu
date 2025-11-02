@@ -286,11 +286,11 @@
 
 /// Methods for loading and manipulating [`Event`]-based data.
 pub mod data {
-    pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
+    pub use laddu_core::data::Dataset;
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
-    pub use laddu_extensions::*;
+    // pub use laddu_extensions::*; // TODO:
 }
 /// Structures for manipulating the cache and free parameters.
 pub mod resources {
@@ -303,9 +303,8 @@ pub mod utils {
 /// Useful traits for all crate structs
 pub mod traits {
     pub use laddu_core::amplitudes::Amplitude;
-    pub use laddu_core::utils::variables::Variable;
     pub use laddu_core::ReadWrite;
-    pub use laddu_extensions::likelihoods::LikelihoodTerm;
+    // pub use laddu_extensions::likelihoods::LikelihoodTerm; // TODO:
 }
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes {
@@ -323,21 +322,21 @@ pub mod amplitudes {
 ///
 /// </div>
 pub mod experimental {
-    pub use laddu_extensions::experimental::*;
+    // pub use laddu_extensions::experimental::*;
 }
 
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
-pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
-pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
+pub use laddu_core::data::Dataset;
+pub use laddu_core::resources::{CacheRow, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+    angles, costheta, mandelstam, mass, phi, pol_angle, pol_magnitude, polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
 pub use laddu_core::LadduError;
-pub use laddu_extensions::*;
+// pub use laddu_extensions::*; // TODO:
 pub use serde::{Deserialize, Serialize};
 pub use typetag;
 

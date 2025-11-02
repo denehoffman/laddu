@@ -17,7 +17,7 @@ rust-version.workspace = true
 num = { workspace = true }
 laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
-laddu-extensions = { workspace = true }
+# laddu-extensions = { workspace = true } # TODO:
 
 serde = { workspace = true }
 typetag = { workspace = true }
@@ -29,13 +29,15 @@ fastrand = { workspace = true }
 fastrand-contrib = { workspace = true }
 rayon = { workspace = true }
 
-[[bench]]
-name = "kmatrix_benchmark"
-harness = false
-
-[[bench]]
-name = "zlm_benchmark"
-harness = false
+# TODO:
+# [[bench]]
+# name = "kmatrix_benchmark"
+# harness = false
+#
+# TODO:
+# [[bench]]
+# name = "zlm_benchmark"
+# harness = false
 
 [features]
 default = ["rayon"]
@@ -43,9 +45,10 @@ rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",
   "laddu-amplitudes/python",
-  "laddu-extensions/python",
+  # "laddu-extensions/python", # TODO:
 ]
-mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
+# mpi = ["laddu-core/mpi", "laddu-extensions/mpi"] # TODO:
+mpi = ["laddu-core/mpi"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

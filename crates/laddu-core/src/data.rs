@@ -3,17 +3,11 @@ use fastrand::Rng;
 use polars::prelude::*;
 use std::sync::Arc;
 
-#[cfg(feature = "mpi")]
-use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
-
-#[cfg(feature = "mpi")]
-use crate::mpi::LadduMPI;
-
 use crate::utils::get_bin_edges;
 use crate::LadduResult;
 
-pub fn test_dataset() -> LadduResult<Dataset> {
-    Ok(Dataset::new(
+pub fn test_dataset() -> Dataset {
+    Dataset::new(
         df!(
             "beam_e" => [8.747],
             "beam_px" => [0.0],
@@ -34,9 +28,10 @@ pub fn test_dataset() -> LadduResult<Dataset> {
             "weight" => [0.48],
             "pol_angle" => [0.0570808],
             "pol_magnitude" => [0.385628],
-        )?
+        )
+        .expect("Error creating test Dataset")
         .lazy(),
-    ))
+    )
 }
 
 #[inline]
@@ -48,7 +43,7 @@ fn count_rows(lf: &LazyFrame) -> LadduResult<usize> {
 /// A collection of [`Event`]s.
 #[derive(Clone)]
 pub struct Dataset {
-    lf: LazyFrame,
+    pub(crate) lf: LazyFrame,
 }
 
 impl Dataset {
@@ -56,11 +51,20 @@ impl Dataset {
         Self { lf: lazyframe }
     }
 
+    pub(crate) fn local_lazyframe(&self) -> LadduResult<LazyFrame> {
+        let total = self.n_events()?;
+        let (offset, len) = crate::mpi::get_range_for_rank(total);
+        Ok(self.lf.clone().slice(offset as i64, len as u64))
+    }
+
     // TODO: write version with rest-frame boost
     pub fn open<T: AsRef<str>>(path: T) -> LadduResult<Self> {
         Ok(Self::new(LazyFrame::scan_parquet(
             PlPath::new(path.as_ref()),
-            Default::default(),
+            ScanArgsParquet {
+                rechunk: true,
+                ..Default::default()
+            },
         )?))
     }
 
@@ -124,15 +128,15 @@ impl Dataset {
 
     /// Filter the [`Dataset`] by a given [`VariableExpression`], selecting events for which
     /// the expression returns `true`.
-    pub fn filter(&self, expression: &Expr) -> LadduResult<Dataset> {
-        Ok(Dataset::new(self.lf.clone().filter(expression.clone())))
+    pub fn filter(&self, expr: &Expr) -> LadduResult<Dataset> {
+        Ok(Dataset::new(self.lf.clone().filter(expr.clone()))) // TODO: rechunk?
     }
 
     /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
     /// given `range`.
-    pub fn bin_by<V>(
+    pub fn bin_by(
         &self,
-        expression: &Expr,
+        expr: &Expr,
         bins: usize,
         limits: (f64, f64),
     ) -> LadduResult<(Vec<Dataset>, Vec<f64>)> {
@@ -143,16 +147,15 @@ impl Dataset {
                 .map(|window| {
                     Dataset::new(
                         self.lf.clone().filter(
-                            expression
-                                .clone()
+                            expr.clone()
                                 .gt_eq(lit(window[0]))
-                                .logical_and(expression.clone().lt(lit(window[1]))),
+                                .logical_and(expr.clone().lt(lit(window[1]))),
                         ),
                     )
                 })
                 .collect::<Vec<Dataset>>(),
             bin_edges,
-        ))
+        )) // TODO: rechunk
     }
 
     /// Boost all the four-momenta in all [`Event`]s to the rest frame of the given set of
@@ -161,13 +164,13 @@ impl Dataset {
         todo!()
     }
     /// Evaluate a [`Variable`] on every event in the [`Dataset`].
-    pub fn evaluate(&self, variable: &Expr) -> LadduResult<Vec<f64>> {
+    pub fn evaluate(&self, expr: &Expr) -> LadduResult<Vec<f64>> {
         Ok(self
             .lf
             .clone()
-            .select([variable.clone()])
+            .select([expr.clone()])
             .collect()?
-            .column(&variable.clone().meta().output_name()?)?
+            .column(&expr.clone().meta().output_name()?)?
             .f64()?
             .to_vec_null_aware()
             .left()
@@ -187,10 +190,10 @@ mod tests {
 
     #[test]
     fn test_dataset_size_check() {
-        let mut dataset = test_dataset().unwrap();
-        assert_eq!(dataset.n_events().unwrap(), 0);
-        dataset = (dataset + test_dataset().unwrap()).unwrap();
+        let mut dataset = test_dataset();
         assert_eq!(dataset.n_events().unwrap(), 1);
+        dataset = (dataset + test_dataset()).unwrap();
+        assert_eq!(dataset.n_events().unwrap(), 2);
     }
 
     //

@@ -1,13 +1,12 @@
-use laddu_core::LadduError;
-use laddu_core::{traits::Variable, utils::histogram};
+use laddu_core::utils::histogram;
+use laddu_core::{LadduError, LadduResult};
 use nalgebra::DVector;
+use polars::prelude::*;
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
 
 #[cfg(feature = "python")]
 use crate::likelihoods::{PyLikelihoodTerm, PyNLL};
-#[cfg(feature = "python")]
-use laddu_python::utils::variables::PyVariable;
 #[cfg(feature = "python")]
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python")]
@@ -46,22 +45,16 @@ impl BinnedGuideTerm {
     ///
     /// The intended usage is to provide some sets of amplitudes to isolate, like `[["amp1", "amp2"], ["amp3"]]`,
     /// along with some known counts for a binned fit (`count_sets ~ [[histogram counts involving "amp1" and "amp2"], [histogram counts involving "amp3"]]` and simlar for `error_sets`).
-    pub fn new<
-        V: Variable + 'static,
-        L: AsRef<str>,
-        T: AsRef<[L]>,
-        U: AsRef<[f64]>,
-        E: AsRef<[f64]>,
-    >(
+    pub fn new<L: AsRef<str>, T: AsRef<[L]>, U: AsRef<[f64]>, E: AsRef<[f64]>>(
         nll: Box<NLL>,
-        variable: &V,
+        expr: &Expr,
         amplitude_sets: &[T],
         bins: usize,
         range: (f64, f64),
         count_sets: &[U],
         error_sets: Option<&[E]>,
-    ) -> Box<Self> {
-        let values = variable.value_on(&nll.accmc_evaluator.dataset);
+    ) -> LadduResult<Box<Self>> {
+        let values = nll.accmc_evaluator.dataset.evaluate(expr)?;
         let amplitude_sets: Vec<Vec<String>> = amplitude_sets
             .iter()
             .map(|t| t.as_ref().iter().map(|s| s.as_ref().to_string()).collect())
@@ -77,7 +70,7 @@ impl BinnedGuideTerm {
         };
         assert_eq!(amplitude_sets.len(), count_sets.len());
         assert_eq!(count_sets.len(), error_sets.len());
-        Box::new(Self {
+        Ok(Box::new(Self {
             nll,
             amplitude_sets,
             values,
@@ -85,12 +78,12 @@ impl BinnedGuideTerm {
             range,
             count_sets,
             error_sets,
-        })
+        }))
     }
 }
 
 impl LikelihoodTerm for BinnedGuideTerm {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         let mut result = 0.0;
         for ((counts, errors), amplitudes) in self
             .count_sets
@@ -100,24 +93,29 @@ impl LikelihoodTerm for BinnedGuideTerm {
         {
             let weights = self.nll.project_with(parameters, amplitudes, None).unwrap();
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
-            // TODO: handle entries where e == 0
             let chisqr: f64 = eval_hist
                 .counts
                 .iter()
                 .zip(counts.iter())
                 .zip(errors.iter())
-                .map(|((o, c), e)| (o - c).powi(2) / e.powi(2))
+                .filter_map(|((o, c), e)| {
+                    if e.powi(2) != 0.0 {
+                        Some((o - c).powi(2) / e.powi(2))
+                    } else {
+                        None
+                    }
+                })
                 .sum();
             result += chisqr;
         }
-        result
+        Ok(result)
     }
 
     fn parameters(&self) -> Vec<String> {
         self.nll.parameters()
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let mut gradient = DVector::zeros(parameters.len());
         let bin_width = (self.range.1 - self.range.0) / self.bins as f64;
         for ((counts, errors), amplitudes) in self
@@ -155,7 +153,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
                 }
             }
         }
-        gradient
+        Ok(gradient)
     }
 }
 
@@ -197,16 +195,17 @@ pub fn py_binned_guide_term(
     count_sets: Vec<Vec<f64>>,
     error_sets: Option<Vec<Vec<f64>>>,
 ) -> PyResult<PyLikelihoodTerm> {
-    let variable = variable.extract::<PyVariable>()?;
+    use pyo3_polars::PyExpr;
+    let expr = variable.extract::<PyExpr>()?;
     Ok(PyLikelihoodTerm(BinnedGuideTerm::new(
         nll.0.clone(),
-        &variable,
+        &expr.0,
         &amplitude_sets,
         bins,
         range,
         &count_sets,
         error_sets.as_deref(),
-    )))
+    )?))
 }
 
 /// A weighted regularization term.
@@ -282,19 +281,19 @@ impl<const P: usize> Regularizer<P> {
 }
 
 impl LikelihoodTerm for Regularizer<1> {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>()
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        Ok(self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>())
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        DVector::from_vec(
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        Ok(DVector::from_vec(
             parameters
                 .iter()
                 .zip(self.weights.iter())
                 .map(|(p, w)| w * p.signum())
                 .collect(),
         )
-        .scale(self.lambda)
+        .scale(self.lambda))
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -303,18 +302,18 @@ impl LikelihoodTerm for Regularizer<1> {
 }
 
 impl LikelihoodTerm for Regularizer<2> {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt()
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        Ok(self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt())
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let denom = parameters
             .iter()
             .zip(self.weights.iter())
             .map(|(p, w)| w * p.powi(2))
             .sum::<f64>()
             .sqrt();
-        DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom)
+        Ok(DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom))
     }
 
     fn parameters(&self) -> Vec<String> {

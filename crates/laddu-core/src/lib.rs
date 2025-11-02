@@ -39,8 +39,8 @@ pub mod mpi {
     #[cfg(feature = "mpi")]
     use mpi::{
         environment::Universe,
-        topology::{Process, SimpleCommunicator},
-        traits::Communicator,
+        topology::SimpleCommunicator,
+        traits::{Communicator, CommunicatorCollectives, Equivalence},
     };
     use parking_lot::RwLock;
 
@@ -193,16 +193,156 @@ pub mod mpi {
     }
 
     pub fn get_range_for_rank(total: usize) -> (usize, usize) {
-        let base = total / crate::mpi::size();
-        let rem = total % crate::mpi::size();
+        let size = crate::mpi::size();
+        let rank = crate::mpi::rank();
+        let base = total / size;
+        let rem = total % size;
         if crate::mpi::rank() < rem {
             let count = base + 1;
-            let start = crate::mpi::rank() * count;
+            let start = rank * count;
             (start, count)
         } else {
             let count = base;
-            let start = rem * (base + 1) + (crate::mpi::rank() - rem) * base;
+            let start = rem * (base + 1) + (rank - rem) * base;
             (start, count)
+        }
+    }
+
+    fn counts_displs(size: usize, total: usize, stride: usize) -> (Vec<i32>, Vec<i32>) {
+        let base = total / size;
+        let rem = total % size;
+        let mut counts = vec![0i32; size];
+        let mut displs = vec![0i32; size];
+        for i in 0..size {
+            let n = if i < rem { base + 1 } else { base };
+            counts[i] = (n * stride) as i32;
+            displs[i] = if i == 0 {
+                0
+            } else {
+                displs[i - 1] + counts[i - 1]
+            };
+        }
+        (counts, displs)
+    }
+    #[inline]
+    fn rank_local_from_global(g: usize, total: usize, size: usize) -> (usize, usize) {
+        let base = total / size;
+        let rem = total % size;
+        let cutoff = rem * (base + 1);
+
+        if g < cutoff {
+            let r = g / (base + 1);
+            (r, g - r * (base + 1))
+        } else {
+            let g2 = g - cutoff;
+            let r = rem + g2 / base;
+            let start = cutoff + (r - rem) * base;
+            (r, g - start)
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    pub trait LadduMPIExt {
+        fn all_gather_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T>;
+        fn locals_from_indices(&self, total: usize, indices: &[usize]) -> Vec<usize>;
+        fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local_for_indices: &[T],
+            total: usize,
+            indices: &[usize],
+            stride: Option<usize>,
+        ) -> Vec<T>;
+    }
+    #[cfg(feature = "mpi")]
+    impl LadduMPIExt for mpi::topology::SimpleCommunicator {
+        fn all_gather_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T> {
+            let size = self.size() as usize;
+            let stride = stride.unwrap_or(1);
+            let mut out = vec![T::default(); total * stride];
+            let (counts, displs) = counts_displs(size, total, stride);
+            debug_assert_eq!(
+                out.len(),
+                total * stride,
+                "output buffer must have size total * stride"
+            );
+            debug_assert_eq!(
+                local.len(),
+                {
+                    let r = self.rank() as usize;
+                    counts[r] as usize
+                },
+                "local slice length must match this rank's assigned portion"
+            );
+            let mut part = mpi::datatype::PartitionMut::new(&mut out, counts, displs);
+            self.all_gather_varcount_into(local, &mut part);
+            out
+        }
+
+        fn locals_from_indices(&self, total: usize, indices: &[usize]) -> Vec<usize> {
+            let size = self.size() as usize;
+            let me = self.rank() as usize;
+            let mut locals = Vec::with_capacity(indices.len());
+            for &g in indices {
+                let (r, li) = rank_local_from_global(g, total, size);
+                if r == me {
+                    locals.push(li);
+                }
+            }
+            locals
+        }
+
+        fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local_for_indices: &[T],
+            total: usize,
+            indices: &[usize],
+            stride: Option<usize>,
+        ) -> Vec<T> {
+            let size = self.size() as usize;
+            let stride = stride.unwrap_or(1);
+            let mut out = vec![T::default(); indices.len() * stride];
+            let mut locals_by_rank = vec![Vec::<usize>::new(); size];
+            for &g in indices {
+                let (r, li) = rank_local_from_global(g, total, size);
+                locals_by_rank[r].push(li);
+            }
+            let mut counts = vec![0i32; size];
+            let mut displs = vec![0i32; size];
+            for r in 0..size {
+                counts[r] = (locals_by_rank[r].len() * stride) as i32;
+                displs[r] = if r == 0 {
+                    0
+                } else {
+                    displs[r - 1] + counts[r - 1]
+                };
+            }
+            debug_assert_eq!(
+                out.len(),
+                indices.len() * stride,
+                "out must be indices.len() * stride"
+            );
+            debug_assert_eq!(
+                local_for_indices.len(),
+                {
+                    let me = self.rank() as usize;
+                    locals_by_rank[me].len() * stride
+                },
+                "local_for_indices must match this rank's (#locals * stride)"
+            );
+
+            let mut part = mpi::datatype::PartitionMut::new(&mut out, counts, displs);
+            self.all_gather_varcount_into(local_for_indices, &mut part);
+            out
         }
     }
 }
@@ -224,18 +364,15 @@ pub mod traits {
 }
 
 pub use crate::data::Dataset;
-// pub use crate::resources::{
-//     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
-//     Resources, ScalarID, VectorID,
-// };
+pub use crate::resources::{CacheRow, ExprID, ParameterID, Resources};
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::variables::{
     angles, costheta, mandelstam, mass, phi, pol_angle, pol_magnitude, polarization,
 };
 pub use crate::utils::vectors::{Vec3, Vec4};
-// pub use amplitudes::{
-//     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
-// };
+pub use amplitudes::{
+    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
+};
 
 pub type LadduResult<T> = Result<T, LadduError>;
 
@@ -355,5 +492,19 @@ impl ReadWrite for MCMCSummary {
 impl ReadWrite for MinimizationSummary {
     fn create_null() -> Self {
         MinimizationSummary::default()
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use polars::prelude::*;
+    /// Get the first value of a 1-row float column, panicking on error.
+    pub fn val1(df: &DataFrame, col: &str) -> f64 {
+        let s = df.column(col).unwrap();
+        match s.dtype() {
+            DataType::Float64 => s.f64().unwrap().get(0).unwrap(),
+            DataType::Float32 => s.f32().unwrap().get(0).unwrap() as f64,
+            dt => panic!("column {col} must be f32/f64, got {dt:?}"),
+        }
     }
 }

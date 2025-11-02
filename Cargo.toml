@@ -1,12 +1,12 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/*", "py-laddu", "py-laddu-mpi"]
 default-members = ["crates/*"]
 exclude = ["prof"]
 
 [workspace.package]
 authors = ["Nathaniel Dene Hoffman <dene@cmu.edu>"]
-edition = "2021"
+edition = "2024"
 homepage = "https://github.com/denehoffman/laddu"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/denehoffman/laddu"
@@ -32,12 +32,14 @@ mpi = { version = "0.8.0", features = ["complex"] }
 nalgebra = "0.34.1"
 num = "0.4.3"
 num_cpus = { version = "1.17.0" }
-numpy = { version = "0.26.0", features = ["nalgebra"] }
+numpy = { version = "0.25.0", features = ["nalgebra"] }
 num-traits = "0.2.19"
 parquet = "56.2.0"
 parking_lot = "0.12.5"
-polars = {version = "0.51.0", features = ["lazy", "parquet", "trigonometry", "log", "bigidx", "row_hash", "meta", "abs", "sign"]}
-pyo3 = { version = "0.26.0" }
+polars = {version = "0.51.0", features = ["lazy", "parquet", "trigonometry", "log", "bigidx", "row_hash", "meta", "abs", "sign", "fmt", "dtype-array", "serde-lazy", "round_series"]}
+polars-arrow = "0.51.0"
+pyo3 = { version = "0.25.0", features = ["num-complex", "abi3-py37"]}
+pyo3-polars = {version = "0.24.0", features = ["lazy"]}
 rapidhash = { version = "4.1.0" }
 rayon = { version = "1.11.0" }
 serde = "1.0.228"

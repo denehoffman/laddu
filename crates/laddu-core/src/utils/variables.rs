@@ -1,15 +1,21 @@
-use crate::utils::{
-    enums::{Channel, Frame},
-    vectors::Vec4,
+use crate::{
+    utils::{
+        enums::{Channel, Frame, Topology},
+        list_to_name,
+        vectors::Vec4,
+    },
+    Vec3,
 };
 use polars::prelude::*;
 
 pub fn mass<I, S>(constituents: I) -> Expr
 where
-    I: IntoIterator<Item = S>,
+    I: IntoIterator<Item = S> + Clone,
     S: Into<PlSmallStr>,
 {
-    Vec4::sum(constituents).mag()
+    Vec4::sum(constituents.clone())
+        .mag()
+        .alias(format!("mass({})", list_to_name(&constituents)))
 }
 
 pub fn costheta<Ir, Id, Ires, Sb, Sr, Sd, Sres>(
@@ -20,14 +26,22 @@ pub fn costheta<Ir, Id, Ires, Sb, Sr, Sd, Sres>(
     frame: Frame,
 ) -> Expr
 where
-    Sb: Into<PlSmallStr>,
-    Ir: IntoIterator<Item = Sr>,
+    Sb: Into<PlSmallStr> + Clone,
+    Ir: IntoIterator<Item = Sr> + Clone,
     Sr: Into<PlSmallStr>,
-    Id: IntoIterator<Item = Sd>,
+    Id: IntoIterator<Item = Sd> + Clone,
     Sd: Into<PlSmallStr>,
-    Ires: IntoIterator<Item = Sres>,
+    Ires: IntoIterator<Item = Sres> + Clone,
     Sres: Into<PlSmallStr>,
 {
+    let name = format!(
+        "costheta({}, [{}], [{}], [{}], {})",
+        beam.clone().into(),
+        list_to_name(&recoil),
+        list_to_name(&daughter),
+        list_to_name(&resonance),
+        frame
+    );
     let beam = Vec4::new(beam);
     let recoil = Vec4::sum(recoil);
     let daughter = Vec4::sum(daughter);
@@ -38,12 +52,12 @@ where
         Frame::Helicity => {
             let recoil_res = recoil.boost(&resonance_boost);
             let z = recoil_res.vec3().neg().unit();
-            daughter_res.vec3().unit().dot(&z)
+            daughter_res.vec3().unit().dot(&z).alias(name)
         }
         Frame::GottfriedJackson => {
             let beam_res = beam.boost(&resonance_boost);
             let z = beam_res.vec3().unit();
-            daughter_res.vec3().unit().dot(&z)
+            daughter_res.vec3().unit().dot(&z).alias(name)
         }
     }
 }
@@ -56,14 +70,22 @@ pub fn phi<Ir, Id, Ires, Sb, Sr, Sd, Sres>(
     frame: Frame,
 ) -> Expr
 where
-    Sb: Into<PlSmallStr>,
-    Ir: IntoIterator<Item = Sr>,
+    Sb: Into<PlSmallStr> + Clone,
+    Ir: IntoIterator<Item = Sr> + Clone,
     Sr: Into<PlSmallStr>,
-    Id: IntoIterator<Item = Sd>,
+    Id: IntoIterator<Item = Sd> + Clone,
     Sd: Into<PlSmallStr>,
-    Ires: IntoIterator<Item = Sres>,
+    Ires: IntoIterator<Item = Sres> + Clone,
     Sres: Into<PlSmallStr>,
 {
+    let name = format!(
+        "phi({}, [{}], [{}], [{}], {})",
+        beam.clone().into(),
+        list_to_name(&recoil),
+        list_to_name(&daughter),
+        list_to_name(&resonance),
+        frame
+    );
     let beam = Vec4::new(beam);
     let recoil = Vec4::sum(recoil);
     let daughter = Vec4::sum(daughter);
@@ -83,7 +105,7 @@ where
     let y = beam.vec3().cross(&recoil.vec3().neg()).unit();
     let x = y.cross(&z);
     let p = daughter_res.vec3();
-    p.dot(&y).arctan2(p.dot(&x))
+    p.dot(&y).arctan2(p.dot(&x)).alias(name)
 }
 
 pub fn angles<Ir, Id, Ires, Sb, Sr, Sd, Sres>(
@@ -92,16 +114,32 @@ pub fn angles<Ir, Id, Ires, Sb, Sr, Sd, Sres>(
     daughter: Id,
     resonance: Ires,
     frame: Frame,
-) -> (Expr, Expr)
+) -> [Expr; 2]
 where
-    Sb: Into<PlSmallStr>,
-    Ir: IntoIterator<Item = Sr>,
+    Sb: Into<PlSmallStr> + Clone,
+    Ir: IntoIterator<Item = Sr> + Clone,
     Sr: Into<PlSmallStr>,
-    Id: IntoIterator<Item = Sd>,
+    Id: IntoIterator<Item = Sd> + Clone,
     Sd: Into<PlSmallStr>,
-    Ires: IntoIterator<Item = Sres>,
+    Ires: IntoIterator<Item = Sres> + Clone,
     Sres: Into<PlSmallStr>,
 {
+    let name_costheta = format!(
+        "costheta({}, [{}], [{}], [{}], {})",
+        beam.clone().into(),
+        list_to_name(&recoil),
+        list_to_name(&daughter),
+        list_to_name(&resonance),
+        frame
+    );
+    let name_phi = format!(
+        "phi({}, [{}], [{}], [{}], {})",
+        beam.clone().into(),
+        list_to_name(&recoil),
+        list_to_name(&daughter),
+        list_to_name(&resonance),
+        frame
+    );
     let beam = Vec4::new(beam);
     let recoil = Vec4::sum(recoil);
     let daughter = Vec4::sum(daughter);
@@ -121,32 +159,39 @@ where
     let y = beam.vec3().cross(&recoil.vec3().neg()).unit();
     let x = y.cross(&z);
     let p = daughter_res.vec3();
-    (p.unit().dot(&z), p.dot(&y).arctan2(p.dot(&x)))
+    [
+        p.unit().dot(&z).alias(name_costheta),
+        p.dot(&y).arctan2(p.dot(&x)).alias(name_phi),
+    ]
 }
 
 pub fn pol_angle<Ir, Sb, Sr, Sphi>(beam: Sb, recoil: Ir, phi: Sphi) -> Expr
 where
-    Sb: Into<PlSmallStr>,
-    Ir: IntoIterator<Item = Sr>,
+    Sb: Into<PlSmallStr> + Clone,
+    Ir: IntoIterator<Item = Sr> + Clone,
     Sr: Into<PlSmallStr>,
-    Sphi: Into<PlSmallStr>,
+    Sphi: Into<PlSmallStr> + Clone,
 {
-    let beam = Vec4::new(beam);
-    let recoil = Vec4::sum(recoil);
-    let phi = col(phi);
-    let u = beam.vec3().unit();
-    let w = beam.vec3().cross(&recoil.vec3().unit());
-    (w.x() * phi.clone().cos() + w.y() * phi.clone().sin()).arctan2(
-        w.z() * (u.x() * phi.clone().sin() - u.y() * phi.clone().cos())
-            + u.z() * (w.y() * phi.clone().cos() - w.x() * phi.sin()),
-    )
+    let name = format!(
+        "pol_angle({}, [{}], {})",
+        beam.clone().into(),
+        list_to_name(&recoil),
+        phi.clone().into()
+    );
+    let beam_u3 = Vec4::new(beam).vec3().unit();
+    let recoil_u3 = Vec4::sum(recoil).vec3().unit();
+    let phi = col(phi).cast(DataType::Float64);
+    let eps = Vec3::from([phi.clone().cos(), phi.sin(), lit(0.0)]);
+    let y = beam_u3.cross(&-recoil_u3);
+    y.dot(&eps).arctan2(beam_u3.dot(&eps.cross(&y))).alias(name)
 }
 
 pub fn pol_magnitude<Spgamma>(p_gamma: Spgamma) -> Expr
 where
-    Spgamma: Into<PlSmallStr>,
+    Spgamma: Into<PlSmallStr> + Clone,
 {
-    col(p_gamma)
+    let name = format!("pol_magnitude({})", p_gamma.clone().into(),);
+    col(p_gamma).cast(DataType::Float64).alias(name)
 }
 
 pub fn polarization<Ir, Sb, Sr, Spgamma, Sphi>(
@@ -154,317 +199,294 @@ pub fn polarization<Ir, Sb, Sr, Spgamma, Sphi>(
     recoil: Ir,
     p_gamma: Spgamma,
     phi: Sphi,
-) -> (Expr, Expr)
+) -> [Expr; 2]
 where
-    Sb: Into<PlSmallStr>,
-    Ir: IntoIterator<Item = Sr>,
-    Sr: Into<PlSmallStr>,
-    Spgamma: Into<PlSmallStr>,
-    Sphi: Into<PlSmallStr>,
+    Sb: Into<PlSmallStr> + Clone,
+    Ir: IntoIterator<Item = Sr> + Clone,
+    Sr: Into<PlSmallStr> + Clone,
+    Spgamma: Into<PlSmallStr> + Clone,
+    Sphi: Into<PlSmallStr> + Clone,
 {
-    (col(p_gamma), pol_angle(beam, recoil, phi))
+    [pol_magnitude(p_gamma), pol_angle(beam, recoil, phi)]
 }
 
-enum Missing {
-    None,
-    P1,
-    P2,
-    P3,
-    P4,
-}
-impl Missing {
-    fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
-pub fn mandelstam<I1, S1, I2, S2, I3, S3, I4, S4>(
-    p1: I1,
-    p2: I2,
-    p3: I3,
-    p4: I4,
-    channel: Channel,
-) -> Expr
-where
-    I1: IntoIterator<Item = S1>,
-    S1: Into<PlSmallStr>,
-    I2: IntoIterator<Item = S2>,
-    S2: Into<PlSmallStr>,
-    I3: IntoIterator<Item = S3>,
-    S3: Into<PlSmallStr>,
-    I4: IntoIterator<Item = S4>,
-    S4: Into<PlSmallStr>,
-{
-    let mut missing = Missing::None;
-    let p1: Vec<PlSmallStr> = p1.into_iter().map(|s| s.into()).collect();
-    let p2: Vec<PlSmallStr> = p2.into_iter().map(|s| s.into()).collect();
-    let p3: Vec<PlSmallStr> = p3.into_iter().map(|s| s.into()).collect();
-    let p4: Vec<PlSmallStr> = p4.into_iter().map(|s| s.into()).collect();
-    if p1.is_empty() {
-        missing = Missing::P1
-    }
-    if p2.is_empty() {
-        if missing.is_none() {
-            missing = Missing::P2
-        } else {
-            unimplemented!()
-        }
-    }
-    if p3.is_empty() {
-        if missing.is_none() {
-            missing = Missing::P3
-        } else {
-            unimplemented!()
-        }
-    }
-    if p4.is_empty() {
-        if missing.is_none() {
-            missing = Missing::P4
-        } else {
-            unimplemented!()
-        }
-    }
+pub fn mandelstam(topology: Topology, channel: Channel) -> Expr {
+    let name = format!("mandelstam({}, {})", topology, channel);
     match channel {
-        Channel::S => match missing {
-            Missing::None | Missing::P3 | Missing::P4 => (Vec4::sum(p1).add(&Vec4::sum(p2))).mag2(),
-            Missing::P1 | Missing::P2 => (Vec4::sum(p3).add(&Vec4::sum(p4))).mag2(),
+        Channel::S => match topology {
+            Topology::All { p1, p2, .. }
+            | Topology::MissingP3 { p1, p2, .. }
+            | Topology::MissingP4 { p1, p2, .. } => Vec4::sum(p1).add(&Vec4::sum(p2)).mag2(),
+            Topology::MissingP1 { p3, p4, .. } | Topology::MissingP2 { p3, p4, .. } => {
+                Vec4::sum(p3).add(&Vec4::sum(p4)).mag2()
+            }
         },
-        Channel::T => match missing {
-            Missing::None | Missing::P2 | Missing::P4 => (Vec4::sum(p1).sub(&Vec4::sum(p3))).mag2(),
-            Missing::P1 | Missing::P3 => (Vec4::sum(p4).sub(&Vec4::sum(p2))).mag2(),
+        Channel::T => match topology {
+            Topology::All { p1, p3, .. }
+            | Topology::MissingP2 { p1, p3, .. }
+            | Topology::MissingP4 { p1, p3, .. } => Vec4::sum(p1).sub(&Vec4::sum(p3)).mag2(),
+            Topology::MissingP1 { p2, p4, .. } | Topology::MissingP3 { p2, p4, .. } => {
+                Vec4::sum(p4).sub(&Vec4::sum(p2)).mag2()
+            }
         },
-        Channel::U => match missing {
-            Missing::None | Missing::P2 | Missing::P3 => (Vec4::sum(p1).sub(&Vec4::sum(p4))).mag2(),
-            Missing::P1 | Missing::P4 => (Vec4::sum(p3).sub(&Vec4::sum(p2))).mag2(),
+        Channel::U => match topology {
+            Topology::All { p1, p4, .. }
+            | Topology::MissingP2 { p1, p4, .. }
+            | Topology::MissingP3 { p1, p4, .. } => Vec4::sum(p1).sub(&Vec4::sum(p4)).mag2(),
+            Topology::MissingP1 { p2, p3, .. } | Topology::MissingP4 { p2, p3, .. } => {
+                Vec4::sum(p3).sub(&Vec4::sum(p2)).mag2()
+            }
         },
     }
+    .alias(name)
 }
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-    // use crate::data::{test_dataset, test_event};
-    // use approx::assert_relative_eq;
-    //
-    // #[test]
-    // fn test_mass_single_particle() {
-    //     let event = test_event();
-    //     let mass = Mass::new([1]);
-    //     assert_relative_eq!(mass.value(&event), 1.007);
-    // }
-    //
-    // #[test]
-    // fn test_mass_multiple_particles() {
-    //     let event = test_event();
-    //     let mass = Mass::new([2, 3]);
-    //     assert_relative_eq!(
-    //         mass.value(&event),
-    //         1.37437863,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_mass_display() {
-    //     let mass = Mass::new([2, 3]);
-    //     assert_eq!(mass.to_string(), "Mass(constituents=[2, 3])");
-    // }
-    //
-    // #[test]
-    // fn test_costheta_helicity() {
-    //     let event = test_event();
-    //     let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_relative_eq!(
-    //         costheta.value(&event),
-    //         -0.4611175,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_costheta_display() {
-    //     let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_eq!(
-    //         costheta.to_string(),
-    //         "CosTheta(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_phi_helicity() {
-    //     let event = test_event();
-    //     let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_relative_eq!(
-    //         phi.value(&event),
-    //         -2.65746258,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_phi_display() {
-    //     let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_eq!(
-    //         phi.to_string(),
-    //         "Phi(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_costheta_gottfried_jackson() {
-    //     let event = test_event();
-    //     let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
-    //     assert_relative_eq!(
-    //         costheta.value(&event),
-    //         0.09198832,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_phi_gottfried_jackson() {
-    //     let event = test_event();
-    //     let phi = Phi::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
-    //     assert_relative_eq!(
-    //         phi.value(&event),
-    //         -2.71391319,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_angles() {
-    //     let event = test_event();
-    //     let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_relative_eq!(
-    //         angles.costheta.value(&event),
-    //         -0.4611175,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    //     assert_relative_eq!(
-    //         angles.phi.value(&event),
-    //         -2.65746258,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_angles_display() {
-    //     let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-    //     assert_eq!(
-    //         angles.to_string(),
-    //         "Angles(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_pol_angle() {
-    //     let event = test_event();
-    //     let pol_angle = PolAngle::new(0, vec![1], 0);
-    //     assert_relative_eq!(
-    //         pol_angle.value(&event),
-    //         1.93592989,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_pol_angle_display() {
-    //     let pol_angle = PolAngle::new(0, vec![1], 0);
-    //     assert_eq!(
-    //         pol_angle.to_string(),
-    //         "PolAngle(beam=0, recoil=[1], beam_polarization=0)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_pol_magnitude() {
-    //     let event = test_event();
-    //     let pol_magnitude = PolMagnitude::new(0);
-    //     assert_relative_eq!(
-    //         pol_magnitude.value(&event),
-    //         0.38562805,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_pol_magnitude_display() {
-    //     let pol_magnitude = PolMagnitude::new(0);
-    //     assert_eq!(
-    //         pol_magnitude.to_string(),
-    //         "PolMagnitude(beam_polarization=0)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_polarization() {
-    //     let event = test_event();
-    //     let polarization = Polarization::new(0, vec![1], 0);
-    //     assert_relative_eq!(
-    //         polarization.pol_angle.value(&event),
-    //         1.93592989,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    //     assert_relative_eq!(
-    //         polarization.pol_magnitude.value(&event),
-    //         0.38562805,
-    //         epsilon = f64::EPSILON.sqrt()
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_polarization_display() {
-    //     let polarization = Polarization::new(0, vec![1], 0);
-    //     assert_eq!(
-    //         polarization.to_string(),
-    //         "Polarization(beam=0, recoil=[1], beam_polarization=0)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_mandelstam() {
-    //     let event = test_event();
-    //     let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
-    //     let t = Mandelstam::new([0], [], [2, 3], [1], Channel::T).unwrap();
-    //     let u = Mandelstam::new([0], [], [2, 3], [1], Channel::U).unwrap();
-    //     let sp = Mandelstam::new([], [0], [1], [2, 3], Channel::S).unwrap();
-    //     let tp = Mandelstam::new([], [0], [1], [2, 3], Channel::T).unwrap();
-    //     let up = Mandelstam::new([], [0], [1], [2, 3], Channel::U).unwrap();
-    //     assert_relative_eq!(s.value(&event), 18.50401105, epsilon = f64::EPSILON.sqrt());
-    //     assert_relative_eq!(s.value(&event), sp.value(&event),);
-    //     assert_relative_eq!(t.value(&event), -0.19222859, epsilon = f64::EPSILON.sqrt());
-    //     assert_relative_eq!(t.value(&event), tp.value(&event),);
-    //     assert_relative_eq!(u.value(&event), -14.40419893, epsilon = f64::EPSILON.sqrt());
-    //     assert_relative_eq!(u.value(&event), up.value(&event),);
-    //     let m2_beam = test_event().get_Vec4::sum([0]).m2();
-    //     let m2_recoil = test_event().get_Vec4::sum([1]).m2();
-    //     let m2_res = test_event().get_Vec4::sum([2, 3]).m2();
-    //     assert_relative_eq!(
-    //         s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
-    //         1.00,
-    //         epsilon = 1e-2
-    //     );
-    //     // Note: not very accurate, but considering the values in test_event only go to about 3
-    //     // decimal places, this is probably okay
-    // }
-    //
-    // #[test]
-    // fn test_mandelstam_display() {
-    //     let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
-    //     assert_eq!(
-    //         s.to_string(),
-    //         "Mandelstam(p1=[0], p2=[], p3=[2, 3], p4=[1], channel=s)"
-    //     );
-    // }
-    //
-    // #[test]
-    // fn test_variable_value_on() {
-    //     let dataset = test_dataset();
-    //     let mass = Mass::new(vec![2, 3]);
-    //
-    //     let values = mass.value_on(&dataset);
-    //     assert_eq!(values.len(), 1);
-    //     assert_relative_eq!(values[0], 1.37437863, epsilon = f64::EPSILON.sqrt());
-    // }
+    use super::*;
+    use crate::data::test_dataset;
+    use crate::tests::val1;
+    use approx::assert_relative_eq;
+    #[test]
+    fn test_mass_single_particle() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf.with_column(mass(["proton"])).collect().unwrap();
+        assert_relative_eq!(val1(&res, "mass(proton)"), 1.0069946154771634);
+    }
+    #[test]
+    fn test_mass_multiple_particles() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(mass(["kshort1", "kshort2"]))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(val1(&res, "mass(kshort1, kshort2)"), 1.3743574213427878);
+    }
+    #[test]
+    fn test_costheta_helicity() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(costheta(
+                "beam",
+                ["proton"],
+                ["kshort1"],
+                ["kshort1", "kshort2"],
+                Frame::Helicity,
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(
+                &res,
+                "costheta(beam, [proton], [kshort1], [kshort1, kshort2], Helicity)"
+            ),
+            -0.4611206717087849
+        );
+    }
+    #[test]
+    fn test_phi_helicity() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(phi(
+                "beam",
+                ["proton"],
+                ["kshort1"],
+                ["kshort1", "kshort2"],
+                Frame::Helicity,
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(
+                &res,
+                "phi(beam, [proton], [kshort1], [kshort1, kshort2], Helicity)"
+            ),
+            -2.6574625881071583
+        );
+    }
+    #[test]
+    fn test_costheta_gottfried_jackson() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(costheta(
+                "beam",
+                ["proton"],
+                ["kshort1"],
+                ["kshort1", "kshort2"],
+                Frame::GottfriedJackson,
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(
+                &res,
+                "costheta(beam, [proton], [kshort1], [kshort1, kshort2], Gottfried-Jackson)"
+            ),
+            0.0919915889924921,
+        );
+    }
+    #[test]
+    fn test_phi_gottfried_jackson() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(phi(
+                "beam",
+                ["proton"],
+                ["kshort1"],
+                ["kshort1", "kshort2"],
+                Frame::GottfriedJackson,
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(
+                &res,
+                "phi(beam, [proton], [kshort1], [kshort1, kshort2], Gottfried-Jackson)"
+            ),
+            -2.7139139065178943
+        );
+    }
+    #[test]
+    fn test_angles() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_columns(angles(
+                "beam",
+                ["proton"],
+                ["kshort1"],
+                ["kshort1", "kshort2"],
+                Frame::Helicity,
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(
+                &res,
+                "costheta(beam, [proton], [kshort1], [kshort1, kshort2], Helicity)"
+            ),
+            -0.4611206717087849
+        );
+        assert_relative_eq!(
+            val1(
+                &res,
+                "phi(beam, [proton], [kshort1], [kshort1, kshort2], Helicity)"
+            ),
+            -2.6574625881071583
+        );
+    }
+    #[test]
+    fn test_pol_angle() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(pol_angle("beam", ["proton"], "pol_angle"))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(&res, "pol_angle(beam, [proton], pol_angle)"),
+            1.9359299078186731,
+        );
+    }
+    #[test]
+    fn test_pol_magnitude() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_column(pol_magnitude("pol_magnitude"))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(val1(&res, "pol_magnitude(pol_magnitude)"), 0.385628);
+    }
+    #[test]
+    fn test_polarization() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_columns(polarization(
+                "beam",
+                ["proton"],
+                "pol_magnitude",
+                "pol_angle",
+            ))
+            .collect()
+            .unwrap();
+        assert_relative_eq!(
+            val1(&res, "pol_angle(beam, [proton], pol_angle)"),
+            1.9359299078186731,
+        );
+        assert_relative_eq!(val1(&res, "pol_magnitude(pol_magnitude)"), 0.385628);
+    }
+    #[test]
+    fn test_mandelstam() {
+        let lf = test_dataset().lf.lazy();
+        let res = lf
+            .with_columns([
+                mandelstam(
+                    Topology::missing_p2(["beam"], ["kshort1", "kshort2"], ["proton"]),
+                    Channel::S,
+                ),
+                mandelstam(
+                    Topology::missing_p2(["beam"], ["kshort1", "kshort2"], ["proton"]),
+                    Channel::T,
+                ),
+                mandelstam(
+                    Topology::missing_p2(["beam"], ["kshort1", "kshort2"], ["proton"]),
+                    Channel::U,
+                ),
+                mandelstam(
+                    Topology::missing_p1(["beam"], ["proton"], ["kshort1", "kshort2"]),
+                    Channel::S,
+                ),
+                mandelstam(
+                    Topology::missing_p1(["beam"], ["proton"], ["kshort1", "kshort2"]),
+                    Channel::T,
+                ),
+                mandelstam(
+                    Topology::missing_p1(["beam"], ["proton"], ["kshort1", "kshort2"]),
+                    Channel::U,
+                ),
+                mass(["beam"]),
+                mass(["kshort1", "kshort2"]),
+                mass(["proton"]),
+            ])
+            .collect()
+            .unwrap();
+        let s = val1(
+            &res,
+            "mandelstam(Topology::MissingP2(p1: [beam], p3: [kshort1, kshort2], p4: [proton]), s)",
+        );
+        let t = val1(
+            &res,
+            "mandelstam(Topology::MissingP2(p1: [beam], p3: [kshort1, kshort2], p4: [proton]), t)",
+        );
+        let u = val1(
+            &res,
+            "mandelstam(Topology::MissingP2(p1: [beam], p3: [kshort1, kshort2], p4: [proton]), u)",
+        );
+        let sp = val1(
+            &res,
+            "mandelstam(Topology::MissingP1(p2: [beam], p3: [proton], p4: [kshort1, kshort2]), s)",
+        );
+        let tp = val1(
+            &res,
+            "mandelstam(Topology::MissingP1(p2: [beam], p3: [proton], p4: [kshort1, kshort2]), t)",
+        );
+        let up = val1(
+            &res,
+            "mandelstam(Topology::MissingP1(p2: [beam], p3: [proton], p4: [kshort1, kshort2]), u)",
+        );
+        let m2_beam = val1(&res, "mass(beam)").powi(2);
+        let m2_proton = val1(&res, "mass(proton)").powi(2);
+        let m2_res = val1(&res, "mass(kshort1, kshort2)").powi(2);
+        assert_relative_eq!(s, 18.50384948999998);
+        assert_relative_eq!(s, sp);
+        assert_relative_eq!(t, -0.1922279184000001);
+        assert_relative_eq!(t, tp);
+        assert_relative_eq!(u, -14.404123804400015);
+        assert_relative_eq!(u, up);
+        assert_relative_eq!(
+            s + t + u - m2_beam - m2_proton - m2_res,
+            1.0,
+            epsilon = 1e-2
+        );
+        // Note: not very accurate, but considering the values in test_event only go to about 3
+        // decimal places, this is probably okay
+    }
 }

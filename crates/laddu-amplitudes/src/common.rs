@@ -1,7 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
-    resources::{Cache, ParameterID, Parameters, Resources},
+    resources::{CacheRow, ParameterID, Parameters, Resources},
     LadduError,
 };
 #[cfg(feature = "python")]
@@ -39,15 +38,14 @@ impl Amplitude for Scalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache_row: &CacheRow) -> Complex64 {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
-        _cache: &Cache,
+        _cache_row: &CacheRow,
         gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid {
@@ -113,15 +111,14 @@ impl Amplitude for ComplexScalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache_row: &CacheRow) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
-        _cache: &Cache,
+        _cache_row: &CacheRow,
         gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid_re {
@@ -192,15 +189,14 @@ impl Amplitude for PolarComplexScalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache_row: &CacheRow) -> Complex64 {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
 
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        _event: &Event,
-        _cache: &Cache,
+        _cache_row: &CacheRow,
         gradient: &mut DVector<Complex64>,
     ) {
         let exp_i_theta = Complex64::cis(parameters.get(self.pid_theta));
@@ -250,7 +246,6 @@ mod tests {
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Manager};
     use std::f64::consts::PI;
-    use std::sync::Arc;
 
     #[test]
     fn test_scalar_creation_and_evaluation() {
@@ -258,13 +253,13 @@ mod tests {
         let amp = Scalar::new("test_scalar", parameter("test_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into(); // Direct amplitude evaluation
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let params = vec![2.5];
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         assert_relative_eq!(result[0].re, 2.5);
         assert_relative_eq!(result[0].im, 0.0);
@@ -276,13 +271,13 @@ mod tests {
         let amp = Scalar::new("test_scalar", parameter("test_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.norm_sqr(); // |f(x)|^2
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let params = vec![2.0];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // For |f(x)|^2 where f(x) = x, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
@@ -295,13 +290,13 @@ mod tests {
         let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         assert_relative_eq!(result[0].re, 1.5);
         assert_relative_eq!(result[0].im, 2.5);
@@ -313,13 +308,13 @@ mod tests {
         let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.norm_sqr(); // |f(x + iy)|^2
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // For |f(x + iy)|^2, partial derivatives should be 2x and 2y
         assert_relative_eq!(gradient[0][0].re, 6.0);
@@ -335,15 +330,15 @@ mod tests {
             PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into();
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
         let params = vec![r, theta];
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         // r * (cos(theta) + i*sin(theta))
         assert_relative_eq!(result[0].re, r * theta.cos());
@@ -357,15 +352,15 @@ mod tests {
             PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
         let aid = manager.register(amp).unwrap();
 
-        let dataset = Arc::new(test_dataset());
+        let dataset = test_dataset();
         let expr = aid.into(); // f(r,θ) = re^(iθ)
         let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = model.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
         let params = vec![r, theta];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
         assert_relative_eq!(gradient[0][0].re, f64::cos(theta));
