@@ -1,237 +1,209 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportMissingTypeStubs=false, reportAttributeAccessIssue=false, reportUnknownArgumentType=false
-"""
-Usage:
-    amptools-to-laddu <input_file> <output_file> [--tree <treename>] [--pol-in-beam | --pol-angle <angle> --pol-magnitude <magnitude>] [--p4-names <name>...] [-n <num-entries>]
+"""AmpTools → laddu Parquet converter.
 
-Options:
-    --tree <treename>            The tree name in the ROOT file [default: kin].
-    --pol-in-beam                Use the beam's momentum for polarization (eps).
-    --pol-angle <angle>          The polarization angle in degrees (only used if --pol-in-beam is not used)
-    --pol-magnitude <magnitude>  The polarization magnitude (only used if --pol-in-beam is not used)
-    --p4-names <name>...         Particle names in the order provided by AmpTools (beam first).
-    -n <num-entries>             Truncate the file to the first n entries for testing.
-"""  # noqa: D205, D400
+This utility reads an AmpTools-style ROOT file and emits a Parquet dataset
+compatible with ``laddu``'s named-column format.  The input file must contain a
+single tree named ``kin`` with the following branches (all ``float32``):
+
+``E_Beam``
+    Scalar beam energy.
+``Px_Beam``/``Py_Beam``/``Pz_Beam``
+    Beam momentum components.
+``E_FinalState``/``Px_FinalState``/``Py_FinalState``/``Pz_FinalState``
+    Fixed-length arrays describing the final-state four-momenta.
+``Weight`` (optional)
+    Event weights.  When absent, events are assumed to be unweighted.
+
+The converter always names the beam ``beam``.  Final-state particle names may be
+supplied explicitly via ``--p4-names``; otherwise they default to ``particle1``,
+``particle2`` … in the order provided by AmpTools.
+
+Polarization information can be supplied in one of two ways:
+* ``--pol-in-beam`` interprets the beam's transverse momentum as the
+  polarization vector and zeros the exported ``beam_px``/``beam_py`` columns.
+* ``--pol-angle`` (degrees) and ``--pol-magnitude`` apply constant values to all
+  events.  Angles are stored in radians.
+
+Polarization columns default to ``pol_magnitude`` and ``pol_angle`` when either
+mode is enabled.
+"""
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
-import numpy.typing as npt
 import polars as pl
 import uproot
-from docopt import docopt
 
-_POLARIZATION_ZERO_TOL = 1e-9
+POLARIZATION_DEFAULT_MAG_NAME = "pol_magnitude"
+POLARIZATION_DEFAULT_ANGLE_NAME = "pol_angle"
 
 
-def _stack_final_component(
-    tree: uproot.ReadOnlyDirectory, field: str, num_entries: int | None
-) -> npt.NDArray[np.float32]:
-    return np.array(
-        list(tree[field].array(library='np', entry_stop=num_entries)), dtype=np.float32
+def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Convert AmpTools ROOT data to laddu Parquet")
+    parser.add_argument("input", type=Path, help="AmpTools ROOT file")
+    parser.add_argument("output", type=Path, help="Destination Parquet file")
+    parser.add_argument(
+        "--p4-names",
+        nargs="*",
+        default=None,
+        metavar="NAME",
+        help="Final-state particle names in AmpTools order (beam is always 'beam')",
+    )
+    parser.add_argument(
+        "--pol-in-beam",
+        action="store_true",
+        help="Derive polarization from Px_Beam/Py_Beam and zero the exported transverse momentum",
+    )
+    parser.add_argument(
+        "--pol-angle",
+        type=float,
+        default=None,
+        help="Constant polarization angle in degrees (requires --pol-magnitude)",
+    )
+    parser.add_argument(
+        "--pol-magnitude",
+        type=float,
+        default=None,
+        help="Constant polarization magnitude (requires --pol-angle)",
+    )
+    parser.add_argument(
+        "--pol-angle-name",
+        default=POLARIZATION_DEFAULT_ANGLE_NAME,
+        help="Name of the polarization angle column (default: pol_angle)",
+    )
+    parser.add_argument(
+        "--pol-magnitude-name",
+        default=POLARIZATION_DEFAULT_MAG_NAME,
+        help="Name of the polarization magnitude column (default: pol_magnitude)",
     )
 
+    args = parser.parse_args(argv)
 
-def _detect_polarization_four_vector(
-    p4_final: npt.NDArray[np.float32],
-) -> tuple[npt.NDArray[np.float32] | None, npt.NDArray[np.float32]]:
-    if p4_final.size == 0 or p4_final.shape[1] == 0:
-        return None, p4_final
+    if args.pol_in_beam and (args.pol_angle is not None or args.pol_magnitude is not None):
+        parser.error("--pol-in-beam cannot be combined with --pol-angle/--pol-magnitude")
 
-    candidate = p4_final[:, -1, :]
-    if np.allclose(candidate[:, 2], 0.0, atol=_POLARIZATION_ZERO_TOL) and np.allclose(
-        candidate[:, 3], 0.0, atol=_POLARIZATION_ZERO_TOL
+    if (args.pol_angle is None) ^ (args.pol_magnitude is None):
+        parser.error("--pol-angle and --pol-magnitude must be provided together")
+
+    if (args.pol_angle_name != POLARIZATION_DEFAULT_ANGLE_NAME or args.pol_magnitude_name != POLARIZATION_DEFAULT_MAG_NAME) and not (
+        args.pol_in_beam or args.pol_angle is not None
     ):
-        return candidate[:, :3], p4_final[:, :-1, :]
+        parser.error("Polarization column names may only be customised when polarization data is exported")
 
-    return None, p4_final
-
-
-def _normalize_polarization_shape(
-    values: npt.NDArray[np.float32] | None,
-    length: int,
-) -> npt.NDArray[np.float32]:
-    if values is None:
-        return np.zeros((length, 3), dtype=np.float32)
-
-    if values.ndim == 3:
-        if values.shape[1] != 1:
-            msg = f'Unexpected polarization shape {values.shape}; expected (N, 1, 3).'
-            raise ValueError(msg)
-        values = values[:, 0, :]
-    if values.shape != (length, 3):
-        msg = f'Polarization array has shape {values.shape}, expected ({length}, 3).'
-        raise ValueError(msg)
-    return values.astype(np.float32, copy=False)
+    return args
 
 
-def read_root_file(
-    input_path: Path | str,
-    tree_name: str = 'kin',
-    *,
-    pol_in_beam: bool = False,
-    pol_angle_rad: float | None = None,
-    pol_magnitude: float | None = None,
-    num_entries: int | None = None,
-) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.float32]]:
-    input_path = Path(input_path)
-    tree = uproot.open(f'{input_path}:{tree_name}')
+def _read_scalar(tree: uproot.behaviors.TBranch.TBranch) -> np.ndarray:
+    array = tree.array(library="np")
+    return np.asarray(array, dtype=np.float32)
 
-    e_beam: npt.NDArray[np.float32] = tree['E_Beam'].array(
-        library='np', entry_stop=num_entries
-    )
-    px_beam: npt.NDArray[np.float32] = tree['Px_Beam'].array(
-        library='np', entry_stop=num_entries
-    )
-    py_beam: npt.NDArray[np.float32] = tree['Py_Beam'].array(
-        library='np', entry_stop=num_entries
-    )
-    pz_beam: npt.NDArray[np.float32] = tree['Pz_Beam'].array(
-        library='np', entry_stop=num_entries
-    )
-    weight = (
-        tree['Weight'].array(library='np', entry_stop=num_entries)
-        if 'Weight' in tree
-        else np.ones_like(e_beam)
-    )
 
-    e_final = _stack_final_component(tree, 'E_FinalState', num_entries)
-    px_final = _stack_final_component(tree, 'Px_FinalState', num_entries)
-    py_final = _stack_final_component(tree, 'Py_FinalState', num_entries)
-    pz_final = _stack_final_component(tree, 'Pz_FinalState', num_entries)
+def _read_matrix(tree: uproot.behaviors.TBranch.TBranch) -> np.ndarray:
+    # uproot returns an object array of per-event vectors; convert to a dense matrix
+    raw = tree.array(library="np")
+    matrix = np.asarray(list(raw), dtype=np.float32)
+    if matrix.ndim != 2:
+        raise ValueError("Final-state branches must be fixed-length arrays")
+    return matrix
 
-    p4_beam = np.stack([px_beam, py_beam, pz_beam, e_beam], axis=-1).astype(np.float32)
-    p4_final = np.stack([px_final, py_final, pz_final, e_final], axis=-1).astype(np.float32)
 
-    polarization_vectors: npt.NDArray[np.float32] | None
-    if 'EPS' in tree:
-        eps = tree['EPS'].array(library='np', entry_stop=num_entries)
-        polarization_vectors = np.asarray(eps, dtype=np.float32)
-    elif 'eps' in tree:
-        eps = tree['eps'].array(library='np', entry_stop=num_entries)
-        polarization_vectors = np.asarray(eps, dtype=np.float32)
-    elif pol_in_beam:
-        polarization_vectors = np.stack([px_beam, py_beam, pz_beam], axis=-1).astype(
+def _default_final_names(count: int) -> list[str]:
+    return [f"particle{i}" for i in range(1, count + 1)]
+
+
+def _ensure_names(names: Sequence[str] | None, count: int) -> list[str]:
+    if names is None or len(names) == 0:
+        return _default_final_names(count)
+    if len(names) != count:
+        raise ValueError(
+            f"Expected {count} final-state names, received {len(names)}"
+        )
+    return list(names)
+
+
+def convert(input_path: Path, output_path: Path, args: argparse.Namespace) -> None:
+    with uproot.open(input_path) as file:
+        try:
+            tree = file["kin"]
+        except uproot.exceptions.KeyInFileError as exc:  # pragma: no cover - defensive
+            raise KeyError("Input file must contain a tree named 'kin'") from exc
+
+        e_beam = _read_scalar(tree["E_Beam"])
+        px_beam = _read_scalar(tree["Px_Beam"])
+        py_beam = _read_scalar(tree["Py_Beam"])
+        pz_beam = _read_scalar(tree["Pz_Beam"])
+
+        e_final = _read_matrix(tree["E_FinalState"])
+        px_final = _read_matrix(tree["Px_FinalState"])
+        py_final = _read_matrix(tree["Py_FinalState"])
+        pz_final = _read_matrix(tree["Pz_FinalState"])
+
+        if "Weight" in tree.keys():
+            weight = _read_scalar(tree["Weight"])
+        else:
+            weight = np.ones_like(e_beam, dtype=np.float32)
+
+    n_events, n_finals = e_final.shape
+    if not (px_final.shape == py_final.shape == pz_final.shape == (n_events, n_finals)):
+        raise ValueError("Final-state branches must have a consistent shape")
+
+    final_names = _ensure_names(args.p4_names, n_finals)
+
+    # Prepare beam components (may be overwritten for pol_in_beam)
+    beam_px = px_beam.copy()
+    beam_py = py_beam.copy()
+
+    pol_magnitude: np.ndarray | None = None
+    pol_angle: np.ndarray | None = None
+    pol_mag_name = args.pol_magnitude_name
+    pol_angle_name = args.pol_angle_name
+
+    if args.pol_in_beam:
+        transverse_sq = px_beam.astype(np.float64) ** 2 + py_beam.astype(np.float64) ** 2
+        pol_magnitude = np.sqrt(transverse_sq).astype(np.float32)
+        pol_angle = np.arctan2(py_beam.astype(np.float64), px_beam.astype(np.float64)).astype(
             np.float32
         )
-        p4_beam[:, 0] = 0  # Set Px to 0
-        p4_beam[:, 1] = 0  # Set Py to 0
-        p4_beam[:, 2] = e_beam  # Set Pz = E for beam
-    elif pol_angle_rad is not None and pol_magnitude is not None:
-        eps_x = pol_magnitude * np.cos(pol_angle_rad) * np.ones_like(e_beam)
-        eps_y = pol_magnitude * np.sin(pol_angle_rad) * np.ones_like(e_beam)
-        eps_z = np.zeros_like(e_beam)
-        polarization_vectors = np.stack([eps_x, eps_y, eps_z], axis=-1).astype(np.float32)
-    else:
-        polarization_vectors = None
+        beam_px.fill(0.0)
+        beam_py.fill(0.0)
+    elif args.pol_angle is not None and args.pol_magnitude is not None:
+        pol_magnitude = np.full(n_events, args.pol_magnitude, dtype=np.float32)
+        pol_angle_value = np.deg2rad(args.pol_angle)
+        pol_angle = np.full(n_events, pol_angle_value, dtype=np.float32)
 
-    if polarization_vectors is None:
-        beam_placeholder_mag = np.sqrt(px_beam * px_beam + py_beam * py_beam)
-        if np.any(beam_placeholder_mag > _POLARIZATION_ZERO_TOL):
-            polarization_vectors = np.stack(
-                [px_beam, py_beam, np.zeros_like(px_beam)], axis=-1
-            ).astype(np.float32)
-            p4_beam[:, 0] = 0.0
-            p4_beam[:, 1] = 0.0
+    columns: dict[str, np.ndarray] = {
+        "beam_px": beam_px,
+        "beam_py": beam_py,
+        "beam_pz": pz_beam,
+        "beam_e": e_beam,
+    }
 
-    derived_polarization, p4_final = _detect_polarization_four_vector(p4_final)
-    if polarization_vectors is None and derived_polarization is not None:
-        polarization_vectors = derived_polarization
+    for idx, name in enumerate(final_names):
+        columns[f"{name}_px"] = px_final[:, idx]
+        columns[f"{name}_py"] = py_final[:, idx]
+        columns[f"{name}_pz"] = pz_final[:, idx]
+        columns[f"{name}_e"] = e_final[:, idx]
 
-    polarization_vectors = _normalize_polarization_shape(polarization_vectors, len(e_beam))
+    if pol_magnitude is not None and pol_angle is not None:
+        columns[pol_mag_name] = pol_magnitude
+        columns[pol_angle_name] = pol_angle
 
-    p4s = np.concatenate([p4_beam[:, np.newaxis, :], p4_final], axis=1)
+    columns["weight"] = weight
 
-    return p4s.astype(np.float32), polarization_vectors, weight.astype(np.float32)
-
-
-def _default_particle_names(count: int) -> list[str]:
-    if count < 1:
-        msg = 'Expected at least one four-momentum from AmpTools.'
-        raise ValueError(msg)
-    return ['beam', *[f'particle{i}' for i in range(1, count)]]
-
-
-def save_as_parquet(
-    p4s: npt.NDArray[np.float32],
-    polarization_vectors: npt.NDArray[np.float32],
-    weight: npt.NDArray[np.float32],
-    output_path: Path | str,
-    particle_names: Sequence[str],
-) -> None:
-    if p4s.shape[1] != len(particle_names):
-        msg = (
-            f'Number of particle names ({len(particle_names)}) does not match '
-            f'number of four-momenta ({p4s.shape[1]}).'
-        )
-        raise ValueError(msg)
-
-    columns: dict[str, npt.NDArray[np.float32]] = {}
-    for index, name in enumerate(particle_names):
-        columns[f'{name}_px'] = p4s[:, index, 0]
-        columns[f'{name}_py'] = p4s[:, index, 1]
-        columns[f'{name}_pz'] = p4s[:, index, 2]
-        columns[f'{name}_e'] = p4s[:, index, 3]
-
-    pol_x = polarization_vectors[:, 0]
-    pol_y = polarization_vectors[:, 1]
-    pol_magnitude = np.sqrt(pol_x * pol_x + pol_y * pol_y).astype(np.float32)
-    pol_angle = np.arctan2(pol_y, pol_x).astype(np.float32)
-
-    columns['pol_magnitude'] = pol_magnitude
-    columns['pol_angle'] = pol_angle
-    columns['weight'] = weight
-
-    dataframe = pl.DataFrame({name: pl.Series(value) for name, value in columns.items()})
-    dataframe.write_parquet(str(output_path), compression='zstd')
-
-
-def convert_from_amptools(
-    input_path: Path,
-    output_path: Path,
-    tree_name: str = 'kin',
-    *,
-    pol_in_beam: bool = False,
-    pol_angle: float | None = None,
-    pol_magnitude: float | None = None,
-    num_entries: int | None = None,
-    particle_names: Sequence[str] | None = None,
-) -> None:
-    p4s, polarization_vectors, weight = read_root_file(
-        input_path,
-        tree_name,
-        pol_in_beam=pol_in_beam,
-        pol_angle_rad=pol_angle,
-        pol_magnitude=pol_magnitude,
-        num_entries=num_entries,
+    pl.DataFrame({key: pl.Series(value) for key, value in columns.items()}).write_parquet(
+        output_path,
+        compression="zstd",
     )
 
-    names = list(particle_names) if particle_names else _default_particle_names(p4s.shape[1])
-    save_as_parquet(p4s, polarization_vectors, weight, output_path, names)
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_arguments(argv)
+    convert(args.input, args.output, args)
 
 
-def run() -> None:
-    args = docopt(__doc__ if __doc__ else '')
-    input_file = args['<input_file>']
-    output_file = args['<output_file>']
-    tree_name = args['--tree']
-    pol_in_beam = args['--pol-in-beam']
-    pol_angle = float(args['--pol-angle']) * np.pi / 180 if args['--pol-angle'] else None
-    pol_magnitude = float(args['--pol-magnitude']) if args['--pol-magnitude'] else None
-    num_entries = int(args['-n']) if args['-n'] else None
-    particle_names = args['--p4-names']
-    if particle_names is not None and len(particle_names) == 0:
-        particle_names = None
-
-    convert_from_amptools(
-        Path(input_file),
-        Path(output_file),
-        tree_name,
-        pol_in_beam=pol_in_beam,
-        pol_angle=pol_angle,
-        pol_magnitude=pol_magnitude,
-        num_entries=num_entries,
-        particle_names=particle_names,
-    )
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    main()
