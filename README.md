@@ -102,8 +102,8 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 
 ```rust
 use laddu::{
-   ParameterLike, EventData, Cache, Resources, Mass,
-   ParameterID, Parameters, LadduError, PI, AmplitudeID,
+   AmplitudeID, Cache, DatasetMetadata, EventData, LadduError, Mass,
+   ParameterID, ParameterLike, Parameters, Resources, PI,
 };
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
@@ -149,6 +149,13 @@ impl MyBreitWigner {
 
 #[typetag::serde]
 impl Amplitude for MyBreitWigner {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        Ok(())
+    }
+
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.pid_mass = resources.register_parameter(&self.mass);
         self.pid_width = resources.register_parameter(&self.width);

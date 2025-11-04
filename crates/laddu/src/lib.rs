@@ -52,8 +52,8 @@
 //!
 //! ```rust,no_run
 //! use laddu::{
-//!    ParameterLike, Event, Cache, Resources, Mass,
-//!    ParameterID, Parameters, f64, LadduError, PI, AmplitudeID,
+//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduError, Mass,
+//!    ParameterID, ParameterLike, Parameters, Resources, PI, f64,
 //! };
 //! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
@@ -99,6 +99,13 @@
 //!
 //! #[typetag::serde]
 //! impl Amplitude for MyBreitWigner {
+//!     fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+//!         self.daughter_1_mass.bind(metadata)?;
+//!         self.daughter_2_mass.bind(metadata)?;
+//!         self.resonance_mass.bind(metadata)?;
+//!         Ok(())
+//!     }
+//!
 //!     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //!         self.pid_mass = resources.register_parameter(&self.mass);
 //!         self.pid_width = resources.register_parameter(&self.width);
@@ -116,7 +123,7 @@
 //!         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
 //!         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
 //!         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//!         let n = f64::sqrt(mass0 * width0 / PI);
+//!         let n = (mass0 * width0 / PI).sqrt();
 //!         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
 //!         Complex64::from(f * n) / d
 //!     }
@@ -131,15 +138,16 @@
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 //! ```rust,no_run
+//! use laddu::{Scalar, Dataset, Mass, Manager, NLL, parameter};
 //! # use laddu::{
-//! #    ParameterLike, Event, Cache, Resources,
-//! #    ParameterID, Parameters, f64, LadduError, PI, AmplitudeID,
+//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduError,
+//! #    ParameterID, ParameterLike, Parameters, Resources, PI, f64,
 //! # };
 //! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 //! # use laddu::{Deserialize, Serialize, typetag};
 //! # use num::complex::Complex64;
-//!
+//! #
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
 //! #     name: String,
@@ -179,6 +187,13 @@
 //! #
 //! # #[typetag::serde]
 //! # impl Amplitude for MyBreitWigner {
+//! #     fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+//! #         self.daughter_1_mass.bind(metadata)?;
+//! #         self.daughter_2_mass.bind(metadata)?;
+//! #         self.resonance_mass.bind(metadata)?;
+//! #         Ok(())
+//! #     }
+//! #
 //! #     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass);
 //! #         self.pid_width = resources.register_parameter(&self.width);
@@ -196,12 +211,11 @@
 //! #         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
 //! #         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
 //! #         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//! #         let n = f64::sqrt(mass0 * width0 / PI);
+//! #         let n = (mass0 * width0 / PI).sqrt();
 //! #         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
 //! #         Complex64::from(f * n) / d
 //! #     }
 //! # }
-//! use laddu::{Scalar, Mass, Manager, NLL, Dataset, parameter};
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 //! let aux_names = ["pol_magnitude", "pol_angle"];
 //! let ds_data = Dataset::open("test_data/data.parquet", &p4_names, &aux_names).unwrap();
