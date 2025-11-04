@@ -1,17 +1,17 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID},
-    data::Event,
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -43,12 +43,18 @@ impl Ylm {
 
 #[typetag::serde]
 impl Amplitude for Ylm {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+        self.angles.costheta.bind(metadata)?;
+        self.angles.phi.bind(metadata)?;
+        Ok(())
+    }
+
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         cache.store_complex_scalar(
             self.csid,
             spherical_harmonic(
@@ -60,16 +66,16 @@ impl Amplitude for Ylm {
         );
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -107,6 +113,7 @@ pub fn py_ylm(name: &str, l: usize, m: isize, angles: &PyAngles) -> PyAmplitude 
 
 #[cfg(test)]
 mod tests {
+    use std::f64;
     use std::sync::Arc;
 
     use super::*;
@@ -116,29 +123,47 @@ mod tests {
     #[test]
     fn test_ylm_evaluation() {
         let mut manager = Manager::default();
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let dataset = Arc::new(test_dataset());
+        let metadata = dataset.metadata();
+        let mut angles = Angles::new(
+            "beam",
+            ["proton"],
+            ["kshort1"],
+            ["kshort1", "kshort2"],
+            Frame::Helicity,
+        );
+        angles.costheta.bind(metadata).unwrap();
+        angles.phi.bind(metadata).unwrap();
+
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
         let expr = aid.into();
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.27133944, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.14268971, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.27133944, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.14268971, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
     fn test_ylm_gradient() {
         let mut manager = Manager::default();
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let dataset = Arc::new(test_dataset());
+        let metadata = dataset.metadata();
+        let mut angles = Angles::new(
+            "beam",
+            ["proton"],
+            ["kshort1"],
+            ["kshort1", "kshort2"],
+            Frame::Helicity,
+        );
+        angles.costheta.bind(metadata).unwrap();
+        angles.phi.bind(metadata).unwrap();
+
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
         let expr = aid.into();
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);

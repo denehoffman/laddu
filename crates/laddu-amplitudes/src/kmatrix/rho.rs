@@ -1,10 +1,10 @@
 use super::FixedKMatrix;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -12,7 +12,7 @@ use laddu_python::{
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SVector};
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -96,6 +96,10 @@ impl KopfKMatrixRho {
 
 #[typetag::serde]
 impl Amplitude for KopfKMatrixRho {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+        self.mass.bind(metadata)
+    }
+
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
@@ -108,7 +112,7 @@ impl Amplitude for KopfKMatrixRho {
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
@@ -117,9 +121,9 @@ impl Amplitude for KopfKMatrixRho {
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
-            Complex::new(
+            Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
                 parameters.get(self.couplings_indices_imag[i]),
             )
@@ -132,9 +136,9 @@ impl Amplitude for KopfKMatrixRho {
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
@@ -144,7 +148,7 @@ impl Amplitude for KopfKMatrixRho {
                 gradient[index] = internal_gradient[i];
             }
             if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
-                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+                gradient[index] = Complex64::I * internal_gradient[i];
             }
         }
     }
@@ -214,6 +218,7 @@ pub fn py_kopf_kmatrix_rho(
 #[cfg(test)]
 mod tests {
     // Note: These tests are not exhaustive, they only check one channel
+    use std::f64;
     use std::sync::Arc;
 
     use super::*;
@@ -223,7 +228,7 @@ mod tests {
     #[test]
     fn test_rho_evaluation() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = KopfKMatrixRho::new(
             "rho",
             [
@@ -242,14 +247,14 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, 0.09483558, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.26091837, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.09483558, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].im, 0.26091837, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
     fn test_rho_gradient() {
         let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = KopfKMatrixRho::new(
             "rho",
             [
@@ -268,12 +273,12 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.0265203, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -0.0266026, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, 0.0265203, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].im, -0.0266026, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.5172379, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 0.1707373, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].re, 0.5172379, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].im, 0.1707373, epsilon = f64::EPSILON.cbrt());
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }

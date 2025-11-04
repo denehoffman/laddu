@@ -50,15 +50,15 @@
 //!
 //! Although this particular amplitude is already included in `laddu`, let's assume it isn't and imagine how we would write it from scratch:
 //!
-//! ```rust
+//! ```rust,no_run
 //! use laddu::{
 //!    ParameterLike, Event, Cache, Resources, Mass,
-//!    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID,
+//!    ParameterID, Parameters, f64, LadduError, PI, AmplitudeID,
 //! };
 //! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 //! use laddu::{Deserialize, Serialize, typetag};
-//! use num::Complex;
+//! use num::complex::Complex64;
 //!
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
@@ -105,7 +105,7 @@
 //!         resources.register_amplitude(&self.name)
 //!     }
 //!
-//!     fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+//!     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
 //!         let mass = self.resonance_mass.value(event);
 //!         let mass0 = parameters.get(self.pid_mass);
 //!         let width0 = parameters.get(self.pid_width);
@@ -116,9 +116,9 @@
 //!         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
 //!         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
 //!         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//!         let n = Float::sqrt(mass0 * width0 / PI);
-//!         let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//!         Complex::from(f * n) / d
+//!         let n = f64::sqrt(mass0 * width0 / PI);
+//!         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+//!         Complex64::from(f * n) / d
 //!     }
 //! }
 //! ```
@@ -130,15 +130,15 @@
 //!
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
-//! ```rust
+//! ```rust,no_run
 //! # use laddu::{
 //! #    ParameterLike, Event, Cache, Resources,
-//! #    ParameterID, Parameters, Float, LadduError, PI, AmplitudeID,
+//! #    ParameterID, Parameters, f64, LadduError, PI, AmplitudeID,
 //! # };
 //! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 //! # use laddu::{Deserialize, Serialize, typetag};
-//! # use num::Complex;
+//! # use num::complex::Complex64;
 //!
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
@@ -185,7 +185,7 @@
 //! #         resources.register_amplitude(&self.name)
 //! #     }
 //! #
-//! #     fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+//! #     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
 //! #         let mass = self.resonance_mass.value(event);
 //! #         let mass0 = parameters.get(self.pid_mass);
 //! #         let width0 = parameters.get(self.pid_width);
@@ -196,18 +196,20 @@
 //! #         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
 //! #         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
 //! #         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//! #         let n = Float::sqrt(mass0 * width0 / PI);
-//! #         let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//! #         Complex::from(f * n) / d
+//! #         let n = f64::sqrt(mass0 * width0 / PI);
+//! #         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+//! #         Complex64::from(f * n) / d
 //! #     }
 //! # }
-//! use laddu::{Scalar, Mass, Manager, NLL, parameter, open};
-//! let ds_data = open("test_data/data.parquet").unwrap();
-//! let ds_mc = open("test_data/mc.parquet").unwrap();
+//! use laddu::{Scalar, Mass, Manager, NLL, Dataset, parameter};
+//! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
+//! let aux_names = ["pol_magnitude", "pol_angle"];
+//! let ds_data = Dataset::open("test_data/data.parquet", &p4_names, &aux_names).unwrap();
+//! let ds_mc = Dataset::open("test_data/mc.parquet", &p4_names, &aux_names).unwrap();
 //!
-//! let resonance_mass = Mass::new([2, 3]);
-//! let p1_mass = Mass::new([2]);
-//! let p2_mass = Mass::new([3]);
+//! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+//! let p1_mass = Mass::new(["kshort1"]);
+//! let p2_mass = Mass::new(["kshort2"]);
 //! let mut manager = Manager::default();
 //! let bw = manager.register(MyBreitWigner::new(
 //!     "bw",
@@ -230,29 +232,28 @@
 //! In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.
 //!
 //! # Data Format
-//! The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
-//! | Column name | Data Type | Interpretation |
-//! | ----------- | --------- | -------------- |
-//! | `p4_0_E`    | `Float32` | Beam Energy    |
-//! | `p4_0_Px`    | `Float32` | Beam Momentum (x-component) |
-//! | `p4_0_Py`    | `Float32` | Beam Momentum (y-component) |
-//! | `p4_0_Pz`    | `Float32` | Beam Momentum (z-component) |
-//! | `aux_0_x`    | `Float32` | Beam Polarization (x-component) |
-//! | `aux_0_y`    | `Float32` | Beam Polarization (y-component) |
-//! | `aux_0_z`    | `Float32` | Beam Polarization (z-component) |
-//! | `p4_1_E`    | `Float32` | Recoil Proton Energy    |
-//! | `p4_1_Px`    | `Float32` | Recoil Proton Momentum (x-component) |
-//! | `p4_1_Py`    | `Float32` | Recoil Proton Momentum (y-component) |
-//! | `p4_1_Pz`    | `Float32` | Recoil Proton Momentum (z-component) |
-//! | `p4_2_E`    | `Float32` | Decay Product 1 Energy    |
-//! | `p4_2_Px`    | `Float32` | Decay Product 1 Momentum (x-component) |
-//! | `p4_2_Py`    | `Float32` | Decay Product 1 Momentum (y-component) |
-//! | `p4_2_Pz`    | `Float32` | Decay Product 1 Momentum (z-component) |
-//! | `p4_3_E`    | `Float32` | Decay Product 2 Energy    |
-//! | `p4_3_Px`    | `Float32` | Decay Product 2 Momentum (x-component) |
-//! | `p4_3_Py`    | `Float32` | Decay Product 2 Momentum (y-component) |
-//! | `p4_3_Pz`    | `Float32` | Decay Product 2 Momentum (z-component) |
-//! | `weight`    | `Float32` | Event Weight |
+//! The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, optional auxiliary scalars (for example, polarization magnitudes/angles), and a single column for the weight. Four-momenta are described by choosing a unique particle identifier and appending the suffixes `_px`, `_py`, `_pz`, and `_e`. Auxiliary values are listed explicitly by name. All numeric columns may be stored as `Float32` or `Float64`; they are promoted to `f64` on read. For example, the following columns describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
+//! | Column name   | Data Type          | Interpretation                      |
+//! | ------------- | ------------------ | ----------------------------------- |
+//! | `beam_px`     | `Float32` or `Float64` | Beam momentum (x-component)         |
+//! | `beam_py`     | `Float32` or `Float64` | Beam momentum (y-component)         |
+//! | `beam_pz`     | `Float32` or `Float64` | Beam momentum (z-component)         |
+//! | `beam_e`      | `Float32` or `Float64` | Beam energy                         |
+//! | `pol_magnitude` | `Float32` or `Float64` | Beam polarization magnitude          |
+//! | `pol_angle`   | `Float32` or `Float64` | Beam polarization angle              |
+//! | `proton_px`   | `Float32` or `Float64` | Recoil proton momentum (x-component) |
+//! | `proton_py`   | `Float32` or `Float64` | Recoil proton momentum (y-component) |
+//! | `proton_pz`   | `Float32` or `Float64` | Recoil proton momentum (z-component) |
+//! | `proton_e`    | `Float32` or `Float64` | Recoil proton energy                 |
+//! | `kaon1_px`    | `Float32` or `Float64` | Decay product 1 momentum (x)         |
+//! | `kaon1_py`    | `Float32` or `Float64` | Decay product 1 momentum (y)         |
+//! | `kaon1_pz`    | `Float32` or `Float64` | Decay product 1 momentum (z)         |
+//! | `kaon1_e`     | `Float32` or `Float64` | Decay product 1 energy               |
+//! | `kaon2_px`    | `Float32` or `Float64` | Decay product 2 momentum (x)         |
+//! | `kaon2_py`    | `Float32` or `Float64` | Decay product 2 momentum (y)         |
+//! | `kaon2_pz`    | `Float32` or `Float64` | Decay product 2 momentum (z)         |
+//! | `kaon2_e`     | `Float32` or `Float64` | Decay product 2 energy               |
+//! | `weight`      | `Float32` or `Float64` | Event weight                         |
 //!
 //! To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
 //!
@@ -282,9 +283,9 @@
 //! It could be the case that I am leaving out software with which I am not familiar. If so, I'd love to include it here for reference. I don't think that `laddu` will ever be the end-all-be-all of amplitude analysis, just an alternative that might improve on existing systems. It is important for physicists to be aware of these alternatives. For example, if you really don't want to learn Rust but need to implement an amplitude which isn't already included here, `laddu` isn't for you, and one of these alternatives might be best.
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
-/// Methods for loading and manipulating [`Event`]-based data.
+/// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data {
-    pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
+    pub use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, EventData};
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
@@ -328,13 +329,13 @@ pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
-pub use laddu_core::data::{open, BinnedDataset, Dataset, Event};
+pub use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
+pub use laddu_core::f64;
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::Float;
 pub use laddu_core::LadduError;
 pub use laddu_core::PI;
 pub use laddu_extensions::*;

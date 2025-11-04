@@ -6,7 +6,7 @@ use std::{
 use auto_ops::*;
 use dyn_clone::DynClone;
 use nalgebra::{ComplexField, DVector};
-use num::Complex;
+use num::complex::Complex64;
 
 use parking_lot::RwLock;
 #[cfg(feature = "rayon")]
@@ -14,9 +14,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    data::{Dataset, Event},
+    data::{Dataset, DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
-    Float, LadduError, ParameterID, ReadWrite,
+    LadduError, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -31,7 +31,7 @@ pub enum ParameterLike {
     /// A named free parameter.
     Parameter(String),
     /// A constant value.
-    Constant(Float),
+    Constant(f64),
     /// An uninitialized parameter-like structure (typically used as the value given in an
     /// [`Amplitude`] constructor before the [`Amplitude::register`] method is called).
     #[default]
@@ -44,7 +44,7 @@ pub fn parameter(name: &str) -> ParameterLike {
 }
 
 /// Shorthand for generating a constant value (which acts like a fixed parameter).
-pub fn constant(value: Float) -> ParameterLike {
+pub fn constant(value: f64) -> ParameterLike {
     ParameterLike::Constant(value)
 }
 
@@ -57,18 +57,32 @@ pub fn constant(value: Float) -> ParameterLike {
 /// cache values which do not depend on free parameters.
 #[typetag::serde(tag = "type")]
 pub trait Amplitude: DynClone + Send + Sync {
+    /// Bind any internal [`Variable`](crate::utils::variables::Variable)s to the given
+    /// [`DatasetMetadata`].
+    ///
+    /// Most amplitudes depend on one or more variables (e.g. `Mass`, `CosTheta`), which carry a
+    /// list of human-readable particle names or auxiliary values. Those names need to be resolved
+    /// to concrete indices using the [`DatasetMetadata`] that accompanies every
+    /// [`Dataset`]. Implementors that store such variables should override this method and call
+    /// `bind` on them so that subsequent calls to [`Amplitude::precompute`] or
+    /// [`Amplitude::compute`] operate on the correct indices. Implementations that do not depend
+    /// on metadata may keep the default no-op behaviour.
+    fn bind(&mut self, _metadata: &DatasetMetadata) -> Result<(), LadduError> {
+        Ok(())
+    }
+
     /// This method should be used to tell the [`Resources`] manager about all of
     /// the free parameters and cached values used by this [`Amplitude`]. It should end by
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
     fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError>;
     /// This method can be used to do some critical calculations ahead of time and
-    /// store them in a [`Cache`]. These values can only depend on the data in an [`Event`],
+    /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
     /// to make a functioning [`Amplitude`].
     #[allow(unused_variables)]
-    fn precompute(&self, event: &Event, cache: &mut Cache) {}
-    /// Evaluates [`Amplitude::precompute`] over ever [`Event`] in a [`Dataset`].
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {}
+    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset
@@ -79,7 +93,7 @@ pub trait Amplitude: DynClone + Send + Sync {
                 self.precompute(event, cache);
             })
     }
-    /// Evaluates [`Amplitude::precompute`] over ever [`Event`] in a [`Dataset`].
+    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset
@@ -89,19 +103,19 @@ pub trait Amplitude: DynClone + Send + Sync {
             .for_each(|(event, cache)| self.precompute(event, cache))
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
-    /// calculated value for a particular [`Event`] and set of [`Parameters`]. See those
+    /// calculated value for a particular [`EventData`] and set of [`Parameters`]. See those
     /// structs, as well as [`Cache`], for documentation on their available methods. For the
-    /// most part, [`Event`]s can be interacted with via
+    /// most part, [`EventData`]s can be interacted with via
     /// [`Variable`](crate::utils::variables::Variable)s, while [`Parameters`] and the
     /// [`Cache`] are more like key-value storage accessed by
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs.
-    fn compute(&self, parameters: &Parameters, event: &Event, cache: &Cache) -> Complex<Float>;
+    fn compute(&self, parameters: &Parameters, event: &EventData, cache: &Cache) -> Complex64;
 
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
-    /// by a particular [`Event`] and set of [`Parameters`]. See those structs, as well as
+    /// by a particular [`EventData`] and set of [`Parameters`]. See those structs, as well as
     /// [`Cache`], for documentation on their available methods. For the most part,
-    /// [`Event`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
+    /// [`EventData`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
     /// while [`Parameters`] and the [`Cache`] are more like key-value storage accessed by
     /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
     /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
@@ -116,9 +130,9 @@ pub trait Amplitude: DynClone + Send + Sync {
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        event: &Event,
+        event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         self.central_difference_with_indices(
             &Vec::from_iter(0..parameters.len()),
@@ -138,15 +152,15 @@ pub trait Amplitude: DynClone + Send + Sync {
         &self,
         indices: &[usize],
         parameters: &Parameters,
-        event: &Event,
+        event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let x = parameters.parameters.to_owned();
         let constants = parameters.constants.to_owned();
-        let h: DVector<Float> = x
+        let h: DVector<f64> = x
             .iter()
-            .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+            .map(|&xi| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
             .collect::<Vec<_>>()
             .into();
         for i in indices {
@@ -162,15 +176,12 @@ pub trait Amplitude: DynClone + Send + Sync {
 }
 
 /// Utility function to calculate a central finite difference gradient.
-pub fn central_difference<F: Fn(&[Float]) -> Float>(
-    parameters: &[Float],
-    func: F,
-) -> DVector<Float> {
+pub fn central_difference<F: Fn(&[f64]) -> f64>(parameters: &[f64], func: F) -> DVector<f64> {
     let mut gradient = DVector::zeros(parameters.len());
     let x = parameters.to_owned();
-    let h: DVector<Float> = x
+    let h: DVector<f64> = x
         .iter()
-        .map(|&xi| Float::cbrt(Float::EPSILON) * (xi.abs() + 1.0))
+        .map(|&xi| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
         .collect::<Vec<_>>()
         .into();
     for i in 0..parameters.len() {
@@ -189,11 +200,11 @@ dyn_clone::clone_trait_object!(Amplitude);
 
 /// A helper struct that contains the value of each amplitude for a particular event
 #[derive(Debug)]
-pub struct AmplitudeValues(pub Vec<Complex<Float>>);
+pub struct AmplitudeValues(pub Vec<Complex64>);
 
 /// A helper struct that contains the gradient of each amplitude for a particular event
 #[derive(Debug)]
-pub struct GradientValues(pub usize, pub Vec<DVector<Complex<Float>>>);
+pub struct GradientValues(pub usize, pub Vec<DVector<Complex64>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
 /// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
@@ -351,7 +362,7 @@ impl Expression {
     ///
     /// This method parses the underlying [`Expression`] but doesn't actually calculate the values
     /// from the [`Amplitude`]s themselves.
-    pub fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex<Float> {
+    pub fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex64 {
         match self {
             Expression::Amp(aid) => amplitude_values.0[aid.1],
             Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
@@ -359,12 +370,12 @@ impl Expression {
             Expression::Mul(a, b) => a.evaluate(amplitude_values) * b.evaluate(amplitude_values),
             Expression::Div(a, b) => a.evaluate(amplitude_values) / b.evaluate(amplitude_values),
             Expression::Neg(a) => -a.evaluate(amplitude_values),
-            Expression::Real(a) => Complex::new(a.evaluate(amplitude_values).re, 0.0),
-            Expression::Imag(a) => Complex::new(a.evaluate(amplitude_values).im, 0.0),
+            Expression::Real(a) => Complex64::new(a.evaluate(amplitude_values).re, 0.0),
+            Expression::Imag(a) => Complex64::new(a.evaluate(amplitude_values).im, 0.0),
             Expression::Conj(a) => a.evaluate(amplitude_values).conj(),
-            Expression::NormSqr(a) => Complex::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
-            Expression::Zero => Complex::ZERO,
-            Expression::One => Complex::ONE,
+            Expression::NormSqr(a) => Complex64::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
+            Expression::Zero => Complex64::ZERO,
+            Expression::One => Complex64::ONE,
         }
     }
     /// Evaluate the gradient of an [`Expression`] over a single event using calculated [`AmplitudeValues`]
@@ -375,7 +386,7 @@ impl Expression {
         &self,
         amplitude_values: &AmplitudeValues,
         gradient_values: &GradientValues,
-    ) -> DVector<Complex<Float>> {
+    ) -> DVector<Complex64> {
         match self {
             Expression::Amp(aid) => gradient_values.1[aid.1].clone(),
             Expression::Add(a, b) => {
@@ -406,17 +417,17 @@ impl Expression {
             Expression::Neg(a) => -a.evaluate_gradient(amplitude_values, gradient_values),
             Expression::Real(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
-                .map(|g| Complex::new(g.re, 0.0)),
+                .map(|g| Complex64::new(g.re, 0.0)),
             Expression::Imag(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
-                .map(|g| Complex::new(g.im, 0.0)),
+                .map(|g| Complex64::new(g.im, 0.0)),
             Expression::Conj(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| g.conj()),
             Expression::NormSqr(a) => {
                 let conj_f_a = a.evaluate(amplitude_values).conjugate();
                 a.evaluate_gradient(amplitude_values, gradient_values)
-                    .map(|g| Complex::new(2.0 * (g * conj_f_a).re, 0.0))
+                    .map(|g| Complex64::new(2.0 * (g * conj_f_a).re, 0.0))
             }
             Expression::Zero | Expression::One => DVector::zeros(gradient_values.0),
         }
@@ -544,15 +555,23 @@ impl Model {
     }
     /// Create an [`Evaluator`] which can compute the result of the internal [`Expression`] built on
     /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
-    /// information over the [`Event`]s in the [`Dataset`].
+    /// information over the [`EventData`]s in the [`Dataset`].
     pub fn load(&self, dataset: &Arc<Dataset>) -> Evaluator {
+        let metadata = dataset.metadata();
         let loaded_resources = Arc::new(RwLock::new(self.manager.resources.clone()));
-        loaded_resources.write().reserve_cache(dataset.n_events());
-        for amplitude in &self.manager.amplitudes {
-            amplitude.precompute_all(dataset, &mut loaded_resources.write());
+        let mut amplitudes = self.manager.amplitudes.clone();
+        {
+            let mut resources_guard = loaded_resources.write();
+            resources_guard.reserve_cache(dataset.n_events());
+            for amplitude in amplitudes.iter_mut() {
+                amplitude
+                    .bind(metadata)
+                    .expect("Failed to bind amplitude to dataset metadata");
+                amplitude.precompute_all(dataset, &mut *resources_guard);
+            }
         }
         Evaluator {
-            amplitudes: self.manager.amplitudes.clone(),
+            amplitudes,
             resources: loaded_resources.clone(),
             dataset: dataset.clone(),
             expression: self.expression.clone(),
@@ -623,7 +642,7 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
-    pub fn evaluate_local(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -642,7 +661,7 @@ impl Evaluator {
                                 if *active {
                                     amp.compute(&parameters, event, cache)
                                 } else {
-                                    Complex::new(0.0, 0.0)
+                                    Complex64::new(0.0, 0.0)
                                 }
                             })
                             .collect(),
@@ -670,7 +689,7 @@ impl Evaluator {
                                 if *active {
                                     amp.compute(&parameters, event, cache)
                                 } else {
-                                    Complex::new(0.0, 0.0)
+                                    Complex64::new(0.0, 0.0)
                                 }
                             })
                             .collect(),
@@ -692,14 +711,10 @@ impl Evaluator {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
     #[cfg(feature = "mpi")]
-    fn evaluate_mpi(
-        &self,
-        parameters: &[Float],
-        world: &SimpleCommunicator,
-    ) -> Vec<Complex<Float>> {
+    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> Vec<Complex64> {
         let local_evaluation = self.evaluate_local(parameters);
         let n_events = self.dataset.n_events();
-        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; n_events];
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
@@ -710,7 +725,7 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate(&self, parameters: &[Float]) -> Vec<Complex<Float>> {
+    pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -722,11 +737,7 @@ impl Evaluator {
 
     /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
     /// than all events in the total dataset.
-    pub fn evaluate_batch_local(
-        &self,
-        parameters: &[Float],
-        indices: &[usize],
-    ) -> Vec<Complex<Float>> {
+    pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -753,7 +764,7 @@ impl Evaluator {
                                 if *active {
                                     amp.compute(&parameters, event, cache)
                                 } else {
-                                    Complex::new(0.0, 0.0)
+                                    Complex64::new(0.0, 0.0)
                                 }
                             })
                             .collect(),
@@ -789,7 +800,7 @@ impl Evaluator {
                                 if *active {
                                     amp.compute(&parameters, event, cache)
                                 } else {
-                                    Complex::new(0.0, 0.0)
+                                    Complex64::new(0.0, 0.0)
                                 }
                             })
                             .collect(),
@@ -808,11 +819,11 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_batch_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<Complex<Float>> {
-        let mut buffer: Vec<Complex<Float>> = vec![Complex::ZERO; indices.len()];
+    ) -> Vec<Complex64> {
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; indices.len()];
         let (counts, displs, locals) = self
             .dataset
             .get_counts_displs_locals_from_indices(indices, world);
@@ -826,7 +837,7 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. See also [`Expression::evaluate`].
-    pub fn evaluate_batch(&self, parameters: &[Float], indices: &[usize]) -> Vec<Complex<Float>> {
+    pub fn evaluate_batch(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -843,7 +854,7 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
-    pub fn evaluate_gradient_local(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+    pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -874,7 +885,7 @@ impl Evaluator {
                                     if *active {
                                         amp.compute(&parameters, event, cache)
                                     } else {
-                                        Complex::new(0.0, 0.0)
+                                        Complex64::new(0.0, 0.0)
                                     }
                                 })
                                 .collect(),
@@ -919,7 +930,7 @@ impl Evaluator {
                                     if *active {
                                         amp.compute(&parameters, event, cache)
                                     } else {
-                                        Complex::new(0.0, 0.0)
+                                        Complex64::new(0.0, 0.0)
                                     }
                                 })
                                 .collect(),
@@ -949,17 +960,17 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_gradient_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex64>> {
         let flattened_local_evaluation = self
             .evaluate_gradient_local(parameters)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
-            .collect::<Vec<Complex<Float>>>();
+            .collect::<Vec<Complex64>>();
         let n_events = self.dataset.n_events();
         let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
-        let mut flattened_result_buffer = vec![Complex::ZERO; n_events * parameters.len()];
+        let mut flattened_result_buffer = vec![Complex64::ZERO; n_events * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
         world.all_gather_varcount_into(
@@ -974,7 +985,7 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate_gradient(&self, parameters: &[Float]) -> Vec<DVector<Complex<Float>>> {
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -988,9 +999,9 @@ impl Evaluator {
     /// of events rather than all events in the total dataset.
     pub fn evaluate_gradient_batch_local(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
@@ -1029,7 +1040,7 @@ impl Evaluator {
                                     if *active {
                                         amp.compute(&parameters, event, cache)
                                     } else {
-                                        Complex::new(0.0, 0.0)
+                                        Complex64::new(0.0, 0.0)
                                     }
                                 })
                                 .collect(),
@@ -1082,7 +1093,7 @@ impl Evaluator {
                                     if *active {
                                         amp.compute(&parameters, event, cache)
                                     } else {
-                                        Complex::new(0.0, 0.0)
+                                        Complex64::new(0.0, 0.0)
                                     }
                                 })
                                 .collect(),
@@ -1107,10 +1118,10 @@ impl Evaluator {
     #[cfg(feature = "mpi")]
     fn evaluate_gradient_batch_mpi(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex64>> {
         let (counts, displs, locals) = self
             .dataset
             .get_flattened_counts_displs_locals_from_indices(indices, parameters.len(), world);
@@ -1118,8 +1129,8 @@ impl Evaluator {
             .evaluate_gradient_batch_local(parameters, &locals)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
-            .collect::<Vec<Complex<Float>>>();
-        let mut flattened_result_buffer = vec![Complex::ZERO; indices.len() * parameters.len()];
+            .collect::<Vec<Complex64>>();
+        let mut flattened_result_buffer = vec![Complex64::ZERO; indices.len() * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
         world.all_gather_varcount_into(
@@ -1137,9 +1148,9 @@ impl Evaluator {
     /// for free parameters. See also [`Expression::evaluate_gradient`].
     pub fn evaluate_gradient_batch(
         &self,
-        parameters: &[Float],
+        parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex<Float>>> {
+    ) -> Vec<DVector<Complex64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -1182,35 +1193,35 @@ impl Amplitude for TestAmplitude {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
-        Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
+    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        event: &Event,
+        event: &EventData,
         _cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid_re {
-            gradient[ind] = Complex::ONE * event.p4s[0].e();
+            gradient[ind] = Complex64::ONE * event.p4s[0].e();
         }
         if let ParameterID::Parameter(ind) = self.pid_im {
-            gradient[ind] = Complex::I * event.p4s[0].e();
+            gradient[ind] = Complex64::I * event.p4s[0].e();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::data::{test_dataset, test_event};
+    use crate::data::{test_dataset, test_event, DatasetMetadata};
 
     use super::*;
     use crate::{
-        data::Event,
+        data::EventData,
         resources::{Cache, ParameterID, Parameters, Resources},
-        Float, LadduError,
+        LadduError,
     };
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
@@ -1248,24 +1259,24 @@ mod tests {
         fn compute(
             &self,
             parameters: &Parameters,
-            _event: &Event,
+            _event: &EventData,
             _cache: &Cache,
-        ) -> Complex<Float> {
-            Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+        ) -> Complex64 {
+            Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
         }
 
         fn compute_gradient(
             &self,
             _parameters: &Parameters,
-            _event: &Event,
+            _event: &EventData,
             _cache: &Cache,
-            gradient: &mut DVector<Complex<Float>>,
+            gradient: &mut DVector<Complex64>,
         ) {
             if let ParameterID::Parameter(ind) = self.pid_re {
-                gradient[ind] = Complex::ONE;
+                gradient[ind] = Complex64::ONE;
             }
             if let ParameterID::Parameter(ind) = self.pid_im {
-                gradient[ind] = Complex::I;
+                gradient[ind] = Complex64::I;
             }
         }
     }
@@ -1281,22 +1292,23 @@ mod tests {
         event2.p4s[0].t = 11.0;
         let mut event3 = test_event();
         event3.p4s[0].t = 12.0;
-        let dataset = Arc::new(Dataset {
-            events: vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
-        });
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
         let expr = Expression::Amp(aid);
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
         let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], Complex::new(1.1, 2.2) * 10.0);
-        assert_eq!(result[1], Complex::new(1.1, 2.2) * 12.0);
+        assert_eq!(result[0], Complex64::new(1.1, 2.2) * 10.0);
+        assert_eq!(result[1], Complex64::new(1.1, 2.2) * 12.0);
         let result_grad = evaluator.evaluate_gradient_batch(&[1.1, 2.2], &[0, 2]);
         assert_eq!(result_grad.len(), 2);
-        assert_eq!(result_grad[0][0], Complex::new(10.0, 0.0));
-        assert_eq!(result_grad[0][1], Complex::new(0.0, 10.0));
-        assert_eq!(result_grad[1][0], Complex::new(12.0, 0.0));
-        assert_eq!(result_grad[1][1], Complex::new(0.0, 12.0));
+        assert_eq!(result_grad[0][0], Complex64::new(10.0, 0.0));
+        assert_eq!(result_grad[0][1], Complex64::new(0.0, 10.0));
+        assert_eq!(result_grad[1][0], Complex64::new(12.0, 0.0));
+        assert_eq!(result_grad[1][1], Complex64::new(0.0, 12.0));
     }
 
     #[test]
@@ -1304,14 +1316,15 @@ mod tests {
         let mut manager = Manager::default();
         let amp = ComplexScalar::new("constant", constant(2.0), constant(3.0));
         let aid = manager.register(amp).unwrap();
-        let dataset = Arc::new(Dataset {
-            events: vec![Arc::new(test_event())],
-        });
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(test_event())],
+            Arc::new(DatasetMetadata::default()),
+        ));
         let expr = Expression::Amp(aid);
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
         let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(2.0, 3.0));
+        assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
     #[test]
@@ -1328,7 +1341,7 @@ mod tests {
         let model = manager.model(&expr);
         let evaluator = model.load(&dataset);
         let result = evaluator.evaluate(&[2.0, 3.0]);
-        assert_eq!(result[0], Complex::new(2.0, 3.0));
+        assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
     #[test]
@@ -1349,126 +1362,126 @@ mod tests {
         let model_add = manager.model(&expr_add);
         let eval_add = model_add.load(&dataset);
         let result_add = eval_add.evaluate(&[]);
-        assert_eq!(result_add[0], Complex::new(2.0, 1.0));
+        assert_eq!(result_add[0], Complex64::new(2.0, 1.0));
 
         // Test (amp) subtraction
         let expr_sub = &aid1 - &aid2;
         let model_sub = manager.model(&expr_sub);
         let eval_sub = model_sub.load(&dataset);
         let result_sub = eval_sub.evaluate(&[]);
-        assert_eq!(result_sub[0], Complex::new(2.0, -1.0));
+        assert_eq!(result_sub[0], Complex64::new(2.0, -1.0));
 
         // Test (amp) multiplication
         let expr_mul = &aid1 * &aid2;
         let model_mul = manager.model(&expr_mul);
         let eval_mul = model_mul.load(&dataset);
         let result_mul = eval_mul.evaluate(&[]);
-        assert_eq!(result_mul[0], Complex::new(0.0, 2.0));
+        assert_eq!(result_mul[0], Complex64::new(0.0, 2.0));
 
         // Test (amp) division
         let expr_div = &aid1 / &aid3;
         let model_div = manager.model(&expr_div);
         let eval_div = model_div.load(&dataset);
         let result_div = eval_div.evaluate(&[]);
-        assert_eq!(result_div[0], Complex::new(6.0 / 25.0, -8.0 / 25.0));
+        assert_eq!(result_div[0], Complex64::new(6.0 / 25.0, -8.0 / 25.0));
 
         // Test (amp) neg
         let expr_neg = -&aid3;
         let model_neg = manager.model(&expr_neg);
         let eval_neg = model_neg.load(&dataset);
         let result_neg = eval_neg.evaluate(&[]);
-        assert_eq!(result_neg[0], Complex::new(-3.0, -4.0));
+        assert_eq!(result_neg[0], Complex64::new(-3.0, -4.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
         let model_add2 = manager.model(&expr_add2);
         let eval_add2 = model_add2.load(&dataset);
         let result_add2 = eval_add2.evaluate(&[]);
-        assert_eq!(result_add2[0], Complex::new(2.0, 3.0));
+        assert_eq!(result_add2[0], Complex64::new(2.0, 3.0));
 
         // Test (expr) subtraction
         let expr_sub2 = &expr_add - &expr_mul;
         let model_sub2 = manager.model(&expr_sub2);
         let eval_sub2 = model_sub2.load(&dataset);
         let result_sub2 = eval_sub2.evaluate(&[]);
-        assert_eq!(result_sub2[0], Complex::new(2.0, -1.0));
+        assert_eq!(result_sub2[0], Complex64::new(2.0, -1.0));
 
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
         let model_mul2 = manager.model(&expr_mul2);
         let eval_mul2 = model_mul2.load(&dataset);
         let result_mul2 = eval_mul2.evaluate(&[]);
-        assert_eq!(result_mul2[0], Complex::new(-2.0, 4.0));
+        assert_eq!(result_mul2[0], Complex64::new(-2.0, 4.0));
 
         // Test (expr) division
         let expr_div2 = &expr_add / &expr_add2;
         let model_div2 = manager.model(&expr_div2);
         let eval_div2 = model_div2.load(&dataset);
         let result_div2 = eval_div2.evaluate(&[]);
-        assert_eq!(result_div2[0], Complex::new(7.0 / 13.0, -4.0 / 13.0));
+        assert_eq!(result_div2[0], Complex64::new(7.0 / 13.0, -4.0 / 13.0));
 
         // Test (expr) neg
         let expr_neg2 = -&expr_mul2;
         let model_neg2 = manager.model(&expr_neg2);
         let eval_neg2 = model_neg2.load(&dataset);
         let result_neg2 = eval_neg2.evaluate(&[]);
-        assert_eq!(result_neg2[0], Complex::new(2.0, -4.0));
+        assert_eq!(result_neg2[0], Complex64::new(2.0, -4.0));
 
         // Test (amp) real
         let expr_real = aid3.real();
         let model_real = manager.model(&expr_real);
         let eval_real = model_real.load(&dataset);
         let result_real = eval_real.evaluate(&[]);
-        assert_eq!(result_real[0], Complex::new(3.0, 0.0));
+        assert_eq!(result_real[0], Complex64::new(3.0, 0.0));
 
         // Test (expr) real
         let expr_mul2_real = expr_mul2.real();
         let model_mul2_real = manager.model(&expr_mul2_real);
         let eval_mul2_real = model_mul2_real.load(&dataset);
         let result_mul2_real = eval_mul2_real.evaluate(&[]);
-        assert_eq!(result_mul2_real[0], Complex::new(-2.0, 0.0));
+        assert_eq!(result_mul2_real[0], Complex64::new(-2.0, 0.0));
 
         // Test (amp) imag
         let expr_imag = aid3.imag();
         let model_imag = manager.model(&expr_imag);
         let eval_imag = model_imag.load(&dataset);
         let result_imag = eval_imag.evaluate(&[]);
-        assert_eq!(result_imag[0], Complex::new(4.0, 0.0));
+        assert_eq!(result_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
         let model_mul2_imag = manager.model(&expr_mul2_imag);
         let eval_mul2_imag = model_mul2_imag.load(&dataset);
         let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
-        assert_eq!(result_mul2_imag[0], Complex::new(4.0, 0.0));
+        assert_eq!(result_mul2_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (amp) conj
         let expr_conj = aid3.conj();
         let model_conj = manager.model(&expr_conj);
         let eval_conj = model_conj.load(&dataset);
         let result_conj = eval_conj.evaluate(&[]);
-        assert_eq!(result_conj[0], Complex::new(3.0, -4.0));
+        assert_eq!(result_conj[0], Complex64::new(3.0, -4.0));
 
         // Test (expr) conj
         let expr_mul2_conj = expr_mul2.conj();
         let model_mul2_conj = manager.model(&expr_mul2_conj);
         let eval_mul2_conj = model_mul2_conj.load(&dataset);
         let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
-        assert_eq!(result_mul2_conj[0], Complex::new(-2.0, -4.0));
+        assert_eq!(result_mul2_conj[0], Complex64::new(-2.0, -4.0));
 
         // Test (amp) norm_sqr
         let expr_norm = aid1.norm_sqr();
         let model_norm = manager.model(&expr_norm);
         let eval_norm = model_norm.load(&dataset);
         let result_norm = eval_norm.evaluate(&[]);
-        assert_eq!(result_norm[0], Complex::new(4.0, 0.0));
+        assert_eq!(result_norm[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) norm_sqr
         let expr_mul2_norm = expr_mul2.norm_sqr();
         let model_mul2_norm = manager.model(&expr_mul2_norm);
         let eval_mul2_norm = model_mul2_norm.load(&dataset);
         let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
-        assert_eq!(result_mul2_norm[0], Complex::new(20.0, 0.0));
+        assert_eq!(result_mul2_norm[0], Complex64::new(20.0, 0.0));
     }
 
     #[test]
@@ -1487,22 +1500,22 @@ mod tests {
 
         // Test initial state (all active)
         let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(3.0, 0.0));
+        assert_eq!(result[0], Complex64::new(3.0, 0.0));
 
         // Test deactivation
         evaluator.deactivate("const1").unwrap();
         let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(2.0, 0.0));
+        assert_eq!(result[0], Complex64::new(2.0, 0.0));
 
         // Test isolation
         evaluator.isolate("const1").unwrap();
         let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(1.0, 0.0));
+        assert_eq!(result[0], Complex64::new(1.0, 0.0));
 
         // Test reactivation
         evaluator.activate_all();
         let result = evaluator.evaluate(&[]);
-        assert_eq!(result[0], Complex::new(3.0, 0.0));
+        assert_eq!(result[0], Complex64::new(3.0, 0.0));
     }
 
     #[test]

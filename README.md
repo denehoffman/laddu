@@ -59,6 +59,11 @@
 - Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
 - Python bindings to allow users to write quick, easy-to-read code that just works.
 
+> **API note:** The low-level event container is now named `EventData`. The metadata-aware view
+> returned by [`Dataset::named_event`](https://docs.rs/laddu-core/latest/laddu_core/data/struct.Dataset.html#method.named_event)
+> is called `Event` and exposes the same kinematic helpers while enabling name-based lookups.
+> Python bindings continue to expose this view as ``laddu.Event``.
+
 # Installation
 
 `laddu` can be added to a Rust project with `cargo`:
@@ -97,12 +102,13 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 
 ```rust
 use laddu::{
-   ParameterLike, Event, Cache, Resources, Mass,
-   ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+   ParameterLike, EventData, Cache, Resources, Mass,
+   ParameterID, Parameters, LadduError, PI, AmplitudeID,
 };
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 use laddu::{Deserialize, Serialize, typetag};
+use num::complex::Complex64;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {
@@ -149,7 +155,7 @@ impl Amplitude for MyBreitWigner {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
         let mass = self.resonance_mass.value(event);
         let mass0 = parameters.get(self.pid_mass);
         let width0 = parameters.get(self.pid_width);
@@ -160,9 +166,9 @@ impl Amplitude for MyBreitWigner {
         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = Float::sqrt(mass0 * width0 / PI);
-        let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex::from(f * n) / d
+        let n = (mass0 * width0 / PI).sqrt();
+        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+        Complex64::from(f * n) / d
     }
 }
 ```
@@ -172,13 +178,15 @@ impl Amplitude for MyBreitWigner {
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 
 ```rust
-use laddu::{Scalar, Mass, Manager, NLL, parameter, open};
-let ds_data = open("test_data/data.parquet").unwrap();
-let ds_mc = open("test_data/mc.parquet").unwrap();
+use laddu::{Scalar, Dataset, Mass, Manager, NLL, parameter};
+let p4_columns = ["beam", "proton", "kshort1", "kshort2"];
+let aux_columns = ["pol_magnitude", "pol_angle"];
+let ds_data = Dataset::open("test_data/data.parquet", &p4_columns, &aux_columns).unwrap();
+let ds_mc = Dataset::open("test_data/mc.parquet", &p4_columns, &aux_columns).unwrap();
 
-let resonance_mass = Mass::new([2, 3]);
-let p1_mass = Mass::new([2]);
-let p2_mass = Mass::new([3]);
+let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+let p1_mass = Mass::new(["kshort1"]);
+let p2_mass = Mass::new(["kshort2"]);
 let mut manager = Manager::default();
 let bw = manager.register(MyBreitWigner::new(
     "bw",
@@ -214,10 +222,12 @@ import numpy as np
 from laddu import constant, parameter
 
 def main():
-    ds_data = ld.open("path/to/data.parquet")
-    ds_mc = ld.open("path/to/accmc.parquet")
-    angles = ld.Angles(0, [1], [2], [2, 3], "Helicity")
-    polarization = ld.Polarization(0, [1])
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
+    ds_data = ld.Dataset.open('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_mc = ld.Dataset.open('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
+    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'], "Helicity")
+    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("z00p", 0, 0, "+", angles, polarization))
     z00n = manager.register(ld.Zlm("z00n", 0, 0, "-", angles, polarization))
@@ -314,26 +324,25 @@ The data format for `laddu` is a bit different from some of the alternatives lik
 
 | Column name | Data Type | Interpretation |
 | ----------- | --------- | -------------- |
-| `p4_0_E` | `Float32` | Beam Energy |
-| `p4_0_Px` | `Float32` | Beam Momentum (x-component) |
-| `p4_0_Py` | `Float32` | Beam Momentum (y-component) |
-| `p4_0_Pz` | `Float32` | Beam Momentum (z-component) |
-| `aux_0_x` | `Float32` | Beam Polarization (x-component) |
-| `aux_0_y` | `Float32` | Beam Polarization (y-component) |
-| `aux_0_z` | `Float32` | Beam Polarization (z-component) |
-| `p4_1_E` | `Float32` | Recoil Proton Energy |
-| `p4_1_Px` | `Float32` | Recoil Proton Momentum (x-component) |
-| `p4_1_Py` | `Float32` | Recoil Proton Momentum (y-component) |
-| `p4_1_Pz` | `Float32` | Recoil Proton Momentum (z-component) |
-| `p4_2_E` | `Float32` | Decay Product 1 Energy |
-| `p4_2_Px` | `Float32` | Decay Product 1 Momentum (x-component) |
-| `p4_2_Py` | `Float32` | Decay Product 1 Momentum (y-component) |
-| `p4_2_Pz` | `Float32` | Decay Product 1 Momentum (z-component) |
-| `p4_3_E` | `Float32` | Decay Product 2 Energy |
-| `p4_3_Px` | `Float32` | Decay Product 2 Momentum (x-component) |
-| `p4_3_Py` | `Float32` | Decay Product 2 Momentum (y-component) |
-| `p4_3_Pz` | `Float32` | Decay Product 2 Momentum (z-component) |
-| `weight` | `Float32` | Event Weight |
+| `beam_px` | `Float32` or `Float64` | Beam momentum (x-component) |
+| `beam_py` | `Float32` or `Float64` | Beam momentum (y-component) |
+| `beam_pz` | `Float32` or `Float64` | Beam momentum (z-component) |
+| `beam_e`  | `Float32` or `Float64` | Beam energy |
+| `pol_magnitude` | `Float32` or `Float64` | Beam polarization magnitude |
+| `pol_angle` | `Float32` or `Float64` | Beam polarization angle |
+| `proton_px` | `Float32` or `Float64` | Recoil proton momentum (x-component) |
+| `proton_py` | `Float32` or `Float64` | Recoil proton momentum (y-component) |
+| `proton_pz` | `Float32` or `Float64` | Recoil proton momentum (z-component) |
+| `proton_e`  | `Float32` or `Float64` | Recoil proton energy |
+| `kshort1_px`  | `Float32` or `Float64` | Decay product 1 momentum (x-component) |
+| `kshort1_py`  | `Float32` or `Float64` | Decay product 1 momentum (y-component) |
+| `kshort1_pz`  | `Float32` or `Float64` | Decay product 1 momentum (z-component) |
+| `kshort1_e`   | `Float32` or `Float64` | Decay product 1 energy |
+| `kshort2_px`  | `Float32` or `Float64` | Decay product 2 momentum (x-component) |
+| `kshort2_py`  | `Float32` or `Float64` | Decay product 2 momentum (y-component) |
+| `kshort2_pz`  | `Float32` or `Float64` | Decay product 2 momentum (z-component) |
+| `kshort2_e`   | `Float32` or `Float64` | Decay product 2 energy |
+| `weight`    | `Float32` or `Float64` | Event weight |
 
 To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
 

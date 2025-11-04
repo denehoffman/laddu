@@ -2,26 +2,26 @@ use std::{array, collections::HashMap};
 
 use indexmap::IndexSet;
 use nalgebra::{SMatrix, SVector};
-use num::Complex;
+use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
-    Float, LadduError,
+    LadduError,
 };
 
 /// This struct holds references to the constants and free parameters used in the fit so that they
 /// may be obtained from their corresponding [`ParameterID`].
 #[derive(Debug)]
 pub struct Parameters<'a> {
-    pub(crate) parameters: &'a [Float],
-    pub(crate) constants: &'a [Float],
+    pub(crate) parameters: &'a [f64],
+    pub(crate) constants: &'a [f64],
 }
 
 impl<'a> Parameters<'a> {
     /// Create a new set of [`Parameters`] from a list of floating values and a list of constant values
-    pub fn new(parameters: &'a [Float], constants: &'a [Float]) -> Self {
+    pub fn new(parameters: &'a [f64], constants: &'a [f64]) -> Self {
         Self {
             parameters,
             constants,
@@ -29,7 +29,7 @@ impl<'a> Parameters<'a> {
     }
 
     /// Obtain a parameter value or constant value from the given [`ParameterID`].
-    pub fn get(&self, pid: ParameterID) -> Float {
+    pub fn get(&self, pid: ParameterID) -> f64 {
         match pid {
             ParameterID::Parameter(index) => self.parameters[index],
             ParameterID::Constant(index) => self.constants[index],
@@ -53,8 +53,8 @@ pub struct Resources {
     /// The set of all registered parameter names across registered [`Amplitude`](`crate::amplitudes::Amplitude`)s
     pub parameters: IndexSet<String>,
     /// Values of all constants across registered [`Amplitude`](`crate::amplitudes::Amplitude`)s
-    pub constants: Vec<Float>,
-    /// The [`Cache`] for each [`Event`](`crate::Event`)
+    pub constants: Vec<f64>,
+    /// The [`Cache`] for each [`EventData`](`crate::data::EventData`)
     pub caches: Vec<Cache>,
     scalar_cache_names: HashMap<String, usize>,
     complex_scalar_cache_names: HashMap<String, usize>,
@@ -66,24 +66,24 @@ pub struct Resources {
 }
 
 /// A single cache entry corresponding to precomputed data for a particular
-/// [`Event`](crate::data::Event) in a [`Dataset`](crate::data::Dataset).
+/// [`EventData`](crate::data::EventData) in a [`Dataset`](crate::data::Dataset).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Cache(Vec<Float>);
+pub struct Cache(Vec<f64>);
 impl Cache {
     fn new(cache_size: usize) -> Self {
         Self(vec![0.0; cache_size])
     }
     /// Store a scalar value with the corresponding [`ScalarID`].
-    pub fn store_scalar(&mut self, sid: ScalarID, value: Float) {
+    pub fn store_scalar(&mut self, sid: ScalarID, value: f64) {
         self.0[sid.0] = value;
     }
     /// Store a complex scalar value with the corresponding [`ComplexScalarID`].
-    pub fn store_complex_scalar(&mut self, csid: ComplexScalarID, value: Complex<Float>) {
+    pub fn store_complex_scalar(&mut self, csid: ComplexScalarID, value: Complex64) {
         self.0[csid.0] = value.re;
         self.0[csid.1] = value.im;
     }
     /// Store a vector with the corresponding [`VectorID`].
-    pub fn store_vector<const R: usize>(&mut self, vid: VectorID<R>, value: SVector<Float, R>) {
+    pub fn store_vector<const R: usize>(&mut self, vid: VectorID<R>, value: SVector<f64, R>) {
         vid.0
             .into_iter()
             .enumerate()
@@ -93,7 +93,7 @@ impl Cache {
     pub fn store_complex_vector<const R: usize>(
         &mut self,
         cvid: ComplexVectorID<R>,
-        value: SVector<Complex<Float>, R>,
+        value: SVector<Complex64, R>,
     ) {
         cvid.0
             .into_iter()
@@ -108,7 +108,7 @@ impl Cache {
     pub fn store_matrix<const R: usize, const C: usize>(
         &mut self,
         mid: MatrixID<R, C>,
-        value: SMatrix<Float, R, C>,
+        value: SMatrix<f64, R, C>,
     ) {
         mid.0.into_iter().enumerate().for_each(|(vi, row)| {
             row.into_iter()
@@ -120,7 +120,7 @@ impl Cache {
     pub fn store_complex_matrix<const R: usize, const C: usize>(
         &mut self,
         cmid: ComplexMatrixID<R, C>,
-        value: SMatrix<Complex<Float>, R, C>,
+        value: SMatrix<Complex64, R, C>,
     ) {
         cmid.0.into_iter().enumerate().for_each(|(vi, row)| {
             row.into_iter()
@@ -134,37 +134,37 @@ impl Cache {
         });
     }
     /// Retrieve a scalar value from the [`Cache`].
-    pub fn get_scalar(&self, sid: ScalarID) -> Float {
+    pub fn get_scalar(&self, sid: ScalarID) -> f64 {
         self.0[sid.0]
     }
     /// Retrieve a complex scalar value from the [`Cache`].
-    pub fn get_complex_scalar(&self, csid: ComplexScalarID) -> Complex<Float> {
-        Complex::new(self.0[csid.0], self.0[csid.1])
+    pub fn get_complex_scalar(&self, csid: ComplexScalarID) -> Complex64 {
+        Complex64::new(self.0[csid.0], self.0[csid.1])
     }
     /// Retrieve a vector from the [`Cache`].
-    pub fn get_vector<const R: usize>(&self, vid: VectorID<R>) -> SVector<Float, R> {
+    pub fn get_vector<const R: usize>(&self, vid: VectorID<R>) -> SVector<f64, R> {
         SVector::from_fn(|i, _| self.0[vid.0[i]])
     }
     /// Retrieve a complex-valued vector from the [`Cache`].
     pub fn get_complex_vector<const R: usize>(
         &self,
         cvid: ComplexVectorID<R>,
-    ) -> SVector<Complex<Float>, R> {
-        SVector::from_fn(|i, _| Complex::new(self.0[cvid.0[i]], self.0[cvid.1[i]]))
+    ) -> SVector<Complex64, R> {
+        SVector::from_fn(|i, _| Complex64::new(self.0[cvid.0[i]], self.0[cvid.1[i]]))
     }
     /// Retrieve a matrix from the [`Cache`].
     pub fn get_matrix<const R: usize, const C: usize>(
         &self,
         mid: MatrixID<R, C>,
-    ) -> SMatrix<Float, R, C> {
+    ) -> SMatrix<f64, R, C> {
         SMatrix::from_fn(|i, j| self.0[mid.0[i][j]])
     }
     /// Retrieve a complex-valued matrix from the [`Cache`].
     pub fn get_complex_matrix<const R: usize, const C: usize>(
         &self,
         cmid: ComplexMatrixID<R, C>,
-    ) -> SMatrix<Complex<Float>, R, C> {
-        SMatrix::from_fn(|i, j| Complex::new(self.0[cmid.0[i][j]], self.0[cmid.1[i][j]]))
+    ) -> SMatrix<Complex64, R, C> {
+        SMatrix::from_fn(|i, j| Complex64::new(self.0[cmid.0[i][j]], self.0[cmid.1[i][j]]))
     }
 }
 
@@ -479,7 +479,7 @@ impl Resources {
 mod tests {
     use super::*;
     use nalgebra::{Matrix2, Vector2};
-    use num::Complex;
+    use num::complex::Complex64;
 
     #[test]
     fn test_parameters() {
@@ -583,8 +583,8 @@ mod tests {
         resources.reserve_cache(1);
         let cache = &mut resources.caches[0];
 
-        let value1 = Complex::new(1.0, 2.0);
-        let value2 = Complex::new(3.0, 4.0);
+        let value1 = Complex64::new(1.0, 2.0);
+        let value2 = Complex64::new(3.0, 4.0);
         cache.store_complex_scalar(complex1, value1);
         cache.store_complex_scalar(complex2, value2);
 
@@ -627,8 +627,8 @@ mod tests {
         resources.reserve_cache(1);
         let cache = &mut resources.caches[0];
 
-        let value1 = Vector2::new(Complex::new(1.0, 2.0), Complex::new(3.0, 4.0));
-        let value2 = Vector2::new(Complex::new(5.0, 6.0), Complex::new(7.0, 8.0));
+        let value1 = Vector2::new(Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0));
+        let value2 = Vector2::new(Complex64::new(5.0, 6.0), Complex64::new(7.0, 8.0));
         cache.store_complex_vector(complex_vector_id1, value1);
         cache.store_complex_vector(complex_vector_id2, value2);
 
@@ -672,16 +672,16 @@ mod tests {
         let cache = &mut resources.caches[0];
 
         let value1 = Matrix2::new(
-            Complex::new(1.0, 2.0),
-            Complex::new(3.0, 4.0),
-            Complex::new(5.0, 6.0),
-            Complex::new(7.0, 8.0),
+            Complex64::new(1.0, 2.0),
+            Complex64::new(3.0, 4.0),
+            Complex64::new(5.0, 6.0),
+            Complex64::new(7.0, 8.0),
         );
         let value2 = Matrix2::new(
-            Complex::new(9.0, 10.0),
-            Complex::new(11.0, 12.0),
-            Complex::new(13.0, 14.0),
-            Complex::new(15.0, 16.0),
+            Complex64::new(9.0, 10.0),
+            Complex64::new(11.0, 12.0),
+            Complex64::new(13.0, 14.0),
+            Complex64::new(15.0, 16.0),
         );
         cache.store_complex_matrix(complex_matrix_id1, value1);
         cache.store_complex_matrix(complex_matrix_id2, value2);

@@ -1,13 +1,13 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
+    data::EventData,
     resources::{Cache, ParameterID, Parameters, Resources},
-    Float, LadduError,
+    LadduError,
 };
 #[cfg(feature = "python")]
 use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -39,19 +39,19 @@ impl Amplitude for Scalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<Float> {
-        Complex::new(parameters.get(self.pid), 0.0)
+    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid), 0.0)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid {
-            gradient[ind] = Complex::ONE;
+            gradient[ind] = Complex64::ONE;
         }
     }
 }
@@ -113,22 +113,22 @@ impl Amplitude for ComplexScalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<Float> {
-        Complex::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(ind) = self.pid_re {
-            gradient[ind] = Complex::ONE;
+            gradient[ind] = Complex64::ONE;
         }
         if let ParameterID::Parameter(ind) = self.pid_im {
-            gradient[ind] = Complex::I;
+            gradient[ind] = Complex64::I;
         }
     }
 }
@@ -192,24 +192,24 @@ impl Amplitude for PolarComplexScalar {
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, _cache: &Cache) -> Complex<Float> {
-        Complex::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
+    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+        Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
 
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
-        let exp_i_theta = Complex::cis(parameters.get(self.pid_theta));
+        let exp_i_theta = Complex64::cis(parameters.get(self.pid_theta));
         if let ParameterID::Parameter(ind) = self.pid_r {
             gradient[ind] = exp_i_theta;
         }
         if let ParameterID::Parameter(ind) = self.pid_theta {
-            gradient[ind] = Complex::<Float>::I
-                * Complex::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
+            gradient[ind] = Complex64::I
+                * Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
         }
     }
 }
@@ -249,6 +249,7 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Manager, PI};
+    use std::f64;
     use std::sync::Arc;
 
     #[test]
@@ -367,9 +368,9 @@ mod tests {
         let gradient = evaluator.evaluate_gradient(&params);
 
         // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
-        assert_relative_eq!(gradient[0][0].re, Float::cos(theta));
-        assert_relative_eq!(gradient[0][0].im, Float::sin(theta));
-        assert_relative_eq!(gradient[0][1].re, -r * Float::sin(theta));
-        assert_relative_eq!(gradient[0][1].im, r * Float::cos(theta));
+        assert_relative_eq!(gradient[0][0].re, f64::cos(theta));
+        assert_relative_eq!(gradient[0][0].im, f64::sin(theta));
+        assert_relative_eq!(gradient[0][1].re, -r * f64::sin(theta));
+        assert_relative_eq!(gradient[0][1].im, r * f64::cos(theta));
     }
 }

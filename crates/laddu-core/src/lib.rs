@@ -8,6 +8,10 @@ use ganesh::core::{MCMCSummary, MinimizationSummary};
 #[cfg(feature = "python")]
 use pyo3::PyErr;
 
+/// Re-exported alias for `std::f64` to ease dependent crates transitioning to the 64-bit
+/// floating point API.
+pub use std::f64;
+
 /// MPI backend for `laddu`
 ///
 /// Message Passing Interface (MPI) is a protocol which enables communication between multiple
@@ -252,7 +256,7 @@ use thiserror::Error;
 
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes;
-/// Methods for loading and manipulating [`Event`]-based data.
+/// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
@@ -265,7 +269,7 @@ pub mod traits {
     pub use crate::ReadWrite;
 }
 
-pub use crate::data::{open, BinnedDataset, Dataset, Event};
+pub use crate::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,
@@ -279,21 +283,8 @@ pub use amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 
-/// A floating-point number type (defaults to [`f64`], see `f32` feature).
-#[cfg(not(feature = "f32"))]
-pub type Float = f64;
-
-/// A floating-point number type (defaults to [`f64`], see `f32` feature).
-#[cfg(feature = "f32")]
-pub type Float = f32;
-
 /// The mathematical constant $`\pi`$.
-#[cfg(not(feature = "f32"))]
-pub const PI: Float = std::f64::consts::PI;
-
-/// The mathematical constant $`\pi`$.
-#[cfg(feature = "f32")]
-pub const PI: Float = std::f32::consts::PI;
+pub const PI: f64 = std::f64::consts::PI;
 
 /// The error type used by all `laddu` internal methods
 #[derive(Error, Debug)]
@@ -349,6 +340,36 @@ pub enum LadduError {
     #[cfg(feature = "numpy")]
     #[error("Numpy error: {0}")]
     NumpyError(#[from] numpy::FromVecError),
+    /// A required column was not found in the input
+    #[error("Required column \"{name}\" was not found in the dataset")]
+    MissingColumn {
+        /// Name of the missing column
+        name: String,
+    },
+    /// A column has an unsupported type
+    #[error("Column \"{name}\" has unsupported type \"{datatype}\"")]
+    InvalidColumnType {
+        /// Column name
+        name: String,
+        /// Detected data type
+        datatype: String,
+    },
+    /// A duplicate name was provided for p4 or aux data
+    #[error("Duplicate {category} name \"{name}\" provided")]
+    DuplicateName {
+        /// Category (p4 or aux)
+        category: &'static str,
+        /// Duplicate name
+        name: String,
+    },
+    /// An unknown name was referenced (e.g., for boosts)
+    #[error("Unknown {category} name \"{name}\"")]
+    UnknownName {
+        /// Category (p4 or aux)
+        category: &'static str,
+        /// Name that could not be resolved
+        name: String,
+    },
     /// A custom fallback error for errors too complex or too infrequent to warrant their own error
     /// category.
     #[error("{0}")]
@@ -380,6 +401,12 @@ impl From<LadduError> for PyErr {
             | LadduError::EncodeError(_)
             | LadduError::DecodeError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
+            LadduError::MissingColumn { .. } | LadduError::UnknownName { .. } => {
+                PyKeyError::new_err(err_string)
+            }
+            LadduError::InvalidColumnType { .. } | LadduError::DuplicateName { .. } => {
+                PyValueError::new_err(err_string)
+            }
             LadduError::Custom(_) => PyException::new_err(err_string),
             #[cfg(feature = "rayon")]
             LadduError::ThreadPoolError(_) => PyException::new_err(err_string),

@@ -1,5 +1,5 @@
 use accurate::{sum::Klein, traits::*};
-use arrow::array::Float32Array;
+use arrow::array::{Float32Array, Float64Array};
 use arrow::record_batch::RecordBatch;
 use auto_ops::impl_op_ex;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -22,59 +22,73 @@ use crate::utils::get_bin_edges;
 use crate::{
     utils::{
         variables::{Variable, VariableExpression},
-        vectors::{Vec3, Vec4},
+        vectors::Vec4,
     },
-    Float, LadduError,
+    LadduError,
 };
-
-const P4_PREFIX: &str = "p4_";
-const AUX_PREFIX: &str = "aux_";
+use indexmap::IndexMap;
 
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
 /// $`\gamma p \to K_S^0 K_S^0 p`$ with a polarized photon beam.
-pub fn test_event() -> Event {
+pub fn test_event() -> EventData {
     use crate::utils::vectors::*;
-    Event {
+    EventData {
         p4s: vec![
             Vec3::new(0.0, 0.0, 8.747).with_mass(0.0),         // beam
             Vec3::new(0.119, 0.374, 0.222).with_mass(1.007),   // "proton"
             Vec3::new(-0.112, 0.293, 3.081).with_mass(0.498),  // "kaon"
             Vec3::new(-0.007, -0.667, 5.446).with_mass(0.498), // "kaon"
         ],
-        aux: vec![Vec3::new(0.385, 0.022, 0.000)],
+        aux: vec![0.38562805, 1.93592989],
         weight: 0.48,
     }
 }
 
-/// An dataset that can be used to test the implementation of an
-/// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a singular
-/// [`Event`] generated from [`test_event`].
+/// Particle names used by [`test_dataset`].
+pub const TEST_P4_NAMES: &[&str] = &["beam", "proton", "kshort1", "kshort2"];
+/// Auxiliary scalar names used by [`test_dataset`].
+pub const TEST_AUX_NAMES: &[&str] = &["pol_magnitude", "pol_angle"];
+
+/// A dataset that can be used to test the implementation of an
+/// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a single
+/// [`EventData`] generated from [`test_event`].
 pub fn test_dataset() -> Dataset {
-    Dataset::new(vec![Arc::new(test_event())])
+    let metadata = Arc::new(
+        DatasetMetadata::new(
+            TEST_P4_NAMES.iter().map(|s| (*s).to_string()).collect(),
+            TEST_AUX_NAMES.iter().map(|s| (*s).to_string()).collect(),
+        )
+        .expect("Test metadata should be valid"),
+    );
+    Dataset::new_with_metadata(vec![Arc::new(test_event())], metadata)
 }
 
-/// A single event in a [`Dataset`] containing all the relevant particle information.
+/// Raw event data in a [`Dataset`] containing all particle and auxiliary information.
+///
+/// An [`EventData`] instance owns the list of four-momenta (`p4s`), auxiliary scalars (`aux`),
+/// and weight recorded for a particular collision event. Use [`Event`] when you need a
+/// metadata-aware view with name-based helpers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Event {
+pub struct EventData {
     /// A list of four-momenta for each particle.
     pub p4s: Vec<Vec4>,
-    /// A list of auxiliary vectors which can be used to store data like particle polarization.
-    pub aux: Vec<Vec3>,
+    /// A list of auxiliary scalar values associated with the event.
+    pub aux: Vec<f64>,
     /// The weight given to the event.
-    pub weight: Float,
+    pub weight: f64,
 }
 
-impl Display for Event {
+impl Display for EventData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Event:")?;
         writeln!(f, "  p4s:")?;
         for p4 in &self.p4s {
             writeln!(f, "    {}", p4.to_p4_string())?;
         }
-        writeln!(f, "  eps:")?;
-        for eps_vec in &self.aux {
-            writeln!(f, "    [{}, {}, {}]", eps_vec.x, eps_vec.y, eps_vec.z)?;
+        writeln!(f, "  aux:")?;
+        for (idx, value) in self.aux.iter().enumerate() {
+            writeln!(f, "    aux[{idx}]: {value}")?;
         }
         writeln!(f, "  weight:")?;
         writeln!(f, "    {}", self.weight)?;
@@ -82,16 +96,16 @@ impl Display for Event {
     }
 }
 
-impl Event {
-    /// Return a four-momentum from the sum of four-momenta at the given indices in the [`Event`].
+impl EventData {
+    /// Return a four-momentum from the sum of four-momenta at the given indices in the [`EventData`].
     pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
         indices.as_ref().iter().map(|i| self.p4s[*i]).sum::<Vec4>()
     }
-    /// Boost all the four-momenta in the [`Event`] to the rest frame of the given set of
+    /// Boost all the four-momenta in the [`EventData`] to the rest frame of the given set of
     /// four-momenta by indices.
     pub fn boost_to_rest_frame_of<T: AsRef<[usize]>>(&self, indices: T) -> Self {
         let frame = self.get_p4_sum(indices);
-        Event {
+        EventData {
             p4s: self
                 .p4s
                 .iter()
@@ -101,21 +115,223 @@ impl Event {
             weight: self.weight,
         }
     }
-    /// Evaluate a [`Variable`] on an [`Event`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Float {
+    /// Evaluate a [`Variable`] on an [`EventData`].
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         variable.value(self)
     }
 }
 
-/// A collection of [`Event`]s.
-#[derive(Debug, Clone, Default)]
+/// A collection of [`EventData`].
+#[derive(Debug, Clone)]
+pub struct DatasetMetadata {
+    pub(crate) p4_names: Vec<String>,
+    pub(crate) aux_names: Vec<String>,
+    pub(crate) p4_lookup: IndexMap<String, usize>,
+    pub(crate) aux_lookup: IndexMap<String, usize>,
+}
+
+impl DatasetMetadata {
+    /// Construct metadata from explicit particle and auxiliary names.
+    pub fn new<P: Into<String>, A: Into<String>>(
+        p4_names: Vec<P>,
+        aux_names: Vec<A>,
+    ) -> Result<Self, LadduError> {
+        let mut p4_lookup = IndexMap::with_capacity(p4_names.len());
+        let mut aux_lookup = IndexMap::with_capacity(aux_names.len());
+        let p4_names: Vec<String> = p4_names
+            .into_iter()
+            .enumerate()
+            .map(|(idx, name)| {
+                let name = name.into();
+                if p4_lookup.contains_key(&name) {
+                    return Err(LadduError::DuplicateName {
+                        category: "p4",
+                        name,
+                    });
+                }
+                p4_lookup.insert(name.clone(), idx);
+                Ok(name)
+            })
+            .collect::<Result<_, _>>()?;
+        let aux_names: Vec<String> = aux_names
+            .into_iter()
+            .enumerate()
+            .map(|(idx, name)| {
+                let name = name.into();
+                if aux_lookup.contains_key(&name) {
+                    return Err(LadduError::DuplicateName {
+                        category: "aux",
+                        name,
+                    });
+                }
+                aux_lookup.insert(name.clone(), idx);
+                Ok(name)
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            p4_names,
+            aux_names,
+            p4_lookup,
+            aux_lookup,
+        })
+    }
+
+    /// Create metadata with no registered names.
+    pub fn empty() -> Self {
+        Self {
+            p4_names: Vec::new(),
+            aux_names: Vec::new(),
+            p4_lookup: IndexMap::new(),
+            aux_lookup: IndexMap::new(),
+        }
+    }
+
+    /// Resolve the index of a four-momentum by name.
+    pub fn p4_index(&self, name: &str) -> Option<usize> {
+        self.p4_lookup.get(name).map(|idx| *idx)
+    }
+
+    /// Resolve the index of an auxiliary scalar by name.
+    pub fn aux_index(&self, name: &str) -> Option<usize> {
+        self.aux_lookup.get(name).map(|idx| *idx)
+    }
+}
+
+impl Default for DatasetMetadata {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+/// A collection of [`EventData`] with optional metadata for name-based lookups.
+#[derive(Debug, Clone)]
 pub struct Dataset {
-    /// The [`Event`]s contained in the [`Dataset`]
-    pub events: Vec<Arc<Event>>,
+    /// The [`EventData`] contained in the [`Dataset`]
+    pub events: Vec<Arc<EventData>>,
+    pub(crate) metadata: Arc<DatasetMetadata>,
+}
+
+/// Metadata-aware snapshot of an [`EventData`] borrowed from a [`Dataset`].
+///
+/// [`Event`] exposes the same kinematic helpers as [`EventData`] while also providing
+/// name-based lookups backed by the attached [`DatasetMetadata`].
+pub struct Event<'a> {
+    /// The underlying event data.
+    pub event: &'a EventData,
+    /// Metadata used for translating names into indices.
+    pub metadata: &'a DatasetMetadata,
+}
+
+impl<'a> Event<'a> {
+    /// Borrow the raw [`EventData`].
+    pub fn data(&self) -> &'a EventData {
+        self.event
+    }
+
+    /// Borrow the four-momenta stored in this event.
+    pub fn p4s(&self) -> &'a [Vec4] {
+        &self.event.p4s
+    }
+
+    /// Borrow the auxiliary scalar values stored in this event.
+    pub fn aux_values(&self) -> &'a [f64] {
+        &self.event.aux
+    }
+
+    /// Return the event weight.
+    pub fn weight(&self) -> f64 {
+        self.event.weight
+    }
+
+    /// Retrieve a four-momentum by name.
+    pub fn p4(&self, name: &str) -> Option<&Vec4> {
+        self.metadata
+            .p4_index(name)
+            .and_then(|idx| self.event.p4s.get(idx))
+    }
+
+    /// Retrieve an auxiliary scalar by name.
+    pub fn aux(&self, name: &str) -> Option<f64> {
+        self.metadata
+            .aux_index(name)
+            .and_then(|idx| self.event.aux.get(idx))
+            .copied()
+    }
+
+    /// Return a four-momentum formed by summing four-momenta at the specified indices.
+    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
+        self.event.get_p4_sum(indices)
+    }
+
+    /// Boost all four-momenta into the rest frame defined by the specified indices.
+    pub fn boost_to_rest_frame_of<T: AsRef<[usize]>>(&self, indices: T) -> EventData {
+        self.event.boost_to_rest_frame_of(indices)
+    }
+
+    /// Evaluate a [`Variable`] over this event.
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
+        self.event.evaluate(variable)
+    }
 }
 
 impl Dataset {
-    /// Get a reference to the [`Event`] at the given index in the [`Dataset`] (non-MPI
+    /// Borrow the dataset metadata used for name lookups.
+    pub fn metadata(&self) -> &DatasetMetadata {
+        &self.metadata
+    }
+
+    /// Clone the internal metadata handle for external consumers (e.g., language bindings).
+    pub fn metadata_arc(&self) -> Arc<DatasetMetadata> {
+        self.metadata.clone()
+    }
+
+    /// Names corresponding to stored four-momenta.
+    pub fn p4_names(&self) -> &[String] {
+        &self.metadata.p4_names
+    }
+
+    /// Names corresponding to stored auxiliary scalars.
+    pub fn aux_names(&self) -> &[String] {
+        &self.metadata.aux_names
+    }
+
+    /// Resolve the index of a four-momentum by name.
+    pub fn p4_index(&self, name: &str) -> Option<usize> {
+        self.metadata.p4_index(name)
+    }
+
+    /// Resolve the index of an auxiliary scalar by name.
+    pub fn aux_index(&self, name: &str) -> Option<usize> {
+        self.metadata.aux_index(name)
+    }
+
+    /// Borrow event data together with metadata-based helpers as an [`Event`] view.
+    pub fn named_event(&self, index: usize) -> Event<'_> {
+        Event {
+            event: self.index(index),
+            metadata: &self.metadata,
+        }
+    }
+
+    /// Retrieve a four-momentum by name for the event at `event_index`.
+    pub fn p4_by_name(&self, event_index: usize, name: &str) -> Option<Vec4> {
+        let idx = self.p4_index(name)?;
+        self.events
+            .get(event_index)
+            .and_then(|event| event.p4s.get(idx))
+            .copied()
+    }
+
+    /// Retrieve an auxiliary scalar by name for the event at `event_index`.
+    pub fn aux_by_name(&self, event_index: usize, name: &str) -> Option<f64> {
+        let idx = self.aux_index(name)?;
+        self.events
+            .get(event_index)
+            .and_then(|event| event.aux.get(idx))
+            .copied()
+    }
+
+    /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
     /// version).
     ///
     /// # Notes
@@ -128,7 +344,7 @@ impl Dataset {
     /// let ds: Dataset = Dataset::new(events);
     /// let event_0 = ds[0];
     /// ```
-    pub fn index_local(&self, index: usize) -> &Event {
+    pub fn index_local(&self, index: usize) -> &EventData {
         &self.events[index]
     }
 
@@ -147,7 +363,7 @@ impl Dataset {
 
     /// Return the counts, displacements, and local indices for the current MPI rank.
     ///
-    /// This method is useful for processing scalar values over a batch of [`Event`]s rather than
+    /// This method is useful for processing scalar values over a batch of [`EventData`]s rather than
     /// the entire dataset.
     #[cfg(feature = "mpi")]
     pub fn get_counts_displs_locals_from_indices(
@@ -184,7 +400,7 @@ impl Dataset {
     /// Return the counts, displacements, and local indices for the current MPI rank, flattened to
     /// account for vectors of a given internal length.
     ///
-    /// This method is useful for processing vector values over a batch of [`Event`]s rather than
+    /// This method is useful for processing vector values over a batch of [`EventData`]s rather than
     /// the entire dataset.
     #[cfg(feature = "mpi")]
     pub fn get_flattened_counts_displs_locals_from_indices(
@@ -220,7 +436,10 @@ impl Dataset {
     }
 
     #[cfg(feature = "mpi")]
-    fn partition(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Vec<Vec<Arc<Event>>> {
+    fn partition(
+        events: Vec<Arc<EventData>>,
+        world: &SimpleCommunicator,
+    ) -> Vec<Vec<Arc<EventData>>> {
         let (counts, displs) = world.get_counts_displs(events.len());
         counts
             .iter()
@@ -236,7 +455,7 @@ impl Dataset {
             .collect()
     }
 
-    /// Get a reference to the [`Event`] at the given index in the [`Dataset`]
+    /// Get a reference to the [`EventData`] at the given index in the [`Dataset`]
     /// (MPI-compatible version).
     ///
     /// # Notes
@@ -250,7 +469,7 @@ impl Dataset {
     /// let event_0 = ds[0];
     /// ```
     #[cfg(feature = "mpi")]
-    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
+    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &EventData {
         let (_, displs) = world.get_counts_displs(self.n_events());
         let (owning_rank, local_index) = Dataset::get_rank_index(index, &displs, world);
         let mut serialized_event_buffer_len: usize = 0;
@@ -270,14 +489,14 @@ impl Dataset {
         world
             .process_at_rank(owning_rank)
             .broadcast_into(&mut serialized_event_buffer);
-        let (event, _): (Event, usize) =
+        let (event, _): (EventData, usize) =
             bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
         Box::leak(Box::new(event))
     }
 }
 
 impl Index<usize> for Dataset {
-    type Output = Event;
+    type Output = EventData;
 
     fn index(&self, index: usize) -> &Self::Output {
         #[cfg(feature = "mpi")]
@@ -291,45 +510,56 @@ impl Index<usize> for Dataset {
 }
 
 impl Dataset {
-    /// Create a new [`Dataset`] from a list of [`Event`]s (non-MPI version).
+    /// Create a new [`Dataset`] from a list of [`EventData`] (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
-    pub fn new_local(events: Vec<Arc<Event>>) -> Self {
-        Dataset { events }
+    pub fn new_local(events: Vec<Arc<EventData>>, metadata: Arc<DatasetMetadata>) -> Self {
+        Dataset { events, metadata }
     }
 
-    /// Create a new [`Dataset`] from a list of [`Event`]s (MPI-compatible version).
+    /// Create a new [`Dataset`] from a list of [`EventData`] (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
     #[cfg(feature = "mpi")]
-    pub fn new_mpi(events: Vec<Arc<Event>>, world: &SimpleCommunicator) -> Self {
+    pub fn new_mpi(
+        events: Vec<Arc<EventData>>,
+        metadata: Arc<DatasetMetadata>,
+        world: &SimpleCommunicator,
+    ) -> Self {
         Dataset {
             events: Dataset::partition(events, world)[world.rank() as usize].clone(),
+            metadata,
         }
     }
 
-    /// Create a new [`Dataset`] from a list of [`Event`]s.
+    /// Create a new [`Dataset`] from a list of [`EventData`].
     ///
     /// This method is prefered for external use because it contains proper MPI construction
     /// methods. Constructing a [`Dataset`] manually is possible, but may cause issues when
     /// interfacing with MPI and should be avoided unless you know what you are doing.
-    pub fn new(events: Vec<Arc<Event>>) -> Self {
+    pub fn new(events: Vec<Arc<EventData>>) -> Self {
+        Dataset::new_with_metadata(events, Arc::new(DatasetMetadata::default()))
+    }
+
+    /// Create a dataset with explicit metadata for name-based lookups.
+    /// Create a dataset with explicit metadata for name-based lookups.
+    pub fn new_with_metadata(events: Vec<Arc<EventData>>, metadata: Arc<DatasetMetadata>) -> Self {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
-                return Dataset::new_mpi(events, &world);
+                return Dataset::new_mpi(events, metadata, &world);
             }
         }
-        Dataset::new_local(events)
+        Dataset::new_local(events, metadata)
     }
 
-    /// The number of [`Event`]s in the [`Dataset`] (non-MPI version).
+    /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
@@ -339,7 +569,7 @@ impl Dataset {
         self.events.len()
     }
 
-    /// The number of [`Event`]s in the [`Dataset`] (MPI-compatible version).
+    /// The number of [`EventData`]s in the [`Dataset`] (MPI-compatible version).
     ///
     /// # Notes
     ///
@@ -353,7 +583,7 @@ impl Dataset {
         n_events_partitioned.iter().sum()
     }
 
-    /// The number of [`Event`]s in the [`Dataset`].
+    /// The number of [`EventData`]s in the [`Dataset`].
     pub fn n_events(&self) -> usize {
         #[cfg(feature = "mpi")]
         {
@@ -366,30 +596,30 @@ impl Dataset {
 }
 
 impl Dataset {
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`] (non-MPI version).
+    /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
-    pub fn weights_local(&self) -> Vec<Float> {
+    pub fn weights_local(&self) -> Vec<f64> {
         #[cfg(feature = "rayon")]
         return self.events.par_iter().map(|e| e.weight).collect();
         #[cfg(not(feature = "rayon"))]
         return self.events.iter().map(|e| e.weight).collect();
     }
 
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`] (MPI-compatible version).
+    /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     #[cfg(feature = "mpi")]
-    pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<Float> {
+    pub fn weights_mpi(&self, world: &SimpleCommunicator) -> Vec<f64> {
         let local_weights = self.weights_local();
         let n_events = self.n_events();
-        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
@@ -398,8 +628,8 @@ impl Dataset {
         buffer
     }
 
-    /// Extract a list of weights over each [`Event`] in the [`Dataset`].
-    pub fn weights(&self) -> Vec<Float> {
+    /// Extract a list of weights over each [`EventData`] in the [`Dataset`].
+    pub fn weights(&self) -> Vec<f64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -409,43 +639,43 @@ impl Dataset {
         self.weights_local()
     }
 
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`] (non-MPI version).
+    /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
-    pub fn n_events_weighted_local(&self) -> Float {
+    pub fn n_events_weighted_local(&self) -> f64 {
         #[cfg(feature = "rayon")]
         return self
             .events
             .par_iter()
             .map(|e| e.weight)
-            .parallel_sum_with_accumulator::<Klein<Float>>();
+            .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         return self.events.iter().map(|e| e.weight).sum();
     }
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`] (MPI-compatible version).
+    /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> Float {
-        let mut n_events_weighted_partitioned: Vec<Float> = vec![0.0; world.size() as usize];
+    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> f64 {
+        let mut n_events_weighted_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
         let n_events_weighted_local = self.n_events_weighted_local();
         world.all_gather_into(&n_events_weighted_local, &mut n_events_weighted_partitioned);
         #[cfg(feature = "rayon")]
         return n_events_weighted_partitioned
             .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<Float>>();
+            .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         return n_events_weighted_partitioned.iter().sum();
     }
 
-    /// Returns the sum of the weights for each [`Event`] in the [`Dataset`].
-    pub fn n_events_weighted(&self) -> Float {
+    /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`].
+    pub fn n_events_weighted(&self) -> f64 {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -469,17 +699,18 @@ impl Dataset {
             .collect::<Vec<usize>>();
         indices.sort();
         #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
+        let bootstrapped_events: Vec<Arc<EventData>> = indices
             .into_par_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = indices
+        let bootstrapped_events: Vec<Arc<EventData>> = indices
             .into_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
         Arc::new(Dataset {
             events: bootstrapped_events,
+            metadata: self.metadata.clone(),
         })
     }
 
@@ -517,17 +748,18 @@ impl Dataset {
         // `local_indices` only contains indices owned by the current rank, translating them into
         // local indices on the events vector.
         #[cfg(feature = "rayon")]
-        let bootstrapped_events: Vec<Arc<Event>> = local_indices
+        let bootstrapped_events: Vec<Arc<EventData>> = local_indices
             .into_par_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let bootstrapped_events: Vec<Arc<Event>> = local_indices
+        let bootstrapped_events: Vec<Arc<EventData>> = local_indices
             .into_iter()
             .map(|idx| self.events[idx].clone())
             .collect();
         Arc::new(Dataset {
             events: bootstrapped_events,
+            metadata: self.metadata.clone(),
         })
     }
 
@@ -545,37 +777,45 @@ impl Dataset {
 
     /// Filter the [`Dataset`] by a given [`VariableExpression`], selecting events for which
     /// the expression returns `true`.
-    pub fn filter(&self, expression: &VariableExpression) -> Arc<Dataset> {
-        let compiled = expression.compile();
+    pub fn filter(&self, expression: &VariableExpression) -> Result<Arc<Dataset>, LadduError> {
+        let compiled = expression.compile(&self.metadata)?;
         #[cfg(feature = "rayon")]
-        let filtered_events = self
+        let filtered_events: Vec<Arc<EventData>> = self
             .events
             .par_iter()
             .filter(|e| compiled.evaluate(e))
             .cloned()
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let filtered_events = self
+        let filtered_events: Vec<Arc<EventData>> = self
             .events
             .iter()
             .filter(|e| compiled.evaluate(e))
             .cloned()
             .collect();
-        Arc::new(Dataset {
+        Ok(Arc::new(Dataset {
             events: filtered_events,
-        })
+            metadata: self.metadata.clone(),
+        }))
     }
 
     /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
     /// given `range`.
-    pub fn bin_by<V>(&self, variable: V, bins: usize, range: (Float, Float)) -> BinnedDataset
+    pub fn bin_by<V>(
+        &self,
+        mut variable: V,
+        bins: usize,
+        range: (f64, f64),
+    ) -> Result<BinnedDataset, LadduError>
     where
         V: Variable,
     {
-        let bin_width = (range.1 - range.0) / bins as Float;
+        variable.bind(self.metadata())?;
+        let bin_width = (range.1 - range.0) / bins as f64;
         let bin_edges = get_bin_edges(bins, range);
+        let variable = variable;
         #[cfg(feature = "rayon")]
-        let evaluated: Vec<(usize, &Arc<Event>)> = self
+        let evaluated: Vec<(usize, &Arc<EventData>)> = self
             .events
             .par_iter()
             .filter_map(|event| {
@@ -590,7 +830,7 @@ impl Dataset {
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let evaluated: Vec<(usize, &Arc<Event>)> = self
+        let evaluated: Vec<(usize, &Arc<EventData>)> = self
             .events
             .iter()
             .filter_map(|event| {
@@ -604,26 +844,37 @@ impl Dataset {
                 }
             })
             .collect();
-        let mut binned_events: Vec<Vec<Arc<Event>>> = vec![Vec::default(); bins];
+        let mut binned_events: Vec<Vec<Arc<EventData>>> = vec![Vec::default(); bins];
         for (bin_index, event) in evaluated {
             binned_events[bin_index].push(event.clone());
         }
-        BinnedDataset {
-            #[cfg(feature = "rayon")]
-            datasets: binned_events
-                .into_par_iter()
-                .map(|events| Arc::new(Dataset { events }))
-                .collect(),
-            #[cfg(not(feature = "rayon"))]
-            datasets: binned_events
-                .into_iter()
-                .map(|events| Arc::new(Dataset { events }))
-                .collect(),
+        #[cfg(feature = "rayon")]
+        let datasets: Vec<Arc<Dataset>> = binned_events
+            .into_par_iter()
+            .map(|events| {
+                Arc::new(Dataset {
+                    events,
+                    metadata: self.metadata.clone(),
+                })
+            })
+            .collect();
+        #[cfg(not(feature = "rayon"))]
+        let datasets: Vec<Arc<Dataset>> = binned_events
+            .into_iter()
+            .map(|events| {
+                Arc::new(Dataset {
+                    events,
+                    metadata: self.metadata.clone(),
+                })
+            })
+            .collect();
+        Ok(BinnedDataset {
+            datasets,
             edges: bin_edges,
-        }
+        })
     }
 
-    /// Boost all the four-momenta in all [`Event`]s to the rest frame of the given set of
+    /// Boost all the four-momenta in all [`EventData`]s to the rest frame of the given set of
     /// four-momenta by indices.
     pub fn boost_to_rest_frame_of<T: AsRef<[usize]> + Sync>(&self, indices: T) -> Arc<Dataset> {
         #[cfg(feature = "rayon")]
@@ -634,6 +885,7 @@ impl Dataset {
                     .par_iter()
                     .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
                     .collect(),
+                metadata: self.metadata.clone(),
             })
         }
         #[cfg(not(feature = "rayon"))]
@@ -644,198 +896,301 @@ impl Dataset {
                     .iter()
                     .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
                     .collect(),
+                metadata: self.metadata.clone(),
             })
         }
     }
     /// Evaluate a [`Variable`] on every event in the [`Dataset`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Vec<Float> {
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> Result<Vec<f64>, LadduError> {
         variable.value_on(self)
     }
-}
 
-impl_op_ex!(+ |a: &Dataset, b: &Dataset| ->  Dataset { Dataset { events: a.events.iter().chain(b.events.iter()).cloned().collect() }});
-
-fn batch_to_event(batch: &RecordBatch, row: usize) -> Event {
-    let mut p4s = Vec::new();
-    let mut aux = Vec::new();
-
-    let p4_count = batch
-        .schema()
-        .fields()
-        .iter()
-        .filter(|field| field.name().starts_with(P4_PREFIX))
-        .count()
-        / 4;
-    let aux_count = batch
-        .schema()
-        .fields()
-        .iter()
-        .filter(|field| field.name().starts_with(AUX_PREFIX))
-        .count()
-        / 3;
-
-    for i in 0..p4_count {
-        let e = batch
-            .column_by_name(&format!("{}{}_E", P4_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        let px = batch
-            .column_by_name(&format!("{}{}_Px", P4_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        let py = batch
-            .column_by_name(&format!("{}{}_Py", P4_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        let pz = batch
-            .column_by_name(&format!("{}{}_Pz", P4_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        p4s.push(Vec4::new(px, py, pz, e));
+    /// Open a Parquet file and construct a [`Dataset`] using named columns.
+    ///
+    /// Each entry in `p4_names` identifies a particle; the loader expects columns named
+    /// ``{identifier}_px``, ``{identifier}_py``, ``{identifier}_pz``, and ``{identifier}_e`` for
+    /// each identifier (component suffixes are matched case-insensitively). Auxiliary scalars are
+    /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
+    /// `Float32` or `Float64` and are promoted to `f64` on load.
+    pub fn open<P: AsRef<str>, S: AsRef<str>>(
+        file_path: P,
+        p4_names: &[S],
+        aux_names: &[S],
+    ) -> Result<Arc<Dataset>, LadduError> {
+        Self::open_impl(file_path, p4_names, aux_names, None::<Vec<String>>)
     }
 
-    // TODO: insert empty vectors if not provided
-    for i in 0..aux_count {
-        let x = batch
-            .column_by_name(&format!("{}{}_x", AUX_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        let y = batch
-            .column_by_name(&format!("{}{}_y", AUX_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        let z = batch
-            .column_by_name(&format!("{}{}_z", AUX_PREFIX, i))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .unwrap()
-            .value(row) as Float;
-        aux.push(Vec3::new(x, y, z));
+    /// The same as [`Dataset::open`], but boosts every event to the rest frame of the specified
+    /// particles.
+    pub fn open_boosted<P: AsRef<str>, S: AsRef<str>, B: AsRef<str>>(
+        file_path: P,
+        p4_names: &[S],
+        aux_names: &[S],
+        boost_to_restframe_of: &[B],
+    ) -> Result<Arc<Dataset>, LadduError> {
+        let boost_names: Vec<String> = boost_to_restframe_of
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect();
+        Self::open_impl(file_path, p4_names, aux_names, Some(boost_names))
     }
 
-    let weight = batch
-        .column(19)
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .unwrap()
-        .value(row) as Float;
+    fn open_impl<P: AsRef<str>, S: AsRef<str>>(
+        file_path: P,
+        p4_names: &[S],
+        aux_names: &[S],
+        boost_to_restframe_of: Option<Vec<String>>,
+    ) -> Result<Arc<Dataset>, LadduError> {
+        let p4_names_vec: Vec<String> = p4_names
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect();
+        let aux_names_vec: Vec<String> = aux_names
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect();
 
-    Event { p4s, aux, weight }
+        let metadata = Arc::new(DatasetMetadata::new(
+            p4_names_vec.clone(),
+            aux_names_vec.clone(),
+        )?);
+
+        let boost_indices: Option<Vec<usize>> = if let Some(names) = boost_to_restframe_of {
+            let mut indices = Vec::with_capacity(names.len());
+            for name in names {
+                let idx = metadata
+                    .p4_index(&name)
+                    .ok_or_else(|| LadduError::UnknownName {
+                        category: "p4",
+                        name,
+                    })?;
+                indices.push(idx);
+            }
+            Some(indices)
+        } else {
+            None
+        };
+
+        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
+        let file = File::open(file_path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let reader = builder.build()?;
+        let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+
+        #[cfg(feature = "rayon")]
+        let events: Vec<Arc<EventData>> = {
+            let boost_indices = boost_indices.as_deref();
+            let batch_events: Vec<Result<Vec<Arc<EventData>>, LadduError>> = batches
+                .into_par_iter()
+                .map(|batch| {
+                    record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
+                })
+                .collect();
+            let mut events = Vec::new();
+            for batch in batch_events {
+                let mut batch = batch?;
+                events.append(&mut batch);
+            }
+            events
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let events: Vec<Arc<EventData>> = {
+            let boost_indices = boost_indices.as_deref();
+            batches
+                .into_iter()
+                .map(|batch| {
+                    record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
+                })
+                .collect::<Result<Vec<_>, LadduError>>()?
+                .into_iter()
+                .flatten()
+                .collect()
+        };
+
+        Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+    }
 }
 
-/// Open a Parquet file and read the data into a [`Dataset`].
-pub fn open<T: AsRef<str>>(file_path: T) -> Result<Arc<Dataset>, LadduError> {
-    // TODO: make this read in directly to MPI ranks
-    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
+    debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
+    debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
+    Dataset {
+        events: a
+            .events
+            .iter()
+            .chain(b.events.iter())
+            .cloned()
+            .collect(),
+        metadata: a.metadata.clone(),
+    }
+});
 
-    #[cfg(feature = "rayon")]
-    let events: Vec<Arc<Event>> = batches
-        .into_par_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    #[cfg(not(feature = "rayon"))]
-    let events: Vec<Arc<Event>> = batches
-        .into_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let event = batch_to_event(&batch, row);
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset::new(events)))
+#[derive(Clone, Copy)]
+enum FloatColumn<'a> {
+    F32(&'a Float32Array),
+    F64(&'a Float64Array),
 }
 
-/// Open a Parquet file and read the data into a [`Dataset`]. This method boosts each event to the
-/// rest frame of the four-momenta at the given indices.
-pub fn open_boosted_to_rest_frame_of<T: AsRef<str>, I: AsRef<[usize]> + Sync>(
-    file_path: T,
-    indices: I,
-) -> Result<Arc<Dataset>, LadduError> {
-    // TODO: make this read in directly to MPI ranks
-    let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-    #[cfg(feature = "rayon")]
-    let events: Vec<Arc<Event>> = batches
-        .into_par_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let mut event = batch_to_event(&batch, row);
-                event = event.boost_to_rest_frame_of(indices.as_ref());
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    #[cfg(not(feature = "rayon"))]
-    let events: Vec<Arc<Event>> = batches
-        .into_iter()
-        .flat_map(|batch| {
-            let num_rows = batch.num_rows();
-            let mut local_events = Vec::with_capacity(num_rows);
-
-            // Process each row in the batch
-            for row in 0..num_rows {
-                let mut event = batch_to_event(&batch, row);
-                event = event.boost_to_rest_frame_of(indices.as_ref());
-                local_events.push(Arc::new(event));
-            }
-            local_events
-        })
-        .collect();
-    Ok(Arc::new(Dataset::new(events)))
+impl<'a> FloatColumn<'a> {
+    fn value(&self, row: usize) -> f64 {
+        match self {
+            Self::F32(array) => array.value(row) as f64,
+            Self::F64(array) => array.value(row) as f64,
+        }
+    }
 }
 
-/// A list of [`Dataset`]s formed by binning [`Event`]s by some [`Variable`].
+struct P4Columns<'a> {
+    px: FloatColumn<'a>,
+    py: FloatColumn<'a>,
+    pz: FloatColumn<'a>,
+    e: FloatColumn<'a>,
+}
+
+fn prepare_float_column<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<FloatColumn<'a>, LadduError> {
+    prepare_float_column_from_candidates(batch, &[name.to_string()], name)
+}
+
+fn prepare_p4_columns<'a>(batch: &'a RecordBatch, name: &str) -> Result<P4Columns<'a>, LadduError> {
+    Ok(P4Columns {
+        px: prepare_float_column_from_candidates(
+            batch,
+            &component_candidates(name, "px"),
+            &format!("{name}_px"),
+        )?,
+        py: prepare_float_column_from_candidates(
+            batch,
+            &component_candidates(name, "py"),
+            &format!("{name}_py"),
+        )?,
+        pz: prepare_float_column_from_candidates(
+            batch,
+            &component_candidates(name, "pz"),
+            &format!("{name}_pz"),
+        )?,
+        e: prepare_float_column_from_candidates(
+            batch,
+            &component_candidates(name, "e"),
+            &format!("{name}_e"),
+        )?,
+    })
+}
+
+fn component_candidates(name: &str, suffix: &str) -> Vec<String> {
+    let mut candidates = Vec::with_capacity(3);
+    let base = format!("{name}_{suffix}");
+    candidates.push(base.clone());
+
+    let mut capitalized = suffix.to_string();
+    if let Some(first) = capitalized.get_mut(0..1) {
+        first.make_ascii_uppercase();
+    }
+    if capitalized != suffix {
+        candidates.push(format!("{name}_{capitalized}"));
+    }
+
+    let upper = suffix.to_ascii_uppercase();
+    if upper != suffix && upper != capitalized {
+        candidates.push(format!("{name}_{upper}"));
+    }
+
+    candidates
+}
+
+fn prepare_float_column_from_candidates<'a>(
+    batch: &'a RecordBatch,
+    candidates: &[String],
+    logical_name: &str,
+) -> Result<FloatColumn<'a>, LadduError> {
+    use arrow::datatypes::DataType;
+
+    for candidate in candidates {
+        if let Some(column) = batch.column_by_name(candidate) {
+            return match column.data_type() {
+                DataType::Float32 => Ok(FloatColumn::F32(
+                    column
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .expect("Column advertised as Float32 but could not be downcast"),
+                )),
+                DataType::Float64 => Ok(FloatColumn::F64(
+                    column
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .expect("Column advertised as Float64 but could not be downcast"),
+                )),
+                other => {
+                    return Err(LadduError::InvalidColumnType {
+                        name: candidate.clone(),
+                        datatype: other.to_string(),
+                    })
+                }
+            };
+        }
+    }
+    Err(LadduError::MissingColumn {
+        name: logical_name.to_string(),
+    })
+}
+
+fn record_batch_to_events(
+    batch: RecordBatch,
+    p4_names: &[String],
+    aux_names: &[String],
+    boost_indices: Option<&[usize]>,
+) -> Result<Vec<Arc<EventData>>, LadduError> {
+    let batch_ref = &batch;
+    let p4_columns: Vec<P4Columns<'_>> = p4_names
+        .iter()
+        .map(|name| prepare_p4_columns(batch_ref, name))
+        .collect::<Result<_, _>>()?;
+
+    let aux_columns: Vec<FloatColumn<'_>> = aux_names
+        .iter()
+        .map(|name| prepare_float_column(batch_ref, name))
+        .collect::<Result<_, _>>()?;
+
+    let weight_column = prepare_float_column(batch_ref, "weight")?;
+
+    let mut events = Vec::with_capacity(batch_ref.num_rows());
+    for row in 0..batch_ref.num_rows() {
+        let mut p4s = Vec::with_capacity(p4_columns.len());
+        for columns in &p4_columns {
+            let px = columns.px.value(row);
+            let py = columns.py.value(row);
+            let pz = columns.pz.value(row);
+            let e = columns.e.value(row);
+            p4s.push(Vec4::new(px, py, pz, e));
+        }
+
+        let mut aux = Vec::with_capacity(aux_columns.len());
+        for column in &aux_columns {
+            aux.push(column.value(row));
+        }
+
+        let mut event = EventData {
+            p4s,
+            aux,
+            weight: weight_column.value(row),
+        };
+        if let Some(indices) = boost_indices {
+            if !indices.is_empty() {
+                event = event.boost_to_rest_frame_of(indices);
+            }
+        }
+        events.push(Arc::new(event));
+    }
+    Ok(events)
+}
+
+/// A list of [`Dataset`]s formed by binning [`EventData`] by some [`Variable`].
 pub struct BinnedDataset {
     datasets: Vec<Arc<Dataset>>,
-    edges: Vec<Float>,
+    edges: Vec<f64>,
 }
 
 impl Index<usize> for BinnedDataset {
@@ -873,12 +1228,12 @@ impl BinnedDataset {
     }
 
     /// Returns a list of the bin edges that were used to form the [`BinnedDataset`].
-    pub fn edges(&self) -> Vec<Float> {
+    pub fn edges(&self) -> Vec<f64> {
         self.edges.clone()
     }
 
     /// Returns the range that was used to form the [`BinnedDataset`].
-    pub fn range(&self) -> (Float, Float) {
+    pub fn range(&self) -> (f64, f64) {
         (self.edges[0], self.edges[self.n_bins()])
     }
 }
@@ -888,13 +1243,14 @@ mod tests {
     use crate::Mass;
 
     use super::*;
+    use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
     use serde::{Deserialize, Serialize};
     #[test]
     fn test_event_creation() {
         let event = test_event();
         assert_eq!(event.p4s.len(), 4);
-        assert_eq!(event.aux.len(), 1);
+        assert_eq!(event.aux.len(), 2);
         assert_relative_eq!(event.weight, 0.48)
     }
 
@@ -913,21 +1269,29 @@ mod tests {
         let event = test_event();
         let event_boosted = event.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = event_boosted.get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
     fn test_event_evaluate() {
         let event = test_event();
-        let mass = Mass::new([1]);
+        let mut mass = Mass::new(["proton"]);
+        mass.bind(
+            &DatasetMetadata::new(
+                TEST_P4_NAMES.iter().map(|s| (*s).to_string()).collect(),
+                TEST_AUX_NAMES.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .expect("metadata"),
+        )
+        .unwrap();
         assert_relative_eq!(event.evaluate(&mass), 1.007);
     }
 
     #[test]
     fn test_dataset_size_check() {
-        let mut dataset = Dataset::default();
+        let mut dataset = Dataset::new(Vec::new());
         assert_eq!(dataset.n_events(), 0);
         dataset.events.push(Arc::new(test_event()));
         assert_eq!(dataset.n_events(), 1);
@@ -936,11 +1300,15 @@ mod tests {
     #[test]
     fn test_dataset_sum() {
         let dataset = test_dataset();
-        let dataset2 = Dataset::new(vec![Arc::new(Event {
-            p4s: test_event().p4s,
-            aux: test_event().aux,
-            weight: 0.52,
-        })]);
+        let metadata = dataset.metadata_arc();
+        let dataset2 = Dataset::new_with_metadata(
+            vec![Arc::new(EventData {
+                p4s: test_event().p4s,
+                aux: test_event().aux,
+                weight: 0.52,
+            })],
+            metadata.clone(),
+        );
         let dataset_sum = &dataset + &dataset2;
         assert_eq!(dataset_sum[0].weight, dataset[0].weight);
         assert_eq!(dataset_sum[1].weight, dataset2[0].weight);
@@ -948,9 +1316,9 @@ mod tests {
 
     #[test]
     fn test_dataset_weights() {
-        let mut dataset = Dataset::default();
+        let mut dataset = Dataset::new(Vec::new());
         dataset.events.push(Arc::new(test_event()));
-        dataset.events.push(Arc::new(Event {
+        dataset.events.push(Arc::new(EventData {
             p4s: test_event().p4s,
             aux: test_event().aux,
             weight: 0.52,
@@ -964,35 +1332,39 @@ mod tests {
 
     #[test]
     fn test_dataset_filtering() {
-        let mut dataset = Dataset::default();
-        dataset.events.push(Arc::new(Event {
-            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.0)],
-            aux: vec![],
-            weight: 1.0,
-        }));
-        dataset.events.push(Arc::new(Event {
-            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.5)],
-            aux: vec![],
-            weight: 1.0,
-        }));
-        dataset.events.push(Arc::new(Event {
-            p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(1.1)],
-            // HACK: using 1.0 messes with this test because the eventual computation gives a mass
-            // slightly less than 1.0
-            aux: vec![],
-            weight: 1.0,
-        }));
+        let metadata = Arc::new(
+            DatasetMetadata::new(vec!["beam"], Vec::<String>::new())
+                .expect("metadata should be valid"),
+        );
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.0)],
+                aux: vec![],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(0.5)],
+                aux: vec![],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec3::new(0.0, 0.0, 5.0).with_mass(1.1)],
+                // HACK: using 1.0 messes with this test because the eventual computation gives a mass
+                // slightly less than 1.0
+                aux: vec![],
+                weight: 1.0,
+            }),
+        ];
+        let dataset = Dataset::new_with_metadata(events, metadata);
 
-        let mass = Mass::new([0]);
+        let metadata = dataset.metadata_arc();
+        let mut mass = Mass::new(["beam"]);
+        mass.bind(metadata.as_ref()).unwrap();
         let expression = mass.gt(0.0).and(&mass.lt(1.0));
 
-        let filtered = dataset.filter(&expression);
+        let filtered = dataset.filter(&expression).unwrap();
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(
-            mass.value(&filtered[0]),
-            0.5,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        assert_relative_eq!(mass.value(&filtered[0]), 0.5, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
@@ -1000,27 +1372,48 @@ mod tests {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
+    }
+
+    #[test]
+    fn test_named_event_view() {
+        let dataset = test_dataset();
+        let view = dataset.named_event(0);
+
+        assert_relative_eq!(view.weight(), dataset[0].weight);
+        let beam = view.p4("beam").expect("beam p4");
+        assert_relative_eq!(beam.px(), dataset[0].p4s[0].px());
+        assert_relative_eq!(beam.e(), dataset[0].p4s[0].e());
+
+        let summed = view.get_p4_sum([2, 3]);
+        assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
+
+        let aux_angle = view.aux("pol_angle").expect("pol angle");
+        assert_relative_eq!(aux_angle, dataset[0].aux[1]);
+
+        let boosted = view.boost_to_rest_frame_of([1, 2, 3]);
+        let boosted_sum = boosted.get_p4_sum([1, 2, 3]);
+        assert_relative_eq!(boosted_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
     #[test]
     fn test_dataset_evaluate() {
         let dataset = test_dataset();
-        let mass = Mass::new([1]);
-        assert_relative_eq!(dataset.evaluate(&mass)[0], 1.007);
+        let mass = Mass::new(["proton"]);
+        assert_relative_eq!(dataset.evaluate(&mass).unwrap()[0], 1.007);
     }
 
     #[test]
     fn test_binned_dataset() {
         let dataset = Dataset::new(vec![
-            Arc::new(Event {
+            Arc::new(EventData {
                 p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(1.0)],
                 aux: vec![],
                 weight: 1.0,
             }),
-            Arc::new(Event {
+            Arc::new(EventData {
                 p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(2.0)],
                 aux: vec![],
                 weight: 2.0,
@@ -1036,14 +1429,14 @@ mod tests {
         }
         #[typetag::serde]
         impl Variable for BeamEnergy {
-            fn value(&self, event: &Event) -> Float {
+            fn value(&self, event: &EventData) -> f64 {
                 event.p4s[0].e()
             }
         }
         assert_eq!(BeamEnergy.to_string(), "BeamEnergy");
 
         // Test binning by first particle energy
-        let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0));
+        let binned = dataset.bin_by(BeamEnergy, 2, (0.0, 3.0)).unwrap();
 
         assert_eq!(binned.n_bins(), 2);
         assert_eq!(binned.edges().len(), 3);
@@ -1058,7 +1451,7 @@ mod tests {
     #[test]
     fn test_dataset_bootstrap() {
         let mut dataset = test_dataset();
-        dataset.events.push(Arc::new(Event {
+        dataset.events.push(Arc::new(EventData {
             p4s: test_event().p4s.clone(),
             aux: test_event().aux.clone(),
             weight: 1.0,
@@ -1070,7 +1463,7 @@ mod tests {
         assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
 
         // Test empty dataset bootstrap
-        let empty_dataset = Dataset::default();
+        let empty_dataset = Dataset::new(Vec::new());
         let empty_bootstrap = empty_dataset.bootstrap(43);
         assert_eq!(empty_bootstrap.n_events(), 0);
     }
@@ -1078,9 +1471,31 @@ mod tests {
     fn test_event_display() {
         let event = test_event();
         let display_string = format!("{}", event);
-        assert_eq!(
-            display_string,
-            "Event:\n  p4s:\n    [e = 8.74700; p = (0.00000, 0.00000, 8.74700); m = 0.00000]\n    [e = 1.10334; p = (0.11900, 0.37400, 0.22200); m = 1.00700]\n    [e = 3.13671; p = (-0.11200, 0.29300, 3.08100); m = 0.49800]\n    [e = 5.50925; p = (-0.00700, -0.66700, 5.44600); m = 0.49800]\n  eps:\n    [0.385, 0.022, 0]\n  weight:\n    0.48\n"
-        );
+        assert!(display_string.contains("Event:"));
+        assert!(display_string.contains("p4s:"));
+        assert!(display_string.contains("aux:"));
+        assert!(display_string.contains("aux[0]: 0.38562805"));
+        assert!(display_string.contains("aux[1]: 1.93592989"));
+        assert!(display_string.contains("weight:"));
+    }
+
+    #[test]
+    fn test_name_based_access() {
+        let metadata =
+            Arc::new(DatasetMetadata::new(vec!["beam", "target"], vec!["pol_angle"]).unwrap());
+        let event = Arc::new(EventData {
+            p4s: vec![Vec4::new(0.0, 0.0, 1.0, 1.0), Vec4::new(0.1, 0.2, 0.3, 0.5)],
+            aux: vec![0.42],
+            weight: 1.0,
+        });
+        let dataset = Dataset::new_with_metadata(vec![event], metadata);
+        let beam = dataset.p4_by_name(0, "beam").unwrap();
+        assert_relative_eq!(beam.px(), 0.0);
+        assert_relative_eq!(beam.py(), 0.0);
+        assert_relative_eq!(beam.pz(), 1.0);
+        assert_relative_eq!(beam.e(), 1.0);
+        assert_relative_eq!(dataset.aux_by_name(0, "pol_angle").unwrap(), 0.42);
+        assert!(dataset.p4_by_name(0, "missing").is_none());
+        assert!(dataset.aux_by_name(0, "missing").is_none());
     }
 }

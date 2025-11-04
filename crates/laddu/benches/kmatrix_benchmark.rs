@@ -10,25 +10,32 @@ use laddu::{
         zlm::Zlm,
         Manager,
     },
-    data::open,
+    data::Dataset,
     extensions::NLL,
     traits::*,
     utils::{
         enums::{Frame, Sign},
         variables::{Angles, Mass, Polarization},
     },
-    Float,
 };
 
 use rayon::ThreadPoolBuilder;
 
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
-    let ds_data = open("benches/bench.parquet").unwrap();
-    let ds_mc = open("benches/bench.parquet").unwrap();
+    let p4_names = ["beam", "proton", "kshort1", "kshort2"];
+    let aux_names = ["pol_magnitude", "pol_angle"];
+    let ds_data = Dataset::open("benches/bench.parquet", &p4_names, &aux_names).unwrap();
+    let ds_mc = Dataset::open("benches/bench.parquet", &p4_names, &aux_names).unwrap();
 
-    let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-    let polarization = Polarization::new(0, [1], 0);
-    let resonance_mass = Mass::new([2, 3]);
+    let angles = Angles::new(
+        "beam",
+        ["proton"],
+        ["kshort1"],
+        ["kshort1", "kshort2"],
+        Frame::Helicity,
+    );
+    let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
     let mut manager = Manager::default();
     let z00p = manager
         .register(Zlm::new(
@@ -167,15 +174,9 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                 let mut rng = fastrand::Rng::new();
                 b.iter_batched(
                     || {
-                        #[cfg(feature = "f32")]
-                        let p: Vec<Float> = (0..nll.parameters().len())
-                            .map(|_| rng.f32_range(-100.0..100.0))
-                            .collect();
-                        #[cfg(not(feature = "f32"))]
-                        let p: Vec<Float> = (0..nll.parameters().len())
+                        (0..nll.parameters().len())
                             .map(|_| rng.f64_range(-100.0..100.0))
-                            .collect();
-                        p
+                            .collect::<Vec<f64>>()
                     },
                     |p| pool.install(|| black_box(nll.evaluate(&p))),
                     BatchSize::SmallInput,
