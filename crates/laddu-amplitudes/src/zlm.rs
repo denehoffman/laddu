@@ -62,15 +62,22 @@ impl Zlm {
 
 #[typetag::serde]
 impl Amplitude for Zlm {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.angles.costheta.bind(metadata)?;
-        self.angles.phi.bind(metadata)?;
-        self.polarization.pol_angle.bind(metadata)?;
-        self.polarization.pol_magnitude.bind(metadata)?;
-        Ok(())
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.angles.costheta.bind(metadata)?;
+            self.angles.phi.bind(metadata)?;
+            self.polarization.pol_angle.bind(metadata)?;
+            self.polarization.pol_magnitude.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }
@@ -203,13 +210,20 @@ impl PolPhase {
 
 #[typetag::serde]
 impl Amplitude for PolPhase {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.polarization.pol_angle.bind(metadata)?;
-        self.polarization.pol_magnitude.bind(metadata)?;
-        Ok(())
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.polarization.pol_angle.bind(metadata)?;
+            self.polarization.pol_magnitude.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }

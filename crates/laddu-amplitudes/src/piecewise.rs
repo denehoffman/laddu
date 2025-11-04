@@ -58,11 +58,19 @@ impl PiecewiseScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewiseScalar {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.variable.bind(metadata)
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.variable.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pids = self
             .values
             .iter()
@@ -202,11 +210,19 @@ impl PiecewiseComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewiseComplexScalar {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.variable.bind(metadata)
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.variable.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pids_re_im = self
             .re_ims
             .iter()
@@ -362,11 +378,19 @@ impl PiecewisePolarComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewisePolarComplexScalar {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.variable.bind(metadata)
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.variable.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pids_r_theta = self
             .r_thetas
             .iter()

@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::EventData,
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
     LadduError,
 };
@@ -34,7 +34,18 @@ impl Scalar {
 
 #[typetag::serde]
 impl Amplitude for Scalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if metadata.is_some() {
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pid = resources.register_parameter(&self.value);
         resources.register_amplitude(&self.name)
     }
@@ -107,7 +118,18 @@ impl ComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for ComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if metadata.is_some() {
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pid_re = resources.register_parameter(&self.re);
         self.pid_im = resources.register_parameter(&self.im);
         resources.register_amplitude(&self.name)
@@ -186,7 +208,18 @@ impl PolarComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for PolarComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if metadata.is_some() {
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pid_r = resources.register_parameter(&self.r);
         self.pid_theta = resources.register_parameter(&self.theta);
         resources.register_amplitude(&self.name)

@@ -316,6 +316,11 @@ impl Resources {
         self.active.push(true);
         Ok(next_id)
     }
+
+    /// Fetch the [`AmplitudeID`] for a previously registered amplitude by name.
+    pub fn amplitude_id(&self, name: &str) -> Option<AmplitudeID> {
+        self.amplitudes.get(name).cloned()
+    }
     /// Register a free parameter (or constant) [`ParameterLike`]. This method should be called
     /// within the [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
     /// resulting [`ParameterID`] should be stored to use later to retrieve the value from the

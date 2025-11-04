@@ -92,11 +92,19 @@ impl KopfKMatrixPi1 {
 
 #[typetag::serde]
 impl Amplitude for KopfKMatrixPi1 {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.mass.bind(metadata)
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.mass.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);

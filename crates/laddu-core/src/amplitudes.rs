@@ -57,25 +57,21 @@ pub fn constant(value: f64) -> ParameterLike {
 /// cache values which do not depend on free parameters.
 #[typetag::serde(tag = "type")]
 pub trait Amplitude: DynClone + Send + Sync {
-    /// Bind any internal [`Variable`](crate::utils::variables::Variable)s to the given
-    /// [`DatasetMetadata`].
-    ///
-    /// Most amplitudes depend on one or more variables (e.g. `Mass`, `CosTheta`), which carry a
-    /// list of human-readable particle names or auxiliary values. Those names need to be resolved
-    /// to concrete indices using the [`DatasetMetadata`] that accompanies every
-    /// [`Dataset`]. Implementors that store such variables should override this method and call
-    /// `bind` on them so that subsequent calls to [`Amplitude::precompute`] or
-    /// [`Amplitude::compute`] operate on the correct indices. Implementations that do not depend
-    /// on metadata may keep the default no-op behaviour.
-    fn bind(&mut self, _metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        Ok(())
-    }
-
     /// This method should be used to tell the [`Resources`] manager about all of
     /// the free parameters and cached values used by this [`Amplitude`]. It should end by
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError>;
+    ///
+    /// Implementors are invoked twice: once when an amplitude is first registered with a
+    /// [`Manager`] (no metadata is available at that point and `metadata` will be `None`) and
+    /// again when a [`Model`] is loaded with a concrete [`Dataset`] (the second invocation will
+    /// provide the dataset metadata). Use the first call to allocate parameter/cache state within
+    /// the [`Resources`] object, and the second call to bind any metadata-dependent variables.
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError>;
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
@@ -516,7 +512,7 @@ impl Manager {
     /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
     pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> Result<AmplitudeID, LadduError> {
         let mut amp = amplitude.clone();
-        let aid = amp.register(&mut self.resources)?;
+        let aid = amp.register(&mut self.resources, None)?;
         self.amplitudes.push(amp);
         Ok(aid)
     }
@@ -565,7 +561,7 @@ impl Model {
             resources_guard.reserve_cache(dataset.n_events());
             for amplitude in amplitudes.iter_mut() {
                 amplitude
-                    .bind(metadata)
+                    .register(&mut *resources_guard, Some(metadata))
                     .expect("Failed to bind amplitude to dataset metadata");
                 amplitude.precompute_all(dataset, &mut *resources_guard);
             }
@@ -1187,7 +1183,18 @@ impl TestAmplitude {
 
 #[typetag::serde]
 impl Amplitude for TestAmplitude {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if metadata.is_some() {
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.pid_re = resources.register_parameter(&self.re);
         self.pid_im = resources.register_parameter(&self.im);
         resources.register_amplitude(&self.name)
@@ -1250,7 +1257,18 @@ mod tests {
 
     #[typetag::serde]
     impl Amplitude for ComplexScalar {
-        fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+        fn register(
+            &mut self,
+            resources: &mut Resources,
+            metadata: Option<&DatasetMetadata>,
+        ) -> Result<AmplitudeID, LadduError> {
+            if metadata.is_some() {
+                return resources.amplitude_id(&self.name).ok_or(
+                    LadduError::AmplitudeNotFoundError {
+                        name: self.name.clone(),
+                    },
+                );
+            }
             self.pid_re = resources.register_parameter(&self.re);
             self.pid_im = resources.register_parameter(&self.im);
             resources.register_amplitude(&self.name)

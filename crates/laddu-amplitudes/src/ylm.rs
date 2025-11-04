@@ -43,13 +43,20 @@ impl Ylm {
 
 #[typetag::serde]
 impl Amplitude for Ylm {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
-        self.angles.costheta.bind(metadata)?;
-        self.angles.phi.bind(metadata)?;
-        Ok(())
-    }
-
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(
+        &mut self,
+        resources: &mut Resources,
+        metadata: Option<&DatasetMetadata>,
+    ) -> Result<AmplitudeID, LadduError> {
+        if let Some(metadata) = metadata {
+            self.angles.costheta.bind(metadata)?;
+            self.angles.phi.bind(metadata)?;
+            return resources
+                .amplitude_id(&self.name)
+                .ok_or(LadduError::AmplitudeNotFoundError {
+                    name: self.name.clone(),
+                });
+        }
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }
