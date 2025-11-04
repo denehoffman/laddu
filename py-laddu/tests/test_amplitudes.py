@@ -18,6 +18,10 @@ from laddu.amplitudes import (
     amplitude_sum,
 )
 
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 1.93592989]
+
 
 def make_test_event() -> Event:
     return Event(
@@ -27,8 +31,10 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
@@ -40,13 +46,15 @@ def make_test_event_with_beam_energy(energy: float) -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_constant_amplitude() -> None:
@@ -78,7 +86,11 @@ def test_batch_evaluation() -> None:
     event1 = make_test_event_with_beam_energy(10.0)
     event2 = make_test_event_with_beam_energy(11.0)
     event3 = make_test_event_with_beam_energy(12.0)
-    dataset = Dataset([event1, event2, event3])
+    dataset = Dataset(
+        [event1, event2, event3],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+    )
     model = manager.model(aid)
     evaluator = model.load(dataset)
     result = evaluator.evaluate_batch([1.1, 2.2], [0, 2])

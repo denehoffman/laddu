@@ -8,8 +8,7 @@ from numpy.typing import NDArray
 
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 from laddu.utils.variables import VariableExpression
-from laddu.utils.vectors import Vec3, Vec4
-
+from laddu.utils.vectors import Vec4
 
 def open_amptools(
     path: str | Path,
@@ -22,32 +21,42 @@ def open_amptools(
     boost_to_com: bool = True,
 ) -> Dataset: ...
 
-
 class Event:
     p4s: list[Vec4]
-    aux: list[Vec3]
+    aux: list[float]
     weight: float
 
     def __init__(
         self,
         p4s: list[Vec4],
-        aux: list[Vec3],
+        aux: list[float],
         weight: float,
         *,
         rest_frame_indices: list[int] | None = None,
+        p4_names: list[str] | None = None,
+        aux_names: list[str] | None = None,
     ) -> None: ...
     def get_p4_sum(self, indices: list[int]) -> Vec4: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Event: ...
-    def evaluate(self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam) -> float: ...
-
+    def evaluate(
+        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> float: ...
 
 class Dataset:
     events: list[Event]
     n_events: int
     n_events_weighted: float
     weights: NDArray[np.float64]
+    p4_names: list[str]
+    aux_names: list[str]
 
-    def __init__(self, events: list[Event]) -> None: ...
+    def __init__(
+        self,
+        events: list[Event],
+        *,
+        p4_names: list[str] | None = None,
+        aux_names: list[str] | None = None,
+    ) -> None: ...
     def __len__(self) -> int: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
@@ -68,21 +77,36 @@ class Dataset:
     ) -> BinnedDataset: ...
     def filter(self, expression: VariableExpression) -> Dataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
+    def p4_by_name(self, index: int, name: str) -> Vec4: ...
+    def aux_by_name(self, index: int, name: str) -> float: ...
     def boost_to_rest_frame_of(self, indices: list[int]) -> Dataset: ...
     @staticmethod
-    def from_dict(data: dict[str, Any], rest_frame_indices: list[int] | None = None) -> Dataset: ...
+    def from_dict(
+        data: dict[str, Any], rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
     @staticmethod
-    def from_numpy(data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None) -> Dataset: ...
+    def from_numpy(
+        data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
     @staticmethod
-    def from_pandas(data: pd.DataFrame, rest_frame_indices: list[int] | None = None) -> Dataset: ...
+    def from_pandas(
+        data: pd.DataFrame, rest_frame_indices: list[int] | None = None
+    ) -> Dataset: ...
     @staticmethod
     def from_polars(
         data: pl.DataFrame, rest_frame_indices: list[int] | None = None
     ) -> Dataset: ...
+    @staticmethod
+    def open(
+        path: str | Path,
+        *,
+        p4s: list[str],
+        aux: list[str],
+        boost_to_restframe_of: list[str] | None = None,
+    ) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
-
 
 class BinnedDataset:
     n_bins: int
@@ -92,5 +116,10 @@ class BinnedDataset:
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Dataset: ...
 
-
-def open(path: str | Path, *, rest_frame_indices: list[int] | None = None) -> Dataset: ...
+def open(
+    path: str | Path,
+    *,
+    p4s: list[str],
+    aux: list[str] | None = None,
+    boost_to_restframe_of: list[str] | None = None,
+) -> Dataset: ...

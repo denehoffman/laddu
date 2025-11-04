@@ -53,7 +53,7 @@ To implement this in code, we could imagine a function like
    def get_moment(data: ld.Dataset, *, l: int, m: int) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3]))) # indices depend on the dataset structure
+       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
        model = manager.model(ylm.conj()) # take the conjugate
        evaluator = model.load(data)
        values = evaluator.evaluate([]) # no free parameters
@@ -123,8 +123,8 @@ Again, we can write this in code in a rather simple way:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        n_l_prime = np.sqrt((2 * l_prime + 1) / (4 * np.pi))
        manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
-       ylm_prime = manager.register(ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles(0, [1], [2], [2, 3])))
+       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
+       ylm_prime = manager.register(ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
        model = manager.model(ylm.conj() * ylm_prime.real())
        evaluator = model.load(accmc)
        values = evaluator.evaluate([]) # no free parameters

@@ -21,12 +21,14 @@ Like before, we begin by loading each dataset, but this time we can chain a meth
 
    import laddu as ld
 
-   res_mass = ld.Mass([2, 3])
+   res_mass = ld.Mass(['kshort1', 'kshort2'])
    bins = 50
    mass_range = (1.0, 2.0)
 
-   data_ds = ld.open("data.parquet")
-   accmc_ds = ld.open("accmc.parquet")
+   p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+   aux_columns = ['pol_magnitude', 'pol_angle']
+   data_ds = ld.Dataset.open("data.parquet", p4s=p4_columns, aux=aux_columns)
+   accmc_ds = ld.Dataset.open("accmc.parquet", p4s=p4_columns, aux=aux_columns)
    # We'll want to retain the unbinned datasets for plotting later
 
    binned_data_ds = data_ds.bin_by(res_mass, bins, mass_range)
@@ -45,8 +47,8 @@ where the terms with particle names in square brackets still represent the produ
 .. code-block:: python
 
    manager = ld.Manager()
-   angles = ld.Angles(0, [1], [2], [2, 3])
-   polarization = ld.Polarization(0, [1], 0)
+   angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
+   polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
 
    z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
    z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))

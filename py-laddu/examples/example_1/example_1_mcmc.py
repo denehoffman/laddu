@@ -106,12 +106,14 @@ def main() -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_file = str(script_dir / 'data_1.parquet')
     accmc_file = str(script_dir / 'accmc_1.parquet')
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
     logger.info('Opening Data file...')
-    data_ds = ld.open(data_file)
+    data_ds = ld.Dataset.open(data_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening AccMC file...')
-    accmc_ds = ld.open(accmc_file)
+    accmc_ds = ld.Dataset.open(accmc_file, p4s=p4_columns, aux=aux_columns)
 
-    res_mass = ld.Mass([2, 3])
+    res_mass = ld.Mass(['kshort1', 'kshort2'])
     m_data = res_mass.value_on(data_ds)
 
     font = {'family': 'DejaVu Sans', 'weight': 'normal', 'size': 22}

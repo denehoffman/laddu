@@ -58,15 +58,17 @@ For a simple unbinned fit, we must first obtain some data. ``laddu`` does not cu
 
 .. note:: The Parquet file format is not common to particle physics but is ubiquitous in data science. The structure that ``laddu`` requires is specified in the API reference and can be generated via `pandas <https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_parquet.html>`_, `polars <https://docs.pola.rs/api/python/stable/reference/api/polars.DataFrame.write_parquet.html>`_ or most other data libraries. The only difficulty is translating existing data (which is likely in the ROOT format) into this representation. For this process, `uproot <https://uproot.readthedocs.io/en/latest/>`_ is recommended to avoid using ROOT directly. There is also an executable ``amptools-to-laddu`` which is installed alongside the Python package which can convert directly from ROOT files in the AmpTools format to the equivalent ``laddu`` Parquet files. The Python API also exposes the underlying conversion method in its ``convert`` submodule.
 
-Reading data with ``laddu`` is as simple as using the `laddu.open` method. It takes the path to the data file as its argument:
+Reading data with ``laddu`` is as simple as using the `laddu.Dataset.open` method. It takes the path to the data file as its argument:
 
 .. code-block:: python
 
    import laddu as ld
 
-   data_ds = ld.open("data.parquet")
-   accmc_ds = ld.open("accmc.parquet")
-   genmc_ds = ld.open("genmc.parquet")
+   p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+   aux_columns = ['pol_magnitude', 'pol_angle']
+   data_ds = ld.Dataset.open("data.parquet", p4s=p4_columns, aux=aux_columns)
+   accmc_ds = ld.Dataset.open("accmc.parquet", p4s=p4_columns, aux=aux_columns)
+   genmc_ds = ld.Dataset.open("genmc.parquet", p4s=p4_columns, aux=aux_columns)
 
 Next, we need to construct a model. Let's assume that the dataset contains events from the channel :math:`\gamma p \to K_S^0 K_S^0 p'` and that the measured particles in the data files are :math:`[\gamma, p', K_{S,1}^0, K_{S,2}^0]`. This setup mimics the GlueX experiment at Jefferson Lab (the momentum of the initial proton target is not measured and can be reasonably assumed to be close to zero in magnitude). Furthermore, because GlueX uses a polarized beam, we will assume the polarization fraction and angle are stored in the data files.
 
@@ -77,10 +79,10 @@ Let's further assume that there are only two resonances present in our data, an 
 .. code:: python
 
    # the mass of the combination of particles 2 and 3, the kaons
-   res_mass = ld.Mass([2, 3])
+   res_mass = ld.Mass(['kshort1', 'kshort2'])
 
    # the decay angles in the helicity frame
-   angles = ld.Angles(0, [1], [2], [2, 3])
+   angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
 
 So far, these angles just represent particles in a generic dataset by index and provide an appropriate method to calculate the corresponding observable. Before we fit anything, we might want to just see what the dataset looks like:
 
@@ -113,12 +115,12 @@ Next, let's come up with a model. ``laddu`` models are formed by combining indiv
    + &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Im\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
    &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Im\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right|^2
 
-where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a manager and a ``Polarization`` object which grabs polarization information from the dataset using the index of the beam and recoil proton to form the production plane:
+where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a manager and a ``Polarization`` object which grabs polarization information from the dataset using the names of the beam, recoil proton, and auxiliary polarization columns:
 
 .. code:: python
 
    manager = ld.Manager()
-   polarization = ld.Polarization(0, [1], 0)
+   polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
 
 Next, we can create ``Zlm`` amplitudes:
 
@@ -138,8 +140,8 @@ Finally, we can register the Breit-Wigners. These have two free parameters, the 
 
 .. code:: python
 
-   bw0 = manager.register(ld.BreitWigner("BW_0", ld.constant(1.506), ld.parameter("f_0 width"), 0, ld.Mass([2]), ld.Mass([3]), res_mass))
-   bw2 = manager.register(ld.BreitWigner("BW_2", ld.constant(1.517), ld.parameter("f_2 width"), 0, ld.Mass([2]), ld.Mass([3]), res_mass))
+   bw0 = manager.register(ld.BreitWigner("BW_0", ld.constant(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass))
+   bw2 = manager.register(ld.BreitWigner("BW_2", ld.constant(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass))
 
 As you can see, these amplitudes also take additional parameters like the masses of each decay product.
 

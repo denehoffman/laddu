@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from laddu.convert import read_root_file
-from laddu.laddu import BinnedDataset, DatasetBase, Event, open
-from laddu.utils.vectors import Vec3, Vec4
+from laddu.laddu import BinnedDataset, DatasetBase, Event
+from laddu.utils.vectors import Vec4
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,121 +17,125 @@ if TYPE_CHECKING:
 
 
 class Dataset(DatasetBase):
-    P4_PREFIX: str = 'p4_'
-    AUX_PREFIX: str = 'aux_'
+    @staticmethod
+    def _infer_p4_names(columns: dict[str, Any]) -> list[str]:
+        if any(key.startswith('p4_') for key in columns):  # legacy format
+            raise ValueError(
+                'Legacy column format detected (p4_N_*). Please run convert_legacy_parquet.py first.'
+            )
+        p4_names: list[str] = []
+        for key in columns:
+            if key.endswith('_px'):
+                base = key[:-3]
+                if base not in p4_names:
+                    required = [f'{base}_{suffix}' for suffix in ('px', 'py', 'pz', 'e')]
+                    missing = [name for name in required if name not in columns]
+                    if missing:
+                        raise KeyError(
+                            f"Missing components {missing} for four-momentum '{base}'"
+                        )
+                    p4_names.append(base)
+        if not p4_names:
+            raise ValueError(
+                'No four-momentum columns found (expected *_px, *_py, *_pz, *_e)'
+            )
+        return p4_names
+
+    @staticmethod
+    def _infer_aux_names(columns: dict[str, Any], used: set[str]) -> list[str]:
+        aux_names: list[str] = []
+        for key in columns:
+            if key == 'weight' or key in used:
+                continue
+            aux_names.append(key)
+        return aux_names
 
     @staticmethod
     def from_dict(
         data: dict[str, Any], rest_frame_indices: list[int] | None = None
     ) -> Dataset:
-        """
-        Create a Dataset from a dict.
+        """Create a Dataset from a dictionary mapping column names to sequences."""
 
-        Arguments
-        ---------
-        data: dict of str to Any
-            dict of lists with keys matching the dataset format
-        rest_frame_indices: list of int, optional
-            If provided, the dataset will be boosted to the rest frame
-            of the 4-momenta specified by the indices
+        columns = {name: np.asarray(values) for name, values in data.items()}
+        p4_names = Dataset._infer_p4_names(columns)
+        component_names = {
+            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
+        }
+        aux_names = Dataset._infer_aux_names(columns, component_names)
 
-        Returns
-        -------
-        Dataset
-        """
-        p4_count = len([key for key in data if key.startswith(Dataset.P4_PREFIX)]) // 4
-        aux_count = len([key for key in data if key.startswith(Dataset.AUX_PREFIX)]) // 3
-        events = []
-        n_events = len(data[f'{Dataset.P4_PREFIX}0_Px'])
-        weights = data.get('weight', np.ones(n_events))
+        n_events = len(columns[f'{p4_names[0]}_px'])
+        weights = np.asarray(
+            columns.get('weight', np.ones(n_events, dtype=float)), dtype=float
+        )
+
+        events: list[Event] = []
         for i in range(n_events):
             p4s = [
                 Vec4.from_array(
                     [
-                        data[f'{Dataset.P4_PREFIX}{j}_Px'][i],
-                        data[f'{Dataset.P4_PREFIX}{j}_Py'][i],
-                        data[f'{Dataset.P4_PREFIX}{j}_Pz'][i],
-                        data[f'{Dataset.P4_PREFIX}{j}_E'][i],
+                        float(columns[f'{name}_px'][i]),
+                        float(columns[f'{name}_py'][i]),
+                        float(columns[f'{name}_pz'][i]),
+                        float(columns[f'{name}_e'][i]),
                     ]
                 )
-                for j in range(p4_count)
+                for name in p4_names
             ]
-            aux = [
-                Vec3.from_array(
-                    [
-                        data[f'{Dataset.AUX_PREFIX}{j}_x'][i],
-                        data[f'{Dataset.AUX_PREFIX}{j}_y'][i],
-                        data[f'{Dataset.AUX_PREFIX}{j}_z'][i],
-                    ]
+            aux_values = [float(columns[name][i]) for name in aux_names]
+            events.append(
+                Event(
+                    p4s,
+                    aux_values,
+                    float(weights[i]),
+                    rest_frame_indices=rest_frame_indices,
+                    p4_names=p4_names,
+                    aux_names=aux_names,
                 )
-                for j in range(aux_count)
-            ]
-            weight = weights[i]
-            events.append(Event(p4s, aux, weight, rest_frame_indices=rest_frame_indices))
-        return DatasetBase(events)
+            )
+
+        return Dataset(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
     def from_numpy(
         data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None
     ) -> Dataset:
-        """
-        Create a Dataset from a dict of numpy arrays.
-
-        Arguments
-        ---------
-        data: dict of str to NDArray
-            dict of arrays with keys matching the dataset format
-        rest_frame_indices: list of int, optional
-            If provided, the dataset will be boosted to the rest frame
-            of the 4-momenta specified by the indices
-
-        Returns
-        -------
-        Dataset
-        """
-        return Dataset.from_dict(data, rest_frame_indices=rest_frame_indices)
+        converted = {key: np.asarray(value) for key, value in data.items()}
+        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
 
     @staticmethod
     def from_pandas(
         data: pd.DataFrame, rest_frame_indices: list[int] | None = None
     ) -> Dataset:
-        """
-        Create a Dataset from a pandas DataFrame.
-
-        Arguments
-        ---------
-        data: pandas.DataFrame
-            DataFrame with columns matching the dataset format
-        rest_frame_indices: list of int, optional
-            If provided, the dataset will be boosted to the rest frame
-            of the 4-momenta specified by the indices
-
-        Returns
-        -------
-        Dataset
-        """
-        return Dataset.from_dict(data.to_dict(), rest_frame_indices=rest_frame_indices)
+        converted = {col: data[col].to_list() for col in data.columns}
+        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
 
     @staticmethod
     def from_polars(
         data: pl.DataFrame, rest_frame_indices: list[int] | None = None
     ) -> Dataset:
-        """
-        Create a Dataset from a polars DataFrame.
+        converted = {col: data[col].to_list() for col in data.columns}
+        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
 
-        Arguments
-        ---------
-        data: polars.DataFrame
-            DataFrame with columns matching the dataset format
-        rest_frame_indices: list of int, optional
-            If provided, the dataset will be boosted to the rest frame
-            of the 4-momenta specified by the indices
+    @staticmethod
+    def open(
+        path: str | 'Path',
+        *,
+        p4s: list[str],
+        aux: list[str],
+        boost_to_restframe_of: list[str] | None = None,
+    ) -> Dataset:
+        """Open a dataset from a Parquet file.
 
-        Returns
-        -------
-        Dataset
+        This mirrors :meth:`laddu.Dataset.open` in the Rust API, delegating to the
+        native implementation provided by :class:`laddu.laddu.DatasetBase`.
         """
-        return Dataset.from_dict(data.to_dict(), rest_frame_indices=rest_frame_indices)
+
+        return DatasetBase.open(
+            path,
+            p4s=p4s,
+            aux=aux,
+            boost_to_restframe_of=boost_to_restframe_of,
+        )
 
 
 def open_amptools(
@@ -154,18 +158,26 @@ def open_amptools(
         num_entries=num_entries,
     )
     n_particles = len(p4s_list[0])
+    p4_names = [f'particle{i}' for i in range(n_particles)]
+    sample_eps = eps_list[0] if eps_list else []
+    aux_len = sum(len(vec) for vec in sample_eps)
+    aux_names = [f'aux_{i}' for i in range(aux_len)]
     rest_frame_indices = list(range(1, n_particles)) if boost_to_com else None
-    ds = Dataset(
-        [
+    events = []
+    for p4s, eps, weight in zip(p4s_list, eps_list, weight_list):
+        p4_vectors = [Vec4.from_array(p4) for p4 in p4s]
+        aux_values = [float(component) for eps_vec in eps for component in eps_vec]
+        events.append(
             Event(
-                [Vec4.from_array(p4) for p4 in p4s],
-                [Vec3.from_array(eps_vec) for eps_vec in eps],
+                p4_vectors,
+                aux_values,
                 weight,
                 rest_frame_indices=rest_frame_indices,
+                p4_names=p4_names,
+                aux_names=aux_names,
             )
-            for p4s, eps, weight in zip(p4s_list, eps_list, weight_list)
-        ]
-    )
+        )
+    ds = Dataset(events, p4_names=p4_names, aux_names=aux_names)
     return ds
 
 

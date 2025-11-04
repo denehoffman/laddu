@@ -1,17 +1,21 @@
 use crate::data::{PyDataset, PyEvent};
 use laddu_core::{
-    data::{Dataset, Event},
+    data::{Dataset, DatasetMetadata, EventData},
+    f64,
     traits::Variable,
     utils::variables::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
         VariableExpression,
     },
-    Float,
+    LadduError,
 };
 use numpy::PyArray1;
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {
@@ -54,6 +58,31 @@ impl Display for PyVariable {
     }
 }
 
+impl PyVariable {
+    pub(crate) fn bind_in_place(&mut self, metadata: &DatasetMetadata) -> PyResult<()> {
+        match self {
+            Self::Mass(mass) => mass.0.bind(metadata).map_err(PyErr::from),
+            Self::CosTheta(cos_theta) => cos_theta.0.bind(metadata).map_err(PyErr::from),
+            Self::Phi(phi) => phi.0.bind(metadata).map_err(PyErr::from),
+            Self::PolAngle(pol_angle) => pol_angle.0.bind(metadata).map_err(PyErr::from),
+            Self::PolMagnitude(pol_magnitude) => {
+                pol_magnitude.0.bind(metadata).map_err(PyErr::from)
+            }
+            Self::Mandelstam(mandelstam) => mandelstam.0.bind(metadata).map_err(PyErr::from),
+        }
+    }
+
+    pub(crate) fn bound(&self, metadata: &DatasetMetadata) -> PyResult<Self> {
+        let mut cloned = self.clone();
+        cloned.bind_in_place(metadata)?;
+        Ok(cloned)
+    }
+
+    pub(crate) fn evaluate_event(&self, event: &Arc<EventData>) -> PyResult<f64> {
+        Ok(self.value(event.as_ref()))
+    }
+}
+
 #[pyclass(name = "VariableExpression", module = "laddu")]
 pub struct PyVariableExpression(pub VariableExpression);
 
@@ -80,8 +109,8 @@ impl PyVariableExpression {
 ///
 /// Parameters
 /// ----------
-/// constituents : list of int
-///     The indices of particles to combine to create the final 4-momentum
+/// constituents : list of str
+///     The names of particles to combine to create the final 4-momentum
 ///
 /// See Also
 /// --------
@@ -94,7 +123,7 @@ pub struct PyMass(pub Mass);
 #[pymethods]
 impl PyMass {
     #[new]
-    fn new(constituents: Vec<usize>) -> Self {
+    fn new(constituents: Vec<String>) -> Self {
         Self(Mass::new(&constituents))
     }
     /// The value of this Variable for the given Event
@@ -109,8 +138,14 @@ impl PyMass {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err("This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset."))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -124,22 +159,27 @@ impl PyMass {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -173,14 +213,14 @@ impl PyMass {
 /// ----------
 /// beam : int
 ///     The index of the `beam` particle
-/// recoil : list of int
-///     Indices of particles which are combined to form the recoiling particle (particles which
+/// recoil : list of str
+///     Names of particles which are combined to form the recoiling particle (particles which
 ///     are not `beam` or part of the `resonance`)
-/// daughter : list of int
-///     Indices of particles which are combined to form one of the decay products of the
+/// daughter : list of str
+///     Names of particles which are combined to form one of the decay products of the
 ///     `resonance`
-/// resonance : list of int
-///     Indices of particles which are combined to form the `resonance`
+/// resonance : list of str
+///     Names of particles which are combined to form the `resonance`
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -202,10 +242,10 @@ impl PyCosTheta {
     #[new]
     #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
     fn new(
-        beam: usize,
-        recoil: Vec<usize>,
-        daughter: Vec<usize>,
-        resonance: Vec<usize>,
+        beam: String,
+        recoil: Vec<String>,
+        daughter: Vec<String>,
+        resonance: Vec<String>,
         frame: &str,
     ) -> PyResult<Self> {
         Ok(Self(CosTheta::new(
@@ -228,8 +268,16 @@ impl PyCosTheta {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -243,22 +291,27 @@ impl PyCosTheta {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -292,14 +345,14 @@ impl PyCosTheta {
 /// ----------
 /// beam : int
 ///     The index of the `beam` particle
-/// recoil : list of int
-///     Indices of particles which are combined to form the recoiling particle (particles which
+/// recoil : list of str
+///     Names of particles which are combined to form the recoiling particle (particles which
 ///     are not `beam` or part of the `resonance`)
-/// daughter : list of int
-///     Indices of particles which are combined to form one of the decay products of the
+/// daughter : list of str
+///     Names of particles which are combined to form one of the decay products of the
 ///     `resonance`
-/// resonance : list of int
-///     Indices of particles which are combined to form the `resonance`
+/// resonance : list of str
+///     Names of particles which are combined to form the `resonance`
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -322,10 +375,10 @@ impl PyPhi {
     #[new]
     #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
     fn new(
-        beam: usize,
-        recoil: Vec<usize>,
-        daughter: Vec<usize>,
-        resonance: Vec<usize>,
+        beam: String,
+        recoil: Vec<String>,
+        daughter: Vec<String>,
+        resonance: Vec<String>,
         frame: &str,
     ) -> PyResult<Self> {
         Ok(Self(Phi::new(
@@ -348,8 +401,16 @@ impl PyPhi {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -363,22 +424,27 @@ impl PyPhi {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -398,14 +464,14 @@ impl PyPhi {
 /// ----------
 /// beam : int
 ///     The index of the `beam` particle
-/// recoil : list of int
-///     Indices of particles which are combined to form the recoiling particle (particles which
+/// recoil : list of str
+///     Names of particles which are combined to form the recoiling particle (particles which
 ///     are not `beam` or part of the `resonance`)
-/// daughter : list of int
-///     Indices of particles which are combined to form one of the decay products of the
+/// daughter : list of str
+///     Names of particles which are combined to form one of the decay products of the
 ///     `resonance`
-/// resonance : list of int
-///     Indices of particles which are combined to form the `resonance`
+/// resonance : list of str
+///     Names of particles which are combined to form the `resonance`
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -427,10 +493,10 @@ impl PyAngles {
     #[new]
     #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
     fn new(
-        beam: usize,
-        recoil: Vec<usize>,
-        daughter: Vec<usize>,
-        resonance: Vec<usize>,
+        beam: String,
+        recoil: Vec<String>,
+        daughter: Vec<String>,
+        resonance: Vec<String>,
         frame: &str,
     ) -> PyResult<Self> {
         Ok(Self(Angles::new(
@@ -476,13 +542,12 @@ impl PyAngles {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
-/// recoil : list of int
-///     Indices of particles which are combined to form the recoiling particle (particles which
-///     are not `beam` or part of the `resonance`)
-/// beam_polarization : int
-///     The index of the auxiliary vector in storing the `beam` particle's polarization
+/// beam : str
+///     Name of the beam four-momentum
+/// recoil : list of str
+///     Names of four-momenta combined to form the recoil system
+/// angle_aux : str
+///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
 #[pyclass(name = "PolAngle", module = "laddu")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -491,8 +556,8 @@ pub struct PyPolAngle(pub PolAngle);
 #[pymethods]
 impl PyPolAngle {
     #[new]
-    fn new(beam: usize, recoil: Vec<usize>, beam_polarization: usize) -> Self {
-        Self(PolAngle::new(beam, &recoil, beam_polarization))
+    fn new(beam: String, recoil: Vec<String>, angle_aux: String) -> Self {
+        Self(PolAngle::new(beam, &recoil, angle_aux))
     }
     /// The value of this Variable for the given Event
     ///
@@ -506,8 +571,16 @@ impl PyPolAngle {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -521,22 +594,27 @@ impl PyPolAngle {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -554,8 +632,8 @@ impl PyPolAngle {
 ///
 /// Parameters
 /// ----------
-/// beam_polarization : int
-///     The index of the auxiliary vector in storing the `beam` particle's polarization
+/// magnitude_aux : str
+///     Name of the auxiliary scalar column storing the magnitude of the polarization vector
 ///
 /// See Also
 /// --------
@@ -568,7 +646,7 @@ pub struct PyPolMagnitude(pub PolMagnitude);
 #[pymethods]
 impl PyPolMagnitude {
     #[new]
-    fn new(beam_polarization: usize) -> Self {
+    fn new(beam_polarization: String) -> Self {
         Self(PolMagnitude::new(beam_polarization))
     }
     /// The value of this Variable for the given Event
@@ -583,8 +661,16 @@ impl PyPolMagnitude {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -598,22 +684,27 @@ impl PyPolMagnitude {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -631,13 +722,14 @@ impl PyPolMagnitude {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
-/// recoil : list of int
-///     Indices of particles which are combined to form the recoiling particle (particles which
-///     are not `beam` or part of the `resonance`)
-/// beam_polarization : int
-///     The index of the auxiliary vector in storing the `beam` particle's polarization
+/// beam : str
+///     Name of the beam four-momentum
+/// recoil : list of str
+///     Names of four-momenta combined to form the recoil system
+/// magnitude_aux : str
+///     Name of the auxiliary scalar storing the polarization magnitude
+/// angle_aux : str
+///     Name of the auxiliary scalar storing the polarization angle in radians
 ///
 /// See Also
 /// --------
@@ -650,8 +742,19 @@ pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
     #[new]
-    fn new(beam: usize, recoil: Vec<usize>, beam_polarization: usize) -> Self {
-        PyPolarization(Polarization::new(beam, &recoil, beam_polarization))
+    fn new(
+        beam: String,
+        recoil: Vec<String>,
+        magnitude_aux: String,
+        angle_aux: String,
+    ) -> PyResult<Self> {
+        if magnitude_aux == angle_aux {
+            return Err(PyValueError::new_err(
+                "`magnitude_aux` and `angle_aux` must reference distinct auxiliary columns",
+            ));
+        }
+        let polarization = Polarization::new(beam, &recoil, magnitude_aux, angle_aux);
+        Ok(PyPolarization(polarization))
     }
     /// The Variable representing the magnitude of the polarization vector
     ///
@@ -661,7 +764,7 @@ impl PyPolarization {
     ///
     #[getter]
     fn pol_magnitude(&self) -> PyPolMagnitude {
-        PyPolMagnitude(self.0.pol_magnitude)
+        PyPolMagnitude(self.0.pol_magnitude.clone())
     }
     /// The Variable representing the polar angle of the polarization vector
     ///
@@ -694,14 +797,14 @@ impl PyPolarization {
 ///
 /// Parameters
 /// ----------
-/// p1: list of int
-///     The indices of particles to combine to create :math:`p_1` in the diagram
-/// p2: list of int
-///     The indices of particles to combine to create :math:`p_2` in the diagram
-/// p3: list of int
-///     The indices of particles to combine to create :math:`p_3` in the diagram
-/// p4: list of int
-///     The indices of particles to combine to create :math:`p_4` in the diagram
+/// p1: list of str
+///     Names of particles to combine to create :math:`p_1` in the diagram
+/// p2: list of str
+///     Names of particles to combine to create :math:`p_2` in the diagram
+/// p3: list of str
+///     Names of particles to combine to create :math:`p_3` in the diagram
+/// p4: list of str
+///     Names of particles to combine to create :math:`p_4` in the diagram
 /// channel: {'s', 't', 'u', 'S', 'T', 'U'}
 ///     The Mandelstam channel to calculate
 ///
@@ -727,10 +830,10 @@ pub struct PyMandelstam(pub Mandelstam);
 impl PyMandelstam {
     #[new]
     fn new(
-        p1: Vec<usize>,
-        p2: Vec<usize>,
-        p3: Vec<usize>,
-        p4: Vec<usize>,
+        p1: Vec<String>,
+        p2: Vec<String>,
+        p3: Vec<String>,
+        p4: Vec<String>,
         channel: &str,
     ) -> PyResult<Self> {
         Ok(Self(Mandelstam::new(p1, p2, p3, p4, channel.parse()?)?))
@@ -747,8 +850,16 @@ impl PyMandelstam {
     /// value : float
     ///     The value of the Variable for the given `event`
     ///
-    fn value(&self, event: &PyEvent) -> Float {
-        self.0.value(&event.0)
+    fn value(&self, event: &PyEvent) -> PyResult<f64> {
+        let metadata = event
+            .metadata
+            .clone()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
+        let mut variable = self.0.clone();
+        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
+        Ok(variable.value(&event.event))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -762,22 +873,27 @@ impl PyMandelstam {
     /// values : array_like
     ///     The values of the Variable for each Event in the given `dataset`
     ///
-    fn value_on<'py>(&self, py: Python<'py>, dataset: &PyDataset) -> Bound<'py, PyArray1<Float>> {
-        PyArray1::from_slice(py, &self.0.value_on(&dataset.0))
+    fn value_on<'py>(
+        &self,
+        py: Python<'py>,
+        dataset: &PyDataset,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let values = self.0.value_on(&dataset.0).map_err(PyErr::from)?;
+        Ok(PyArray1::from_vec(py, values))
     }
-    fn __eq__(&self, value: Float) -> PyVariableExpression {
+    fn __eq__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.eq(value))
     }
-    fn __lt__(&self, value: Float) -> PyVariableExpression {
+    fn __lt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.lt(value))
     }
-    fn __gt__(&self, value: Float) -> PyVariableExpression {
+    fn __gt__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.gt(value))
     }
-    fn __le__(&self, value: Float) -> PyVariableExpression {
+    fn __le__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.le(value))
     }
-    fn __ge__(&self, value: Float) -> PyVariableExpression {
+    fn __ge__(&self, value: f64) -> PyVariableExpression {
         PyVariableExpression(self.0.ge(value))
     }
     fn __repr__(&self) -> String {
@@ -790,7 +906,18 @@ impl PyMandelstam {
 
 #[typetag::serde]
 impl Variable for PyVariable {
-    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+        match self {
+            PyVariable::Mass(mass) => mass.0.bind(metadata),
+            PyVariable::CosTheta(cos_theta) => cos_theta.0.bind(metadata),
+            PyVariable::Phi(phi) => phi.0.bind(metadata),
+            PyVariable::PolAngle(pol_angle) => pol_angle.0.bind(metadata),
+            PyVariable::PolMagnitude(pol_magnitude) => pol_magnitude.0.bind(metadata),
+            PyVariable::Mandelstam(mandelstam) => mandelstam.0.bind(metadata),
+        }
+    }
+
+    fn value_on(&self, dataset: &Dataset) -> Result<Vec<f64>, LadduError> {
         match self {
             PyVariable::Mass(mass) => mass.0.value_on(dataset),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),
@@ -801,7 +928,7 @@ impl Variable for PyVariable {
         }
     }
 
-    fn value(&self, event: &Event) -> Float {
+    fn value(&self, event: &EventData) -> f64 {
         match self {
             PyVariable::Mass(mass) => mass.0.value(event),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),

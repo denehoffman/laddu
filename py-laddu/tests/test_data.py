@@ -5,6 +5,9 @@ import pytest
 
 from laddu import Dataset, Event, Mass, Vec3
 
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+
 
 def make_test_event() -> Event:
     return Event(
@@ -14,19 +17,21 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        [0.38562805, 1.93592989],
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_event_creation() -> None:
     event = make_test_event()
     assert len(event.p4s) == 4
-    assert len(event.aux) == 1
+    assert len(event.aux) == 2
     assert event.weight == 0.48
 
 
@@ -50,24 +55,35 @@ def test_event_boost() -> None:
 
 def test_event_evaluate() -> None:
     event = make_test_event()
-    mass = Mass([1])
+    mass = Mass(['proton'])
     assert event.evaluate(mass) == 1.007
+
+
+def test_event_evaluate_without_metadata() -> None:
+    event = Event(
+        [Vec3(0, 0, 1).with_mass(1.0)],
+        [],
+        1.0,
+    )
+    mass = Mass(['particle'])
+    with pytest.raises(ValueError):
+        event.evaluate(mass)
 
 
 def test_dataset_conversion() -> None:
     data = {
-        'p4_0_Px': [1.0, 2.0, 3.0, 4.0],
-        'p4_0_Py': [2.0, 3.0, 4.0, 5.0],
-        'p4_0_Pz': [3.0, 4.0, 5.0, 6.0],
-        'p4_0_E': [4.0, 5.0, 6.0, 7.0],
-        'p4_1_Px': [5.0, 6.0, 7.0, 8.0],
-        'p4_1_Py': [6.0, 7.0, 8.0, 9.0],
-        'p4_1_Pz': [7.0, 8.0, 9.0, 10.0],
-        'p4_1_E': [80.0, 90.0, 100.0, 110.0],
-        'aux_0_x': [9.0, 10.0, 11.0, 3.3],
-        'aux_0_y': [10.1, 11.0, 12.0, 4.4],
-        'aux_0_z': [0.1, 0.2, 0.3, 5.5],
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
         'weight': [1.0, 1.0, 2.0, 6.6],
+        'extra_column': [10, 20, 30, 40],
     }
     ds_from_dict = Dataset.from_dict(data)
     np_data = {k: np.array(v) for k, v in data.items()}
@@ -75,7 +91,7 @@ def test_dataset_conversion() -> None:
     ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
     ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
     assert ds_from_dict[1].p4s[0].px == 2.0
-    assert ds_from_numpy[0].aux[0].y == 10.1
+    assert pytest.approx(ds_from_numpy[0].aux[1]) == 0.1
     assert ds_from_pandas[2].weight == 2.0
     assert ds_from_polars[2].p4s[1].e == 100.0
 
@@ -88,15 +104,22 @@ def test_dataset_size_check() -> None:
 
 
 def test_dataset_weights() -> None:
-    dataset = Dataset(
+    second_event = Event(
         [
-            make_test_event(),
-            Event(
-                make_test_event().p4s,
-                make_test_event().aux,
-                0.52,
-            ),
-        ]
+            Vec3(0.0, 0.0, 8.747).with_mass(0.0),
+            Vec3(0.119, 0.374, 0.222).with_mass(1.007),
+            Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
+            Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
+        ],
+        [0.38562805, 1.93592989],
+        0.52,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+    )
+    dataset = Dataset(
+        [make_test_event(), second_event],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
     weights = dataset.weights
     assert len(weights) == 2
@@ -107,7 +130,24 @@ def test_dataset_weights() -> None:
 
 def test_dataset_sum() -> None:
     dataset = make_test_dataset()
-    dataset2 = Dataset([Event(make_test_event().p4s, make_test_event().aux, 0.52)])
+    dataset2 = Dataset(
+        [
+            Event(
+                [
+                    Vec3(0.0, 0.0, 8.747).with_mass(0.0),
+                    Vec3(0.119, 0.374, 0.222).with_mass(1.007),
+                    Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
+                    Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
+                ],
+                [0.38562805, 1.93592989],
+                0.52,
+                p4_names=P4_NAMES,
+                aux_names=AUX_NAMES,
+            )
+        ],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+    )
     dataset_sum = dataset + dataset2
     assert dataset_sum[0].weight == dataset[0].weight
     assert dataset_sum[1].weight == dataset2[0].weight
@@ -120,14 +160,14 @@ def test_dataset_sum() -> None:
 def test_dataset_filtering() -> None:
     dataset = Dataset(
         [
-            Event([Vec3(0, 0, 5).with_mass(0.0)], [], 1.0),
-            Event([Vec3(0, 0, 5).with_mass(0.5)], [], 1.0),
-            Event([Vec3(0, 0, 5).with_mass(1.1)], [], 1.0),
-            # HACK: using 1.0 messes with this test because the eventual computation gives a mass
-            # slightly less than 1.0
-        ]
+            Event([Vec3(0, 0, 5).with_mass(0.0)], [], 1.0, p4_names=['p'], aux_names=[]),
+            Event([Vec3(0, 0, 5).with_mass(0.5)], [], 1.0, p4_names=['p'], aux_names=[]),
+            Event([Vec3(0, 0, 5).with_mass(1.1)], [], 1.0, p4_names=['p'], aux_names=[]),
+        ],
+        p4_names=['p'],
+        aux_names=[],
     )
-    mass = Mass([0])
+    mass = Mass(['p'])
     expression = (mass > 0.0) & (mass < 1.0)
 
     filtered = dataset.filter(expression)
@@ -137,14 +177,14 @@ def test_dataset_filtering() -> None:
 
 def test_dataset_evaluate() -> None:
     dataset = make_test_dataset()
-    mass = Mass([1])
+    mass = Mass(['proton'])
     assert dataset.evaluate(mass)[0] == 1.007
 
 
 def test_dataset_index() -> None:
     dataset = make_test_dataset()
     assert isinstance(dataset[0], Event)
-    mass = Mass([1])
+    mass = Mass(['proton'])
     assert isinstance(dataset[mass], np.ndarray)
 
 
@@ -155,16 +195,22 @@ def test_binned_dataset() -> None:
                 [Vec3(0.0, 0.0, 1.0).with_mass(1.0)],
                 [],
                 1.0,
+                p4_names=['p'],
+                aux_names=[],
             ),
             Event(
                 [Vec3(0.0, 0.0, 2.0).with_mass(2.0)],
                 [],
                 2.0,
+                p4_names=['p'],
+                aux_names=[],
             ),
-        ]
+        ],
+        p4_names=['p'],
+        aux_names=[],
     )
 
-    mass = Mass([0])
+    mass = Mass(['p'])
     binned = dataset.bin_by(mass, 2, (0.0, 3.0))
 
     assert binned.n_bins == 2
@@ -185,8 +231,12 @@ def test_dataset_bootstrap() -> None:
                 make_test_event().p4s,
                 make_test_event().aux,
                 1.0,
+                p4_names=P4_NAMES,
+                aux_names=AUX_NAMES,
             ),
-        ]
+        ],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
     assert dataset[0].weight != dataset[1].weight
 
@@ -194,7 +244,7 @@ def test_dataset_bootstrap() -> None:
     assert len(bootstrapped) == len(dataset)
     assert bootstrapped[0].weight == bootstrapped[1].weight
 
-    empty_dataset = Dataset([])
+    empty_dataset = Dataset([], p4_names=[], aux_names=[])
     empty_bootstrap = empty_dataset.bootstrap(43)
     assert len(empty_bootstrap) == 0
 
@@ -211,7 +261,9 @@ def test_dataset_boost() -> None:
 def test_event_display() -> None:
     event = make_test_event()
     display_string = str(event)
-    assert (
-        display_string
-        == 'Event:\n  p4s:\n    [e = 8.74700; p = (0.00000, 0.00000, 8.74700); m = 0.00000]\n    [e = 1.10334; p = (0.11900, 0.37400, 0.22200); m = 1.00700]\n    [e = 3.13671; p = (-0.11200, 0.29300, 3.08100); m = 0.49800]\n    [e = 5.50925; p = (-0.00700, -0.66700, 5.44600); m = 0.49800]\n  eps:\n    [0.385, 0.022, 0]\n  weight:\n    0.48\n'
-    )
+    assert 'Event:' in display_string
+    assert 'p4s:' in display_string
+    assert 'aux:' in display_string
+    assert 'aux[0]: 0.38562805' in display_string
+    assert 'aux[1]: 1.93592989' in display_string
+    assert 'weight:' in display_string

@@ -10,6 +10,10 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixRho,
 )
 
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 1.93592989]
+
 
 def make_test_event() -> Event:
     return Event(
@@ -19,18 +23,20 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_f0_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF0(
         'f0',
         (
@@ -54,7 +60,7 @@ def test_f0_evaluation() -> None:
 
 def test_f0_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF0(
         'f0',
         (
@@ -98,7 +104,7 @@ def test_f0_gradient() -> None:
 
 def test_f2_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF2(
         'f2',
         (
@@ -121,7 +127,7 @@ def test_f2_evaluation() -> None:
 
 def test_f2_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF2(
         'f2',
         (
@@ -158,7 +164,7 @@ def test_f2_gradient() -> None:
 
 def test_a0_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA0(
         'a0',
         (
@@ -179,7 +185,7 @@ def test_a0_evaluation() -> None:
 
 def test_a0_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA0(
         'a0',
         (
@@ -206,7 +212,7 @@ def test_a0_gradient() -> None:
 
 def test_a2_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA2(
         'a2',
         (
@@ -227,7 +233,7 @@ def test_a2_evaluation() -> None:
 
 def test_a2_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA2(
         'a2',
         (
@@ -254,7 +260,7 @@ def test_a2_gradient() -> None:
 
 def test_rho_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixRho(
         'rho',
         (
@@ -275,7 +281,7 @@ def test_rho_evaluation() -> None:
 
 def test_rho_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixRho(
         'rho',
         (
@@ -302,7 +308,7 @@ def test_rho_gradient() -> None:
 
 def test_pi1_evaluation() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixPi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
@@ -320,7 +326,7 @@ def test_pi1_evaluation() -> None:
 
 def test_pi1_gradient() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixPi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),

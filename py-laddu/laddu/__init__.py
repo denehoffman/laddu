@@ -16,7 +16,7 @@ from laddu.amplitudes.phase_space import PhaseSpaceFactor
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import PolPhase, Zlm
 from laddu.convert import convert_from_amptools
-from laddu.data import BinnedDataset, Dataset, Event, open, open_amptools
+from laddu.data import BinnedDataset, Dataset, Event, open_amptools
 from laddu.extensions import (
     NLL,
     AutocorrelationTerminator,
@@ -125,7 +125,6 @@ __all__ = [
     'likelihood_product',
     'likelihood_sum',
     'mpi',
-    'open',
     'open_amptools',
     'parameter',
     'utils',

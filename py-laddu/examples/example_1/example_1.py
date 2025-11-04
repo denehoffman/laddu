@@ -44,13 +44,15 @@ def main(bins: int, niters: int, nboot: int) -> None:
     data_file = str(script_dir / 'data_1.parquet')
     accmc_file = str(script_dir / 'accmc_1.parquet')
     genmc_file = str(script_dir / 'mc_1.parquet')
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
     start = perf_counter()
     logger.info('Opening Data file...')
-    data_ds = ld.open(data_file)
+    data_ds = ld.Dataset.open(data_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening AccMC file...')
-    accmc_ds = ld.open(accmc_file)
+    accmc_ds = ld.Dataset.open(accmc_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening GenMC file...')
-    genmc_ds = ld.open(genmc_file)
+    genmc_ds = ld.Dataset.open(genmc_file, p4s=p4_columns, aux=aux_columns)
     tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = (
         fit_unbinned(niters, nboot, data_ds, accmc_ds, genmc_ds)
     )
@@ -109,7 +111,7 @@ def main(bins: int, niters: int, nboot: int) -> None:
     )
     pprint(table)
 
-    res_mass = ld.Mass([2, 3])
+    res_mass = ld.Mass(['kshort1', 'kshort2'])
     m_data = res_mass.value_on(data_ds)
     m_accmc = res_mass.value_on(accmc_ds)
     m_genmc = res_mass.value_on(genmc_ds)
@@ -331,9 +333,9 @@ def fit_binned(
     np.ndarray,
 ]:
     logger.info('Starting Binned Fit')
-    res_mass = ld.Mass([2, 3])
-    angles = ld.Angles(0, [1], [2], [2, 3])
-    polarization = ld.Polarization(0, [1], 0)
+    res_mass = ld.Mass(['kshort1', 'kshort2'])
+    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
+    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -482,9 +484,9 @@ def fit_unbinned(
     list[str],
 ]:
     logger.info('Starting Unbinned Fit')
-    res_mass = ld.Mass([2, 3])
-    angles = ld.Angles(0, [1], [2], [2, 3])
-    polarization = ld.Polarization(0, [1], 0)
+    res_mass = ld.Mass(['kshort1', 'kshort2'])
+    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
+    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm('Z00+', 0, 0, '+', angles, polarization))
     z22p = manager.register(ld.Zlm('Z22+', 2, 2, '+', angles, polarization))
@@ -494,8 +496,8 @@ def fit_unbinned(
             ld.constant(1.506),
             ld.parameter('f0_width'),
             0,
-            ld.Mass([2]),
-            ld.Mass([3]),
+            ld.Mass(['kshort1']),
+            ld.Mass(['kshort2']),
             res_mass,
         )
     )
@@ -505,8 +507,8 @@ def fit_unbinned(
             ld.constant(1.517),
             ld.parameter('f2_width'),
             2,
-            ld.Mass([2]),
-            ld.Mass([3]),
+            ld.Mass(['kshort1']),
+            ld.Mass(['kshort2']),
             res_mass,
         )
     )

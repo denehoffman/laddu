@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
-    polarization = ld.Polarization(0, [1], 0)
+    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -45,7 +45,14 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
     manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
+    ylm = manager.register(
+        ld.Ylm(
+            'ylm',
+            l,
+            m,
+            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
+        )
+    )
     model = manager.model(ylm.conj())
     evaluator = model.load(data)
     values = evaluator.evaluate([])
@@ -67,7 +74,7 @@ def get_norm_int_term(
     const = (
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
-    polarization = ld.Polarization(0, [1], 0)
+    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
@@ -80,8 +87,22 @@ def get_norm_int_term(
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
     manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
-    ylpmp = manager.register(ld.Ylm('ylpmp', lp, mp, ld.Angles(0, [1], [2], [2, 3])))
+    ylm = manager.register(
+        ld.Ylm(
+            'ylm',
+            l,
+            m,
+            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
+        )
+    )
+    ylpmp = manager.register(
+        ld.Ylm(
+            'ylpmp',
+            lp,
+            mp,
+            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
+        )
+    )
     model = manager.model(ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real()))
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])
@@ -162,10 +183,24 @@ if __name__ == '__main__':
     edges = np.histogram_bin_edges([], bins, (1.0, 2.0))
     centers = (edges[1:] + edges[:-1]) / 2
 
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
+    boost_columns = p4_columns[1:]
+
     if not (script_dir / 'unpolarized_moments.pkl').exists():
-        data = ld.open(script_dir / 'data_2.parquet', rest_frame_indices=[1, 2, 3])
-        accmc = ld.open(script_dir / 'mc_2.parquet', rest_frame_indices=[1, 2, 3])
-        mass = ld.Mass([2, 3])
+        data = ld.Dataset.open(
+            script_dir / 'data_2.parquet',
+            p4s=p4_columns,
+            aux=aux_columns,
+            boost_to_restframe_of=boost_columns,
+        )
+        accmc = ld.Dataset.open(
+            script_dir / 'mc_2.parquet',
+            p4s=p4_columns,
+            aux=aux_columns,
+            boost_to_restframe_of=boost_columns,
+        )
+        mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []
@@ -220,9 +255,9 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.open(script_dir / 'data_2.parquet')
-        accmc = ld.open(script_dir / 'mc_2.parquet')
-        mass = ld.Mass([2, 3])
+        data = ld.Dataset.open(script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns)
+        accmc = ld.Dataset.open(script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns)
+        mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []

@@ -8,6 +8,10 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixF2,
 )
 
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 1.93592989]
+
 
 def make_test_event() -> Event:
     return Event(
@@ -17,18 +21,20 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_serde() -> None:
     manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     f0 = KopfKMatrixF0(
         'f0',
         (

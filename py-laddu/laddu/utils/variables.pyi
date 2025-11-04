@@ -5,26 +5,23 @@ import numpy.typing as npt
 
 from laddu.data import Dataset, Event
 
-
 class VariableExpression:
     def __and__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __or__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __invert__(self) -> VariableExpression: ...
 
-
 class Mass:
-    def __init__(self, constituents: list[int]) -> None: ...
+    def __init__(self, constituents: list[str]) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
-
 
 class CosTheta:
     def __init__(
         self,
-        beam: int,
-        recoil: list[int],
-        daughter: list[int],
-        resonance: list[int],
+        beam: str,
+        recoil: list[str],
+        daughter: list[str],
+        resonance: list[str],
         frame: Literal[
             'Helicity',
             'HX',
@@ -42,15 +39,14 @@ class CosTheta:
     def __gt__(self, value: float) -> VariableExpression: ...
     def __le__(self, value: float) -> VariableExpression: ...
     def __ge__(self, value: float) -> VariableExpression: ...
-
 
 class Phi:
     def __init__(
         self,
-        beam: int,
-        recoil: list[int],
-        daughter: list[int],
-        resonance: list[int],
+        beam: str,
+        recoil: list[str],
+        daughter: list[str],
+        resonance: list[str],
         frame: Literal[
             'Helicity',
             'HX',
@@ -68,7 +64,6 @@ class Phi:
     def __gt__(self, value: float) -> VariableExpression: ...
     def __le__(self, value: float) -> VariableExpression: ...
     def __ge__(self, value: float) -> VariableExpression: ...
-
 
 class Angles:
     costheta: CosTheta
@@ -76,10 +71,10 @@ class Angles:
 
     def __init__(
         self,
-        beam: int,
-        recoil: list[int],
-        daughter: list[int],
-        resonance: list[int],
+        beam: str,
+        recoil: list[str],
+        daughter: list[str],
+        resonance: list[str],
         frame: Literal[
             'Helicity',
             'HX',
@@ -91,13 +86,12 @@ class Angles:
         ] = 'Helicity',
     ) -> None: ...
 
-
 class PolAngle:
     def __init__(
         self,
-        beam: int,
-        recoil: list[int],
-        beam_polarization: int,
+        beam: str,
+        recoil: list[str],
+        angle_aux: str,
     ) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -106,12 +100,11 @@ class PolAngle:
     def __gt__(self, value: float) -> VariableExpression: ...
     def __le__(self, value: float) -> VariableExpression: ...
     def __ge__(self, value: float) -> VariableExpression: ...
-
 
 class PolMagnitude:
     def __init__(
         self,
-        beam_polarization: int,
+        magnitude_aux: str,
     ) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
@@ -120,22 +113,26 @@ class PolMagnitude:
     def __gt__(self, value: float) -> VariableExpression: ...
     def __le__(self, value: float) -> VariableExpression: ...
     def __ge__(self, value: float) -> VariableExpression: ...
-
 
 class Polarization:
     pol_magnitude: PolMagnitude
     pol_angle: PolAngle
 
-    def __init__(self, beam: int, recoil: list[int], beam_polarization: int) -> None: ...
-
+    def __init__(
+        self,
+        beam: str,
+        recoil: list[str],
+        magnitude_aux: str,
+        angle_aux: str,
+    ) -> None: ...
 
 class Mandelstam:
     def __init__(
         self,
-        p1: list[int],
-        p2: list[int],
-        p3: list[int],
-        p4: list[int],
+        p1: list[str],
+        p2: list[str],
+        p3: list[str],
+        p4: list[str],
         channel: Literal['s', 't', 'u'],
     ) -> None: ...
     def value(self, event: Event) -> float: ...
