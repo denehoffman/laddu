@@ -52,7 +52,7 @@ class Dataset(DatasetBase):
 
     @staticmethod
     def from_dict(
-        data: dict[str, Any], rest_frame_indices: list[int] | None = None
+        data: dict[str, Any], rest_frame_of: list[str] | None = None
     ) -> Dataset:
         """Create a Dataset from a dictionary mapping column names to sequences."""
 
@@ -87,7 +87,7 @@ class Dataset(DatasetBase):
                     p4s,
                     aux_values,
                     float(weights[i]),
-                    rest_frame_indices=rest_frame_indices,
+                    rest_frame_of=rest_frame_of,
                     p4_names=p4_names,
                     aux_names=aux_names,
                 )
@@ -97,24 +97,24 @@ class Dataset(DatasetBase):
 
     @staticmethod
     def from_numpy(
-        data: dict[str, NDArray[np.floating]], rest_frame_indices: list[int] | None = None
+        data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None
     ) -> Dataset:
         converted = {key: np.asarray(value) for key, value in data.items()}
-        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
+        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
     def from_pandas(
-        data: pd.DataFrame, rest_frame_indices: list[int] | None = None
+        data: pd.DataFrame, rest_frame_of: list[str] | None = None
     ) -> Dataset:
         converted = {col: data[col].to_list() for col in data.columns}
-        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
+        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
     def from_polars(
-        data: pl.DataFrame, rest_frame_indices: list[int] | None = None
+        data: pl.DataFrame, rest_frame_of: list[str] | None = None
     ) -> Dataset:
         converted = {col: data[col].to_list() for col in data.columns}
-        return Dataset.from_dict(converted, rest_frame_indices=rest_frame_indices)
+        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
     def open(
@@ -162,7 +162,7 @@ def open_amptools(
     sample_eps = eps_list[0] if eps_list else []
     aux_len = sum(len(vec) for vec in sample_eps)
     aux_names = [f'aux_{i}' for i in range(aux_len)]
-    rest_frame_indices = list(range(1, n_particles)) if boost_to_com else None
+    rest_frame_of = p4_names[1:] if boost_to_com else None
     events = []
     for p4s, eps, weight in zip(p4s_list, eps_list, weight_list):
         p4_vectors = [Vec4.from_array(p4) for p4 in p4s]
@@ -172,7 +172,7 @@ def open_amptools(
                 p4_vectors,
                 aux_values,
                 weight,
-                rest_frame_indices=rest_frame_indices,
+                rest_frame_of=rest_frame_of,
                 p4_names=p4_names,
                 aux_names=aux_names,
             )

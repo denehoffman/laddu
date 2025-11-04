@@ -1,9 +1,10 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
-use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, EventData};
+use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
 use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
+    types::{PyIterator, PyList},
     IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -24,9 +25,8 @@ use crate::utils::vectors::PyVec4;
 ///     Scalar auxiliary data associated with the event
 /// weight : float
 ///     The weight associated with this event
-/// rest_frame_indices : list of int, optional
-///     If supplied, the event will be boosted to the rest frame of the 4-momenta at the
-///     given indices
+/// rest_frame_of : list of str, optional
+///     If supplied, the event will be boosted to the rest frame of the named four-momenta
 /// p4_names : list of str, optional
 ///     Human-readable aliases for each four-momentum. Providing names enables name-based
 ///     lookups when evaluating variables.
@@ -36,99 +36,117 @@ use crate::utils::vectors::PyVec4;
 #[pyclass(name = "Event", module = "laddu")]
 #[derive(Clone)]
 pub struct PyEvent {
-    pub event: Arc<EventData>,
-    pub metadata: Option<Arc<DatasetMetadata>>,
+    pub event: Event,
+    has_metadata: bool,
 }
 
 #[pymethods]
 impl PyEvent {
     #[new]
-    #[pyo3(signature = (p4s, aux, weight, *, rest_frame_indices=None, p4_names=None, aux_names=None))]
+    #[pyo3(signature = (p4s, aux, weight, *, rest_frame_of=None, p4_names=None, aux_names=None))]
     fn new(
         p4s: Vec<PyVec4>,
         aux: Vec<f64>,
         weight: f64,
-        rest_frame_indices: Option<Vec<usize>>,
+        rest_frame_of: Option<Vec<String>>,
         p4_names: Option<Vec<String>>,
         aux_names: Option<Vec<String>>,
     ) -> PyResult<Self> {
-        let event = EventData {
+        let mut event = EventData {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
             aux,
             weight,
         };
-        let metadata = if let Some(p4_names) = p4_names {
+        let (metadata, metadata_provided) = if p4_names.is_some() || aux_names.is_some() {
+            let p4_names = p4_names.unwrap_or_default();
             let aux_names = aux_names.unwrap_or_default();
-            Some(Arc::new(
-                DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?,
-            ))
+            (
+                Arc::new(DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?),
+                true,
+            )
         } else {
-            None
+            (Arc::new(DatasetMetadata::empty()), false)
         };
-        let event = if let Some(indices) = rest_frame_indices {
-            event.boost_to_rest_frame_of(indices)
-        } else {
-            event
-        };
+        if let Some(names) = rest_frame_of {
+            if !metadata_provided {
+                return Err(PyValueError::new_err(
+                    "`rest_frame_of` requires specifying `p4_names` to resolve particle names",
+                ));
+            }
+            let indices = names
+                .iter()
+                .map(|name| {
+                    metadata.p4_index(name).ok_or_else(|| {
+                        PyKeyError::new_err(format!("Unknown particle name '{name}'"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            event = event.boost_to_rest_frame_of(indices);
+        }
+        let event = Event::new(Arc::new(event), metadata);
         Ok(Self {
-            event: Arc::new(event),
-            metadata,
+            event,
+            has_metadata: metadata_provided,
         })
     }
     fn __str__(&self) -> String {
-        self.event.to_string()
+        self.event.data().to_string()
     }
     /// The list of 4-momenta for each particle in the event
     ///
     #[getter]
     fn get_p4s(&self) -> Vec<PyVec4> {
-        self.event.p4s.iter().map(|p4| PyVec4(*p4)).collect()
+        self.event.p4s().iter().map(|p4| PyVec4(*p4)).collect()
     }
     /// The list of auxiliary scalar values associated with the event
     ///
     #[getter]
-    fn get_aux(&self) -> Vec<f64> {
-        self.event.aux.clone()
+    #[pyo3(name = "aux_values")]
+    fn aux_values_prop(&self) -> Vec<f64> {
+        self.event.aux_values().to_vec()
     }
     /// The weight of this event relative to others in a Dataset
     ///
     #[getter]
     fn get_weight(&self) -> f64 {
-        self.event.weight
+        self.event.weight()
     }
     /// Get the sum of the four-momenta within the event at the given indices
     ///
     /// Parameters
     /// ----------
-    /// indices : list of int
-    ///     The indices of the four-momenta to sum
+    /// names : list of str
+    ///     The names of the four-momenta to sum
     ///
     /// Returns
     /// -------
     /// Vec4
     ///     The result of summing the given four-momenta
     ///
-    fn get_p4_sum(&self, indices: Vec<usize>) -> PyVec4 {
-        PyVec4(self.event.get_p4_sum(indices))
+    fn get_p4_sum(&self, names: Vec<String>) -> PyResult<PyVec4> {
+        let indices = self.resolve_p4_indices(&names)?;
+        Ok(PyVec4(self.event.data().get_p4_sum(indices)))
     }
     /// Boost all the four-momenta in the event to the rest frame of the given set of
     /// four-momenta by indices.
     ///
     /// Parameters
     /// ----------
-    /// indices : list of int
-    ///     The indices of the four-momenta to sum
+    /// names : list of str
+    ///     The names of the four-momenta whose rest frame should be used for the boost
     ///
     /// Returns
     /// -------
     /// Event
     ///     The boosted event
     ///
-    pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> Self {
-        Self {
-            event: Arc::new(self.event.boost_to_rest_frame_of(indices)),
-            metadata: self.metadata.clone(),
-        }
+    pub fn boost_to_rest_frame_of(&self, names: Vec<String>) -> PyResult<Self> {
+        let indices = self.resolve_p4_indices(&names)?;
+        let boosted = self.event.data().boost_to_rest_frame_of(indices);
+        Ok(Self {
+            event: Event::new(Arc::new(boosted), self.event.metadata_arc()),
+            has_metadata: self.has_metadata,
+        })
     }
     /// Get the value of a Variable on the given Event
     ///
@@ -148,14 +166,90 @@ impl PyEvent {
     ///
     fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<f64> {
         let mut variable = variable.extract::<PyVariable>()?;
-        if let Some(metadata) = &self.metadata {
-            variable.bind_in_place(metadata.as_ref())?;
-        } else {
+        if !self.has_metadata {
             return Err(PyValueError::new_err(
                 "Cannot evaluate variable on an Event without associated metadata. Construct the Event with `p4_names`/`aux_names` or evaluate through a Dataset.",
             ));
         }
-        variable.evaluate_event(&self.event)
+        variable.bind_in_place(self.event.metadata())?;
+        let event_arc = self.event.data_arc();
+        variable.evaluate_event(&event_arc)
+    }
+
+    /// Retrieve a four-momentum by name (if present).
+    fn p4(&self, name: &str) -> PyResult<Option<PyVec4>> {
+        self.ensure_metadata()?;
+        Ok(self.event.p4(name).copied().map(PyVec4))
+    }
+
+    /// Retrieve an auxiliary scalar by name (if present).
+    fn aux(&self, name: &str) -> PyResult<Option<f64>> {
+        self.ensure_metadata()?;
+        Ok(self.event.aux(name))
+    }
+
+    /// Retrieve either a four-momentum or auxiliary scalar by name, returning ``None`` when not found.
+    fn get<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Option<Py<PyAny>>> {
+        self.ensure_metadata()?;
+        if let Some(p4) = self.event.p4(name) {
+            let obj = PyVec4(*p4).into_pyobject(py)?.into_any().unbind();
+            return Ok(Some(obj));
+        }
+        if let Some(value) = self.event.aux(name) {
+            let obj = value.into_pyobject(py)?.into_any().unbind();
+            return Ok(Some(obj));
+        }
+        Ok(None)
+    }
+
+    fn __getitem__<'py>(
+        &self,
+        py: Python<'py>,
+        key: Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let name = key.extract::<String>()?;
+        if !self.has_metadata {
+            return Err(PyValueError::new_err(
+                "Event has no associated metadata; indexing by name is unavailable",
+            ));
+        }
+        if let Some(p4) = self.event.p4(&name) {
+            return PyVec4(*p4).into_bound_py_any(py);
+        }
+        if let Some(value) = self.event.aux(&name) {
+            return value.into_bound_py_any(py);
+        }
+        Err(PyKeyError::new_err(format!(
+            "Unknown particle or auxiliary name '{name}'",
+        )))
+    }
+}
+
+impl PyEvent {
+    fn ensure_metadata(&self) -> PyResult<&DatasetMetadata> {
+        if !self.has_metadata {
+            Err(PyValueError::new_err(
+                "Event has no associated metadata for name-based operations",
+            ))
+        } else {
+            Ok(self.event.metadata())
+        }
+    }
+
+    fn resolve_p4_indices(&self, names: &[String]) -> PyResult<Vec<usize>> {
+        let metadata = self.ensure_metadata()?;
+        names
+            .iter()
+            .map(|name| {
+                metadata
+                    .p4_index(name)
+                    .ok_or_else(|| PyKeyError::new_err(format!("Unknown particle name '{name}'")))
+            })
+            .collect()
+    }
+
+    pub(crate) fn metadata_opt(&self) -> Option<&DatasetMetadata> {
+        self.has_metadata.then(|| self.event.metadata())
     }
 }
 
@@ -192,20 +286,23 @@ impl PyDataset {
     ) -> PyResult<Self> {
         let inferred_metadata = events
             .iter()
-            .filter_map(|event| event.metadata.clone())
-            .next();
-        let metadata = if let Some(p4_names) = p4_names {
+            .find_map(|event| event.has_metadata.then(|| event.event.metadata_arc()));
+
+        let use_explicit_names = p4_names.is_some() || aux_names.is_some();
+        let metadata = if use_explicit_names {
+            let p4_names = p4_names.unwrap_or_default();
             let aux_names = aux_names.unwrap_or_default();
             Some(Arc::new(
                 DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?,
             ))
-        } else if let Some(meta) = inferred_metadata {
-            Some(meta)
         } else {
-            None
+            inferred_metadata
         };
 
-        let events: Vec<Arc<EventData>> = events.into_iter().map(|event| event.event).collect();
+        let events: Vec<Arc<EventData>> = events
+            .into_iter()
+            .map(|event| event.event.data_arc())
+            .collect();
         let dataset = if let Some(metadata) = metadata {
             Dataset::new_with_metadata(events, metadata)
         } else {
@@ -252,6 +349,15 @@ impl PyDataset {
     }
     fn __len__(&self) -> usize {
         self.0.n_events()
+    }
+    fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let list_bound = PyList::empty(py);
+        for event in slf.events() {
+            list_bound.append(Py::new(py, event)?)?;
+        }
+        let iterator = PyIterator::from_object(list_bound.as_any())?;
+        Ok(iterator.into())
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
         if let Ok(other_ds) = other.extract::<PyRef<PyDataset>>() {
@@ -335,13 +441,12 @@ impl PyDataset {
     ///
     #[getter]
     fn events(&self) -> Vec<PyEvent> {
-        let metadata = self.0.metadata_arc();
         self.0
             .events
             .iter()
             .map(|rust_event| PyEvent {
                 event: rust_event.clone(),
-                metadata: Some(metadata.clone()),
+                has_metadata: true,
             })
             .collect()
     }
@@ -366,10 +471,9 @@ impl PyDataset {
         if let Ok(value) = self.evaluate(py, index.clone()) {
             value.into_bound_py_any(py)
         } else if let Ok(index) = index.extract::<usize>() {
-            let metadata = self.0.metadata_arc();
             PyEvent {
-                event: Arc::new(self.0[index].clone()),
-                metadata: Some(metadata),
+                event: self.0[index].clone(),
+                has_metadata: true,
             }
             .into_bound_py_any(py)
         } else {
@@ -458,20 +562,20 @@ impl PyDataset {
         PyDataset(self.0.bootstrap(seed))
     }
     /// Boost all the four-momenta in all events to the rest frame of the given set of
-    /// four-momenta by indices.
+    /// named four-momenta.
     ///
     /// Parameters
     /// ----------
-    /// indices : list of int
-    ///     The indices of the four-momenta to sum
+    /// names : list of str
+    ///     The names of the four-momenta defining the rest frame
     ///
     /// Returns
     /// -------
     /// Dataset
     ///     The boosted dataset
     ///
-    pub fn boost_to_rest_frame_of(&self, indices: Vec<usize>) -> PyDataset {
-        PyDataset(self.0.boost_to_rest_frame_of(indices))
+    pub fn boost_to_rest_frame_of(&self, names: Vec<String>) -> PyDataset {
+        PyDataset(self.0.boost_to_rest_frame_of(&names))
     }
     /// Get the value of a Variable over every event in the Dataset.
     ///

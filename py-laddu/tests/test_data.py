@@ -31,13 +31,13 @@ def make_test_dataset() -> Dataset:
 def test_event_creation() -> None:
     event = make_test_event()
     assert len(event.p4s) == 4
-    assert len(event.aux) == 2
+    assert len(event.aux_values) == 2
     assert event.weight == 0.48
 
 
 def test_event_p4_sum() -> None:
     event = make_test_event()
-    p4_sum = event.get_p4_sum([2, 3])
+    p4_sum = event.get_p4_sum(['kshort1', 'kshort2'])
     assert p4_sum.px == event.p4s[2].px + event.p4s[3].px
     assert p4_sum.py == event.p4s[2].py + event.p4s[3].py
     assert p4_sum.pz == event.p4s[2].pz + event.p4s[3].pz
@@ -46,11 +46,28 @@ def test_event_p4_sum() -> None:
 
 def test_event_boost() -> None:
     event = make_test_event()
-    event_boosted = event.boost_to_rest_frame_of([1, 2, 3])
-    p4_sum = event_boosted.get_p4_sum([1, 2, 3])
+    rest_frame = ['proton', 'kshort1', 'kshort2']
+    event_boosted = event.boost_to_rest_frame_of(rest_frame)
+    p4_sum = event_boosted.get_p4_sum(rest_frame)
     assert pytest.approx(p4_sum.px) == 0.0
     assert pytest.approx(p4_sum.py) == 0.0
     assert pytest.approx(p4_sum.pz) == 0.0
+
+
+def test_event_name_lookup() -> None:
+    event = make_test_event()
+    proton_vec = event['proton']
+    assert pytest.approx(proton_vec.e) == event.p4s[1].e
+    proton_optional = event.p4('proton')
+    assert proton_optional is not None
+    assert pytest.approx(proton_optional.e) == event.p4s[1].e
+    aux_value = event.aux('pol_angle')
+    assert aux_value is not None
+    assert pytest.approx(aux_value) == event.aux_values[1]
+    assert isinstance(event.get('pol_magnitude'), float)
+    assert event.get('unknown') is None
+    with pytest.raises(KeyError):
+        _ = event['unknown']
 
 
 def test_event_evaluate() -> None:
@@ -91,7 +108,7 @@ def test_dataset_conversion() -> None:
     ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
     ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
     assert ds_from_dict[1].p4s[0].px == 2.0
-    assert pytest.approx(ds_from_numpy[0].aux[1]) == 0.1
+    assert pytest.approx(ds_from_numpy[0].aux_values[1]) == 0.1
     assert ds_from_pandas[2].weight == 2.0
     assert ds_from_polars[2].p4s[1].e == 100.0
 
@@ -186,6 +203,8 @@ def test_dataset_index() -> None:
     assert isinstance(dataset[0], Event)
     mass = Mass(['proton'])
     assert isinstance(dataset[mass], np.ndarray)
+    proton_vec = dataset[0]['proton']
+    assert pytest.approx(proton_vec.e) == dataset[0].p4s[1].e
 
 
 def test_binned_dataset() -> None:
@@ -229,7 +248,7 @@ def test_dataset_bootstrap() -> None:
             make_test_event(),
             Event(
                 make_test_event().p4s,
-                make_test_event().aux,
+                make_test_event().aux_values,
                 1.0,
                 p4_names=P4_NAMES,
                 aux_names=AUX_NAMES,
@@ -249,10 +268,19 @@ def test_dataset_bootstrap() -> None:
     assert len(empty_bootstrap) == 0
 
 
+def test_dataset_iteration() -> None:
+    dataset = make_test_dataset()
+    events = list(dataset)
+    assert len(events) == dataset.n_events
+    assert all(isinstance(event, Event) for event in events)
+    assert pytest.approx(events[0]['proton'].e) == dataset[0]['proton'].e
+
+
 def test_dataset_boost() -> None:
     dataset = make_test_dataset()
-    dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3])
-    p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3])
+    rest_frame = ['proton', 'kshort1', 'kshort2']
+    dataset_boosted = dataset.boost_to_rest_frame_of(rest_frame)
+    p4_sum = dataset_boosted[0].get_p4_sum(rest_frame)
     assert pytest.approx(p4_sum.px) == 0.0
     assert pytest.approx(p4_sum.py) == 0.0
     assert pytest.approx(p4_sum.pz) == 0.0

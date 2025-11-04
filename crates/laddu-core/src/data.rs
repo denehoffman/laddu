@@ -207,40 +207,56 @@ impl Default for DatasetMetadata {
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
-    pub events: Vec<Arc<EventData>>,
+    pub events: Vec<Event>,
     pub(crate) metadata: Arc<DatasetMetadata>,
 }
 
-/// Metadata-aware snapshot of an [`EventData`] borrowed from a [`Dataset`].
-///
-/// [`Event`] exposes the same kinematic helpers as [`EventData`] while also providing
-/// name-based lookups backed by the attached [`DatasetMetadata`].
-pub struct Event<'a> {
-    /// The underlying event data.
-    pub event: &'a EventData,
-    /// Metadata used for translating names into indices.
-    pub metadata: &'a DatasetMetadata,
+/// Metadata-aware view of an [`EventData`] with name-based helpers.
+#[derive(Clone, Debug)]
+pub struct Event {
+    event: Arc<EventData>,
+    metadata: Arc<DatasetMetadata>,
 }
 
-impl<'a> Event<'a> {
+impl Event {
+    /// Create a new metadata-aware event from raw data and dataset metadata.
+    pub fn new(event: Arc<EventData>, metadata: Arc<DatasetMetadata>) -> Self {
+        Self { event, metadata }
+    }
+
     /// Borrow the raw [`EventData`].
-    pub fn data(&self) -> &'a EventData {
-        self.event
+    pub fn data(&self) -> &EventData {
+        &self.event
+    }
+
+    /// Obtain a clone of the underlying [`EventData`] handle.
+    pub fn data_arc(&self) -> Arc<EventData> {
+        self.event.clone()
     }
 
     /// Borrow the four-momenta stored in this event.
-    pub fn p4s(&self) -> &'a [Vec4] {
+    pub fn p4s(&self) -> &[Vec4] {
         &self.event.p4s
     }
 
     /// Borrow the auxiliary scalar values stored in this event.
-    pub fn aux_values(&self) -> &'a [f64] {
+    pub fn aux_values(&self) -> &[f64] {
         &self.event.aux
     }
 
     /// Return the event weight.
     pub fn weight(&self) -> f64 {
         self.event.weight
+    }
+
+    /// Retrieve the dataset metadata attached to this event.
+    pub fn metadata(&self) -> &DatasetMetadata {
+        &self.metadata
+    }
+
+    /// Clone the metadata handle associated with this event.
+    pub fn metadata_arc(&self) -> Arc<DatasetMetadata> {
+        self.metadata.clone()
     }
 
     /// Retrieve a four-momentum by name.
@@ -258,19 +274,59 @@ impl<'a> Event<'a> {
             .copied()
     }
 
-    /// Return a four-momentum formed by summing four-momenta at the specified indices.
-    pub fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
-        self.event.get_p4_sum(indices)
+    fn resolve_p4_indices<'a, N>(&'a self, names: N) -> Vec<usize>
+    where
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        names
+            .into_iter()
+            .map(|name| {
+                let name_ref = name.as_ref();
+                self.metadata
+                    .p4_index(name_ref)
+                    .unwrap_or_else(|| panic!("Unknown particle name '{name}'", name = name_ref))
+            })
+            .collect()
     }
 
-    /// Boost all four-momenta into the rest frame defined by the specified indices.
-    pub fn boost_to_rest_frame_of<T: AsRef<[usize]>>(&self, indices: T) -> EventData {
-        self.event.boost_to_rest_frame_of(indices)
+    /// Return a four-momentum formed by summing four-momenta with the specified names.
+    pub fn get_p4_sum<'a, N>(&'a self, names: N) -> Vec4
+    where
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        let indices = self.resolve_p4_indices(names);
+        self.event.get_p4_sum(&indices)
+    }
+
+    /// Boost all four-momenta into the rest frame defined by the specified particle names.
+    pub fn boost_to_rest_frame_of<'a, N>(&'a self, names: N) -> EventData
+    where
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        let indices = self.resolve_p4_indices(names);
+        self.event.boost_to_rest_frame_of(&indices)
     }
 
     /// Evaluate a [`Variable`] over this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         self.event.evaluate(variable)
+    }
+}
+
+impl Deref for Event {
+    type Target = EventData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.event
+    }
+}
+
+impl AsRef<EventData> for Event {
+    fn as_ref(&self) -> &EventData {
+        self.data()
     }
 }
 
@@ -306,11 +362,8 @@ impl Dataset {
     }
 
     /// Borrow event data together with metadata-based helpers as an [`Event`] view.
-    pub fn named_event(&self, index: usize) -> Event<'_> {
-        Event {
-            event: self.index(index),
-            metadata: &self.metadata,
-        }
+    pub fn named_event(&self, index: usize) -> Event {
+        self.events[index].clone()
     }
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
@@ -344,7 +397,7 @@ impl Dataset {
     /// let ds: Dataset = Dataset::new(events);
     /// let event_0 = ds[0];
     /// ```
-    pub fn index_local(&self, index: usize) -> &EventData {
+    pub fn index_local(&self, index: usize) -> &Event {
         &self.events[index]
     }
 
@@ -469,7 +522,7 @@ impl Dataset {
     /// let event_0 = ds[0];
     /// ```
     #[cfg(feature = "mpi")]
-    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &EventData {
+    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
         let (_, displs) = world.get_counts_displs(self.n_events());
         let (owning_rank, local_index) = Dataset::get_rank_index(index, &displs, world);
         let mut serialized_event_buffer_len: usize = 0;
@@ -477,7 +530,7 @@ impl Dataset {
         let config = bincode::config::standard();
         if world.rank() == owning_rank {
             let event = self.index_local(local_index);
-            serialized_event_buffer = bincode::serde::encode_to_vec(event, config).unwrap();
+            serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
             serialized_event_buffer_len = serialized_event_buffer.len();
         }
         world
@@ -491,12 +544,31 @@ impl Dataset {
             .broadcast_into(&mut serialized_event_buffer);
         let (event, _): (EventData, usize) =
             bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
-        Box::leak(Box::new(event))
+        let leaked = Event::new(Arc::new(event), self.metadata.clone());
+        Box::leak(Box::new(leaked))
+    }
+}
+
+impl<'a> IntoIterator for &'a Dataset {
+    type Item = &'a Event;
+    type IntoIter = std::slice::Iter<'a, Event>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.iter()
+    }
+}
+
+impl IntoIterator for Dataset {
+    type Item = Event;
+    type IntoIter = std::vec::IntoIter<Event>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.events.into_iter()
     }
 }
 
 impl Index<usize> for Dataset {
-    type Output = EventData;
+    type Output = Event;
 
     fn index(&self, index: usize) -> &Self::Output {
         #[cfg(feature = "mpi")]
@@ -517,7 +589,14 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::new`] instead.
     pub fn new_local(events: Vec<Arc<EventData>>, metadata: Arc<DatasetMetadata>) -> Self {
-        Dataset { events, metadata }
+        let wrapped_events = events
+            .into_iter()
+            .map(|event| Event::new(event, metadata.clone()))
+            .collect();
+        Dataset {
+            events: wrapped_events,
+            metadata,
+        }
     }
 
     /// Create a new [`Dataset`] from a list of [`EventData`] (MPI-compatible version).
@@ -532,8 +611,14 @@ impl Dataset {
         metadata: Arc<DatasetMetadata>,
         world: &SimpleCommunicator,
     ) -> Self {
+        let partitions = Dataset::partition(events, world);
+        let local = partitions[world.rank() as usize]
+            .iter()
+            .cloned()
+            .map(|event| Event::new(event, metadata.clone()))
+            .collect();
         Dataset {
-            events: Dataset::partition(events, world)[world.rank() as usize].clone(),
+            events: local,
             metadata,
         }
     }
@@ -701,17 +786,17 @@ impl Dataset {
         #[cfg(feature = "rayon")]
         let bootstrapped_events: Vec<Arc<EventData>> = indices
             .into_par_iter()
-            .map(|idx| self.events[idx].clone())
+            .map(|idx| self.events[idx].data_arc())
             .collect();
         #[cfg(not(feature = "rayon"))]
         let bootstrapped_events: Vec<Arc<EventData>> = indices
             .into_iter()
-            .map(|idx| self.events[idx].clone())
+            .map(|idx| self.events[idx].data_arc())
             .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-            metadata: self.metadata.clone(),
-        })
+        Arc::new(Dataset::new_with_metadata(
+            bootstrapped_events,
+            self.metadata.clone(),
+        ))
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -750,17 +835,17 @@ impl Dataset {
         #[cfg(feature = "rayon")]
         let bootstrapped_events: Vec<Arc<EventData>> = local_indices
             .into_par_iter()
-            .map(|idx| self.events[idx].clone())
+            .map(|idx| self.events[idx].data_arc())
             .collect();
         #[cfg(not(feature = "rayon"))]
         let bootstrapped_events: Vec<Arc<EventData>> = local_indices
             .into_iter()
-            .map(|idx| self.events[idx].clone())
+            .map(|idx| self.events[idx].data_arc())
             .collect();
-        Arc::new(Dataset {
-            events: bootstrapped_events,
-            metadata: self.metadata.clone(),
-        })
+        Arc::new(Dataset::new_with_metadata(
+            bootstrapped_events,
+            self.metadata.clone(),
+        ))
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -783,20 +868,20 @@ impl Dataset {
         let filtered_events: Vec<Arc<EventData>> = self
             .events
             .par_iter()
-            .filter(|e| compiled.evaluate(e))
-            .cloned()
+            .filter(|event| compiled.evaluate(event.as_ref()))
+            .map(|event| event.data_arc())
             .collect();
         #[cfg(not(feature = "rayon"))]
         let filtered_events: Vec<Arc<EventData>> = self
             .events
             .iter()
-            .filter(|e| compiled.evaluate(e))
-            .cloned()
+            .filter(|event| compiled.evaluate(event.as_ref()))
+            .map(|event| event.data_arc())
             .collect();
-        Ok(Arc::new(Dataset {
-            events: filtered_events,
-            metadata: self.metadata.clone(),
-        }))
+        Ok(Arc::new(Dataset::new_with_metadata(
+            filtered_events,
+            self.metadata.clone(),
+        )))
     }
 
     /// Bin a [`Dataset`] by the value of the given [`Variable`] into a number of `bins` within the
@@ -815,7 +900,7 @@ impl Dataset {
         let bin_edges = get_bin_edges(bins, range);
         let variable = variable;
         #[cfg(feature = "rayon")]
-        let evaluated: Vec<(usize, &Arc<EventData>)> = self
+        let evaluated: Vec<(usize, Arc<EventData>)> = self
             .events
             .par_iter()
             .filter_map(|event| {
@@ -823,14 +908,14 @@ impl Dataset {
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event))
+                    Some((bin_index, event.data_arc()))
                 } else {
                     None
                 }
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let evaluated: Vec<(usize, &Arc<EventData>)> = self
+        let evaluated: Vec<(usize, Arc<EventData>)> = self
             .events
             .iter()
             .filter_map(|event| {
@@ -838,7 +923,7 @@ impl Dataset {
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event))
+                    Some((bin_index, event.data_arc()))
                 } else {
                     None
                 }
@@ -851,22 +936,12 @@ impl Dataset {
         #[cfg(feature = "rayon")]
         let datasets: Vec<Arc<Dataset>> = binned_events
             .into_par_iter()
-            .map(|events| {
-                Arc::new(Dataset {
-                    events,
-                    metadata: self.metadata.clone(),
-                })
-            })
+            .map(|events| Arc::new(Dataset::new_with_metadata(events, self.metadata.clone())))
             .collect();
         #[cfg(not(feature = "rayon"))]
         let datasets: Vec<Arc<Dataset>> = binned_events
             .into_iter()
-            .map(|events| {
-                Arc::new(Dataset {
-                    events,
-                    metadata: self.metadata.clone(),
-                })
-            })
+            .map(|events| Arc::new(Dataset::new_with_metadata(events, self.metadata.clone())))
             .collect();
         Ok(BinnedDataset {
             datasets,
@@ -875,30 +950,36 @@ impl Dataset {
     }
 
     /// Boost all the four-momenta in all [`EventData`]s to the rest frame of the given set of
-    /// four-momenta by indices.
-    pub fn boost_to_rest_frame_of<T: AsRef<[usize]> + Sync>(&self, indices: T) -> Arc<Dataset> {
+    /// four-momenta identified by name.
+    pub fn boost_to_rest_frame_of<S>(&self, names: &[S]) -> Arc<Dataset>
+    where
+        S: AsRef<str>,
+    {
+        let indices: Vec<usize> = names
+            .iter()
+            .map(|name| {
+                let name_ref = name.as_ref();
+                self.metadata
+                    .p4_index(name_ref)
+                    .unwrap_or_else(|| panic!("Unknown particle name '{name}'", name = name_ref))
+            })
+            .collect();
         #[cfg(feature = "rayon")]
-        {
-            Arc::new(Dataset {
-                events: self
-                    .events
-                    .par_iter()
-                    .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
-                    .collect(),
-                metadata: self.metadata.clone(),
-            })
-        }
+        let boosted_events: Vec<Arc<EventData>> = self
+            .events
+            .par_iter()
+            .map(|event| Arc::new(event.data().boost_to_rest_frame_of(&indices)))
+            .collect();
         #[cfg(not(feature = "rayon"))]
-        {
-            Arc::new(Dataset {
-                events: self
-                    .events
-                    .iter()
-                    .map(|event| Arc::new(event.boost_to_rest_frame_of(indices.as_ref())))
-                    .collect(),
-                metadata: self.metadata.clone(),
-            })
-        }
+        let boosted_events: Vec<Arc<EventData>> = self
+            .events
+            .iter()
+            .map(|event| Arc::new(event.data().boost_to_rest_frame_of(&indices)))
+            .collect();
+        Arc::new(Dataset::new_with_metadata(
+            boosted_events,
+            self.metadata.clone(),
+        ))
     }
     /// Evaluate a [`Variable`] on every event in the [`Dataset`].
     pub fn evaluate<V: Variable>(&self, variable: &V) -> Result<Vec<f64>, LadduError> {
@@ -1291,9 +1372,9 @@ mod tests {
 
     #[test]
     fn test_dataset_size_check() {
-        let mut dataset = Dataset::new(Vec::new());
+        let dataset = Dataset::new(Vec::new());
         assert_eq!(dataset.n_events(), 0);
-        dataset.events.push(Arc::new(test_event()));
+        let dataset = Dataset::new(vec![Arc::new(test_event())]);
         assert_eq!(dataset.n_events(), 1);
     }
 
@@ -1316,13 +1397,14 @@ mod tests {
 
     #[test]
     fn test_dataset_weights() {
-        let mut dataset = Dataset::new(Vec::new());
-        dataset.events.push(Arc::new(test_event()));
-        dataset.events.push(Arc::new(EventData {
-            p4s: test_event().p4s,
-            aux: test_event().aux,
-            weight: 0.52,
-        }));
+        let dataset = Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(EventData {
+                p4s: test_event().p4s,
+                aux: test_event().aux,
+                weight: 0.52,
+            }),
+        ]);
         let weights = dataset.weights();
         assert_eq!(weights.len(), 2);
         assert_relative_eq!(weights[0], 0.48);
@@ -1370,8 +1452,8 @@ mod tests {
     #[test]
     fn test_dataset_boost() {
         let dataset = test_dataset();
-        let dataset_boosted = dataset.boost_to_rest_frame_of([1, 2, 3]);
-        let p4_sum = dataset_boosted[0].get_p4_sum([1, 2, 3]);
+        let dataset_boosted = dataset.boost_to_rest_frame_of(&["proton", "kshort1", "kshort2"]);
+        let p4_sum = dataset_boosted[0].get_p4_sum(["proton", "kshort1", "kshort2"]);
         assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
@@ -1387,14 +1469,16 @@ mod tests {
         assert_relative_eq!(beam.px(), dataset[0].p4s[0].px());
         assert_relative_eq!(beam.e(), dataset[0].p4s[0].e());
 
-        let summed = view.get_p4_sum([2, 3]);
+        let summed = view.get_p4_sum(["kshort1", "kshort2"]);
         assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
 
         let aux_angle = view.aux("pol_angle").expect("pol angle");
         assert_relative_eq!(aux_angle, dataset[0].aux[1]);
 
-        let boosted = view.boost_to_rest_frame_of([1, 2, 3]);
-        let boosted_sum = boosted.get_p4_sum([1, 2, 3]);
+        let metadata = dataset.metadata_arc();
+        let boosted = view.boost_to_rest_frame_of(["proton", "kshort1", "kshort2"]);
+        let boosted_event = Event::new(Arc::new(boosted), metadata);
+        let boosted_sum = boosted_event.get_p4_sum(["proton", "kshort1", "kshort2"]);
         assert_relative_eq!(boosted_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
@@ -1450,12 +1534,18 @@ mod tests {
 
     #[test]
     fn test_dataset_bootstrap() {
-        let mut dataset = test_dataset();
-        dataset.events.push(Arc::new(EventData {
-            p4s: test_event().p4s.clone(),
-            aux: test_event().aux.clone(),
-            weight: 1.0,
-        }));
+        let metadata = test_dataset().metadata_arc();
+        let dataset = Dataset::new_with_metadata(
+            vec![
+                Arc::new(test_event()),
+                Arc::new(EventData {
+                    p4s: test_event().p4s.clone(),
+                    aux: test_event().aux.clone(),
+                    weight: 1.0,
+                }),
+            ],
+            metadata,
+        );
         assert_relative_ne!(dataset[0].weight, dataset[1].weight);
 
         let bootstrapped = dataset.bootstrap(43);
@@ -1466,6 +1556,17 @@ mod tests {
         let empty_dataset = Dataset::new(Vec::new());
         let empty_bootstrap = empty_dataset.bootstrap(43);
         assert_eq!(empty_bootstrap.n_events(), 0);
+    }
+
+    #[test]
+    fn test_dataset_iteration_returns_events() {
+        let dataset = test_dataset();
+        let mut weights = Vec::new();
+        for event in &dataset {
+            weights.push(event.weight());
+        }
+        assert_eq!(weights.len(), dataset.n_events());
+        assert_relative_eq!(weights[0], dataset[0].weight);
     }
     #[test]
     fn test_event_display() {

@@ -140,12 +140,13 @@ impl PyMass {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
-            .ok_or_else(|| PyValueError::new_err("This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset."))?;
+            .metadata_opt()
+            .ok_or_else(|| PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -270,14 +271,13 @@ impl PyCosTheta {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
+            .metadata_opt()
             .ok_or_else(|| PyValueError::new_err(
                 "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
             ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -403,14 +403,13 @@ impl PyPhi {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
+            .metadata_opt()
             .ok_or_else(|| PyValueError::new_err(
                 "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
             ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -573,14 +572,13 @@ impl PyPolAngle {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
+            .metadata_opt()
             .ok_or_else(|| PyValueError::new_err(
                 "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
             ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -663,14 +661,13 @@ impl PyPolMagnitude {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
+            .metadata_opt()
             .ok_or_else(|| PyValueError::new_err(
                 "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
             ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -852,14 +849,13 @@ impl PyMandelstam {
     ///
     fn value(&self, event: &PyEvent) -> PyResult<f64> {
         let metadata = event
-            .metadata
-            .clone()
+            .metadata_opt()
             .ok_or_else(|| PyValueError::new_err(
                 "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
             ))?;
         let mut variable = self.0.clone();
-        variable.bind(metadata.as_ref()).map_err(PyErr::from)?;
-        Ok(variable.value(&event.event))
+        variable.bind(metadata).map_err(PyErr::from)?;
+        Ok(variable.value(event.event.data()))
     }
     /// All values of this Variable on the given Dataset
     ///

@@ -120,9 +120,9 @@ def test_mandelstam() -> None:
     assert pytest.approx(t.value(event)) == pytest.approx(tp.value(event))
     assert pytest.approx(u.value(event)) == -14.4041989
     assert pytest.approx(u.value(event)) == pytest.approx(up.value(event))
-    m2_beam = event.get_p4_sum([0]).m2
-    m2_recoil = event.get_p4_sum([1]).m2
-    m2_res = event.get_p4_sum([2, 3]).m2
+    m2_beam = event.get_p4_sum(['beam']).m2
+    m2_recoil = event.get_p4_sum(['proton']).m2
+    m2_res = event.get_p4_sum(['kshort1', 'kshort2']).m2
     assert (
         pytest.approx(
             s.value(event)
