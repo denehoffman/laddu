@@ -150,7 +150,7 @@ jobs:
         platform:
           - runner: macos-15-intel
             target: x86_64
-          - runner: macos-15-latest
+          - runner: macos-latest
             target: aarch64
     steps:
       - uses: actions/checkout@v4
