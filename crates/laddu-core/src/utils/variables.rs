@@ -360,7 +360,7 @@ impl P4Selection {
 
     fn index(&self) -> usize {
         self.indices
-            .get(0)
+            .first()
             .copied()
             .expect("P4Selection is expected to contain at least one element")
     }

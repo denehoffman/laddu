@@ -561,9 +561,9 @@ impl Model {
             resources_guard.reserve_cache(dataset.n_events());
             for amplitude in amplitudes.iter_mut() {
                 amplitude
-                    .register(&mut *resources_guard, Some(metadata))
+                    .register(&mut resources_guard, Some(metadata))
                     .expect("Failed to bind amplitude to dataset metadata");
-                amplitude.precompute_all(dataset, &mut *resources_guard);
+                amplitude.precompute_all(dataset, &mut resources_guard);
             }
         }
         Evaluator {

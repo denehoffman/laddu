@@ -20,9 +20,8 @@ class Dataset(DatasetBase):
     @staticmethod
     def _infer_p4_names(columns: dict[str, Any]) -> list[str]:
         if any(key.startswith('p4_') for key in columns):  # legacy format
-            raise ValueError(
-                'Legacy column format detected (p4_N_*). Please run convert_legacy_parquet.py first.'
-            )
+            msg = 'Legacy column format detected (p4_N_*). Please run convert_legacy_parquet.py first.'
+            raise ValueError(msg)
         p4_names: list[str] = []
         for key in columns:
             if key.endswith('_px'):
@@ -31,14 +30,10 @@ class Dataset(DatasetBase):
                     required = [f'{base}_{suffix}' for suffix in ('px', 'py', 'pz', 'e')]
                     missing = [name for name in required if name not in columns]
                     if missing:
-                        raise KeyError(
-                            f"Missing components {missing} for four-momentum '{base}'"
-                        )
+                        raise KeyError(f"Missing components {missing} for four-momentum '{base}'")
                     p4_names.append(base)
         if not p4_names:
-            raise ValueError(
-                'No four-momentum columns found (expected *_px, *_py, *_pz, *_e)'
-            )
+            raise ValueError('No four-momentum columns found (expected *_px, *_py, *_pz, *_e)')
         return p4_names
 
     @staticmethod
@@ -51,22 +46,15 @@ class Dataset(DatasetBase):
         return aux_names
 
     @staticmethod
-    def from_dict(
-        data: dict[str, Any], rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+    def from_dict(data: dict[str, Any], rest_frame_of: list[str] | None = None) -> Dataset:
         """Create a Dataset from a dictionary mapping column names to sequences."""
-
         columns = {name: np.asarray(values) for name, values in data.items()}
         p4_names = Dataset._infer_p4_names(columns)
-        component_names = {
-            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-        }
+        component_names = {f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')}
         aux_names = Dataset._infer_aux_names(columns, component_names)
 
         n_events = len(columns[f'{p4_names[0]}_px'])
-        weights = np.asarray(
-            columns.get('weight', np.ones(n_events, dtype=float)), dtype=float
-        )
+        weights = np.asarray(columns.get('weight', np.ones(n_events, dtype=float)), dtype=float)
 
         events: list[Event] = []
         for i in range(n_events):
@@ -96,40 +84,29 @@ class Dataset(DatasetBase):
         return Dataset(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
-    def from_numpy(
-        data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+    def from_numpy(data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None) -> Dataset:
         converted = {key: np.asarray(value) for key, value in data.items()}
         return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
-    def from_pandas(
-        data: pd.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+    def from_pandas(data: pd.DataFrame, rest_frame_of: list[str] | None = None) -> Dataset:
         converted = {col: data[col].to_list() for col in data.columns}
         return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
-    def from_polars(
-        data: pl.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+    def from_polars(data: pl.DataFrame, rest_frame_of: list[str] | None = None) -> Dataset:
         converted = {col: data[col].to_list() for col in data.columns}
         return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
 
     @staticmethod
     def open(
-        path: str | 'Path',
+        path: str | Path,
         *,
         p4s: list[str],
         aux: list[str],
         boost_to_restframe_of: list[str] | None = None,
     ) -> Dataset:
-        """Open a dataset from a Parquet file.
-
-        This mirrors :meth:`laddu.Dataset.open` in the Rust API, delegating to the
-        native implementation provided by :class:`laddu.laddu.DatasetBase`.
-        """
-
+        """Open a dataset from a Parquet file."""
         return DatasetBase.open(
             path,
             p4s=p4s,

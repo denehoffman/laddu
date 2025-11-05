@@ -520,7 +520,7 @@ impl PyDataset {
         range: (f64, f64),
     ) -> PyResult<PyBinnedDataset> {
         let py_variable = variable.extract::<PyVariable>()?;
-        let bound_variable = py_variable.bound(self.0.metadata()).map_err(PyErr::from)?;
+        let bound_variable = py_variable.bound(self.0.metadata())?;
         Ok(PyBinnedDataset(self.0.bin_by(
             bound_variable,
             bins,
@@ -593,7 +593,7 @@ impl PyDataset {
         variable: Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let variable = variable.extract::<PyVariable>()?;
-        let bound_variable = variable.bound(self.0.metadata()).map_err(PyErr::from)?;
+        let bound_variable = variable.bound(self.0.metadata())?;
         let values = self.0.evaluate(&bound_variable).map_err(PyErr::from)?;
         Ok(PyArray1::from_vec(py, values))
     }

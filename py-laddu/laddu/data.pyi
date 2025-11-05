@@ -6,8 +6,15 @@ import pandas as pd
 import polars as pl
 from numpy.typing import NDArray
 
-from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
-from laddu.utils.variables import VariableExpression
+from laddu.utils.variables import (
+    CosTheta,
+    Mandelstam,
+    Mass,
+    Phi,
+    PolAngle,
+    PolMagnitude,
+    VariableExpression,
+)
 from laddu.utils.vectors import Vec4
 
 def open_amptools(

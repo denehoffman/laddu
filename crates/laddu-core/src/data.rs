@@ -188,12 +188,12 @@ impl DatasetMetadata {
 
     /// Resolve the index of a four-momentum by name.
     pub fn p4_index(&self, name: &str) -> Option<usize> {
-        self.p4_lookup.get(name).map(|idx| *idx)
+        self.p4_lookup.get(name).copied()
     }
 
     /// Resolve the index of an auxiliary scalar by name.
     pub fn aux_index(&self, name: &str) -> Option<usize> {
-        self.aux_lookup.get(name).map(|idx| *idx)
+        self.aux_lookup.get(name).copied()
     }
 }
 
@@ -274,7 +274,7 @@ impl Event {
             .copied()
     }
 
-    fn resolve_p4_indices<'a, N>(&'a self, names: N) -> Vec<usize>
+    fn resolve_p4_indices<N>(&self, names: N) -> Vec<usize>
     where
         N: IntoIterator,
         N::Item: AsRef<str>,
@@ -291,7 +291,7 @@ impl Event {
     }
 
     /// Return a four-momentum formed by summing four-momenta with the specified names.
-    pub fn get_p4_sum<'a, N>(&'a self, names: N) -> Vec4
+    pub fn get_p4_sum<N>(&self, names: N) -> Vec4
     where
         N: IntoIterator,
         N::Item: AsRef<str>,
@@ -301,7 +301,7 @@ impl Event {
     }
 
     /// Boost all four-momenta into the rest frame defined by the specified particle names.
-    pub fn boost_to_rest_frame_of<'a, N>(&'a self, names: N) -> EventData
+    pub fn boost_to_rest_frame_of<N>(&self, names: N) -> EventData
     where
         N: IntoIterator,
         N::Item: AsRef<str>,
@@ -1117,7 +1117,7 @@ impl<'a> FloatColumn<'a> {
     fn value(&self, row: usize) -> f64 {
         match self {
             Self::F32(array) => array.value(row) as f64,
-            Self::F64(array) => array.value(row) as f64,
+            Self::F64(array) => array.value(row),
         }
     }
 }
