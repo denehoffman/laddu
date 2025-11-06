@@ -102,7 +102,7 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 
 ```rust
 use laddu::{
-   AmplitudeID, Cache, DatasetMetadata, EventData, LadduError, Mass,
+   AmplitudeID, Cache, DatasetMetadata, EventData, LadduError, LadduResult, Mass,
    ParameterID, ParameterLike, Parameters, Resources, PI,
 };
 use laddu::traits::*;
@@ -153,7 +153,7 @@ impl Amplitude for MyBreitWigner {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.daughter_1_mass.bind(metadata)?;
             self.daughter_2_mass.bind(metadata)?;
@@ -192,11 +192,12 @@ impl Amplitude for MyBreitWigner {
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 
 ```rust
-use laddu::{Scalar, Dataset, Mass, Manager, NLL, parameter};
+use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
 let p4_columns = ["beam", "proton", "kshort1", "kshort2"];
 let aux_columns = ["pol_magnitude", "pol_angle"];
-let ds_data = Dataset::open("test_data/data.parquet", &p4_columns, &aux_columns).unwrap();
-let ds_mc = Dataset::open("test_data/mc.parquet", &p4_columns, &aux_columns).unwrap();
+let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
+let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
+let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
 
 let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 let p1_mass = Mass::new(["kshort1"]);
@@ -358,7 +359,7 @@ The data format for `laddu` is a bit different from some of the alternatives lik
 | `kshort2_e`   | `Float32` or `Float64` | Decay product 2 energy |
 | `weight`    | `Float32` or `Float64` | Event weight |
 
-To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
+To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository).
 
 # MPI Support
 
