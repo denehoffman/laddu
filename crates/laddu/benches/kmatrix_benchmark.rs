@@ -10,7 +10,7 @@ use laddu::{
         zlm::Zlm,
         Manager,
     },
-    data::Dataset,
+    data::{Dataset, DatasetReadOptions},
     extensions::NLL,
     traits::*,
     utils::{
@@ -24,8 +24,11 @@ use rayon::ThreadPoolBuilder;
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let p4_names = ["beam", "proton", "kshort1", "kshort2"];
     let aux_names = ["pol_magnitude", "pol_angle"];
-    let ds_data = Dataset::open("benches/bench.parquet", &p4_names, &aux_names).unwrap();
-    let ds_mc = Dataset::open("benches/bench.parquet", &p4_names, &aux_names).unwrap();
+    let options = DatasetReadOptions::default()
+        .p4_names(p4_names)
+        .aux_names(aux_names);
+    let ds_data = Dataset::open("benches/bench.parquet", &options).unwrap();
+    let ds_mc = Dataset::open("benches/bench.parquet", &options).unwrap();
 
     let angles = Angles::new(
         "beam",

@@ -1,12 +1,17 @@
 use accurate::{sum::Klein, traits::*};
-use arrow::array::{Float32Array, Float64Array};
-use arrow::record_batch::RecordBatch;
+use arrow::{
+    array::{Float32Array, Float64Array},
+    datatypes::DataType,
+    record_batch::RecordBatch,
+};
 use auto_ops::impl_op_ex;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut, Index, IndexMut};
-use std::path::Path;
-use std::sync::Arc;
+use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashSet,
+    ops::{Deref, DerefMut, Index, IndexMut},
+};
 use std::{fmt::Display, fs::File};
 
 #[cfg(feature = "rayon")]
@@ -993,42 +998,53 @@ impl Dataset {
     /// each identifier (component suffixes are matched case-insensitively). Auxiliary scalars are
     /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
     /// `Float32` or `Float64` and are promoted to `f64` on load.
-    pub fn open<P: AsRef<str>, S: AsRef<str>>(
-        file_path: P,
-        p4_names: &[S],
-        aux_names: &[S],
-    ) -> Result<Arc<Dataset>, LadduError> {
-        Self::open_impl(file_path, p4_names, aux_names, None::<Vec<String>>)
+    /// If `boost_to_restframe_of` is provided, the method boosts every event to the rest frame of the specified particles.
+    ///
+    /// This method currently supports Parquet files only.
+    pub fn open(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
+        let path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
+        if let Some(ext) = path.extension() {
+            if let Some(ext_str) = ext.to_str() {
+                match ext_str.to_lowercase().as_str() {
+                    "parquet" => Self::open_parquet_impl(path, options),
+                    _ => Err(LadduError::Custom(format!(
+                        "Filetype not supported: {}",
+                        ext_str
+                    ))),
+                }
+            } else {
+                Err(LadduError::Custom(format!(
+                    "Invalid file extension: {}",
+                    path.display()
+                )))
+            }
+        } else {
+            Err(LadduError::Custom(format!(
+                "Filetype could not be detected from extension: {}",
+                path.display()
+            )))
+        }
     }
-
-    /// The same as [`Dataset::open`], but boosts every event to the rest frame of the specified
-    /// particles.
-    pub fn open_boosted<P: AsRef<str>, S: AsRef<str>, B: AsRef<str>>(
-        file_path: P,
-        p4_names: &[S],
-        aux_names: &[S],
-        boost_to_restframe_of: &[B],
-    ) -> Result<Arc<Dataset>, LadduError> {
-        let boost_names: Vec<String> = boost_to_restframe_of
+    fn open_parquet_impl(
+        file_path: PathBuf,
+        options: &DatasetReadOptions,
+    ) -> LadduResult<Arc<Dataset>> {
+        let (detected_p4_names, detected_aux_names) = detect_columns(&file_path)?;
+        let p4_names_vec: Vec<String> = options
+            .p4_names
+            .clone()
+            .map(|strs| strs.into_iter().map(|s| s.to_string()).collect())
+            .unwrap_or(detected_p4_names)
             .iter()
-            .map(|name| name.as_ref().to_string())
+            .map(|name| name.to_string())
             .collect();
-        Self::open_impl(file_path, p4_names, aux_names, Some(boost_names))
-    }
-
-    fn open_impl<P: AsRef<str>, S: AsRef<str>>(
-        file_path: P,
-        p4_names: &[S],
-        aux_names: &[S],
-        boost_to_restframe_of: Option<Vec<String>>,
-    ) -> Result<Arc<Dataset>, LadduError> {
-        let p4_names_vec: Vec<String> = p4_names
+        let aux_names_vec: Vec<String> = options
+            .aux_names
+            .clone()
+            .map(|strs| strs.into_iter().map(|s| s.to_string()).collect())
+            .unwrap_or(detected_aux_names)
             .iter()
-            .map(|name| name.as_ref().to_string())
-            .collect();
-        let aux_names_vec: Vec<String> = aux_names
-            .iter()
-            .map(|name| name.as_ref().to_string())
+            .map(|name| name.to_string())
             .collect();
 
         let metadata = Arc::new(DatasetMetadata::new(
@@ -1036,23 +1052,24 @@ impl Dataset {
             aux_names_vec.clone(),
         )?);
 
-        let boost_indices: Option<Vec<usize>> = if let Some(names) = boost_to_restframe_of {
-            let mut indices = Vec::with_capacity(names.len());
-            for name in names {
-                let idx = metadata
-                    .p4_index(&name)
-                    .ok_or_else(|| LadduError::UnknownName {
-                        category: "p4",
-                        name,
-                    })?;
-                indices.push(idx);
-            }
-            Some(indices)
-        } else {
-            None
-        };
+        let boost_indices: Option<Vec<usize>> =
+            if let Some(names) = options.boost_to_restframe_of.clone() {
+                let names = names.into_iter().collect::<Vec<_>>();
+                let mut indices = Vec::with_capacity(names.len());
+                for name in names {
+                    let idx = metadata
+                        .p4_index(&name)
+                        .ok_or_else(|| LadduError::UnknownName {
+                            category: "p4",
+                            name: name.to_string(),
+                        })?;
+                    indices.push(idx);
+                }
+                Some(indices)
+            } else {
+                None
+            };
 
-        let file_path = Path::new(&*shellexpand::full(file_path.as_ref())?).canonicalize()?;
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let reader = builder.build()?;
@@ -1061,7 +1078,7 @@ impl Dataset {
         #[cfg(feature = "rayon")]
         let events: Vec<Arc<EventData>> = {
             let boost_indices = boost_indices.as_deref();
-            let batch_events: Vec<Result<Vec<Arc<EventData>>, LadduError>> = batches
+            let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
                 .into_par_iter()
                 .map(|batch| {
                     record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
@@ -1083,7 +1100,7 @@ impl Dataset {
                 .map(|batch| {
                     record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
                 })
-                .collect::<Result<Vec<_>, LadduError>>()?
+                .collect::<LadduResult<Vec<_>>>()?
                 .into_iter()
                 .flatten()
                 .collect()
@@ -1091,6 +1108,105 @@ impl Dataset {
 
         Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
     }
+}
+
+/// Options for reading a [`Dataset`] from a file.
+///
+/// # See Also
+/// [`Dataset::open`]
+#[derive(Default, Clone)]
+pub struct DatasetReadOptions {
+    /// Particle names to read from the data file.
+    pub p4_names: Option<Vec<String>>,
+    /// Auxiliary scalar names to read from the data file.
+    pub aux_names: Option<Vec<String>>,
+    /// Particles whose rest frame should be used to boost each event.
+    pub boost_to_restframe_of: Option<Vec<String>>,
+}
+impl DatasetReadOptions {
+    /// Create a new [`Default`] set of [`DatasetReadOptions`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// If provided, the specified particles will be read from the data file (assuming columns with
+    /// required suffixes are present, i.e. `<particle>_px`, `<particle>_py`, `<particle>_pz`, and `<particle>_e`). Otherwise, all valid columns with these suffixes will be read.
+    pub fn p4_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.p4_names = Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
+        self
+    }
+
+    /// If provided, the specified columns will be read as auxiliary scalars. Otherwise, all valid
+    /// columns which do not satisfy the conditions required to be read as four-momenta will be
+    /// used.
+    pub fn aux_names<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.aux_names = Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
+        self
+    }
+
+    /// If provided, [`Event`]s in the [`Dataset`] will be boosted to the rest frame of the specified particles.
+    pub fn boost_to_restframe_of<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.boost_to_restframe_of =
+            Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
+        self
+    }
+}
+
+fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)> {
+    let file = File::open(file_path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema();
+    let float_cols: Vec<&str> = schema
+        .fields()
+        .iter()
+        .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
+        .map(|f| f.name().as_str())
+        .collect();
+    let suffixes = ["_e", "_px", "_py", "_pz"];
+    let suffix_set: HashSet<_> = suffixes.into_iter().collect();
+    let mut groups: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for col in &float_cols {
+        for suf in &suffix_set {
+            if let Some(prefix) = col.strip_suffix(suf) {
+                groups.entry(prefix).or_default().insert(*suf);
+            }
+        }
+    }
+    let p4_name_set: HashSet<&str> = groups
+        .iter()
+        .filter(|(_, sfxs)| *sfxs == &suffix_set)
+        .map(|(p, _)| *p)
+        .collect();
+    let p4_columns: HashSet<&str> = float_cols
+        .iter()
+        .copied()
+        .filter(|c| {
+            suffix_set.iter().any(|s| {
+                c.strip_suffix(s)
+                    .map(|p| p4_name_set.contains(p))
+                    .unwrap_or(false)
+            })
+        })
+        .collect();
+    let p4_names: Vec<String> = p4_name_set.into_iter().map(|s| s.to_string()).collect();
+    let aux_names: Vec<String> = float_cols
+        .into_iter()
+        .filter(|c| !p4_columns.contains(*c))
+        .map(|s| s.to_string())
+        .collect();
+    Ok((p4_names, aux_names))
 }
 
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {

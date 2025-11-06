@@ -1,5 +1,8 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
-use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
+use laddu_core::{
+    data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData},
+    DatasetReadOptions,
+};
 use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
@@ -317,18 +320,24 @@ impl PyDataset {
     /// ----------
     /// path : str or Path
     ///     The path to the Parquet file.
-    /// p4s : list[str]
+    /// p4s : list[str], optional
     ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
-    /// aux : list[str]
+    /// aux : list[str], optional
     ///     Auxiliary scalar column names copied verbatim in order.
     /// boost_to_restframe_of : list[str], optional
     ///     Names of particles whose rest frame should be used to boost each event.
+    ///
+    /// Notes
+    /// -----
+    /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
+    /// the valid suffixes are provided for a particle, the corresponding columns will be read as a
+    /// four-momentum, otherwise they will be read as auxiliary scalars.
     #[staticmethod]
-    #[pyo3(signature = (path, *, p4s, aux, boost_to_restframe_of=None))]
+    #[pyo3(signature = (path, *, p4s=None, aux=None, boost_to_restframe_of=None))]
     fn open(
         path: Bound<PyAny>,
-        p4s: Vec<String>,
-        aux: Vec<String>,
+        p4s: Option<Vec<String>>,
+        aux: Option<Vec<String>>,
         boost_to_restframe_of: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let path_str = if let Ok(s) = path.extract::<String>() {
@@ -339,11 +348,17 @@ impl PyDataset {
             Err(PyTypeError::new_err("Expected str or Path"))
         }?;
 
-        let dataset = if let Some(boost) = boost_to_restframe_of {
-            Dataset::open_boosted(path_str, &p4s, &aux, &boost)?
-        } else {
-            Dataset::open(path_str, &p4s, &aux)?
-        };
+        let mut read_options = DatasetReadOptions::default();
+        if let Some(p4s) = p4s {
+            read_options = read_options.p4_names(p4s);
+        }
+        if let Some(aux) = aux {
+            read_options = read_options.aux_names(aux);
+        }
+        if let Some(boost_to_restframe_of) = boost_to_restframe_of {
+            read_options = read_options.boost_to_restframe_of(boost_to_restframe_of);
+        }
+        let dataset = Dataset::open(&path_str, &read_options)?;
 
         Ok(Self(dataset))
     }

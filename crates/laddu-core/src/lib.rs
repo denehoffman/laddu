@@ -269,7 +269,9 @@ pub mod traits {
     pub use crate::ReadWrite;
 }
 
-pub use crate::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
+pub use crate::data::{
+    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
+};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,

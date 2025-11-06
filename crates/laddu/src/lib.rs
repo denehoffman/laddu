@@ -145,7 +145,7 @@
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 //! ```rust,no_run
-//! use laddu::{Scalar, Dataset, Mass, Manager, NLL, parameter};
+//! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
 //! # use laddu::{
 //! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult,
 //! #    ParameterID, ParameterLike, Parameters, Resources, PI,
@@ -232,8 +232,9 @@
 //! # }
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 //! let aux_names = ["pol_magnitude", "pol_angle"];
-//! let ds_data = Dataset::open("test_data/data.parquet", &p4_names, &aux_names).unwrap();
-//! let ds_mc = Dataset::open("test_data/mc.parquet", &p4_names, &aux_names).unwrap();
+//! let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
+//! let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
+//! let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
 //!
 //! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 //! let p1_mass = Mass::new(["kshort1"]);
@@ -313,7 +314,9 @@
 
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data {
-    pub use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, EventData};
+    pub use laddu_core::data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, EventData,
+    };
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
@@ -357,7 +360,9 @@ pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
-pub use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
+pub use laddu_core::data::{
+    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
+};
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
