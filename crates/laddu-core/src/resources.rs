@@ -8,7 +8,7 @@ use serde_with::serde_as;
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
-    LadduError,
+    LadduError, LadduResult,
 };
 
 /// This struct holds references to the constants and free parameters used in the fit so that they
@@ -242,7 +242,7 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
 
 impl Resources {
     /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
+    pub fn activate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         self.active[self
             .amplitudes
             .get(name.as_ref())
@@ -253,7 +253,7 @@ impl Resources {
         Ok(())
     }
     /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
+    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         for name in names {
             self.activate(name)?
         }
@@ -264,7 +264,7 @@ impl Resources {
         self.active = vec![true; self.active.len()];
     }
     /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
+    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         self.active[self
             .amplitudes
             .get(name.as_ref())
@@ -275,7 +275,7 @@ impl Resources {
         Ok(())
     }
     /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
+    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         for name in names {
             self.deactivate(name)?;
         }
@@ -286,12 +286,12 @@ impl Resources {
         self.active = vec![false; self.active.len()];
     }
     /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) -> Result<(), LadduError> {
+    pub fn isolate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         self.deactivate_all();
         self.activate(name)
     }
     /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) -> Result<(), LadduError> {
+    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
         self.deactivate_all();
         self.activate_many(names)
     }
@@ -305,7 +305,7 @@ impl Resources {
     ///
     /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
     /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
-    pub fn register_amplitude(&mut self, name: &str) -> Result<AmplitudeID, LadduError> {
+    pub fn register_amplitude(&mut self, name: &str) -> LadduResult<AmplitudeID> {
         if self.amplitudes.contains_key(name) {
             return Err(LadduError::RegistrationError {
                 name: name.to_string(),

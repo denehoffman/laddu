@@ -2,10 +2,9 @@ use super::{AdlerZero, FixedKMatrix};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::{DatasetMetadata, EventData},
-    f64,
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    LadduError,
+    LadduError, LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -182,7 +181,7 @@ impl Amplitude for KopfKMatrixF0 {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.mass.bind(metadata)?;
             return resources

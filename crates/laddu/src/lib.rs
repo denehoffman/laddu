@@ -52,8 +52,8 @@
 //!
 //! ```rust,no_run
 //! use laddu::{
-//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduError, Mass,
-//!    ParameterID, ParameterLike, Parameters, Resources, PI, f64,
+//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, Mass,
+//!    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! };
 //! use laddu::traits::*;
 //! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
@@ -103,7 +103,7 @@
 //!         &mut self,
 //!         resources: &mut Resources,
 //!         metadata: Option<&DatasetMetadata>,
-//!     ) -> Result<AmplitudeID, LadduError> {
+//!     ) -> LadduResult<AmplitudeID> {
 //!         if let Some(metadata) = metadata {
 //!             self.daughter_1_mass.bind(metadata)?;
 //!             self.daughter_2_mass.bind(metadata)?;
@@ -147,8 +147,8 @@
 //! ```rust,no_run
 //! use laddu::{Scalar, Dataset, Mass, Manager, NLL, parameter};
 //! # use laddu::{
-//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduError,
-//! #    ParameterID, ParameterLike, Parameters, Resources, PI, f64,
+//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult,
+//! #    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! # };
 //! # use laddu::traits::*;
 //! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
@@ -198,7 +198,7 @@
 //! #         &mut self,
 //! #         resources: &mut Resources,
 //! #         metadata: Option<&DatasetMetadata>,
-//! #     ) -> Result<AmplitudeID, LadduError> {
+//! #     ) -> LadduResult<AmplitudeID> {
 //! #         if let Some(metadata) = metadata {
 //! #             self.daughter_1_mass.bind(metadata)?;
 //! #             self.daughter_2_mass.bind(metadata)?;
@@ -358,13 +358,12 @@ pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
 };
 pub use laddu_core::data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData};
-pub use laddu_core::f64;
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::LadduError;
+pub use laddu_core::LadduResult;
 pub use laddu_core::PI;
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};

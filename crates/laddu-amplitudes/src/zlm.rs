@@ -1,13 +1,12 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID},
     data::{DatasetMetadata, EventData},
-    f64,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    LadduError, Polarization, Sign,
+    LadduError, LadduResult, Polarization, Sign,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -66,7 +65,7 @@ impl Amplitude for Zlm {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.angles.costheta.bind(metadata)?;
             self.angles.phi.bind(metadata)?;
@@ -214,7 +213,7 @@ impl Amplitude for PolPhase {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.polarization.pol_angle.bind(metadata)?;
             self.polarization.pol_magnitude.bind(metadata)?;

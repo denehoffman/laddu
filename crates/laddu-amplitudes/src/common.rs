@@ -2,7 +2,7 @@ use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
-    LadduError,
+    LadduError, LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
@@ -38,7 +38,7 @@ impl Amplitude for Scalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if metadata.is_some() {
             return resources
                 .amplitude_id(&self.name)
@@ -122,7 +122,7 @@ impl Amplitude for ComplexScalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if metadata.is_some() {
             return resources
                 .amplitude_id(&self.name)
@@ -212,7 +212,7 @@ impl Amplitude for PolarComplexScalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if metadata.is_some() {
             return resources
                 .amplitude_id(&self.name)

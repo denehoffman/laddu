@@ -1,11 +1,10 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::{DatasetMetadata, EventData},
-    f64,
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
-    LadduError, ScalarID,
+    LadduError, LadduResult, ScalarID,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -62,7 +61,7 @@ impl Amplitude for PiecewiseScalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.variable.bind(metadata)?;
             return resources
@@ -214,7 +213,7 @@ impl Amplitude for PiecewiseComplexScalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.variable.bind(metadata)?;
             return resources
@@ -382,7 +381,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.variable.bind(metadata)?;
             return resources

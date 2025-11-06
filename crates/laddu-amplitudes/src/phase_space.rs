@@ -3,7 +3,7 @@ use laddu_core::{
     data::{DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
-    LadduError, Mandelstam, Mass, ScalarID, PI,
+    LadduError, LadduResult, Mandelstam, Mass, ScalarID, PI,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -73,7 +73,7 @@ impl Amplitude for PhaseSpaceFactor {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.recoil_mass.bind(metadata)?;
             self.daughter_1_mass.bind(metadata)?;

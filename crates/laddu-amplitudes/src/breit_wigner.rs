@@ -3,13 +3,12 @@ use serde::{Deserialize, Serialize};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
     data::{DatasetMetadata, EventData},
-    f64,
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
         functions::{blatt_weisskopf, breakup_momentum},
         variables::{Mass, Variable},
     },
-    LadduError, PI,
+    LadduError, LadduResult, PI,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -76,7 +75,7 @@ impl Amplitude for BreitWigner {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.daughter_1_mass.bind(metadata)?;
             self.daughter_2_mass.bind(metadata)?;

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{Dataset, DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
-    LadduError, ParameterID, ReadWrite,
+    LadduError, LadduResult, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -71,7 +71,7 @@ pub trait Amplitude: DynClone + Send + Sync {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError>;
+    ) -> LadduResult<AmplitudeID>;
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
@@ -510,7 +510,7 @@ impl Manager {
     ///
     /// The [`Amplitude`]'s name must be unique and not already
     /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
-    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> Result<AmplitudeID, LadduError> {
+    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> LadduResult<AmplitudeID> {
         let mut amp = amplitude.clone();
         let aid = amp.register(&mut self.resources, None)?;
         self.amplitudes.push(amp);
@@ -599,11 +599,11 @@ impl Evaluator {
         self.resources.read().parameters.iter().cloned().collect()
     }
     /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn activate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().activate(name)
     }
     /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().activate_many(names)
     }
     /// Activate all registered [`Amplitude`]s.
@@ -611,11 +611,11 @@ impl Evaluator {
         self.resources.write().activate_all();
     }
     /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().deactivate(name)
     }
     /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().deactivate_many(names)
     }
     /// Deactivate all registered [`Amplitude`]s.
@@ -623,11 +623,11 @@ impl Evaluator {
         self.resources.write().deactivate_all();
     }
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn isolate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().isolate(name)
     }
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().isolate_many(names)
     }
 
@@ -1187,7 +1187,7 @@ impl Amplitude for TestAmplitude {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if metadata.is_some() {
             return resources
                 .amplitude_id(&self.name)
@@ -1261,7 +1261,7 @@ mod tests {
             &mut self,
             resources: &mut Resources,
             metadata: Option<&DatasetMetadata>,
-        ) -> Result<AmplitudeID, LadduError> {
+        ) -> LadduResult<AmplitudeID> {
             if metadata.is_some() {
                 return resources.amplitude_id(&self.name).ok_or(
                     LadduError::AmplitudeNotFoundError {

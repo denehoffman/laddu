@@ -286,6 +286,9 @@ pub use amplitudes::{
 /// The mathematical constant $`\pi`$.
 pub const PI: f64 = std::f64::consts::PI;
 
+/// A [`Result`] type alias for [`LadduError`]s.
+pub type LadduResult<T> = Result<T, LadduError>;
+
 /// The error type used by all `laddu` internal methods
 #[derive(Error, Debug)]
 pub enum LadduError {

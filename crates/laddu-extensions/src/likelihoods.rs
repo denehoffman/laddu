@@ -12,9 +12,8 @@ use fastrand::Rng;
 use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
-    f64,
     resources::Parameters,
-    LadduError,
+    LadduError, LadduResult,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -101,12 +100,12 @@ impl NLL {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn activate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.activate(&name)?;
         self.accmc_evaluator.activate(&name)
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.activate_many(names)?;
         self.accmc_evaluator.activate_many(names)
     }
@@ -116,12 +115,12 @@ impl NLL {
         self.accmc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.deactivate(&name)?;
         self.accmc_evaluator.deactivate(&name)
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.deactivate_many(names)?;
         self.accmc_evaluator.deactivate_many(names)
     }
@@ -131,12 +130,12 @@ impl NLL {
         self.accmc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) -> Result<(), LadduError> {
+    pub fn isolate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.isolate(&name)?;
         self.accmc_evaluator.isolate(&name)
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> Result<(), LadduError> {
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.isolate_many(names)?;
         self.accmc_evaluator.isolate_many(names)
     }

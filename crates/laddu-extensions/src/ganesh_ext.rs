@@ -12,7 +12,7 @@ use ganesh::{
     core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status},
 };
-use laddu_core::{f64, LadduError};
+use laddu_core::{LadduError, LadduResult};
 use nalgebra::DVector;
 #[cfg(feature = "rayon")]
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -100,10 +100,10 @@ pub trait Threadable {
     /// # Errors
     ///
     /// This will return an error if there is any problem constructing the underlying thread pool.
-    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError>;
+    fn get_pool(&self) -> LadduResult<MaybeThreadPool>;
 }
 impl<P> Threadable for MinimizationSettings<P> {
-    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError> {
+    fn get_pool(&self) -> LadduResult<MaybeThreadPool> {
         #[cfg(feature = "rayon")]
         {
             Ok(MaybeThreadPool {
@@ -142,7 +142,7 @@ impl<P> Threadable for MinimizationSettings<P> {
 }
 
 impl<P> Threadable for MCMCSettings<P> {
-    fn get_pool(&self) -> Result<MaybeThreadPool, LadduError> {
+    fn get_pool(&self) -> LadduResult<MaybeThreadPool> {
         #[cfg(feature = "rayon")]
         {
             Ok(MaybeThreadPool {
@@ -192,11 +192,7 @@ where
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -228,11 +224,7 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for NLL {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -256,7 +248,7 @@ impl NLL {
     pub fn minimize(
         &self,
         settings: MinimizationSettings<Self>,
-    ) -> Result<MinimizationSummary, LadduError> {
+    ) -> LadduResult<MinimizationSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MinimizationSettings::LBFGSB {
@@ -309,7 +301,7 @@ impl NLL {
     ///
     /// This method may return an error if there was any problem constructing thread pools or
     /// evaluating the underlying model.
-    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> LadduResult<MCMCSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MCMCSettings::AIES {
@@ -338,11 +330,7 @@ impl NLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -374,11 +362,7 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -402,7 +386,7 @@ impl StochasticNLL {
     pub fn minimize(
         &self,
         settings: MinimizationSettings<Self>,
-    ) -> Result<MinimizationSummary, LadduError> {
+    ) -> LadduResult<MinimizationSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MinimizationSettings::LBFGSB {
@@ -455,7 +439,7 @@ impl StochasticNLL {
     ///
     /// This method may return an error if there was any problem constructing thread pools or
     /// evaluating the underlying model.
-    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> LadduResult<MCMCSummary> {
         let mtp = settings.get_pool()?;
         Ok(match settings {
             MCMCSettings::AIES {
@@ -484,11 +468,7 @@ impl StochasticNLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    fn evaluate(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -520,11 +500,7 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    fn log_density(
-        &self,
-        parameters: &DVector<f64>,
-        args: &MaybeThreadPool,
-    ) -> Result<f64, LadduError> {
+    fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
             Ok(-args
@@ -548,7 +524,7 @@ impl LikelihoodEvaluator {
     pub fn minimize(
         &self,
         settings: MinimizationSettings<Self>,
-    ) -> Result<MinimizationSummary, LadduError> {
+    ) -> LadduResult<MinimizationSummary> {
         let mtp = settings.get_pool()?;
         match settings {
             MinimizationSettings::LBFGSB {
@@ -600,7 +576,7 @@ impl LikelihoodEvaluator {
     ///
     /// This method may return an error if there was any problem constructing thread pools or
     /// evaluating the underlying model.
-    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> Result<MCMCSummary, LadduError> {
+    pub fn mcmc(&self, settings: MCMCSettings<Self>) -> LadduResult<MCMCSummary> {
         let mtp = settings.get_pool()?;
         match settings {
             MCMCSettings::AIES {

@@ -6,7 +6,7 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    LadduError,
+    LadduError, LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
@@ -47,7 +47,7 @@ impl Amplitude for Ylm {
         &mut self,
         resources: &mut Resources,
         metadata: Option<&DatasetMetadata>,
-    ) -> Result<AmplitudeID, LadduError> {
+    ) -> LadduResult<AmplitudeID> {
         if let Some(metadata) = metadata {
             self.angles.costheta.bind(metadata)?;
             self.angles.phi.bind(metadata)?;

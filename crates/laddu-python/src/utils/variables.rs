@@ -1,13 +1,12 @@
 use crate::data::{PyDataset, PyEvent};
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventData},
-    f64,
     traits::Variable,
     utils::variables::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
         VariableExpression,
     },
-    LadduError,
+    LadduError, LadduResult,
 };
 use numpy::PyArray1;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -902,7 +901,7 @@ impl PyMandelstam {
 
 #[typetag::serde]
 impl Variable for PyVariable {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         match self {
             PyVariable::Mass(mass) => mass.0.bind(metadata),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.bind(metadata),

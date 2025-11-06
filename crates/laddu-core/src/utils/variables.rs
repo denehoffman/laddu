@@ -13,7 +13,7 @@ use crate::{
         enums::{Channel, Frame},
         vectors::Vec3,
     },
-    LadduError,
+    LadduError, LadduResult,
 };
 
 use auto_ops::impl_op_ex;
@@ -27,7 +27,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// Bind the variable to dataset metadata so that any referenced names can be resolved to
     /// concrete indices. Implementations that do not require metadata may keep the default
     /// no-op.
-    fn bind(&mut self, _metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
         Ok(())
     }
 
@@ -163,10 +163,7 @@ impl VariableExpression {
 
     /// Comple the [`VariableExpression`] into a [`CompiledExpression`] bound to the supplied
     /// metadata so that all variable references are resolved.
-    pub(crate) fn compile(
-        &self,
-        metadata: &DatasetMetadata,
-    ) -> Result<CompiledExpression, LadduError> {
+    pub(crate) fn compile(&self, metadata: &DatasetMetadata) -> LadduResult<CompiledExpression> {
         let mut compiled = compile_expression(self.clone());
         compiled.bind(metadata)?;
         Ok(compiled)
@@ -225,7 +222,7 @@ pub(crate) struct CompiledExpression {
 }
 
 impl CompiledExpression {
-    pub fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    pub fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         for variable in &mut self.variables {
             variable.bind(metadata)?;
         }
@@ -339,7 +336,7 @@ impl P4Selection {
         }
     }
 
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         let mut resolved = Vec::with_capacity(self.names.len());
         for name in &self.names {
             let idx = metadata
@@ -389,7 +386,7 @@ impl AuxSelection {
         }
     }
 
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         let idx = metadata
             .aux_index(&self.name)
             .ok_or_else(|| LadduError::UnknownName {
@@ -439,7 +436,7 @@ impl Display for Mass {
 }
 #[typetag::serde]
 impl Variable for Mass {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.constituents.bind(metadata)
     }
 
@@ -508,7 +505,7 @@ impl Default for CosTheta {
 }
 #[typetag::serde]
 impl Variable for CosTheta {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.beam.bind(metadata)?;
         self.recoil.bind(metadata)?;
         self.daughter.bind(metadata)?;
@@ -611,7 +608,7 @@ impl Default for Phi {
 }
 #[typetag::serde]
 impl Variable for Phi {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.beam.bind(metadata)?;
         self.recoil.bind(metadata)?;
         self.daughter.bind(metadata)?;
@@ -741,7 +738,7 @@ impl PolAngle {
 }
 #[typetag::serde]
 impl Variable for PolAngle {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.beam.bind(metadata)?;
         self.recoil.bind(metadata)?;
         self.angle_aux.bind(metadata)?;
@@ -778,7 +775,7 @@ impl PolMagnitude {
 }
 #[typetag::serde]
 impl Variable for PolMagnitude {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.magnitude_aux.bind(metadata)
     }
 
@@ -877,7 +874,7 @@ impl Mandelstam {
         p3: P3,
         p4: P4,
         channel: Channel,
-    ) -> Result<Self, LadduError>
+    ) -> LadduResult<Self>
     where
         P1: IntoIterator,
         P1::Item: Into<String>,
@@ -930,7 +927,7 @@ impl Mandelstam {
 
 #[typetag::serde]
 impl Variable for Mandelstam {
-    fn bind(&mut self, metadata: &DatasetMetadata) -> Result<(), LadduError> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.p1.bind(metadata)?;
         self.p2.bind(metadata)?;
         self.p3.bind(metadata)?;

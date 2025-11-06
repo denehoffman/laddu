@@ -24,7 +24,7 @@ use crate::{
         variables::{Variable, VariableExpression},
         vectors::Vec4,
     },
-    LadduError,
+    LadduError, LadduResult,
 };
 use indexmap::IndexMap;
 
@@ -135,7 +135,7 @@ impl DatasetMetadata {
     pub fn new<P: Into<String>, A: Into<String>>(
         p4_names: Vec<P>,
         aux_names: Vec<A>,
-    ) -> Result<Self, LadduError> {
+    ) -> LadduResult<Self> {
         let mut p4_lookup = IndexMap::with_capacity(p4_names.len());
         let mut aux_lookup = IndexMap::with_capacity(aux_names.len());
         let p4_names: Vec<String> = p4_names
@@ -891,7 +891,7 @@ impl Dataset {
         mut variable: V,
         bins: usize,
         range: (f64, f64),
-    ) -> Result<BinnedDataset, LadduError>
+    ) -> LadduResult<BinnedDataset>
     where
         V: Variable,
     {
