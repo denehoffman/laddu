@@ -41,7 +41,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
-    fn value_on_local(&self, dataset: &Dataset) -> Result<Vec<f64>, LadduError> {
+    fn value_on_local(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         let mut variable = dyn_clone::clone_box(self);
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
@@ -63,11 +63,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     #[cfg(feature = "mpi")]
-    fn value_on_mpi(
-        &self,
-        dataset: &Dataset,
-        world: &SimpleCommunicator,
-    ) -> Result<Vec<f64>, LadduError> {
+    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> LadduResult<Vec<f64>> {
         let local_weights = self.value_on_local(dataset)?;
         let n_events = dataset.n_events();
         let mut buffer: Vec<f64> = vec![0.0; n_events];
@@ -81,7 +77,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
 
     /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
     /// [`Dataset`].
-    fn value_on(&self, dataset: &Dataset) -> Result<Vec<f64>, LadduError> {
+    fn value_on(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {

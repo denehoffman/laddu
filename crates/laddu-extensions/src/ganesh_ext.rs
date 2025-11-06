@@ -210,7 +210,7 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -348,7 +348,7 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
             Ok(args
@@ -486,7 +486,7 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
-    ) -> Result<DVector<f64>, LadduError> {
+    ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
             Ok(args

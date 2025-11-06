@@ -1,5 +1,5 @@
-use laddu_core::LadduError;
 use laddu_core::{traits::Variable, utils::histogram};
+use laddu_core::{LadduError, LadduResult};
 use nalgebra::DVector;
 
 use crate::{likelihoods::LikelihoodTerm, NLL};
@@ -249,11 +249,7 @@ impl<const P: usize> Regularizer<P> {
     /// # Errors
     ///
     /// This method will return a [`LadduError`] if the number of parameters and weights are not equal.
-    pub fn new<T, U, F>(
-        parameters: T,
-        lambda: f64,
-        weights: Option<F>,
-    ) -> Result<Box<Self>, LadduError>
+    pub fn new<T, U, F>(parameters: T, lambda: f64, weights: Option<F>) -> LadduResult<Box<Self>>
     where
         T: IntoIterator<Item = U>,
         U: AsRef<str>,

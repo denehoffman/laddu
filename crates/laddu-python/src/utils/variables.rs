@@ -6,7 +6,7 @@ use laddu_core::{
         Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
         VariableExpression,
     },
-    LadduError, LadduResult,
+    LadduResult,
 };
 use numpy::PyArray1;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -912,7 +912,7 @@ impl Variable for PyVariable {
         }
     }
 
-    fn value_on(&self, dataset: &Dataset) -> Result<Vec<f64>, LadduError> {
+    fn value_on(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         match self {
             PyVariable::Mass(mass) => mass.0.value_on(dataset),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value_on(dataset),

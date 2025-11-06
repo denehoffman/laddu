@@ -13,7 +13,7 @@ use laddu_core::{
     amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
     data::Dataset,
     resources::Parameters,
-    LadduError, LadduResult,
+    LadduResult,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -30,6 +30,8 @@ use crate::ganesh_ext::{
     py_ganesh::{FromPyArgs, PyMCMCSummary, PyMinimizationSummary},
     MCMCSettings, MinimizationSettings,
 };
+#[cfg(feature = "python")]
+use laddu_core::LadduError;
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyEvaluator, PyModel},
@@ -377,7 +379,7 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many(names)?;
@@ -439,7 +441,7 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
@@ -476,7 +478,7 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<Vec<f64>, LadduError> {
+    ) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
@@ -501,7 +503,7 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<(Vec<f64>, Vec<DVector<f64>>), LadduError> {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many(names)?;
@@ -602,7 +604,7 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Result<(Vec<f64>, Vec<DVector<f64>>), LadduError> {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
@@ -658,7 +660,7 @@ impl NLL {
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
-    ) -> Result<(Vec<f64>, Vec<DVector<f64>>), LadduError> {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {

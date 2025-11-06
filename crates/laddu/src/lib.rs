@@ -52,7 +52,7 @@
 //!
 //! ```rust,no_run
 //! use laddu::{
-//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, Mass,
+//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, LadduError, Mass,
 //!    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! };
 //! use laddu::traits::*;
@@ -147,7 +147,7 @@
 //! ```rust,no_run
 //! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
 //! # use laddu::{
-//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult,
+//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, LadduError,
 //! #    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! # };
 //! # use laddu::traits::*;
@@ -368,8 +368,8 @@ pub use laddu_core::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::LadduResult;
 pub use laddu_core::PI;
+pub use laddu_core::{LadduError, LadduResult};
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;

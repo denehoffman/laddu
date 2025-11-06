@@ -13,6 +13,7 @@ use std::{
     ops::{Deref, DerefMut, Index, IndexMut},
 };
 use std::{fmt::Display, fs::File};
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -867,7 +868,7 @@ impl Dataset {
 
     /// Filter the [`Dataset`] by a given [`VariableExpression`], selecting events for which
     /// the expression returns `true`.
-    pub fn filter(&self, expression: &VariableExpression) -> Result<Arc<Dataset>, LadduError> {
+    pub fn filter(&self, expression: &VariableExpression) -> LadduResult<Arc<Dataset>> {
         let compiled = expression.compile(&self.metadata)?;
         #[cfg(feature = "rayon")]
         let filtered_events: Vec<Arc<EventData>> = self
@@ -987,11 +988,11 @@ impl Dataset {
         ))
     }
     /// Evaluate a [`Variable`] on every event in the [`Dataset`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Result<Vec<f64>, LadduError> {
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> LadduResult<Vec<f64>> {
         variable.value_on(self)
     }
 
-    /// Open a Parquet file and construct a [`Dataset`] using named columns.
+    /// Open a file and construct a [`Dataset`] using named columns.
     ///
     /// Each entry in `p4_names` identifies a particle; the loader expects columns named
     /// ``{identifier}_px``, ``{identifier}_py``, ``{identifier}_pz``, and ``{identifier}_e`` for
@@ -1245,14 +1246,11 @@ struct P4Columns<'a> {
     e: FloatColumn<'a>,
 }
 
-fn prepare_float_column<'a>(
-    batch: &'a RecordBatch,
-    name: &str,
-) -> Result<FloatColumn<'a>, LadduError> {
+fn prepare_float_column<'a>(batch: &'a RecordBatch, name: &str) -> LadduResult<FloatColumn<'a>> {
     prepare_float_column_from_candidates(batch, &[name.to_string()], name)
 }
 
-fn prepare_p4_columns<'a>(batch: &'a RecordBatch, name: &str) -> Result<P4Columns<'a>, LadduError> {
+fn prepare_p4_columns<'a>(batch: &'a RecordBatch, name: &str) -> LadduResult<P4Columns<'a>> {
     Ok(P4Columns {
         px: prepare_float_column_from_candidates(
             batch,
@@ -1302,7 +1300,7 @@ fn prepare_float_column_from_candidates<'a>(
     batch: &'a RecordBatch,
     candidates: &[String],
     logical_name: &str,
-) -> Result<FloatColumn<'a>, LadduError> {
+) -> LadduResult<FloatColumn<'a>> {
     use arrow::datatypes::DataType;
 
     for candidate in candidates {
@@ -1339,7 +1337,7 @@ fn record_batch_to_events(
     p4_names: &[String],
     aux_names: &[String],
     boost_indices: Option<&[usize]>,
-) -> Result<Vec<Arc<EventData>>, LadduError> {
+) -> LadduResult<Vec<Arc<EventData>>> {
     let batch_ref = &batch;
     let p4_columns: Vec<P4Columns<'_>> = p4_names
         .iter()
