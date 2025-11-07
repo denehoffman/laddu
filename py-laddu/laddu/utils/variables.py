@@ -15,8 +15,8 @@ Examples
 ... }
 >>> dataset = Dataset.from_dict(columns)
 >>> mass = Mass(['kshort1', 'kshort2'])
->>> mass  # doctest: +ELLIPSIS
-Mass(...)
+>>> mass
+Mass { constituents: P4Selection { names: ["kshort1", "kshort2"], indices: [] } }
 """
 
 from laddu.laddu import (
