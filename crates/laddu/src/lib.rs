@@ -288,7 +288,8 @@
 //! | `kaon2_e`     | `Float32` or `Float64` | Decay product 2 energy               |
 //! | `weight`      | `Float32` or `Float64` | Event weight                         |
 //!
-//! To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository).
+//! To make it easier to get started, we can directly convert from the `AmpTools` format using the
+//! provided `amptools-to-laddu` script (see the `bin` directory of this repository).
 //!
 //! # MPI Support
 //!
