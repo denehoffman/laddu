@@ -44,8 +44,10 @@ pub struct PhaseSpaceFactor {
 }
 
 impl PhaseSpaceFactor {
-    /// Construct a new [`Zlm`] with the given name, angular momentum (`l`), moment (`m`), and
-    /// reflectivity (`r`) over the given set of [`Angles`] and [`Polarization`] [`Variable`]s.
+    /// Construct a new [`PhaseSpaceFactor`] that models the two-body phase-space density.
+    ///
+    /// Parameters specify the recoiling particle mass, the daughter masses, the resonance
+    /// mass, and the Mandelstam-s variable controlling the production kinematics.
     pub fn new(
         name: &str,
         recoil_mass: &Mass,

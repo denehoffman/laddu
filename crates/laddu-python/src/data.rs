@@ -327,6 +327,11 @@ impl PyDataset {
     /// boost_to_restframe_of : list[str], optional
     ///     Names of particles whose rest frame should be used to boost each event.
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu import Dataset  # doctest: +SKIP
+    /// >>> Dataset.open('demo.parquet', p4s=['beam', 'kshort1'])  # doctest: +SKIP
+    ///
     /// Notes
     /// -----
     /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
@@ -522,6 +527,13 @@ impl PyDataset {
     /// laddu.PolMagnitude
     /// laddu.Mandelstam
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu.utils.variables import Mass  # doctest: +SKIP
+    /// >>> binned = dataset.bin_by(Mass(['kshort1']), bins=10, range=(0.9, 1.5))  # doctest: +SKIP
+    /// >>> len(binned)  # doctest: +SKIP
+    /// 10
+    ///
     /// Raises
     /// ------
     /// TypeError
@@ -554,6 +566,11 @@ impl PyDataset {
     /// Dataset
     ///     The filtered Dataset
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu.utils.variables import Mass  # doctest: +SKIP
+    /// >>> heavy = dataset.filter(Mass(['kshort1']) > 1.0)  # doctest: +SKIP
+    ///
     pub fn filter(&self, expression: &PyVariableExpression) -> PyResult<PyDataset> {
         Ok(PyDataset(
             self.0.filter(&expression.0).map_err(PyErr::from)?,
@@ -573,6 +590,12 @@ impl PyDataset {
     /// Dataset
     ///     A bootstrapped Dataset
     ///
+    /// Examples
+    /// --------
+    /// >>> replica = dataset.bootstrap(2024)  # doctest: +SKIP
+    /// >>> len(replica) == len(dataset)  # doctest: +SKIP
+    /// True
+    ///
     fn bootstrap(&self, seed: usize) -> PyDataset {
         PyDataset(self.0.bootstrap(seed))
     }
@@ -589,6 +612,10 @@ impl PyDataset {
     /// Dataset
     ///     The boosted dataset
     ///
+    /// Examples
+    /// --------
+    /// >>> dataset.boost_to_rest_frame_of(['kshort1', 'kshort2'])  # doctest: +SKIP
+    ///
     pub fn boost_to_rest_frame_of(&self, names: Vec<String>) -> PyDataset {
         PyDataset(self.0.boost_to_rest_frame_of(&names))
     }
@@ -602,6 +629,12 @@ impl PyDataset {
     /// -------
     /// values : array_like
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu.utils.variables import Mass  # doctest: +SKIP
+    /// >>> masses = dataset.evaluate(Mass(['kshort1']))  # doctest: +SKIP
+    /// >>> masses.shape  # doctest: +SKIP
+    /// (len(dataset),)
     fn evaluate<'py>(
         &self,
         py: Python<'py>,

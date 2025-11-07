@@ -953,7 +953,7 @@ pub fn py_constant(value: f64) -> PyParameterLike {
     PyParameterLike(constant(value))
 }
 
-/// A amplitude used only for internal testing which evaluates (p0 + i * p1) * event.p4s[0].e
+/// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.
 #[pyfunction(name = "TestAmplitude")]
 pub fn py_test_amplitude(name: &str, re: PyParameterLike, im: PyParameterLike) -> PyAmplitude {
     PyAmplitude(TestAmplitude::new(name, re.0, im.0))
