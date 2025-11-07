@@ -1915,125 +1915,67 @@ impl PyNLL {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
-    /// algorithm has different settings:
+    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
+    /// recognises the following keys:
     ///
-    /// L-BFGS-B
-    /// ========
-    /// m : int, default=10
-    ///     The number of saved corrections to the approximated Hessian.
-    /// skip_hessian : bool, default=False
-    ///     If True, the exact Hessian will not be calculated.
-    /// line_search : dict
-    ///     Settings for the line search (see next section).
-    /// eps_f : float, default=`MACH_EPS^(1/2)`
-    ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float, default=1e-5
-    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
+    /// Available algorithms
+    /// --------------------
+    /// **`lbfgsb` (Limited-memory BFGS-B)**
+    ///     - `m` (int, default `10`): Number of correction vectors retained for the Hessian
+    ///       approximation.
+    ///     - `skip_hessian` (bool, default `False`): Skip the exact Hessian recomputation during
+    ///       convergence checks.
+    ///     - `line_search` (dict): fine-tunes the line search with entries such as::
     ///
-    /// Line Search
-    /// ===========
-    /// method : {"morethuente", "hagerzhang"}
-    ///     The line search method to use.
-    /// max_iterations : int, default=100
-    ///     The maximum number of line search iterations.
-    /// c1 : float, default=1e-4
-    ///     The first Wolfe condition constant (More-Thuente only).
-    /// c2 : float, default=0.9
-    ///     The second Wolfe condition constant (More-Thuente only).
-    /// max_zoom : int, default=100
-    ///     The maximum number of zoom steps (More-Thuente only).
-    /// delta : float, default=0.1
-    ///     The first Wolfe condition constant (Hager-Zhang only).
-    /// sigma : float, default=0.9
-    ///     The second Wolfe condition constant (Hager-Zhang only).
-    /// epsilon : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
-    /// theta : float, default=0.5
-    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
-    /// gamma : float, default=0.66
-    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
-    /// max_bisects : int, default=50
-    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///         {"method": "hagerzhang", "max_iterations": 100, "c1": 1e-4, "c2": 0.9}
     ///
-    /// Adam
-    /// ====
-    /// beta_c : float, default=0.9
-    ///     The slope of the exponential moving average used to terminate the algorithm.
-    /// eps_loss : float, default=`MACH_EPS^(1/2)`
-    ///     The minimum change in exponential moving average loss which will increase the patience counter.
-    /// patience : int, default=1
-    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///       Supported keys are `method` (`"morethuente"` or `"hagerzhang"`), `max_iterations`,
+    ///       `c1`, `c2`, `max_zoom`, `delta`, `sigma`, `epsilon`, `theta`, `gamma`, and
+    ///       `max_bisects`.
     ///
-    /// Nelder-Mead
-    /// ===========
-    /// alpha : float, default=1.0
-    ///     The reflection coefficient.
-    /// beta : float, default=2.0
-    ///     The expansion coefficient.
-    /// gamma : float, default=0.5
-    ///     The contraction coefficient.
-    /// delta : float, default=0.5
-    ///     The shrink coefficient.
-    /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
-    /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
-    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
-    ///     The method used to generate the initial simplex.
-    /// orthogonal_multiplier : float, default=1.05
-    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
-    /// orthogonal_zero_step : float, default=0.00025
-    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
-    /// simplex_size : float, default=1.0
-    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
-    /// simplex : list of list of floats
-    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
-    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_f : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the f_terminator method.
-    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_x : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the x_terminator method.
+    /// **`adam` (Adaptive Moment Estimation)**
+    ///     - `beta_c` (float, default `0.9`): Slope of the exponential moving average used to
+    ///       judge convergence.
+    ///     - `eps_loss` (float, default `sqrt(MACH_EPS)`): Minimum change in the averaged loss
+    ///       required to reset the patience counter.
+    ///     - `patience` (int, default `1`): Number of tolerated non-improving iterations.
     ///
-    /// Particle Swarm Optimization (PSO)
-    /// =================================
-    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
-    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
-    /// swarm_position_bounds : list of tuple of floats or None
-    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm_size : int
-    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm : list of list of floats
-    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
-    /// swarm_topology : {"global", "ring"}
-    ///     The topology connecting particles in the swarm.
-    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
-    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
-    /// swarm_boundary_method : {"inf", "shr"}
-    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
-    /// use_transform : bool, default=False
-    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
-    /// swarm_velocity_bounds : list of tuple of floats or None, optional
-    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
-    /// omega : float, default=0.8
-    ///     The inertial weight.
-    /// c1 : float, default = 0.1
-    ///     The cognitive weight.
-    /// c2 : float, default = 0.1
-    ///     The social weight.
+    /// **`nelder-mead` (Simplex search with adaptive parameters)**
+    ///     - `alpha`/`beta`/`gamma`/`delta` control the reflection, expansion, contraction, and
+    ///       shrink steps (defaults: `1.0`, `2.0`, `0.5`, `0.5`).
+    ///     - `adaptive` (bool): Enable the Gao & Han (2010) adaptive schedule.
+    ///     - `expansion_method`: Either `"greedyminimization"` or `"greedyexpansion"` (see
+    ///       Lagarias et al., 1998).
+    ///     - `simplex_construction_method`: `"scaledorthogonal"`, `"orthogonal"`, or `"custom"`.
+    ///       When `custom` is selected, provide `simplex` with explicit vertices.
+    ///     - `f_terminator` / `x_terminator` and their tolerances (`eps_f` / `eps_x`) choose the
+    ///       function- and position-based stopping criteria described by Singer & Singer (2004).
     ///
-    /// .. rubric:: References
+    /// **`pso` (Particle Swarm Optimisation)**
+    ///     - `swarm_position_initializer`: `"randominlimits"`, `"latinhypercube"`, or `"custom"`.
+    ///       Random initialisers require `swarm_position_bounds` and `swarm_size`; the custom mode
+    ///       consumes the `swarm` argument directly.
+    ///     - `swarm_topology` (`"global"` or `"ring"`) and `swarm_update_method`
+    ///       (`"sync"`/`"async"`) select the neighbourhood structure.
+    ///     - `swarm_boundary_method` (`"inf"` or `"shr"`) and `use_transform` control how bounds
+    ///       are enforced.
+    ///     - `swarm_velocity_bounds` (optional), `omega` (default `0.8`), `c1` and `c2` (defaults
+    ///       `0.1`) tune the particle dynamics.
     ///
-    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// References
+    /// ----------
+    /// Gao, F. & Han, L. (2010). *Implementing the Nelder-Mead simplex algorithm with adaptive
+    /// parameters*. Comput. Optim. Appl. 51(1), 259–277. <https://doi.org/10.1007/s10589-010-9329-3>
+    ///
+    /// Lagarias, J. C., Reeds, J. A., Wright, M. H., & Wright, P. E. (1998). *Convergence Properties
+    /// of the Nelder–Mead Simplex Method in Low Dimensions*. SIAM J. Optim. 9(1), 112–147.
+    /// <https://doi.org/10.1137/S1052623496303470>
+    ///
+    /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
+    /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2111,44 +2053,40 @@ impl PyNLL {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    /// See Also
+    /// --------
+    /// NLL.minimize
+    /// StochasticNLL.mcmc
+    ///
+    /// Examples
+    /// --------
+    /// >>> nll.mcmc([[0.0, 0.5]], method='ess', max_steps=512)  # doctest: +SKIP
+    ///
     /// Notes
     /// -----
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm has different settings.
+    /// algorithm exposes different keys:
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
-    /// =============================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
-    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
-    ///     parameter may be provided to specify properties of moves which support it. For the AIES
-    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
-    ///     (2.0 by default).
+    /// Sampling algorithms
+    /// -------------------
+    /// **`aies` (Affine-Invariant Ensemble Sampler; Goodman & Weare, 2010)**
+    ///     - `moves`: Sequence of tuples `("stretch", freq)` or `("walk", freq)`. The optional
+    ///       dictionary overrides parameters such as `{"a": 2.0}` for the stretch move.
+    ///     - `n_adaptive`: Number of adaptive warm-up steps (default `0`).
     ///
-    /// ESS (Ensemble Slice Sampler) [Karamanis]_
-    /// =================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
-    ///     should be used relative to the sum of all frequencies given across all moves. An
-    ///     optional middle dictionary parameter may be provided to specify properties of moves
-    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
-    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
-    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
-    ///     'n_components' parameter (5 by default) which represents the number of mixture
-    ///     components to use for clustering (should be larger than the expected number of modes).
-    /// n_adaptive : int, default=0
-    ///     The number of adaptive moves to perform at the start of sampling
-    /// max_steps : int, default=10000
-    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
-    /// mu : float, default = 1.0
-    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    /// **`ess` (Ensemble Slice Sampler; Karamanis & Beutler, 2021)**
+    ///     - `moves`: Sequence of tuples selecting `"differential"`, `"gaussian"`, or `"global"`
+    ///       moves. The optional dictionary configures `scale` (default `1.0`), `rescale_cov`
+    ///       (default `0.001`), and `n_components` (default `5`) for the global move.
+    ///     - `n_adaptive`: Number of adaptive moves to perform at the start of sampling (default `0`).
+    ///     - `max_steps`: Maximum number of expansions/contractions per slice-evaluation step (default `10000`).
+    ///     - `mu`: Adaptive scaling parameter used when `n_adaptive > 0` (default `1.0`).
     ///
-    /// .. rubric:: References
+    /// References
+    /// ----------
+    /// Goodman, J. & Weare, J. (2010). *Ensemble samplers with affine invariance*. CAMCoS 5(1), 65–80. <https://doi.org/10.2140/camcos.2010.5.65>
     ///
-    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2255,125 +2193,70 @@ impl PyStochasticNLL {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    /// Examples
+    /// --------
+    /// >>> nll.minimize([1.0, 0.1], method='lbfgsb', max_steps=200)  # doctest: +SKIP
+    ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
-    /// algorithm has different settings:
+    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
+    /// recognises the following keys:
     ///
-    /// L-BFGS-B
-    /// ========
-    /// m : int, default=10
-    ///     The number of saved corrections to the approximated Hessian.
-    /// skip_hessian : bool, default=False
-    ///     If True, the exact Hessian will not be calculated.
-    /// line_search : dict
-    ///     Settings for the line search (see next section).
-    /// eps_f : float, default=`MACH_EPS^(1/2)`
-    ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float, default=1e-5
-    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
+    /// Available algorithms
+    /// --------------------
+    /// **`lbfgsb` (Limited-memory BFGS-B)**
+    ///     - `m` (int, default `10`): Number of correction vectors retained for the Hessian
+    ///       approximation.
+    ///     - `skip_hessian` (bool, default `False`): Skip the exact Hessian recomputation during
+    ///       convergence checks.
+    ///     - `line_search` (dict): fine-tunes the line search with entries such as::
     ///
-    /// Line Search
-    /// ===========
-    /// method : {"morethuente", "hagerzhang"}
-    ///     The line search method to use.
-    /// max_iterations : int, default=100
-    ///     The maximum number of line search iterations.
-    /// c1 : float, default=1e-4
-    ///     The first Wolfe condition constant (More-Thuente only).
-    /// c2 : float, default=0.9
-    ///     The second Wolfe condition constant (More-Thuente only).
-    /// max_zoom : int, default=100
-    ///     The maximum number of zoom steps (More-Thuente only).
-    /// delta : float, default=0.1
-    ///     The first Wolfe condition constant (Hager-Zhang only).
-    /// sigma : float, default=0.9
-    ///     The second Wolfe condition constant (Hager-Zhang only).
-    /// epsilon : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
-    /// theta : float, default=0.5
-    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
-    /// gamma : float, default=0.66
-    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
-    /// max_bisects : int, default=50
-    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///         {"method": "hagerzhang", "max_iterations": 100, "c1": 1e-4, "c2": 0.9}
     ///
-    /// Adam
-    /// ====
-    /// beta_c : float, default=0.9
-    ///     The slope of the exponential moving average used to terminate the algorithm.
-    /// eps_loss : float, default=`MACH_EPS^(1/2)`
-    ///     The minimum change in exponential moving average loss which will increase the patience counter.
-    /// patience : int, default=1
-    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///       Supported keys are `method` (`"morethuente"` or `"hagerzhang"`), `max_iterations`,
+    ///       `c1`, `c2`, `max_zoom`, `delta`, `sigma`, `epsilon`, `theta`, `gamma`, and
+    ///       `max_bisects`.
     ///
-    /// Nelder-Mead
-    /// ===========
-    /// alpha : float, default=1.0
-    ///     The reflection coefficient.
-    /// beta : float, default=2.0
-    ///     The expansion coefficient.
-    /// gamma : float, default=0.5
-    ///     The contraction coefficient.
-    /// delta : float, default=0.5
-    ///     The shrink coefficient.
-    /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
-    /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
-    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
-    ///     The method used to generate the initial simplex.
-    /// orthogonal_multiplier : float, default=1.05
-    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
-    /// orthogonal_zero_step : float, default=0.00025
-    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
-    /// simplex_size : float, default=1.0
-    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
-    /// simplex : list of list of floats
-    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
-    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_f : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the f_terminator method.
-    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_x : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the x_terminator method.
+    /// **`adam` (Adaptive Moment Estimation)**
+    ///     - `beta_c` (float, default `0.9`): Slope of the exponential moving average used to
+    ///       judge convergence.
+    ///     - `eps_loss` (float, default `sqrt(MACH_EPS)`): Minimum change in the averaged loss
+    ///       required to reset the patience counter.
+    ///     - `patience` (int, default `1`): Number of tolerated non-improving iterations.
     ///
-    /// Particle Swarm Optimization (PSO)
-    /// =================================
-    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
-    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
-    /// swarm_position_bounds : list of tuple of floats or None
-    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm_size : int
-    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm : list of list of floats
-    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
-    /// swarm_topology : {"global", "ring"}
-    ///     The topology connecting particles in the swarm.
-    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
-    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
-    /// swarm_boundary_method : {"inf", "shr"}
-    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
-    /// use_transform : bool, default=False
-    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
-    /// swarm_velocity_bounds : list of tuple of floats or None, optional
-    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
-    /// omega : float, default=0.8
-    ///     The inertial weight.
-    /// c1 : float, default = 0.1
-    ///     The cognitive weight.
-    /// c2 : float, default = 0.1
-    ///     The social weight.
+    /// **`nelder-mead` (Simplex search with adaptive parameters)**
+    ///     - `alpha`/`beta`/`gamma`/`delta` control the reflection, expansion, contraction, and
+    ///       shrink steps (defaults: `1.0`, `2.0`, `0.5`, `0.5`).
+    ///     - `adaptive` (bool): Enable the Gao & Han (2010) adaptive schedule.
+    ///     - `expansion_method`: Either `"greedyminimization"` or `"greedyexpansion"` (see
+    ///       Lagarias et al., 1998).
+    ///     - `simplex_construction_method`: `"scaledorthogonal"`, `"orthogonal"`, or `"custom"`.
+    ///       When `custom` is selected, provide `simplex` with explicit vertices.
+    ///     - `f_terminator` / `x_terminator` and their tolerances (`eps_f` / `eps_x`) choose the
+    ///       function- and position-based stopping criteria described by Singer & Singer (2004).
     ///
-    /// .. rubric:: References
+    /// **`pso` (Particle Swarm Optimisation)**
+    ///     - `swarm_position_initializer`: `"randominlimits"`, `"latinhypercube"`, or `"custom"`.
+    ///       Random initialisers require `swarm_position_bounds` and `swarm_size`; the custom mode
+    ///       consumes the `swarm` argument directly.
+    ///     - `swarm_topology` (`"global"` or `"ring"`) and `swarm_update_method`
+    ///       (`"sync"`/`"async"`) select the neighbourhood structure.
+    ///     - `swarm_boundary_method` (`"inf"` or `"shr"`) and `use_transform` control how bounds
+    ///       are enforced.
+    ///     - `swarm_velocity_bounds` (optional), `omega` (default `0.8`), `c1` and `c2` (defaults
+    ///       `0.1`) tune the particle dynamics.
     ///
-    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// References
+    /// ----------
+    /// Gao, F. & Han, L. (2010). *Implementing the Nelder-Mead simplex algorithm with adaptive
+    /// parameters*. Comput. Optim. Appl. 51(1), 259–277. <https://doi.org/10.1007/s10589-010-9329-3>
+    ///
+    /// Lagarias, J. C., Reeds, J. A., Wright, M. H., & Wright, P. E. (1998). *Convergence Properties
+    /// of the Nelder–Mead Simplex Method in Low Dimensions*. SIAM J. Optim. 9(1), 112–147.
+    /// <https://doi.org/10.1137/S1052623496303470>
+    ///
+    /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
+    /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2450,44 +2333,41 @@ impl PyStochasticNLL {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    /// See Also
+    /// --------
+    /// StochasticNLL.minimize
+    /// NLL.mcmc
+    ///
+    /// Examples
+    /// --------
+    /// >>> s_nll = nll.to_stochastic(batch_size=2048, seed=1234)  # doctest: +SKIP
+    /// >>> s_nll.mcmc([[0.0, 0.5]], max_steps=1024)  # doctest: +SKIP
+    ///
     /// Notes
     /// -----
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm has different settings.
+    /// algorithm exposes different keys:
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
-    /// =============================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
-    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
-    ///     parameter may be provided to specify properties of moves which support it. For the AIES
-    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
-    ///     (2.0 by default).
+    /// Sampling algorithms
+    /// -------------------
+    /// **`aies` (Affine-Invariant Ensemble Sampler; Goodman & Weare, 2010)**
+    ///     - `moves`: Sequence of tuples `("stretch", freq)` or `("walk", freq)`. The optional
+    ///       dictionary overrides parameters such as `{"a": 2.0}` for the stretch move.
+    ///     - `n_adaptive`: Number of adaptive warm-up steps (default `0`).
     ///
-    /// ESS (Ensemble Slice Sampler) [Karamanis]_
-    /// =================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
-    ///     should be used relative to the sum of all frequencies given across all moves. An
-    ///     optional middle dictionary parameter may be provided to specify properties of moves
-    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
-    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
-    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
-    ///     'n_components' parameter (5 by default) which represents the number of mixture
-    ///     components to use for clustering (should be larger than the expected number of modes).
-    /// n_adaptive : int, default=0
-    ///     The number of adaptive moves to perform at the start of sampling
-    /// max_steps : int, default=10000
-    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
-    /// mu : float, default = 1.0
-    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    /// **`ess` (Ensemble Slice Sampler; Karamanis & Beutler, 2021)**
+    ///     - `moves`: Sequence of tuples selecting `"differential"`, `"gaussian"`, or `"global"`
+    ///       moves. The optional dictionary configures `scale` (default `1.0`), `rescale_cov`
+    ///       (default `0.001`), and `n_components` (default `5`) for the global move.
+    ///     - `n_adaptive`: Number of adaptive moves to perform at the start of sampling (default `0`).
+    ///     - `max_steps`: Maximum number of expansions/contractions per slice-evaluation step (default `10000`).
+    ///     - `mu`: Adaptive scaling parameter used when `n_adaptive > 0` (default `1.0`).
     ///
-    /// .. rubric:: References
+    /// References
+    /// ----------
+    /// Goodman, J. & Weare, J. (2010). *Ensemble samplers with affine invariance*. CAMCoS 5(1), 65–80. <https://doi.org/10.2140/camcos.2010.5.65>
     ///
-    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -2927,8 +2807,34 @@ impl_op_ex!(
 #[derive(Clone)]
 pub struct PyLikelihoodExpression(LikelihoodExpression);
 
-/// A convenience method to sum sequences of LikelihoodExpressions
+/// A convenience method to sum sequences of [`LikelihoodExpression`]s or identifiers.
 ///
+/// Parameters
+/// ----------
+/// terms : sequence of LikelihoodExpression or LikelihoodID
+///     A non-empty sequence whose elements are summed. Single-element sequences are returned
+///     unchanged while empty sequences evaluate to [`LikelihoodZero`].
+///
+/// Returns
+/// -------
+/// LikelihoodExpression
+///     A new expression representing the sum of all inputs.
+///
+/// See Also
+/// --------
+/// likelihood_product
+/// LikelihoodZero
+///
+/// Examples
+/// --------
+/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
+/// >>> manager = LikelihoodManager()
+/// >>> alpha = manager.register(LikelihoodScalar('alpha'))
+/// >>> expression = likelihood_sum([alpha])
+/// >>> manager.load(expression).evaluate([0.5])
+/// 0.5
+/// >>> manager.load(likelihood_sum([])).evaluate([])
+/// 0.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -2973,8 +2879,38 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
     ))
 }
 
-/// A convenience method to multiply sequences of LikelihoodExpressions
+/// A convenience method to multiply sequences of [`LikelihoodExpression`]s or identifiers.
 ///
+/// Parameters
+/// ----------
+/// terms : sequence of LikelihoodExpression or LikelihoodID
+///     A non-empty sequence whose elements are multiplied. Single-element sequences are returned
+///     unchanged while empty sequences evaluate to [`LikelihoodOne`].
+///
+/// Returns
+/// -------
+/// LikelihoodExpression
+///     A new expression representing the product of all inputs.
+///
+/// See Also
+/// --------
+/// likelihood_sum
+/// LikelihoodOne
+///
+/// Examples
+/// --------
+/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_product
+/// >>> manager = LikelihoodManager()
+/// >>> alpha = manager.register(LikelihoodScalar('alpha'))
+/// >>> beta = manager.register(LikelihoodScalar('beta'))
+/// >>> expression = likelihood_product([alpha, beta])
+/// >>> evaluator = manager.load(expression)
+/// >>> evaluator.parameters
+/// ['alpha', 'beta']
+/// >>> evaluator.evaluate([2.0, 3.0])
+/// 6.0
+/// >>> manager.load(likelihood_product([])).evaluate([])
+/// 1.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3018,16 +2954,50 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
     ))
 }
 
-/// A convenience class representing a zero-valued LikelihoodExpression
+/// A convenience constructor for a zero-valued [`LikelihoodExpression`].
 ///
+/// Returns
+/// -------
+/// LikelihoodExpression
+///     An expression that evaluates to ``0`` for any parameter values.
+///
+/// See Also
+/// --------
+/// LikelihoodOne
+/// likelihood_sum
+///
+/// Examples
+/// --------
+/// >>> from laddu import LikelihoodManager, LikelihoodZero
+/// >>> evaluator = LikelihoodManager().load(LikelihoodZero())
+/// >>> evaluator.parameters
+/// []
+/// >>> evaluator.evaluate([])
+/// 0.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodZero")]
 pub fn py_likelihood_zero() -> PyLikelihoodExpression {
     PyLikelihoodExpression(LikelihoodExpression::Zero)
 }
 
-/// A convenience class representing a unit-valued LikelihoodExpression
+/// A convenience constructor for a unit-valued [`LikelihoodExpression`].
 ///
+/// Returns
+/// -------
+/// LikelihoodExpression
+///     An expression that evaluates to ``1`` for any parameter values.
+///
+/// See Also
+/// --------
+/// LikelihoodZero
+/// likelihood_product
+///
+/// Examples
+/// --------
+/// >>> from laddu import LikelihoodManager, LikelihoodOne
+/// >>> evaluator = LikelihoodManager().load(LikelihoodOne())
+/// >>> evaluator.evaluate([])
+/// 1.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodOne")]
 pub fn py_likelihood_one() -> PyLikelihoodExpression {
@@ -3341,125 +3311,70 @@ impl PyLikelihoodEvaluator {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    /// Examples
+    /// --------
+    /// >>> s_nll.minimize([1.0, 0.1], method='adam', max_steps=500)  # doctest: +SKIP
+    ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
-    /// algorithm has different settings:
+    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
+    /// recognises the following keys:
     ///
-    /// L-BFGS-B
-    /// ========
-    /// m : int, default=10
-    ///     The number of saved corrections to the approximated Hessian.
-    /// skip_hessian : bool, default=False
-    ///     If True, the exact Hessian will not be calculated.
-    /// line_search : dict
-    ///     Settings for the line search (see next section).
-    /// eps_f : float,  default=`MACH_EPS^(1/2)`
-    ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float, default=1e-5
-    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
+    /// Available algorithms
+    /// --------------------
+    /// **`lbfgsb` (Limited-memory BFGS-B)**
+    ///     - `m` (int, default `10`): Number of correction vectors retained for the Hessian
+    ///       approximation.
+    ///     - `skip_hessian` (bool, default `False`): Skip the exact Hessian recomputation during
+    ///       convergence checks.
+    ///     - `line_search` (dict): fine-tunes the line search with entries such as::
     ///
-    /// Line Search
-    /// ===========
-    /// method : {"morethuente", "hagerzhang"}
-    ///     The line search method to use.
-    /// max_iterations : int, default=100
-    ///     The maximum number of line search iterations.
-    /// c1 : float, default=1e-4
-    ///     The first Wolfe condition constant (More-Thuente only).
-    /// c2 : float, default=0.9
-    ///     The second Wolfe condition constant (More-Thuente only).
-    /// max_zoom : int, default=100
-    ///     The maximum number of zoom steps (More-Thuente only).
-    /// delta : float, default=0.1
-    ///     The first Wolfe condition constant (Hager-Zhang only).
-    /// sigma : float, default=0.9
-    ///     The second Wolfe condition constant (Hager-Zhang only).
-    /// epsilon : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
-    /// theta : float, default=0.5
-    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
-    /// gamma : float, default=0.66
-    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
-    /// max_bisects : int, default=50
-    ///     The maximum number of allowed bisections (Hager-Zhang only).
+    ///         {"method": "hagerzhang", "max_iterations": 100, "c1": 1e-4, "c2": 0.9}
     ///
-    /// Adam
-    /// ====
-    /// beta_c : float, default=0.9
-    ///     The slope of the exponential moving average used to terminate the algorithm.
-    /// eps_loss : float, default=`MACH_EPS^(1/2)`
-    ///     The minimum change in exponential moving average loss which will increase the patience counter.
-    /// patience : int, default=1
-    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
+    ///       Supported keys are `method` (`"morethuente"` or `"hagerzhang"`), `max_iterations`,
+    ///       `c1`, `c2`, `max_zoom`, `delta`, `sigma`, `epsilon`, `theta`, `gamma`, and
+    ///       `max_bisects`.
     ///
-    /// Nelder-Mead
-    /// ===========
-    /// alpha : float, default=1.0
-    ///     The reflection coefficient.
-    /// beta : float, default=2.0
-    ///     The expansion coefficient.
-    /// gamma : float, default=0.5
-    ///     The contraction coefficient.
-    /// delta : float, default=0.5
-    ///     The shrink coefficient.
-    /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han[Gao]_.
-    /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See [Lagarias]_ for details.
-    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
-    ///     The method used to generate the initial simplex.
-    /// orthogonal_multiplier : float, default=1.05
-    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
-    /// orthogonal_zero_step : float, default=0.00025
-    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
-    /// simplex_size : float, default=1.0
-    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
-    /// simplex : list of list of floats
-    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
-    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_f : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the f_terminator method.
-    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See [Singer]_ for details. Set to None to skip this check.
-    /// eps_x : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the x_terminator method.
+    /// **`adam` (Adaptive Moment Estimation)**
+    ///     - `beta_c` (float, default `0.9`): Slope of the exponential moving average used to
+    ///       judge convergence.
+    ///     - `eps_loss` (float, default `sqrt(MACH_EPS)`): Minimum change in the averaged loss
+    ///       required to reset the patience counter.
+    ///     - `patience` (int, default `1`): Number of tolerated non-improving iterations.
     ///
-    /// Particle Swarm Optimization (PSO)
-    /// =================================
-    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
-    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
-    /// swarm_position_bounds : list of tuple of floats or None
-    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm_size : int
-    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm : list of list of floats
-    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
-    /// swarm_topology : {"global", "ring"}
-    ///     The topology connecting particles in the swarm.
-    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
-    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
-    /// swarm_boundary_method : {"inf", "shr"}
-    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
-    /// use_transform : bool, default=False
-    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
-    /// swarm_velocity_bounds : list of tuple of floats or None, optional
-    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
-    /// omega : float, default=0.8
-    ///     The inertial weight.
-    /// c1 : float, default = 0.1
-    ///     The cognitive weight.
-    /// c2 : float, default = 0.1
-    ///     The social weight.
+    /// **`nelder-mead` (Simplex search with adaptive parameters)**
+    ///     - `alpha`/`beta`/`gamma`/`delta` control the reflection, expansion, contraction, and
+    ///       shrink steps (defaults: `1.0`, `2.0`, `0.5`, `0.5`).
+    ///     - `adaptive` (bool): Enable the Gao & Han (2010) adaptive schedule.
+    ///     - `expansion_method`: Either `"greedyminimization"` or `"greedyexpansion"` (see
+    ///       Lagarias et al., 1998).
+    ///     - `simplex_construction_method`: `"scaledorthogonal"`, `"orthogonal"`, or `"custom"`.
+    ///       When `custom` is selected, provide `simplex` with explicit vertices.
+    ///     - `f_terminator` / `x_terminator` and their tolerances (`eps_f` / `eps_x`) choose the
+    ///       function- and position-based stopping criteria described by Singer & Singer (2004).
     ///
-    /// .. rubric:: References
+    /// **`pso` (Particle Swarm Optimisation)**
+    ///     - `swarm_position_initializer`: `"randominlimits"`, `"latinhypercube"`, or `"custom"`.
+    ///       Random initialisers require `swarm_position_bounds` and `swarm_size`; the custom mode
+    ///       consumes the `swarm` argument directly.
+    ///     - `swarm_topology` (`"global"` or `"ring"`) and `swarm_update_method`
+    ///       (`"sync"`/`"async"`) select the neighbourhood structure.
+    ///     - `swarm_boundary_method` (`"inf"` or `"shr"`) and `use_transform` control how bounds
+    ///       are enforced.
+    ///     - `swarm_velocity_bounds` (optional), `omega` (default `0.8`), `c1` and `c2` (defaults
+    ///       `0.1`) tune the particle dynamics.
     ///
-    /// .. [Gao] F. Gao and L. Han, “Implementing the Nelder-Mead simplex algorithm with adaptive parameters,” Comput Optim Appl, vol. 51, no. 1, pp. 259–277, May 2010, doi: 10.1007/s10589-010-9329-3.
-    /// .. [Lagarias] J. C. Lagarias, J. A. Reeds, M. H. Wright, and P. E. Wright, “Convergence Properties of the Nelder--Mead Simplex Method in Low Dimensions,” SIAM J. Optim., vol. 9, no. 1, pp. 112–147, Jan. 1998, doi: 10.1137/s1052623496303470.
-    /// .. [Singer] S. Singer and S. Singer, “Efficient Implementation of the Nelder–Mead Search Algorithm,” Appl Numer Analy &amp; Comput, vol. 1, no. 2, pp. 524–534, Dec. 2004, doi: 10.1002/anac.200410015.
+    /// References
+    /// ----------
+    /// Gao, F. & Han, L. (2010). *Implementing the Nelder-Mead simplex algorithm with adaptive
+    /// parameters*. Comput. Optim. Appl. 51(1), 259–277. <https://doi.org/10.1007/s10589-010-9329-3>
+    ///
+    /// Lagarias, J. C., Reeds, J. A., Wright, M. H., & Wright, P. E. (1998). *Convergence Properties
+    /// of the Nelder–Mead Simplex Method in Low Dimensions*. SIAM J. Optim. 9(1), 112–147.
+    /// <https://doi.org/10.1137/S1052623496303470>
+    ///
+    /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
+    /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -3536,42 +3451,55 @@ impl PyLikelihoodEvaluator {
     /// Exception
     ///     If there was an error building the thread pool
     ///
+    /// See Also
+    /// --------
+    /// NLL.mcmc
+    /// StochasticNLL.mcmc
+    ///
+    /// Examples
+    /// --------
+    /// >>> manager = LikelihoodManager()  # doctest: +SKIP
+    /// >>> scale = manager.register(LikelihoodScalar('scale'))  # doctest: +SKIP
+    /// >>> evaluator = manager.load(likelihood_sum([scale]))  # doctest: +SKIP
+    /// >>> evaluator.minimize([1.0], method='pso', max_steps=150)  # doctest: +SKIP
+    ///
+    /// Examples
+    /// --------
+    /// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
+    /// >>> manager = LikelihoodManager()
+    /// >>> alpha = manager.register(LikelihoodScalar('alpha'))
+    /// >>> evaluator = manager.load(likelihood_sum([alpha]))
+    /// >>> summary = evaluator.mcmc([[0.0], [0.4]], max_steps=4, method='aies')
+    /// >>> summary.dimension[2]
+    /// 1
+    /// >>> summary.get_flat_chain().shape[1]
+    /// 1
+    ///
     /// Notes
     /// -----
     /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm has different settings.
+    /// algorithm exposes different keys:
     ///
-    /// AIES (Affine-Invariant Ensemble Sampler) [Goodman]_
-    /// =============================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
-    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
-    ///     parameter may be provided to specify properties of moves which support it. For the AIES
-    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
-    ///     (2.0 by default).
+    /// Sampling algorithms
+    /// -------------------
+    /// **`aies` (Affine-Invariant Ensemble Sampler; Goodman & Weare, 2010)**
+    ///     - `moves`: Sequence of tuples `("stretch", freq)` or `("walk", freq)`. The optional
+    ///       dictionary overrides parameters such as `{"a": 2.0}` for the stretch move.
+    ///     - `n_adaptive`: Number of adaptive warm-up steps (default `0`).
     ///
-    /// ESS (Ensemble Slice Sampler) [Karamanis]_
-    /// =================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
-    ///     should be used relative to the sum of all frequencies given across all moves. An
-    ///     optional middle dictionary parameter may be provided to specify properties of moves
-    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
-    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
-    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
-    ///     'n_components' parameter (5 by default) which represents the number of mixture
-    ///     components to use for clustering (should be larger than the expected number of modes).
-    /// n_adaptive : int, default=0
-    ///     The number of adaptive moves to perform at the start of sampling
-    /// max_steps : int, default=10000
-    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
-    /// mu : float, default = 1.0
-    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    /// **`ess` (Ensemble Slice Sampler; Karamanis & Beutler, 2021)**
+    ///     - `moves`: Sequence of tuples selecting `"differential"`, `"gaussian"`, or `"global"`
+    ///       moves. The optional dictionary configures `scale` (default `1.0`), `rescale_cov`
+    ///       (default `0.001`), and `n_components` (default `5`) for the global move.
+    ///     - `n_adaptive`: Number of adaptive moves to perform at the start of sampling (default `0`).
+    ///     - `max_steps`: Maximum number of expansions/contractions per slice-evaluation step (default `10000`).
+    ///     - `mu`: Adaptive scaling parameter used when `n_adaptive > 0` (default `1.0`).
     ///
-    /// .. [Goodman] J. Goodman and J. Weare, “Ensemble samplers with affine invariance,” CAMCoS, vol. 5, no. 1, pp. 65–80, Jan. 2010, doi: 10.2140/camcos.2010.5.65.
-    /// .. [Karamanis] M. Karamanis and F. Beutler, “Ensemble slice sampling,” Stat Comput, vol. 31, no. 5, Aug. 2021, doi: 10.1007/s11222-021-10038-2.
+    /// References
+    /// ----------
+    /// Goodman, J. & Weare, J. (2010). *Ensemble samplers with affine invariance*. CAMCoS 5(1), 65–80. <https://doi.org/10.2140/camcos.2010.5.65>
+    ///
+    /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
@@ -3640,17 +3568,31 @@ impl LikelihoodTerm for LikelihoodScalar {
     }
 }
 
-/// A parameterized scalar term which can be added to a LikelihoodManager
+/// A parameterized scalar term which can be added to a [`LikelihoodManager`].
 ///
 /// Parameters
 /// ----------
 /// name : str
-///     The name of the new scalar parameter
+///     The name of the new scalar parameter.
 ///
 /// Returns
 /// -------
 /// LikelihoodTerm
+///     A [`LikelihoodTerm`] representing a single free scaling parameter.
 ///
+/// See Also
+/// --------
+/// likelihood_sum
+/// LikelihoodManager.register
+///
+/// Examples
+/// --------
+/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
+/// >>> manager = LikelihoodManager()
+/// >>> scale = manager.register(LikelihoodScalar('alpha'))
+/// >>> evaluator = manager.load(likelihood_sum([scale]))
+/// >>> evaluator.evaluate([1.25])
+/// 1.25
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodScalar")]
 pub fn py_likelihood_scalar(name: String) -> PyLikelihoodTerm {

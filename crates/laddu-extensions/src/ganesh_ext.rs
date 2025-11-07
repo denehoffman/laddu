@@ -2800,20 +2800,29 @@ pub mod py_ganesh {
     }
 
     /// Calculate the integrated autocorrelation time for each parameter according to
-    /// [Karamanis]_
+    /// Karamanis & Beutler (2021)
     ///
     /// Parameters
     /// ----------
     /// x : array_like
     ///     An array of dimension ``(n_walkers, n_steps, n_parameters)``
     /// c : float, default = 7.0
-    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
+    ///     Set the time window for Sokal's autowindowing function (Sokal, 1997). If None, the default window
     ///     size of 7.0 is used.
     ///
-    /// .. rubric:: References
+    /// Examples
+    /// --------
+    /// >>> import numpy as np
+    /// >>> from laddu import integrated_autocorrelation_times
+    /// >>> samples = np.random.randn(4, 16, 2).tolist()
+    /// >>> integrated_autocorrelation_times(samples).shape
+    /// (2,)
     ///
-    /// .. [Karamanis] Karamanis, M., & Beutler, F. (2021). Ensemble slice sampling. Statistics and Computing, 31(5). https://doi.org/10.1007/s11222-021-10038-2
-    /// .. [Sokal] Sokal, A. (1997). Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms. In NATO ASI Series (pp. 131–192). Springer US. https://doi.org/10.1007/978-1-4899-0319-8_6
+    /// References
+    /// ----------
+    /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat. Comput. 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
+    ///
+    /// Sokal, A. (1997). *Monte Carlo Methods in Statistical Mechanics: Foundations and New Algorithms*. NATO ASI Series, 131–192. <https://doi.org/10.1007/978-1-4899-0319-8_6>
     ///
     #[pyfunction(name = "integrated_autocorrelation_times")]
     #[pyo3(signature = (samples, *, c=None))]
@@ -2831,7 +2840,7 @@ pub mod py_ganesh {
             .to_pyarray(py)
     }
 
-    /// A terminator for MCMC algorithms that monitors autocorrelation according to [Karamanis]_.
+    /// A terminator for MCMC algorithms that monitors autocorrelation according to Karamanis & Beutler (2021).
     ///
     /// Parameters
     /// ----------
@@ -2848,10 +2857,18 @@ pub mod py_ganesh {
     ///     If set to False, the terminator will act like an observer and only store
     ///     autocorrelation times.
     /// sokal_window : float, default=None
-    ///     Set the time window for Sokal's autowindowing function[Sokal]_. If None, the default window
+    ///     Set the time window for Sokal's autowindowing function (Sokal, 1997). If None, the default window
     ///     size of 7.0 is used.
     /// verbose : bool, default=False
     ///     Print autocorrelation information at each check step.
+    ///
+    /// Examples
+    /// --------
+    /// .. code-block:: python
+    ///
+    ///     terminator = AutocorrelationTerminator(n_check=25, discard=0.3)
+    ///     summary = evaluator.mcmc(p0, terminators=[terminator])
+    ///     print(terminator.taus)
     ///
     #[pyclass(name = "AutocorrelationTerminator", module = "laddu")]
     #[derive(Clone)]

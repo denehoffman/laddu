@@ -10,9 +10,17 @@ pub mod variables;
 pub mod vectors;
 
 /// A helper method to get histogram edges from evenly-spaced `bins` over a given `range`
+///
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_index`]
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::get_bin_edges;
+///
+/// assert_eq!(get_bin_edges(3, (0.0, 3.0)), vec![0.0, 1.0, 2.0, 3.0]);
+/// ```
 pub fn get_bin_edges(bins: usize, range: (f64, f64)) -> Vec<f64> {
     let bin_width = (range.1 - range.0) / (bins as f64);
     (0..=bins)
@@ -26,6 +34,14 @@ pub fn get_bin_edges(bins: usize, range: (f64, f64)) -> Vec<f64> {
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_edges`]
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::get_bin_index;
+///
+/// assert_eq!(get_bin_index(0.25, 4, (0.0, 1.0)), Some(1));
+/// assert_eq!(get_bin_index(1.5, 4, (0.0, 1.0)), None);
+/// ```
 pub fn get_bin_index(value: f64, bins: usize, range: (f64, f64)) -> Option<usize> {
     if value >= range.0 && value < range.1 {
         let bin_width = (range.1 - range.0) / bins as f64;
@@ -46,6 +62,17 @@ pub struct Histogram {
 
 /// A method which creates a histogram from some data by binning it with evenly spaced `bins` within
 /// the given `range`
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::histogram;
+///
+/// let values = vec![0.1, 0.4, 0.8];
+/// let weights: Option<&[f64]> = None;
+/// let hist = histogram(values.as_slice(), 2, (0.0, 1.0), weights);
+/// assert_eq!(hist.counts, vec![2.0, 1.0]);
+/// assert_eq!(hist.bin_edges, vec![0.0, 0.5, 1.0]);
+/// ```
 pub fn histogram<T: AsRef<[f64]>>(
     values: T,
     bins: usize,

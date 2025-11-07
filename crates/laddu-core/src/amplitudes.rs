@@ -104,7 +104,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// most part, [`EventData`]s can be interacted with via
     /// [`Variable`](crate::utils::variables::Variable)s, while [`Parameters`] and the
     /// [`Cache`] are more like key-value storage accessed by
-    /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
+    /// [`ParameterID`]s and several different types of cache
     /// IDs.
     fn compute(&self, parameters: &Parameters, event: &EventData, cache: &Cache) -> Complex64;
 
@@ -113,7 +113,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`Cache`], for documentation on their available methods. For the most part,
     /// [`EventData`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
     /// while [`Parameters`] and the [`Cache`] are more like key-value storage accessed by
-    /// [`ParameterID`](crate::resources::ParameterID)s and several different types of cache
+    /// [`ParameterID`]s and several different types of cache
     /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
     /// improve performance for some derivative-using methods of minimization. The default
     /// implementation calculates a central finite difference across all parameters, regardless of

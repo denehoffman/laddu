@@ -6,7 +6,15 @@ use nalgebra::{Vector3, Vector4};
 
 use serde::{Deserialize, Serialize};
 
-/// A vector with three components
+/// A vector with three components.
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::vectors::Vec3;
+///
+/// let cross = Vec3::x().cross(&Vec3::y());
+/// assert_eq!(cross, Vec3::z());
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec3 {
     /// The x-component of the vector
@@ -236,7 +244,16 @@ impl_op_ex_commutative!(-|a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x - b, a.y - 
 impl_op_ex_commutative!(*|a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x * b, a.y * b, a.z * b) });
 impl_op_ex!(/ |a: &Vec3, b: &f64| -> Vec3 { Vec3::new(a.x / b, a.y / b, a.z / b) });
 
-/// A vector with four components (a Lorentz vector)
+/// A four-vector (Lorentz vector) whose last component stores the energy.
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::vectors::{Vec3, Vec4};
+///
+/// let momentum = Vec3::new(1.0, 0.0, 0.0);
+/// let four_vector = momentum.with_mass(2.0);
+/// assert!((four_vector.m2() - 4.0).abs() < 1e-12);
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vec4 {
     /// The x-component of the vector
