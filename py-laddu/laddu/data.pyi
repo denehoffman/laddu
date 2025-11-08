@@ -111,8 +111,8 @@ class Dataset:
     def open(
         path: str | Path,
         *,
-        p4s: list[str],
-        aux: list[str],
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
         boost_to_restframe_of: list[str] | None = None,
     ) -> Dataset: ...
     def evaluate(

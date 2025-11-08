@@ -59,7 +59,7 @@ pub mod mpi {
         if let Some(world) = crate::mpi::get_world() {
             world.rank() == ROOT_RANK
         } else {
-            false
+            true
         }
     }
 
@@ -68,24 +68,20 @@ pub mod mpi {
     pub fn get_world() -> Option<SimpleCommunicator> {
         if let Some(universe_lock) = MPI_UNIVERSE.get() {
             if let Some(universe) = &*universe_lock.read() {
-                let world = universe.world();
-                if world.size() == 1 {
-                    return None;
-                }
-                return Some(world);
+                return Some(universe.world());
             }
         }
         None
     }
 
     /// Get the rank of the current process
-    pub fn get_rank() -> Option<i32> {
-        get_world().map(|w| w.rank())
+    pub fn get_rank() -> i32 {
+        get_world().map(|w| w.rank()).unwrap_or(ROOT_RANK)
     }
 
     /// Get number of available processes/ranks
-    pub fn get_size() -> Option<i32> {
-        get_world().map(|w| w.size())
+    pub fn get_size() -> i32 {
+        get_world().map(|w| w.size()).unwrap_or(1)
     }
 
     /// Use the MPI backend
