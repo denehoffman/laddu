@@ -408,93 +408,6 @@ impl Dataset {
     }
 
     #[cfg(feature = "mpi")]
-    fn get_rank_index(index: usize, displs: &[i32], world: &SimpleCommunicator) -> (i32, usize) {
-        for (i, &displ) in displs.iter().enumerate() {
-            if displ as usize > index {
-                return (i as i32 - 1, index - displs[i - 1] as usize);
-            }
-        }
-        (
-            world.size() - 1,
-            index - displs[world.size() as usize - 1] as usize,
-        )
-    }
-
-    /// Return the counts, displacements, and local indices for the current MPI rank.
-    ///
-    /// This method is useful for processing scalar values over a batch of [`EventData`]s rather than
-    /// the entire dataset.
-    #[cfg(feature = "mpi")]
-    pub fn get_counts_displs_locals_from_indices(
-        &self,
-        indices: &[usize],
-        world: &SimpleCommunicator,
-    ) -> (Vec<i32>, Vec<i32>, Vec<usize>) {
-        let mut counts = vec![0i32; world.size() as usize];
-        let mut displs = vec![0i32; world.size() as usize];
-        let (_, global_displs) = world.get_counts_displs(self.n_events());
-        let owning_rank_locals: Vec<(i32, usize)> = indices
-            .iter()
-            .map(|i| Dataset::get_rank_index(*i, &global_displs, world))
-            .collect();
-        let mut locals_by_rank = vec![Vec::new(); world.size() as usize];
-        for &(r, li) in owning_rank_locals.iter() {
-            locals_by_rank[r as usize].push(li);
-        }
-        for rank in 0..world.size() as usize {
-            counts[rank] = locals_by_rank[rank].len() as i32;
-            displs[rank] = if rank == 0 {
-                0
-            } else {
-                displs[rank - 1] + counts[rank - 1]
-            };
-        }
-        (
-            counts,
-            displs,
-            locals_by_rank[world.rank() as usize].clone(),
-        )
-    }
-
-    /// Return the counts, displacements, and local indices for the current MPI rank, flattened to
-    /// account for vectors of a given internal length.
-    ///
-    /// This method is useful for processing vector values over a batch of [`EventData`]s rather than
-    /// the entire dataset.
-    #[cfg(feature = "mpi")]
-    pub fn get_flattened_counts_displs_locals_from_indices(
-        &self,
-        indices: &[usize],
-        internal_len: usize,
-        world: &SimpleCommunicator,
-    ) -> (Vec<i32>, Vec<i32>, Vec<usize>) {
-        let mut counts = vec![0i32; world.size() as usize];
-        let mut displs = vec![0i32; world.size() as usize];
-        let (_, global_displs) = world.get_counts_displs(self.n_events());
-        let owning_rank_locals: Vec<(i32, usize)> = indices
-            .iter()
-            .map(|i| Dataset::get_rank_index(*i, &global_displs, world))
-            .collect();
-        let mut locals_by_rank = vec![Vec::new(); world.size() as usize];
-        for &(r, li) in owning_rank_locals.iter() {
-            locals_by_rank[r as usize].push(li);
-        }
-        for rank in 0..world.size() as usize {
-            counts[rank] = (locals_by_rank[rank].len() * internal_len) as i32;
-            displs[rank] = if rank == 0 {
-                0
-            } else {
-                displs[rank - 1] + counts[rank - 1]
-            };
-        }
-        (
-            counts,
-            displs,
-            locals_by_rank[world.rank() as usize].clone(),
-        )
-    }
-
-    #[cfg(feature = "mpi")]
     fn partition(
         events: Vec<Arc<EventData>>,
         world: &SimpleCommunicator,
@@ -529,8 +442,8 @@ impl Dataset {
     /// ```
     #[cfg(feature = "mpi")]
     pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
-        let (_, displs) = world.get_counts_displs(self.n_events());
-        let (owning_rank, local_index) = Dataset::get_rank_index(index, &displs, world);
+        let total = self.n_events();
+        let (owning_rank, local_index) = world.owner_of_global_index(index, total);
         let mut serialized_event_buffer_len: usize = 0;
         let mut serialized_event_buffer: Vec<u8> = Vec::default();
         let config = bincode::config::standard();
@@ -824,11 +737,10 @@ impl Dataset {
             indices.sort();
         }
         world.process_at_root().broadcast_into(&mut indices);
-        let (_, displs) = world.get_counts_displs(self.n_events());
         let local_indices: Vec<usize> = indices
             .into_iter()
             .filter_map(|idx| {
-                let (owning_rank, local_index) = Dataset::get_rank_index(idx, &displs, world);
+                let (owning_rank, local_index) = world.owner_of_global_index(idx, n_events);
                 if world.rank() == owning_rank {
                     Some(local_index)
                 } else {

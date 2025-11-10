@@ -1134,11 +1134,8 @@ impl StochasticNLL {
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> f64 {
-        let (_, _, locals) = self
-            .nll
-            .data_evaluator
-            .dataset
-            .get_counts_displs_locals_from_indices(indices, world);
+        let total = self.nll.data_evaluator.dataset.n_events();
+        let locals = world.locals_from_globals(indices, total);
         let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
@@ -1429,11 +1426,8 @@ impl StochasticNLL {
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> DVector<f64> {
-        let (_, _, locals) = self
-            .nll
-            .data_evaluator
-            .dataset
-            .get_counts_displs_locals_from_indices(indices, world);
+        let total = self.nll.data_evaluator.dataset.n_events();
+        let locals = world.locals_from_globals(indices, total);
         let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices

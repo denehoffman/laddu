@@ -40,9 +40,10 @@ pub mod mpi {
     use std::sync::OnceLock;
 
     use lazy_static::lazy_static;
+    use mpi::datatype::PartitionMut;
     use mpi::environment::Universe;
     use mpi::topology::{Process, SimpleCommunicator};
-    use mpi::traits::Communicator;
+    use mpi::traits::{Communicator, CommunicatorCollectives, Equivalence};
     use parking_lot::RwLock;
 
     lazy_static! {
@@ -172,12 +173,80 @@ pub mod mpi {
         USE_MPI.load(Ordering::SeqCst)
     }
 
+    fn counts_displs(size: usize, total: usize, stride: usize) -> (Vec<i32>, Vec<i32>) {
+        let mut counts = vec![0i32; size];
+        let mut displs = vec![0i32; size];
+        if size == 0 {
+            return (counts, displs);
+        }
+        let base = total / size;
+        let remainder = total % size;
+        let mut offset = 0i32;
+        for rank in 0..size {
+            let n = if rank < remainder { base + 1 } else { base };
+            let scaled = (n * stride) as i32;
+            counts[rank] = scaled;
+            displs[rank] = offset;
+            offset += scaled;
+        }
+        (counts, displs)
+    }
+
+    #[inline]
+    fn rank_local_from_global(i_global: usize, size: usize, total: usize) -> (usize, usize) {
+        assert!(size > 0, "Communicator must have at least one rank");
+        assert!(total > 0, "Cannot map global indices when dataset is empty");
+        assert!(
+            i_global < total,
+            "Global index {} out of bounds for {} events",
+            i_global,
+            total
+        );
+        let base = total / size;
+        let remainder = total % size;
+        let big_block = base + 1;
+        let threshold = remainder * big_block;
+        if i_global < threshold {
+            let rank = i_global / big_block;
+            let local = i_global % big_block;
+            (rank, local)
+        } else {
+            let adjusted = i_global - threshold;
+            let rank = remainder + adjusted / base;
+            let local = adjusted % base;
+            (rank, local)
+        }
+    }
+
     /// A trait including some useful auxiliary methods for MPI
     pub trait LadduMPI {
         /// Get the process at the root rank
         fn process_at_root(&self) -> Process<'_>;
         /// Check if the current rank is the root rank
         fn is_root(&self) -> bool;
+        /// Gather arbitrarily-sized local slices into a buffer ordered by the
+        /// canonical dataset partition.
+        fn all_gather_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T>;
+        /// Gather batches corresponding to arbitrary global indices while
+        /// preserving the order of `global_indices`.
+        fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            global_indices: &[usize],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T>;
+        /// Return the `(rank, local_index)` pair owning `global_index` in a
+        /// dataset containing `total` events.
+        fn owner_of_global_index(&self, global_index: usize, total: usize) -> (i32, usize);
+        /// Translate a list of global dataset indices into the corresponding
+        /// local indices owned by this rank, preserving their original order.
+        fn locals_from_globals(&self, global_indices: &[usize], total: usize) -> Vec<usize>;
         /// Get the counts/displacements for partitioning a buffer of length
         /// `buf_len`
         fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>);
@@ -202,6 +271,124 @@ pub mod mpi {
             self.rank() == crate::mpi::ROOT_RANK
         }
 
+        /// Gather arbitrarily-sized local slices into a buffer ordered by the
+        /// canonical dataset partition.
+        fn all_gather_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T> {
+            let size = self.size() as usize;
+            let stride = stride.unwrap_or(1);
+            assert!(stride > 0, "Stride must be greater than zero");
+            let mut out = vec![T::default(); total * stride];
+            if total == 0 || size == 0 {
+                return out;
+            }
+            let (counts, displs) = counts_displs(size, total, stride);
+            {
+                let mut partition = PartitionMut::new(&mut out, counts, displs);
+                self.all_gather_varcount_into(local, &mut partition);
+            }
+            out
+        }
+
+        /// Gather batches corresponding to arbitrary global indices while
+        /// preserving the order of `global_indices`.
+        fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            global_indices: &[usize],
+            total: usize,
+            stride: Option<usize>,
+        ) -> Vec<T> {
+            let size = self.size() as usize;
+            let stride = stride.unwrap_or(1);
+            assert!(stride > 0, "Stride must be greater than zero");
+            let n_indices = global_indices.len();
+            let mut gathered = vec![T::default(); n_indices * stride];
+            if n_indices == 0 || size == 0 {
+                return gathered;
+            }
+
+            assert!(
+                total > 0,
+                "Cannot gather batched data from an empty dataset"
+            );
+
+            let mut locals_by_rank = vec![Vec::<usize>::new(); size];
+            let mut targets_by_rank = vec![Vec::<usize>::new(); size];
+            for (position, &global_index) in global_indices.iter().enumerate() {
+                let (rank, local_index) = rank_local_from_global(global_index, size, total);
+                locals_by_rank[rank].push(local_index);
+                targets_by_rank[rank].push(position);
+            }
+
+            let mut counts = vec![0i32; size];
+            let mut displs = vec![0i32; size];
+            for rank in 0..size {
+                counts[rank] = (locals_by_rank[rank].len() * stride) as i32;
+                displs[rank] = if rank == 0 {
+                    0
+                } else {
+                    displs[rank - 1] + counts[rank - 1]
+                };
+            }
+
+            let expected_local = locals_by_rank[self.rank() as usize].len() * stride;
+            debug_assert_eq!(
+                local.len(),
+                expected_local,
+                "Local buffer length does not match expected gathered size for rank {}",
+                self.rank()
+            );
+
+            {
+                let mut partition =
+                    PartitionMut::new(&mut gathered, counts.clone(), displs.clone());
+                self.all_gather_varcount_into(local, &mut partition);
+            }
+
+            let mut result = vec![T::default(); n_indices * stride];
+            for rank in 0..size {
+                let mut cursor = displs[rank] as usize;
+                for &target in &targets_by_rank[rank] {
+                    let dst = target * stride;
+                    for offset in 0..stride {
+                        result[dst + offset] = gathered[cursor + offset].clone();
+                    }
+                    cursor += stride;
+                }
+            }
+
+            result
+        }
+
+        fn owner_of_global_index(&self, global_index: usize, total: usize) -> (i32, usize) {
+            assert!(total > 0, "Cannot look up ownership in an empty dataset");
+            let size = self.size() as usize;
+            let (rank, local) = rank_local_from_global(global_index, size, total);
+            (rank as i32, local)
+        }
+
+        /// Translate a list of global dataset indices into the corresponding
+        /// local indices owned by this rank, preserving their original order.
+        fn locals_from_globals(&self, global_indices: &[usize], total: usize) -> Vec<usize> {
+            let size = self.size() as usize;
+            let this_rank = self.rank() as usize;
+            let mut locals = Vec::new();
+            if total == 0 {
+                return locals;
+            }
+            for &global_index in global_indices {
+                let (rank, local_index) = rank_local_from_global(global_index, size, total);
+                if rank == this_rank {
+                    locals.push(local_index);
+                }
+            }
+            locals
+        }
         fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>) {
             let mut counts = vec![0; self.size() as usize];
             let mut displs = vec![0; self.size() as usize];

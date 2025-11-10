@@ -819,16 +819,10 @@ impl Evaluator {
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> Vec<Complex64> {
-        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; indices.len()];
-        let (counts, displs, locals) = self
-            .dataset
-            .get_counts_displs_locals_from_indices(indices, world);
+        let total = self.dataset.n_events();
+        let locals = world.locals_from_globals(indices, total);
         let local_evaluation = self.evaluate_batch_local(parameters, &locals);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
-            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
-        }
-        buffer
+        world.all_gather_batched_partitioned(&local_evaluation, indices, total, None)
     }
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
@@ -1118,22 +1112,20 @@ impl Evaluator {
         indices: &[usize],
         world: &SimpleCommunicator,
     ) -> Vec<DVector<Complex64>> {
-        let (counts, displs, locals) = self
-            .dataset
-            .get_flattened_counts_displs_locals_from_indices(indices, parameters.len(), world);
+        let total = self.dataset.n_events();
+        let locals = world.locals_from_globals(indices, total);
         let flattened_local_evaluation = self
             .evaluate_gradient_batch_local(parameters, &locals)
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
             .collect::<Vec<Complex64>>();
-        let mut flattened_result_buffer = vec![Complex64::ZERO; indices.len() * parameters.len()];
-        let mut partitioned_flattened_result_buffer =
-            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
-        world.all_gather_varcount_into(
-            &flattened_local_evaluation,
-            &mut partitioned_flattened_result_buffer,
-        );
-        flattened_result_buffer
+        world
+            .all_gather_batched_partitioned(
+                &flattened_local_evaluation,
+                indices,
+                total,
+                Some(parameters.len()),
+            )
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect()
