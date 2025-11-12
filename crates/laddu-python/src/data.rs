@@ -7,7 +7,7 @@ use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyIterator, PyList},
+    types::{PyDict, PyIterator, PyList},
     IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -98,15 +98,25 @@ impl PyEvent {
     /// The list of 4-momenta for each particle in the event
     ///
     #[getter]
-    fn get_p4s(&self) -> Vec<PyVec4> {
-        self.event.p4s().iter().map(|p4| PyVec4(*p4)).collect()
+    fn p4s<'py>(&self, py: Python<'py>) -> PyResult<Py<PyDict>> {
+        self.ensure_metadata()?;
+        let mapping = PyDict::new(py);
+        for (name, vec4) in self.event.p4s() {
+            mapping.set_item(name, PyVec4(vec4))?;
+        }
+        Ok(mapping.into())
     }
-    /// The list of auxiliary scalar values associated with the event
+    /// The auxiliary scalar values associated with the event
     ///
     #[getter]
-    #[pyo3(name = "aux_values")]
-    fn aux_values_prop(&self) -> Vec<f64> {
-        self.event.aux_values().to_vec()
+    #[pyo3(name = "aux")]
+    fn aux_mapping<'py>(&self, py: Python<'py>) -> PyResult<Py<PyDict>> {
+        self.ensure_metadata()?;
+        let mapping = PyDict::new(py);
+        for (name, value) in self.event.aux() {
+            mapping.set_item(name, value)?;
+        }
+        Ok(mapping.into())
     }
     /// The weight of this event relative to others in a Dataset
     ///
@@ -185,47 +195,7 @@ impl PyEvent {
         Ok(self.event.p4(name).copied().map(PyVec4))
     }
 
-    /// Retrieve an auxiliary scalar by name (if present).
-    fn aux(&self, name: &str) -> PyResult<Option<f64>> {
-        self.ensure_metadata()?;
-        Ok(self.event.aux(name))
-    }
 
-    /// Retrieve either a four-momentum or auxiliary scalar by name, returning ``None`` when not found.
-    fn get<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Option<Py<PyAny>>> {
-        self.ensure_metadata()?;
-        if let Some(p4) = self.event.p4(name) {
-            let obj = PyVec4(*p4).into_pyobject(py)?.into_any().unbind();
-            return Ok(Some(obj));
-        }
-        if let Some(value) = self.event.aux(name) {
-            let obj = value.into_pyobject(py)?.into_any().unbind();
-            return Ok(Some(obj));
-        }
-        Ok(None)
-    }
-
-    fn __getitem__<'py>(
-        &self,
-        py: Python<'py>,
-        key: Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let name = key.extract::<String>()?;
-        if !self.has_metadata {
-            return Err(PyValueError::new_err(
-                "Event has no associated metadata; indexing by name is unavailable",
-            ));
-        }
-        if let Some(p4) = self.event.p4(&name) {
-            return PyVec4(*p4).into_bound_py_any(py);
-        }
-        if let Some(value) = self.event.aux(&name) {
-            return value.into_bound_py_any(py);
-        }
-        Err(PyKeyError::new_err(format!(
-            "Unknown particle or auxiliary name '{name}'",
-        )))
-    }
 }
 
 impl PyEvent {

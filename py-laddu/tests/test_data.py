@@ -41,10 +41,8 @@ def _assert_events_close(
         vec_right = event_right.p4(name)
         _assert_vec4_close(vec_left, vec_right)
     for name in aux_names:
-        aux_left = event_left.aux(name)
-        aux_right = event_right.aux(name)
-        assert aux_left is not None
-        assert aux_right is not None
+        aux_left = event_left.aux[name]
+        aux_right = event_right.aux[name]
         assert pytest.approx(aux_left) == aux_right
     assert pytest.approx(event_left.weight) == event_right.weight
 
@@ -86,17 +84,19 @@ def make_test_dataset() -> Dataset:
 def test_event_creation() -> None:
     event = make_test_event()
     assert len(event.p4s) == 4
-    assert len(event.aux_values) == 2
+    assert len(event.aux) == 2
     assert event.weight == 0.48
 
 
 def test_event_p4_sum() -> None:
     event = make_test_event()
     p4_sum = event.get_p4_sum(['kshort1', 'kshort2'])
-    assert p4_sum.px == event.p4s[2].px + event.p4s[3].px
-    assert p4_sum.py == event.p4s[2].py + event.p4s[3].py
-    assert p4_sum.pz == event.p4s[2].pz + event.p4s[3].pz
-    assert p4_sum.e == event.p4s[2].e + event.p4s[3].e
+    first = event.p4s['kshort1']
+    second = event.p4s['kshort2']
+    assert p4_sum.px == first.px + second.px
+    assert p4_sum.py == first.py + second.py
+    assert p4_sum.pz == first.pz + second.pz
+    assert p4_sum.e == first.e + second.e
 
 
 def test_event_boost() -> None:
@@ -111,19 +111,18 @@ def test_event_boost() -> None:
 
 def test_event_name_lookup() -> None:
     event = make_test_event()
-    proton_vec = event['proton']
+    proton_vec = event.p4s['proton']
     assert isinstance(proton_vec, Vec4)
-    assert pytest.approx(proton_vec.e) == event.p4s[1].e
+    assert pytest.approx(proton_vec.e) == event.p4s['proton'].e
     proton_optional = event.p4('proton')
     assert proton_optional is not None
-    assert pytest.approx(proton_optional.e) == event.p4s[1].e
-    aux_value = event.aux('pol_angle')
-    assert aux_value is not None
-    assert pytest.approx(aux_value) == event.aux_values[1]
-    assert isinstance(event.get('pol_magnitude'), float)
-    assert event.get('unknown') is None
+    assert pytest.approx(proton_optional.e) == event.p4s['proton'].e
+    aux_value = event.aux['pol_angle']
+    assert pytest.approx(aux_value) == event.aux['pol_angle']
+    assert isinstance(event.aux.get('pol_magnitude'), float)
+    assert event.aux.get('unknown') is None
     with pytest.raises(KeyError):
-        _ = event['unknown']
+        _ = event.p4s['unknown']
 
 
 def test_event_evaluate() -> None:
@@ -163,10 +162,10 @@ def test_dataset_conversion() -> None:
     ds_from_numpy = Dataset.from_numpy(np_data)
     ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
     ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
-    assert ds_from_dict[1].p4s[0].px == 2.0
-    assert pytest.approx(ds_from_numpy[0].aux_values[1]) == 0.1
+    assert ds_from_dict[1].p4s['beam'].px == 2.0
+    assert pytest.approx(ds_from_numpy[0].aux['pol_angle']) == 0.1
     assert ds_from_pandas[2].weight == 2.0
-    assert ds_from_polars[2].p4s[1].e == 100.0
+    assert ds_from_polars[2].p4s['proton'].e == 100.0
 
 
 def test_dataset_size_check() -> None:
@@ -259,9 +258,9 @@ def test_dataset_index() -> None:
     assert isinstance(dataset[0], Event)
     mass = Mass(['proton'])
     assert isinstance(dataset[mass], np.ndarray)
-    proton_vec = dataset[0]['proton']
+    proton_vec = dataset[0].p4s['proton']
     assert isinstance(proton_vec, Vec4)
-    assert pytest.approx(proton_vec.e) == dataset[0].p4s[1].e
+    assert pytest.approx(proton_vec.e) == dataset[0].p4s['proton'].e
 
 
 def test_binned_dataset() -> None:
@@ -304,8 +303,8 @@ def test_dataset_bootstrap() -> None:
         [
             make_test_event(),
             Event(
-                make_test_event().p4s,
-                make_test_event().aux_values,
+                list(make_test_event().p4s.values()),
+                list(make_test_event().aux.values()),
                 1.0,
                 p4_names=P4_NAMES,
                 aux_names=AUX_NAMES,
@@ -330,9 +329,9 @@ def test_dataset_iteration() -> None:
     events = list(dataset)
     assert len(events) == dataset.n_events
     assert all(isinstance(event, Event) for event in events)
-    proton_vec_from_events = events[0]['proton']
+    proton_vec_from_events = events[0].p4s['proton']
     assert isinstance(proton_vec_from_events, Vec4)
-    proton_vec_from_dataset = dataset[0]['proton']
+    proton_vec_from_dataset = dataset[0].p4s['proton']
     assert isinstance(proton_vec_from_dataset, Vec4)
     assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
 
@@ -404,8 +403,9 @@ def test_dataset_open_amptools_matches_native_vectors() -> None:
     for idx in range(native.n_events):
         amp_event = amptools[idx]
         native_event = native[idx]
-        _assert_vec4_close(amp_event.p4s[0], native_event.p4s[0])
-        for amp_vec, native_vec in zip(amp_event.p4s[1:], native_event.p4s[1:]):
+        amp_vectors = list(amp_event.p4s.values())
+        native_vectors = list(native_event.p4s.values())
+        for amp_vec, native_vec in zip(amp_vectors, native_vectors):
             _assert_vec4_close(amp_vec, native_vec)
         assert pytest.approx(amp_event.weight) == native_event.weight
 
@@ -421,18 +421,14 @@ def test_dataset_open_amptools_pol_in_beam_columns() -> None:
     for idx in range(native.n_events):
         amp_event = amptools[idx]
         native_event = native[idx]
-        amp_mag = amp_event.aux('pol_magnitude')
-        native_mag = native_event.aux('pol_magnitude')
-        assert amp_mag is not None
-        assert native_mag is not None
+        amp_mag = amp_event.aux['pol_magnitude']
+        native_mag = native_event.aux['pol_magnitude']
         assert pytest.approx(amp_mag) == native_mag
-        amp_angle = amp_event.aux('pol_angle')
-        native_angle = native_event.aux('pol_angle')
-        assert amp_angle is not None
-        assert native_angle is not None
+        amp_angle = amp_event.aux['pol_angle']
+        native_angle = native_event.aux['pol_angle']
         assert pytest.approx(amp_angle) == native_angle
-        assert pytest.approx(amp_event.p4s[0].px) == 0.0
-        assert pytest.approx(amp_event.p4s[0].py) == 0.0
+        assert pytest.approx(amp_event.p4s['beam'].px) == 0.0
+        assert pytest.approx(amp_event.p4s['beam'].py) == 0.0
 
 
 def test_dataset_open_amptools_custom_polarization_names() -> None:
@@ -448,8 +444,8 @@ def test_dataset_open_amptools_custom_polarization_names() -> None:
         },
     )
     assert dataset.aux_names == ['mag_pol', 'phi_pol']
-    mag = dataset[0].aux('mag_pol')
-    phi = dataset[0].aux('phi_pol')
+    mag = dataset[0].aux['mag_pol']
+    phi = dataset[0].aux['phi_pol']
     assert mag is not None
     assert phi is not None
     assert pytest.approx(mag) == 0.75

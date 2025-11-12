@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, overload
 
@@ -19,8 +19,8 @@ from laddu.utils.variables import (
 from laddu.utils.vectors import Vec4
 
 class Event:
-    p4s: list[Vec4]
-    aux_values: list[float]
+    p4s: Mapping[str, Vec4]
+    aux: Mapping[str, float]
     weight: float
 
     def __init__(
@@ -36,12 +36,9 @@ class Event:
     def get_p4_sum(self, names: list[str]) -> Vec4: ...
     def boost_to_rest_frame_of(self, names: list[str]) -> Event: ...
     def p4(self, name: str) -> Vec4 | None: ...
-    def aux(self, name: str) -> float | None: ...
-    def get(self, name: str) -> Vec4 | float | None: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> float: ...
-    def __getitem__(self, name: str) -> Vec4 | float: ...
 
 class Dataset(Sequence[Event]):
     events: list[Event]

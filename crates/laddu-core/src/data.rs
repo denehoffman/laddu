@@ -239,14 +239,26 @@ impl Event {
         self.event.clone()
     }
 
-    /// Borrow the four-momenta stored in this event.
-    pub fn p4s(&self) -> &[Vec4] {
-        &self.event.p4s
+    /// Return the four-momenta stored in this event keyed by their registered names.
+    pub fn p4s(&self) -> IndexMap<&str, Vec4> {
+        let mut map = IndexMap::with_capacity(self.metadata.p4_names.len());
+        for (idx, name) in self.metadata.p4_names.iter().enumerate() {
+            if let Some(p4) = self.event.p4s.get(idx) {
+                map.insert(name.as_str(), *p4);
+            }
+        }
+        map
     }
 
-    /// Borrow the auxiliary scalar values stored in this event.
-    pub fn aux_values(&self) -> &[f64] {
-        &self.event.aux
+    /// Return the auxiliary scalars stored in this event keyed by their registered names.
+    pub fn aux(&self) -> IndexMap<&str, f64> {
+        let mut map = IndexMap::with_capacity(self.metadata.aux_names.len());
+        for (idx, name) in self.metadata.aux_names.iter().enumerate() {
+            if let Some(value) = self.event.aux.get(idx) {
+                map.insert(name.as_str(), *value);
+            }
+        }
+        map
     }
 
     /// Return the event weight.
@@ -269,14 +281,6 @@ impl Event {
         self.metadata
             .p4_index(name)
             .and_then(|idx| self.event.p4s.get(idx))
-    }
-
-    /// Retrieve an auxiliary scalar by name.
-    pub fn aux(&self, name: &str) -> Option<f64> {
-        self.metadata
-            .aux_index(name)
-            .and_then(|idx| self.event.aux.get(idx))
-            .copied()
     }
 
     fn resolve_p4_indices<N>(&self, names: N) -> Vec<usize>
@@ -1618,12 +1622,16 @@ mod tests {
             assert_relative_eq!(lp4.pz(), rp4.pz(), epsilon = 1e-9);
             assert_relative_eq!(lp4.e(), rp4.e(), epsilon = 1e-9);
         }
+        let left_aux = left.aux();
+        let right_aux = right.aux();
         for name in aux_names {
-            let laux = left
-                .aux(name)
+            let laux = left_aux
+                .get(name)
+                .copied()
                 .unwrap_or_else(|| panic!("missing aux '{name}' in left dataset"));
-            let raux = right
-                .aux(name)
+            let raux = right_aux
+                .get(name)
+                .copied()
                 .unwrap_or_else(|| panic!("missing aux '{name}' in right dataset"));
             assert_relative_eq!(laux, raux, epsilon = 1e-9);
         }
@@ -1846,7 +1854,11 @@ mod tests {
         let summed = view.get_p4_sum(["kshort1", "kshort2"]);
         assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
 
-        let aux_angle = view.aux("pol_angle").expect("pol angle");
+        let aux_angle = view
+            .aux()
+            .get("pol_angle")
+            .copied()
+            .expect("pol angle");
         assert_relative_eq!(aux_angle, dataset[0].aux[1]);
 
         let metadata = dataset.metadata_arc();

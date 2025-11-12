@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import uproot
 
-from laddu.laddu import BinnedDataset, Dataset as _DatasetCore, Event
+from laddu.laddu import BinnedDataset, Event
+from laddu.laddu import Dataset as _DatasetCore
 from laddu.utils.vectors import Vec4
 
 if TYPE_CHECKING:
