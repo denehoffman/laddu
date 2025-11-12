@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import uproot
 
-from laddu.laddu import BinnedDataset, DatasetBase, Event
+from laddu.laddu import BinnedDataset, Dataset as _DatasetCore, Event
 from laddu.utils.vectors import Vec4
 
 if TYPE_CHECKING:
@@ -16,7 +16,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class Dataset(DatasetBase):
+_NATIVE_DATASET_OPEN = _DatasetCore.open
+
+
+class _DatasetExtensions:
     """In-memory event container backed by :class:`laddu.laddu.Event` objects.
 
     The helper constructors accept ``dict`` objects, pandas/Polars frames, or
@@ -65,10 +68,10 @@ class Dataset(DatasetBase):
             aux_names.append(key)
         return aux_names
 
-    @staticmethod
+    @classmethod
     def from_dict(
-        data: dict[str, Any], rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+        cls, data: dict[str, Any], rest_frame_of: list[str] | None = None
+    ) -> _DatasetCore:
         """Create a dataset from iterables keyed by column name.
 
         Parameters
@@ -81,11 +84,11 @@ class Dataset(DatasetBase):
             used to boost each event (useful for quasi-two-body systems).
         """
         columns = {name: np.asarray(values) for name, values in data.items()}
-        p4_names = Dataset._infer_p4_names(columns)
+        p4_names = cls._infer_p4_names(columns)
         component_names = {
             f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
         }
-        aux_names = Dataset._infer_aux_names(columns, component_names)
+        aux_names = cls._infer_aux_names(columns, component_names)
 
         n_events = len(columns[f'{p4_names[0]}_px'])
         weights = np.asarray(
@@ -117,38 +120,39 @@ class Dataset(DatasetBase):
                 )
             )
 
-        return Dataset(events, p4_names=p4_names, aux_names=aux_names)
+        return cls(events, p4_names=p4_names, aux_names=aux_names)
 
-    @staticmethod
+    @classmethod
     def from_numpy(
-        data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+        cls, data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None
+    ) -> _DatasetCore:
         """Create a dataset from arrays without copying.
 
         Accepts any mapping of column names to ``ndarray`` objects and mirrors
         :meth:`from_dict`.
         """
         converted = {key: np.asarray(value) for key, value in data.items()}
-        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
 
-    @staticmethod
+    @classmethod
     def from_pandas(
-        data: pd.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+        cls, data: pd.DataFrame, rest_frame_of: list[str] | None = None
+    ) -> _DatasetCore:
         """Materialise a dataset from a :class:`pandas.DataFrame`."""
         converted = {col: data[col].to_list() for col in data.columns}
-        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
 
-    @staticmethod
+    @classmethod
     def from_polars(
-        data: pl.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> Dataset:
+        cls, data: pl.DataFrame, rest_frame_of: list[str] | None = None
+    ) -> _DatasetCore:
         """Materialise a dataset from a :class:`polars.DataFrame`."""
         converted = {col: data[col].to_list() for col in data.columns}
-        return Dataset.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
 
-    @staticmethod
+    @classmethod
     def open(
+        cls,
         path: str | Path,
         *,
         p4s: list[str] | None = None,
@@ -158,7 +162,7 @@ class Dataset(DatasetBase):
         tree: str | None = None,
         uproot_kwargs: dict[str, Any] | None = None,
         amptools_kwargs: dict[str, Any] | None = None,
-    ) -> Dataset:
+    ) -> _DatasetCore:
         """Open a dataset from a file.
 
         Parameters
@@ -189,13 +193,13 @@ class Dataset(DatasetBase):
         """
         path_obj = Path(path)
         backend_name = (
-            backend.lower() if backend else Dataset._default_backend_for_path(path_obj)
+            backend.lower() if backend else cls._default_backend_for_path(path_obj)
         )
         if backend_name == 'auto':
-            backend_name = Dataset._default_backend_for_path(path_obj)
+            backend_name = cls._default_backend_for_path(path_obj)
 
         if backend_name in {'native', 'parquet', 'rust', 'oxyroot'}:
-            return DatasetBase.open(
+            return _NATIVE_DATASET_OPEN(
                 path_obj,
                 p4s=p4s,
                 aux=aux,
@@ -206,7 +210,7 @@ class Dataset(DatasetBase):
         if backend_name == 'uproot':
             kwargs = dict(uproot_kwargs or {})
             backend_tree = tree or kwargs.pop('tree', None)
-            return Dataset._open_with_uproot(
+            return cls._open_with_uproot(
                 path_obj,
                 tree=backend_tree,
                 p4s=p4s,
@@ -218,7 +222,7 @@ class Dataset(DatasetBase):
         if backend_name == 'amptools':
             kwargs = dict(amptools_kwargs or {})
             backend_tree = tree or kwargs.pop('tree', None)
-            dataset = Dataset._open_amptools_format(
+            dataset = cls._open_amptools_format(
                 path_obj,
                 tree=backend_tree,
                 amptools_kwargs=kwargs,
@@ -237,8 +241,9 @@ class Dataset(DatasetBase):
     def _default_backend_for_path(path: Path) -> str:
         return 'oxyroot' if path.suffix.lower() == '.root' else 'native'
 
-    @staticmethod
+    @classmethod
     def _open_with_uproot(
+        cls,
         path: Path,
         *,
         tree: str | None,
@@ -246,22 +251,23 @@ class Dataset(DatasetBase):
         aux: list[str] | None,
         boost_to_restframe_of: list[str] | None,
         uproot_kwargs: dict[str, Any],
-    ) -> Dataset:
+    ) -> _DatasetCore:
         with uproot.open(path) as root_file:
-            tree_obj = Dataset._select_uproot_tree(root_file, tree)
+            tree_obj = cls._select_uproot_tree(root_file, tree)
             arrays = tree_obj.arrays(library='np', **uproot_kwargs)
 
         columns = {name: np.asarray(values) for name, values in arrays.items()}
-        selected = Dataset._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
-        return Dataset.from_numpy(selected, rest_frame_of=boost_to_restframe_of)
+        selected = cls._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
+        return cls.from_numpy(selected, rest_frame_of=boost_to_restframe_of)
 
-    @staticmethod
+    @classmethod
     def _open_amptools_format(
+        cls,
         path: Path,
         *,
         tree: str | None,
         amptools_kwargs: dict[str, Any],
-    ) -> Dataset:
+    ) -> _DatasetCore:
         kwargs = dict(amptools_kwargs)
         pol_in_beam = kwargs.pop('pol_in_beam', False)
         pol_angle = kwargs.pop('pol_angle', None)
@@ -326,7 +332,7 @@ class Dataset(DatasetBase):
                     aux_names=aux_names,
                 )
             )
-        return Dataset(events, p4_names=p4_names, aux_names=aux_names)
+        return cls(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
     def _select_uproot_tree(
@@ -352,8 +358,9 @@ class Dataset(DatasetBase):
             raise ValueError(msg)
         return file[tree_candidates[0]]
 
-    @staticmethod
+    @classmethod
     def _prepare_uproot_columns(
+        cls,
         columns: dict[str, np.ndarray],
         *,
         p4s: list[str] | None,
@@ -364,7 +371,7 @@ class Dataset(DatasetBase):
             raise ValueError(msg)
 
         data = {name: np.asarray(values) for name, values in columns.items()}
-        p4_names = Dataset._infer_p4_names(data) if p4s is None else p4s
+        p4_names = cls._infer_p4_names(data) if p4s is None else p4s
 
         component_columns = [
             f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
@@ -377,7 +384,7 @@ class Dataset(DatasetBase):
         used_components = set(component_columns)
 
         if aux is None:
-            aux_names = Dataset._infer_aux_names(data, used_components)
+            aux_names = cls._infer_aux_names(data, used_components)
         else:
             aux_names = aux
             missing_aux = [col for col in aux_names if col not in data]
@@ -394,6 +401,36 @@ class Dataset(DatasetBase):
             selected['weight'] = data['weight']
 
         return selected
+
+
+for _name, _attr in _DatasetExtensions.__dict__.items():
+    if _name.startswith('__'):
+        continue
+    setattr(_DatasetCore, _name, _attr)
+
+if TYPE_CHECKING:
+    from laddu.laddu import Dataset as Dataset
+else:
+    Dataset = cast('type[_DatasetExtensions]', _DatasetCore)
+    Dataset.__doc__ = _DatasetExtensions.__doc__
+
+DatasetBase = Dataset
+del _name, _attr
+
+
+def open(
+    path: str | Path,
+    *,
+    p4s: list[str],
+    aux: list[str] | None = None,
+    boost_to_restframe_of: list[str] | None = None,
+) -> Dataset:
+    return Dataset.open(
+        path,
+        p4s=p4s,
+        aux=aux,
+        boost_to_restframe_of=boost_to_restframe_of,
+    )
 
 
 @dataclass

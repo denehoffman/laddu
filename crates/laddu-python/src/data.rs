@@ -274,7 +274,7 @@ impl PyEvent {
 /// --------
 /// laddu.Dataset.open
 ///
-#[pyclass(name = "DatasetBase", module = "laddu", subclass)]
+#[pyclass(name = "Dataset", module = "laddu", subclass)]
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
 
