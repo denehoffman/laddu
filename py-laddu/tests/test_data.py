@@ -1,12 +1,67 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
 
-from laddu import Dataset, Event, Mass, Vec3
+from laddu import Dataset, Event, Mass, Vec3, Vec4
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
+
+TEST_DATA_DIR = Path(__file__).resolve().parent / 'data_files'
+DATA_F32_PARQUET = TEST_DATA_DIR / 'data_f32.parquet'
+DATA_F64_PARQUET = TEST_DATA_DIR / 'data_f64.parquet'
+DATA_F32_ROOT = TEST_DATA_DIR / 'data_f32.root'
+DATA_F64_ROOT = TEST_DATA_DIR / 'data_f64.root'
+DATA_AMPTOOLS_ROOT = TEST_DATA_DIR / 'data_amptools.root'
+DATA_AMPTOOLS_POL_ROOT = TEST_DATA_DIR / 'data_amptools_pol.root'
+
+
+def _assert_vec4_close(vec_left: Vec4 | None, vec_right: Vec4 | None) -> None:
+    assert vec_left is not None
+    assert vec_right is not None
+    assert pytest.approx(vec_left.px) == vec_right.px
+    assert pytest.approx(vec_left.py) == vec_right.py
+    assert pytest.approx(vec_left.pz) == vec_right.pz
+    assert pytest.approx(vec_left.e) == vec_right.e
+
+
+def _assert_events_close(
+    event_left: Event,
+    event_right: Event,
+    p4_names: list[str],
+    aux_names: list[str],
+) -> None:
+    for name in p4_names:
+        vec_left = event_left.p4(name)
+        vec_right = event_right.p4(name)
+        _assert_vec4_close(vec_left, vec_right)
+    for name in aux_names:
+        aux_left = event_left.aux(name)
+        aux_right = event_right.aux(name)
+        assert aux_left is not None
+        assert aux_right is not None
+        assert pytest.approx(aux_left) == aux_right
+    assert pytest.approx(event_left.weight) == event_right.weight
+
+
+def _shared_names(left: list[str], right: list[str]) -> list[str]:
+    left_set = set(left)
+    right_set = set(right)
+    assert left_set == right_set
+    return sorted(left_set)
+
+
+def _assert_datasets_close(dataset_left: Dataset, dataset_right: Dataset) -> None:
+    assert dataset_left.n_events == dataset_right.n_events
+    shared_p4 = _shared_names(dataset_left.p4_names, dataset_right.p4_names)
+    shared_aux = _shared_names(dataset_left.aux_names, dataset_right.aux_names)
+    for idx in range(dataset_left.n_events):
+        _assert_events_close(dataset_left[idx], dataset_right[idx], shared_p4, shared_aux)
 
 
 def make_test_event() -> Event:
@@ -57,6 +112,7 @@ def test_event_boost() -> None:
 def test_event_name_lookup() -> None:
     event = make_test_event()
     proton_vec = event['proton']
+    assert isinstance(proton_vec, Vec4)
     assert pytest.approx(proton_vec.e) == event.p4s[1].e
     proton_optional = event.p4('proton')
     assert proton_optional is not None
@@ -204,6 +260,7 @@ def test_dataset_index() -> None:
     mass = Mass(['proton'])
     assert isinstance(dataset[mass], np.ndarray)
     proton_vec = dataset[0]['proton']
+    assert isinstance(proton_vec, Vec4)
     assert pytest.approx(proton_vec.e) == dataset[0].p4s[1].e
 
 
@@ -273,7 +330,11 @@ def test_dataset_iteration() -> None:
     events = list(dataset)
     assert len(events) == dataset.n_events
     assert all(isinstance(event, Event) for event in events)
-    assert pytest.approx(events[0]['proton'].e) == dataset[0]['proton'].e
+    proton_vec_from_events = events[0]['proton']
+    assert isinstance(proton_vec_from_events, Vec4)
+    proton_vec_from_dataset = dataset[0]['proton']
+    assert isinstance(proton_vec_from_dataset, Vec4)
+    assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
 
 
 def test_dataset_boost() -> None:
@@ -295,3 +356,126 @@ def test_event_display() -> None:
     assert 'aux[0]: 0.38562805' in display_string
     assert 'aux[1]: 1.93592989' in display_string
     assert 'weight:' in display_string
+
+
+def test_dataset_open_parquet_auto_vs_named() -> None:
+    auto = Dataset.open(DATA_F32_PARQUET)
+    assert auto.p4_names == P4_NAMES
+    assert auto.aux_names == AUX_NAMES
+
+    explicit = Dataset.open(
+        DATA_F32_PARQUET,
+        p4s=P4_NAMES,
+        aux=AUX_NAMES,
+    )
+    _assert_datasets_close(auto, explicit)
+
+
+def test_dataset_open_root_matches_parquet() -> None:
+    parquet = Dataset.open(DATA_F32_PARQUET)
+    root_auto = Dataset.open(DATA_F32_ROOT)
+    assert root_auto.p4_names == P4_NAMES
+    assert root_auto.aux_names == AUX_NAMES
+    _assert_datasets_close(root_auto, parquet)
+
+    root_named = Dataset.open(
+        DATA_F32_ROOT,
+        p4s=P4_NAMES,
+        aux=AUX_NAMES,
+    )
+    _assert_datasets_close(root_auto, root_named)
+
+
+def test_dataset_open_amptools_matches_native_vectors() -> None:
+    native = Dataset.open(DATA_F32_PARQUET)
+    amptools = Dataset.open(
+        DATA_AMPTOOLS_ROOT,
+        backend='amptools',
+        amptools_kwargs={'boost_to_com': False},
+    )
+    assert amptools.p4_names == [
+        'beam',
+        'final_state_0',
+        'final_state_1',
+        'final_state_2',
+    ]
+    assert amptools.aux_names == []
+    assert amptools.n_events == native.n_events
+    for idx in range(native.n_events):
+        amp_event = amptools[idx]
+        native_event = native[idx]
+        _assert_vec4_close(amp_event.p4s[0], native_event.p4s[0])
+        for amp_vec, native_vec in zip(amp_event.p4s[1:], native_event.p4s[1:]):
+            _assert_vec4_close(amp_vec, native_vec)
+        assert pytest.approx(amp_event.weight) == native_event.weight
+
+
+def test_dataset_open_amptools_pol_in_beam_columns() -> None:
+    native = Dataset.open(DATA_F32_PARQUET)
+    amptools = Dataset.open(
+        DATA_AMPTOOLS_POL_ROOT,
+        backend='amptools',
+        amptools_kwargs={'pol_in_beam': True, 'boost_to_com': False},
+    )
+    assert amptools.aux_names == AUX_NAMES
+    for idx in range(native.n_events):
+        amp_event = amptools[idx]
+        native_event = native[idx]
+        amp_mag = amp_event.aux('pol_magnitude')
+        native_mag = native_event.aux('pol_magnitude')
+        assert amp_mag is not None
+        assert native_mag is not None
+        assert pytest.approx(amp_mag) == native_mag
+        amp_angle = amp_event.aux('pol_angle')
+        native_angle = native_event.aux('pol_angle')
+        assert amp_angle is not None
+        assert native_angle is not None
+        assert pytest.approx(amp_angle) == native_angle
+        assert pytest.approx(amp_event.p4s[0].px) == 0.0
+        assert pytest.approx(amp_event.p4s[0].py) == 0.0
+
+
+def test_dataset_open_amptools_custom_polarization_names() -> None:
+    dataset = Dataset.open(
+        DATA_AMPTOOLS_ROOT,
+        backend='amptools',
+        amptools_kwargs={
+            'pol_angle': 30.0,
+            'pol_magnitude': 0.75,
+            'pol_angle_name': 'phi_pol',
+            'pol_magnitude_name': 'mag_pol',
+            'boost_to_com': False,
+        },
+    )
+    assert dataset.aux_names == ['mag_pol', 'phi_pol']
+    mag = dataset[0].aux('mag_pol')
+    phi = dataset[0].aux('phi_pol')
+    assert mag is not None
+    assert phi is not None
+    assert pytest.approx(mag) == 0.75
+    assert pytest.approx(phi) == np.deg2rad(30.0)
+
+
+def test_dataset_open_amptools_rejects_unknown_option() -> None:
+    with pytest.raises(TypeError):
+        Dataset.open(
+            DATA_AMPTOOLS_ROOT,
+            backend='amptools',
+            amptools_kwargs={'unknown_option': True},
+        )
+
+
+def test_dataset_open_parquet_f64_matches_f32() -> None:
+    f32 = Dataset.open(DATA_F32_PARQUET)
+    f64 = Dataset.open(DATA_F64_PARQUET)
+    assert f64.p4_names == P4_NAMES
+    assert f64.aux_names == AUX_NAMES
+    _assert_datasets_close(f32, f64)
+
+
+def test_dataset_open_root_f64_matches_parquet() -> None:
+    parquet = Dataset.open(DATA_F32_PARQUET)
+    root_f64 = Dataset.open(DATA_F64_ROOT)
+    assert root_f64.p4_names == P4_NAMES
+    assert root_f64.aux_names == AUX_NAMES
+    _assert_datasets_close(root_f64, parquet)

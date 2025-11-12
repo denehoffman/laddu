@@ -1,5 +1,5 @@
 import laddu.laddu as _laddu
-from laddu import amplitudes, convert, data, experimental, extensions, mpi, utils
+from laddu import amplitudes, data, experimental, extensions, mpi, utils
 from laddu.amplitudes import (
     AmplitudeOne,
     AmplitudeZero,
@@ -15,8 +15,7 @@ from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import PolPhase, Zlm
-from laddu.convert import convert_from_amptools
-from laddu.data import BinnedDataset, Dataset, Event, open_amptools
+from laddu.data import BinnedDataset, Dataset, Event
 from laddu.extensions import (
     NLL,
     AutocorrelationTerminator,
@@ -116,8 +115,6 @@ __all__ = [
     'amplitude_sum',
     'amplitudes',
     'constant',
-    'convert',
-    'convert_from_amptools',
     'data',
     'experimental',
     'extensions',
@@ -125,7 +122,6 @@ __all__ = [
     'likelihood_product',
     'likelihood_sum',
     'mpi',
-    'open_amptools',
     'parameter',
     'utils',
 ]

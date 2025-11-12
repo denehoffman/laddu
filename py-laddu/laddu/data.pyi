@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, overload
 
@@ -16,17 +17,6 @@ from laddu.utils.variables import (
     VariableExpression,
 )
 from laddu.utils.vectors import Vec4
-
-def open_amptools(
-    path: str | Path,
-    tree: str = 'kin',
-    *,
-    pol_in_beam: bool = False,
-    pol_angle: float | None = None,
-    pol_magnitude: float | None = None,
-    num_entries: int | None = None,
-    boost_to_com: bool = True,
-) -> Dataset: ...
 
 class Event:
     p4s: list[Vec4]
@@ -51,8 +41,9 @@ class Event:
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> float: ...
+    def __getitem__(self, name: str) -> Vec4 | float: ...
 
-class Dataset:
+class Dataset(Sequence[Event]):
     events: list[Event]
     n_events: int
     n_events_weighted: float
@@ -114,6 +105,10 @@ class Dataset:
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         boost_to_restframe_of: list[str] | None = None,
+        backend: str | None = None,
+        tree: str | None = None,
+        uproot_kwargs: dict[str, Any] | None = None,
+        amptools_kwargs: dict[str, Any] | None = None,
     ) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam

@@ -31,9 +31,6 @@ dependencies = [
 [project.urls]
 Documentation = "https://laddu.readthedocs.io/en/stable/"
 
-[project.scripts]
-amptools-to-laddu = "laddu:convert.run"
-
 [project.optional-dependencies]
 tests = ["pytest"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
