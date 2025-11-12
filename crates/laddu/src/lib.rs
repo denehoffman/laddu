@@ -288,8 +288,9 @@
 //! | `kaon2_e`     | `Float32` or `Float64` | Decay product 2 energy               |
 //! | `weight`      | `Float32` or `Float64` | Event weight                         |
 //!
-//! To make it easier to get started, we can directly convert from the `AmpTools` format using the
-//! provided `amptools-to-laddu` script (see the `bin` directory of this repository).
+//! AmpTools-format ROOT tuples can also be loaded through the Python bindings of `laddu` by calling
+//! `Dataset.open(..., backend="amptools")`, which performs the conversion automatically. The Rust
+//! API currently supports Parquet and standard ROOT TTrees.
 //!
 //! # MPI Support
 //!

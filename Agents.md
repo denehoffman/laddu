@@ -28,7 +28,7 @@ Use `just <target>` from the repo root; many tasks pin their working directory f
 
 ## Working Style Checklist
 1. Run the relevant `just develop*` target before touching Python code so the `uv` environment lines up.
-2. Keep `ruff` and `cargo clippy` clean alongside the standard Cargo/Python tests (`just test`).
+2. Keep `ruff` and `cargo clippy` clean alongside the standard Cargo/Python tests (`just test`). Use `ruff check --fix` and `uvx ty check` to make sure the Python files are clear of type errors and poor syntax choices.
 3. When adding APIs, write Rust docs + doctests first, then mirror concise NumPy-style docstrings (with usage examples) on the Python side.
 4. Prefer updating `.justfile` recipes rather than ad-hoc commands if you need a repeatable workflow—extend the table above as new tasks appear.
 

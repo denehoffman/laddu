@@ -335,7 +335,9 @@ The resulting unpolarized moments are shown below:
 
 # Data Format
 
-The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
+`laddu` focuses on a *column* layout rather than a specific file container. Each particle is represented by four floating-point columns (``_px``, ``_py``, ``_pz``, ``_e``), auxiliary scalars keep their explicit names (e.g. ``pol_magnitude``), and an optional ``weight`` column stores per-event weights. As long as those columns exist, the physical storage format may vary. Today, Parquet is the preferred container because it is small, language-agnostic, and easy to stream, but the Rust core can also read ROOT TTrees via [`oxyroot`](https://github.com/m-dupont/oxyroot), and the Python bindings add an AmpTools-aware backend on top of `uproot`.
+
+For example, the following columns describe a dataset with four particles, the first of which is a polarized photon beam as in the GlueX experiment:
 
 | Column name | Data Type | Interpretation |
 | ----------- | --------- | -------------- |
@@ -359,7 +361,19 @@ The data format for `laddu` is a bit different from some of the alternatives lik
 | `kshort2_e`   | `Float32` or `Float64` | Decay product 2 energy |
 | `weight`    | `Float32` or `Float64` | Event weight |
 
-To make it easier to get started, we can directly convert from the `AmpTools` format using the provided `amptools-to-laddu` script (see the `bin` directory of this repository).
+AmpTools-format ROOT files can be directly read as `Dataset` objects (this is currently implemented in the Python bindings; the Rust API still targets Parquet/standard ROOT TTrees):
+
+```python
+from laddu import Dataset
+
+dataset = Dataset.open(
+    'example_amp.root',
+    backend='amptools',
+    amptools_kwargs={'pol_in_beam': True},
+)
+```
+
+This loads the ROOT tree, infers the particle names, and exposes the result through the same `Dataset` interface used for Parquet inputs.
 
 # MPI Support
 
