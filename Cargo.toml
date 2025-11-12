@@ -38,6 +38,7 @@ parking_lot = "0.12.5"
 pyo3 = { version = "0.26.0" }
 rapidhash = { version = "4.1.0" }
 rayon = { version = "1.11.0" }
+oxyroot = "0.1.25"
 serde = "1.0.228"
 serde-pickle = "1.2.0"
 serde_with = "3.15.0"

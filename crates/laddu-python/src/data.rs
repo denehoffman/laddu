@@ -314,18 +314,20 @@ impl PyDataset {
         Ok(Self(Arc::new(dataset)))
     }
 
-    /// Open a Dataset from a Parquet file.
+    /// Open a Dataset from disk.
     ///
     /// Parameters
     /// ----------
     /// path : str or Path
-    ///     The path to the Parquet file.
+    ///     The path to the data file (Parquet or ROOT).
     /// p4s : list[str], optional
     ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
     /// aux : list[str], optional
     ///     Auxiliary scalar column names copied verbatim in order.
     /// boost_to_restframe_of : list[str], optional
     ///     Names of particles whose rest frame should be used to boost each event.
+    /// tree : str, optional
+    ///     Name of the TTree to read when opening ROOT files.
     ///
     /// Examples
     /// --------
@@ -337,13 +339,15 @@ impl PyDataset {
     /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
     /// the valid suffixes are provided for a particle, the corresponding columns will be read as a
     /// four-momentum, otherwise they will be read as auxiliary scalars.
+    ///
     #[staticmethod]
-    #[pyo3(signature = (path, *, p4s=None, aux=None, boost_to_restframe_of=None))]
+    #[pyo3(signature = (path, *, p4s=None, aux=None, boost_to_restframe_of=None, tree=None))]
     fn open(
         path: Bound<PyAny>,
         p4s: Option<Vec<String>>,
         aux: Option<Vec<String>>,
         boost_to_restframe_of: Option<Vec<String>>,
+        tree: Option<String>,
     ) -> PyResult<Self> {
         let path_str = if let Ok(s) = path.extract::<String>() {
             Ok(s)
@@ -362,6 +366,9 @@ impl PyDataset {
         }
         if let Some(boost_to_restframe_of) = boost_to_restframe_of {
             read_options = read_options.boost_to_restframe_of(boost_to_restframe_of);
+        }
+        if let Some(tree) = tree {
+            read_options = read_options.tree(tree);
         }
         let dataset = Dataset::open(&path_str, &read_options)?;
 
@@ -635,6 +642,7 @@ impl PyDataset {
     /// >>> masses = dataset.evaluate(Mass(['kshort1']))  # doctest: +SKIP
     /// >>> masses.shape  # doctest: +SKIP
     /// (len(dataset),)
+    ///
     fn evaluate<'py>(
         &self,
         py: Python<'py>,

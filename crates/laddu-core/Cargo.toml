@@ -26,6 +26,7 @@ mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 numpy = { workspace = true, optional = true }
+oxyroot = { workspace = true }
 parquet = { workspace = true }
 parking_lot = { workspace = true }
 pyo3 = { workspace = true, features = [

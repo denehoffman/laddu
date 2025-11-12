@@ -7,13 +7,12 @@ use arrow::{
 use auto_ops::impl_op_ex;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path};
-use std::{
-    collections::HashSet,
-    ops::{Deref, DerefMut, Index, IndexMut},
-};
+use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::path::Path;
 use std::{fmt::Display, fs::File};
 use std::{path::PathBuf, sync::Arc};
+
+use oxyroot::{Branch, Named, ReaderTree, RootFile};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -32,7 +31,7 @@ use crate::{
     },
     LadduError, LadduResult,
 };
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
@@ -910,16 +909,18 @@ impl Dataset {
     /// ``{identifier}_px``, ``{identifier}_py``, ``{identifier}_pz``, and ``{identifier}_e`` for
     /// each identifier (component suffixes are matched case-insensitively). Auxiliary scalars are
     /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
-    /// `Float32` or `Float64` and are promoted to `f64` on load.
-    /// If `boost_to_restframe_of` is provided, the method boosts every event to the rest frame of the specified particles.
+    /// `Float32` or `Float64` and are promoted to `f64` on load. If `boost_to_restframe_of` is
+    /// provided, the method boosts every event to the rest frame of the specified particles.
     ///
-    /// This method currently supports Parquet files only.
+    /// This method currently supports Parquet files and ROOT TTrees. When reading
+    /// ROOT files containing multiple trees, set [`DatasetReadOptions::tree`] to select one.
     pub fn open(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
         let path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
         if let Some(ext) = path.extension() {
             if let Some(ext_str) = ext.to_str() {
                 match ext_str.to_lowercase().as_str() {
                     "parquet" => Self::open_parquet_impl(path, options),
+                    "root" => Self::open_root_impl(path, options),
                     _ => Err(LadduError::Custom(format!(
                         "Filetype not supported: {}",
                         ext_str
@@ -943,46 +944,8 @@ impl Dataset {
         options: &DatasetReadOptions,
     ) -> LadduResult<Arc<Dataset>> {
         let (detected_p4_names, detected_aux_names) = detect_columns(&file_path)?;
-        let p4_names_vec: Vec<String> = options
-            .p4_names
-            .clone()
-            .map(|strs| strs.into_iter().map(|s| s.to_string()).collect())
-            .unwrap_or(detected_p4_names)
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
-        let aux_names_vec: Vec<String> = options
-            .aux_names
-            .clone()
-            .map(|strs| strs.into_iter().map(|s| s.to_string()).collect())
-            .unwrap_or(detected_aux_names)
-            .iter()
-            .map(|name| name.to_string())
-            .collect();
-
-        let metadata = Arc::new(DatasetMetadata::new(
-            p4_names_vec.clone(),
-            aux_names_vec.clone(),
-        )?);
-
-        let boost_indices: Option<Vec<usize>> =
-            if let Some(names) = options.boost_to_restframe_of.clone() {
-                let names = names.into_iter().collect::<Vec<_>>();
-                let mut indices = Vec::with_capacity(names.len());
-                for name in names {
-                    let idx = metadata
-                        .p4_index(&name)
-                        .ok_or_else(|| LadduError::UnknownName {
-                            category: "p4",
-                            name: name.to_string(),
-                        })?;
-                    indices.push(idx);
-                }
-                Some(indices)
-            } else {
-                None
-            };
-
+        let (metadata, boost_indices) =
+            options.resolve_metadata(detected_p4_names, detected_aux_names)?;
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let reader = builder.build()?;
@@ -994,7 +957,12 @@ impl Dataset {
             let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
                 .into_par_iter()
                 .map(|batch| {
-                    record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
+                    record_batch_to_events(
+                        batch,
+                        &metadata.p4_names,
+                        &metadata.aux_names,
+                        boost_indices,
+                    )
                 })
                 .collect();
             let mut events = Vec::new();
@@ -1011,7 +979,12 @@ impl Dataset {
             batches
                 .into_iter()
                 .map(|batch| {
-                    record_batch_to_events(batch, &p4_names_vec, &aux_names_vec, boost_indices)
+                    record_batch_to_events(
+                        batch,
+                        &metadata.p4_names,
+                        &metadata.aux_names,
+                        boost_indices,
+                    )
                 })
                 .collect::<LadduResult<Vec<_>>>()?
                 .into_iter()
@@ -1021,7 +994,138 @@ impl Dataset {
 
         Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
     }
+
+    fn open_root_impl(
+        file_path: PathBuf,
+        options: &DatasetReadOptions,
+    ) -> LadduResult<Arc<Dataset>> {
+        let mut file = RootFile::open(&file_path).map_err(|err| {
+            LadduError::Custom(format!(
+                "Failed to open ROOT file '{}': {err}",
+                file_path.display()
+            ))
+        })?;
+
+        let (tree, tree_name) = resolve_root_tree(&mut file, options.tree.as_deref())?;
+
+        let branches: Vec<&Branch> = tree.branches().collect();
+        let mut lookup: BranchLookup<'_> = IndexMap::new();
+        for &branch in &branches {
+            if let Some(kind) = branch_scalar_kind(branch) {
+                lookup.insert(branch.name(), (kind, branch));
+            }
+        }
+
+        if lookup.is_empty() {
+            return Err(LadduError::Custom(format!(
+                "No float or double branches found in ROOT tree '{tree_name}'"
+            )));
+        }
+
+        let column_names: Vec<&str> = lookup.keys().copied().collect();
+        let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
+        let (metadata, boost_indices) =
+            options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+
+        let weight_values = read_branch_values(&lookup, "weight")?;
+        let n_events = weight_values.len();
+
+        struct RootP4Columns {
+            px: Vec<f64>,
+            py: Vec<f64>,
+            pz: Vec<f64>,
+            e: Vec<f64>,
+        }
+
+        // TODO: do all reads in parallel if possible to match parquet impl
+        let mut p4_columns = Vec::with_capacity(metadata.p4_names.len());
+        for name in &metadata.p4_names {
+            let logical = format!("{name}_px");
+            let px = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "px"),
+                &logical,
+            )?;
+
+            let logical = format!("{name}_py");
+            let py = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "py"),
+                &logical,
+            )?;
+
+            let logical = format!("{name}_pz");
+            let pz = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "pz"),
+                &logical,
+            )?;
+
+            let logical = format!("{name}_e");
+            let e = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "e"),
+                &logical,
+            )?;
+
+            p4_columns.push(RootP4Columns { px, py, pz, e });
+        }
+
+        let mut aux_columns = Vec::with_capacity(metadata.aux_names.len());
+        for name in &metadata.aux_names {
+            let values = read_branch_values(&lookup, name)?;
+            aux_columns.push(values);
+        }
+
+        let boost_indices_slice = boost_indices.as_deref();
+
+        let mut events = Vec::with_capacity(n_events);
+        for row in 0..n_events {
+            let mut p4s = Vec::with_capacity(p4_columns.len());
+            for columns in &p4_columns {
+                p4s.push(Vec4::new(
+                    columns.px[row],
+                    columns.py[row],
+                    columns.pz[row],
+                    columns.e[row],
+                ));
+            }
+
+            let mut aux = Vec::with_capacity(aux_columns.len());
+            for column in &aux_columns {
+                aux.push(column[row]);
+            }
+
+            let mut event = EventData {
+                p4s,
+                aux,
+                weight: weight_values[row],
+            };
+            if let Some(indices) = boost_indices_slice {
+                if !indices.is_empty() {
+                    event = event.boost_to_rest_frame_of(indices);
+                }
+            }
+            events.push(Arc::new(event));
+        }
+
+        Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+    }
 }
+
+impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
+    debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
+    debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
+    Dataset {
+        events: a
+            .events
+            .iter()
+            .chain(b.events.iter())
+            .cloned()
+            .collect(),
+        metadata: a.metadata.clone(),
+    }
+});
 
 /// Options for reading a [`Dataset`] from a file.
 ///
@@ -1035,6 +1139,9 @@ pub struct DatasetReadOptions {
     pub aux_names: Option<Vec<String>>,
     /// Particles whose rest frame should be used to boost each event.
     pub boost_to_restframe_of: Option<Vec<String>>,
+    /// Name of the tree to read when loading ROOT files. When absent and the file contains a
+    /// single tree, it will be selected automatically.
+    pub tree: Option<String>,
 }
 impl DatasetReadOptions {
     /// Create a new [`Default`] set of [`DatasetReadOptions`].
@@ -1075,7 +1182,47 @@ impl DatasetReadOptions {
             Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
         self
     }
+
+    /// Select the tree to read when opening ROOT files.
+    pub fn tree<S>(mut self, name: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        self.tree = Some(name.as_ref().to_string());
+        self
+    }
+
+    fn resolve_metadata(
+        &self,
+        detected_p4_names: Vec<String>,
+        detected_aux_names: Vec<String>,
+    ) -> LadduResult<(Arc<DatasetMetadata>, Option<Vec<usize>>)> {
+        let p4_names_vec = self.p4_names.clone().unwrap_or(detected_p4_names);
+        let aux_names_vec = self.aux_names.clone().unwrap_or(detected_aux_names);
+
+        let metadata = Arc::new(DatasetMetadata::new(p4_names_vec, aux_names_vec)?);
+
+        let boost_indices = if let Some(names) = self.boost_to_restframe_of.clone() {
+            let mut indices = Vec::with_capacity(names.len());
+            for name in names {
+                let idx = metadata
+                    .p4_index(&name)
+                    .ok_or_else(|| LadduError::UnknownName {
+                        category: "p4",
+                        name: name.to_string(),
+                    })?;
+                indices.push(idx);
+            }
+            Some(indices)
+        } else {
+            None
+        };
+
+        Ok((metadata, boost_indices))
+    }
 }
+
+const P4_COMPONENT_SUFFIXES: [&str; 4] = ["_px", "_py", "_pz", "_e"];
 
 fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)> {
     let file = File::open(file_path)?;
@@ -1087,54 +1234,145 @@ fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)
         .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
         .map(|f| f.name().as_str())
         .collect();
-    let suffixes = ["_e", "_px", "_py", "_pz"];
-    let suffix_set: HashSet<_> = suffixes.into_iter().collect();
-    let mut groups: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for col in &float_cols {
-        for suf in &suffix_set {
-            if let Some(prefix) = col.strip_suffix(suf) {
-                groups.entry(prefix).or_default().insert(*suf);
+    Ok(infer_p4_and_aux_names(&float_cols))
+}
+
+fn infer_p4_and_aux_names(float_cols: &[&str]) -> (Vec<String>, Vec<String>) {
+    let suffix_set: IndexSet<&str> = P4_COMPONENT_SUFFIXES.iter().copied().collect();
+    let mut groups: IndexMap<&str, IndexSet<&str>> = IndexMap::new();
+    for col in float_cols {
+        for suffix in &suffix_set {
+            if let Some(prefix) = col.strip_suffix(suffix) {
+                groups.entry(prefix).or_default().insert(*suffix);
             }
         }
     }
-    let p4_name_set: HashSet<&str> = groups
-        .iter()
-        .filter(|(_, sfxs)| *sfxs == &suffix_set)
-        .map(|(p, _)| *p)
-        .collect();
-    let p4_columns: HashSet<&str> = float_cols
-        .iter()
-        .copied()
-        .filter(|c| {
-            suffix_set.iter().any(|s| {
-                c.strip_suffix(s)
-                    .map(|p| p4_name_set.contains(p))
-                    .unwrap_or(false)
-            })
-        })
-        .collect();
-    let p4_names: Vec<String> = p4_name_set.into_iter().map(|s| s.to_string()).collect();
-    let aux_names: Vec<String> = float_cols
-        .into_iter()
-        .filter(|c| !p4_columns.contains(*c))
-        .map(|s| s.to_string())
-        .collect();
-    Ok((p4_names, aux_names))
+
+    let mut p4_names: Vec<String> = Vec::new();
+    let mut p4_columns: IndexSet<String> = IndexSet::new();
+    for (prefix, suffixes) in &groups {
+        if suffixes.len() == suffix_set.len() {
+            p4_names.push((*prefix).to_string());
+            for suffix in &suffix_set {
+                p4_columns.insert(format!("{prefix}{suffix}"));
+            }
+        }
+    }
+
+    let mut aux_names: Vec<String> = Vec::new();
+    for col in float_cols {
+        if p4_columns.contains(*col) {
+            continue;
+        }
+        if col.eq_ignore_ascii_case("weight") {
+            continue;
+        }
+        aux_names.push((*col).to_string());
+    }
+
+    (p4_names, aux_names)
 }
 
-impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
-    debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
-    debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
-    Dataset {
-        events: a
-            .events
-            .iter()
-            .chain(b.events.iter())
-            .cloned()
-            .collect(),
-        metadata: a.metadata.clone(),
+type BranchLookup<'a> = IndexMap<&'a str, (RootScalarKind, &'a Branch)>;
+
+#[derive(Clone, Copy)]
+enum RootScalarKind {
+    F32,
+    F64,
+}
+
+fn branch_scalar_kind(branch: &Branch) -> Option<RootScalarKind> {
+    let type_name = branch.item_type_name();
+    let lower = type_name.to_ascii_lowercase();
+    if lower.contains("vector") {
+        return None;
     }
-});
+    match lower.as_str() {
+        "float" | "float_t" | "float32_t" => Some(RootScalarKind::F32),
+        "double" | "double_t" | "double32_t" => Some(RootScalarKind::F64),
+        _ => None,
+    }
+}
+
+fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> LadduResult<Vec<f64>> {
+    let (kind, branch) =
+        lookup
+            .get(column_name)
+            .copied()
+            .ok_or_else(|| LadduError::MissingColumn {
+                name: column_name.to_string(),
+            })?;
+
+    let values = match kind {
+        RootScalarKind::F32 => branch
+            .as_iter::<f32>()
+            .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
+            .map(|value| value as f64)
+            .collect(),
+        RootScalarKind::F64 => branch
+            .as_iter::<f64>()
+            .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
+            .collect(),
+    };
+    Ok(values)
+}
+
+fn read_branch_values_from_candidates<'a>(
+    lookup: &BranchLookup<'a>,
+    candidates: &[String],
+    logical_name: &str,
+) -> LadduResult<Vec<f64>> {
+    for candidate in candidates {
+        if lookup.contains_key(candidate.as_str()) {
+            return read_branch_values(lookup, candidate);
+        }
+    }
+    Err(LadduError::MissingColumn {
+        name: logical_name.to_string(),
+    })
+}
+
+fn resolve_root_tree(
+    file: &mut RootFile,
+    requested: Option<&str>,
+) -> LadduResult<(ReaderTree, String)> {
+    if let Some(name) = requested {
+        let tree = file
+            .get_tree(name)
+            .map_err(|err| map_root_error(&format!("Failed to open ROOT tree '{name}'"), err))?;
+        return Ok((tree, name.to_string()));
+    }
+
+    let tree_names: Vec<String> = file
+        .keys()
+        .into_iter()
+        .filter(|key| key.class_name() == "TTree")
+        .map(|key| key.name().to_string())
+        .collect();
+
+    if tree_names.is_empty() {
+        return Err(LadduError::Custom(
+            "ROOT file does not contain any TTrees".to_string(),
+        ));
+    }
+
+    if tree_names.len() > 1 {
+        return Err(LadduError::Custom(format!(
+            "Multiple TTrees found ({:?}); specify DatasetReadOptions::tree to disambiguate",
+            tree_names
+        )));
+    }
+
+    let selected = &tree_names[0];
+    let tree = file
+        .get_tree(selected)
+        .map_err(|err| map_root_error(&format!("Failed to open ROOT tree '{selected}'"), err))?;
+    Ok((tree, selected.clone()))
+}
+
+fn map_root_error<E: std::fmt::Display>(context: &str, err: E) -> LadduError {
+    LadduError::Custom(format!("{context}: {err}")) // NOTE: the oxyroot error type is not public
+}
 
 #[derive(Clone, Copy)]
 enum FloatColumn<'a> {
@@ -1353,6 +1591,116 @@ mod tests {
     use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
     use serde::{Deserialize, Serialize};
+    use std::path::{Path, PathBuf};
+
+    fn test_data_path(file: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test_data")
+            .join(file)
+    }
+
+    fn open_test_dataset(file: &str, options: DatasetReadOptions) -> Arc<Dataset> {
+        let path = test_data_path(file);
+        let path_str = path.to_str().expect("test data path should be valid UTF-8");
+        Dataset::open(path_str, &options).expect("dataset should open")
+    }
+
+    fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
+        for name in p4_names {
+            let lp4 = left
+                .p4(name)
+                .unwrap_or_else(|| panic!("missing p4 '{name}' in left dataset"));
+            let rp4 = right
+                .p4(name)
+                .unwrap_or_else(|| panic!("missing p4 '{name}' in right dataset"));
+            assert_relative_eq!(lp4.px(), rp4.px(), epsilon = 1e-9);
+            assert_relative_eq!(lp4.py(), rp4.py(), epsilon = 1e-9);
+            assert_relative_eq!(lp4.pz(), rp4.pz(), epsilon = 1e-9);
+            assert_relative_eq!(lp4.e(), rp4.e(), epsilon = 1e-9);
+        }
+        for name in aux_names {
+            let laux = left
+                .aux(name)
+                .unwrap_or_else(|| panic!("missing aux '{name}' in left dataset"));
+            let raux = right
+                .aux(name)
+                .unwrap_or_else(|| panic!("missing aux '{name}' in right dataset"));
+            assert_relative_eq!(laux, raux, epsilon = 1e-9);
+        }
+        assert_relative_eq!(left.weight(), right.weight(), epsilon = 1e-9);
+    }
+
+    fn assert_datasets_close(
+        left: &Arc<Dataset>,
+        right: &Arc<Dataset>,
+        p4_names: &[&str],
+        aux_names: &[&str],
+    ) {
+        assert_eq!(left.n_events(), right.n_events());
+        for idx in 0..left.n_events() {
+            let levent = &left[idx];
+            let revent = &right[idx];
+            assert_events_close(levent, revent, p4_names, aux_names);
+        }
+    }
+
+    #[test]
+    fn test_open_parquet_auto_matches_explicit_names() {
+        let auto = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let explicit_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES);
+        let explicit = open_test_dataset("data_f32.parquet", explicit_options);
+
+        let mut detected_p4: Vec<&str> = auto.p4_names().iter().map(String::as_str).collect();
+        detected_p4.sort_unstable();
+        let mut expected_p4 = TEST_P4_NAMES.to_vec();
+        expected_p4.sort_unstable();
+        assert_eq!(detected_p4, expected_p4);
+        let mut detected_aux: Vec<&str> = auto.aux_names().iter().map(String::as_str).collect();
+        detected_aux.sort_unstable();
+        let mut expected_aux = TEST_AUX_NAMES.to_vec();
+        expected_aux.sort_unstable();
+        assert_eq!(detected_aux, expected_aux);
+        assert_datasets_close(&auto, &explicit, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_open_parquet_f64_matches_f32() {
+        let f32_ds = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let f64_ds = open_test_dataset("data_f64.parquet", DatasetReadOptions::new());
+        assert_datasets_close(&f64_ds, &f32_ds, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_open_root_detects_columns_and_matches_parquet() {
+        let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let root_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
+        let mut detected_p4: Vec<&str> = root_auto.p4_names().iter().map(String::as_str).collect();
+        detected_p4.sort_unstable();
+        let mut expected_p4 = TEST_P4_NAMES.to_vec();
+        expected_p4.sort_unstable();
+        assert_eq!(detected_p4, expected_p4);
+        let mut detected_aux: Vec<&str> =
+            root_auto.aux_names().iter().map(String::as_str).collect();
+        detected_aux.sort_unstable();
+        let mut expected_aux = TEST_AUX_NAMES.to_vec();
+        expected_aux.sort_unstable();
+        assert_eq!(detected_aux, expected_aux);
+        let root_named_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES);
+        let root_named = open_test_dataset("data_f32.root", root_named_options);
+        assert_datasets_close(&root_auto, &root_named, TEST_P4_NAMES, TEST_AUX_NAMES);
+        assert_datasets_close(&root_auto, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_open_root_f64_matches_parquet() {
+        let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let root_f64 = open_test_dataset("data_f64.root", DatasetReadOptions::new());
+        assert_datasets_close(&root_f64, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
     #[test]
     fn test_event_creation() {
         let event = test_event();
