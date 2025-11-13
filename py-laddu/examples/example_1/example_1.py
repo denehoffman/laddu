@@ -53,8 +53,8 @@ def main(bins: int, niters: int, nboot: int) -> None:
     accmc_ds = ld.Dataset.open(accmc_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening GenMC file...')
     genmc_ds = ld.Dataset.open(genmc_file, p4s=p4_columns, aux=aux_columns)
-    tot_weights, s0p_weights, d2p_weights, status, boot_statuses, parameters = (
-        fit_unbinned(niters, nboot, data_ds, accmc_ds, genmc_ds)
+    tot_weights, s0p_weights, d2p_weights, fit, boot_fites, parameters = fit_unbinned(
+        niters, nboot, data_ds, accmc_ds, genmc_ds
     )
     (
         (binned_tot, binned_tot_err),
@@ -64,28 +64,28 @@ def main(bins: int, niters: int, nboot: int) -> None:
     ) = fit_binned(bins, niters, nboot, data_ds, accmc_ds, genmc_ds)
     end = perf_counter()
     logger.info(f'Total time: {end - start:.3f}s')
-    logger.info(f'\n\n{status}')
+    logger.info(f'\n\n{fit}')
 
-    f0_width = status.x[parameters.index('f0_width')]
-    f2_width = status.x[parameters.index('f2_width')]
-    f0_re = status.x[parameters.index('S0+ re')]
-    f2_re = status.x[parameters.index('D2+ re')]
-    f2_im = status.x[parameters.index('D2+ im')]
+    f0_width = fit.x[parameters.index('f0_width')]
+    f2_width = fit.x[parameters.index('f2_width')]
+    f0_re = fit.x[parameters.index('S0+ re')]
+    f2_re = fit.x[parameters.index('D2+ re')]
+    f2_im = fit.x[parameters.index('D2+ im')]
 
     f0_width_err = np.array(
-        [boot_status.x[parameters.index('f0_width')] for boot_status in boot_statuses]
+        [boot_fit.x[parameters.index('f0_width')] for boot_fit in boot_fites]
     ).std()
     f2_width_err = np.array(
-        [boot_status.x[parameters.index('f2_width')] for boot_status in boot_statuses]
+        [boot_fit.x[parameters.index('f2_width')] for boot_fit in boot_fites]
     ).std()
     f0_re_err = np.array(
-        [boot_status.x[parameters.index('S0+ re')] for boot_status in boot_statuses]
+        [boot_fit.x[parameters.index('S0+ re')] for boot_fit in boot_fites]
     ).std()
     f2_re_err = np.array(
-        [boot_status.x[parameters.index('D2+ re')] for boot_status in boot_statuses]
+        [boot_fit.x[parameters.index('D2+ re')] for boot_fit in boot_fites]
     ).std()
     f2_im_err = np.array(
-        [boot_status.x[parameters.index('D2+ im')] for boot_status in boot_statuses]
+        [boot_fit.x[parameters.index('D2+ im')] for boot_fit in boot_fites]
     ).std()
 
     u_f0_re = ufloat(f0_re, f0_re_err)
@@ -369,7 +369,7 @@ def fit_binned(
     for ibin in range(bins):
         logger.info(f'Fitting Bin #{ibin}')
         best_nll = np.inf
-        best_status = None
+        best_fit = None
         nll = ld.NLL(model, data_ds_binned[ibin], accmc_ds_binned[ibin])
         gen_eval = model.load(
             genmc_ds_binned[ibin],
@@ -377,24 +377,24 @@ def fit_binned(
         for iiter in range(niters):
             logger.info(f'Fitting Iteration #{iiter}')
             p0 = rng.uniform(-1000.0, 1000.0, len(nll.parameters))
-            status = nll.minimize(p0)
-            if status.fx < best_nll:
-                best_nll = status.fx
-                best_status = status
+            fit = nll.minimize(p0)
+            if fit.fx < best_nll:
+                best_nll = fit.fx
+                best_fit = fit
 
-        if best_status is None:
+        if best_fit is None:
             msg = f'All fits for bin #{ibin} failed!'
             raise RuntimeError(msg)
 
-        tot_res.append(nll.project(best_status.x).sum())
-        tot_res_acc.append(nll.project(best_status.x, mc_evaluator=gen_eval).sum())
-        s0p_res.append(nll.project_with(best_status.x, ['Z00+', 'S0+']).sum())
+        tot_res.append(nll.project(best_fit.x).sum())
+        tot_res_acc.append(nll.project(best_fit.x, mc_evaluator=gen_eval).sum())
+        s0p_res.append(nll.project_with(best_fit.x, ['Z00+', 'S0+']).sum())
         s0p_res_acc.append(
-            nll.project_with(best_status.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval).sum()
+            nll.project_with(best_fit.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval).sum()
         )
-        d2p_res.append(nll.project_with(best_status.x, ['Z22+', 'D2+']).sum())
+        d2p_res.append(nll.project_with(best_fit.x, ['Z22+', 'D2+']).sum())
         d2p_res_acc.append(
-            nll.project_with(best_status.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval).sum()
+            nll.project_with(best_fit.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval).sum()
         )
         nll.activate_all()
         gen_eval.activate_all()
@@ -405,7 +405,7 @@ def fit_binned(
         s0p_boot_acc = []
         d2p_boot = []
         d2p_boot_acc = []
-        bootstrap_statuses = []
+        bootstrap_fites = []
         for iboot in range(nboot):
             logger.info(f'Running bootstrap fit #{iboot}')
             boot_nll = ld.NLL(
@@ -413,23 +413,21 @@ def fit_binned(
                 data_ds_binned[ibin].bootstrap(iboot),
                 accmc_ds_binned[ibin],
             )
-            boot_status = boot_nll.minimize(best_status.x)
-            bootstrap_statuses.append(boot_status)
+            boot_fit = boot_nll.minimize(best_fit.x)
+            bootstrap_fites.append(boot_fit)
 
-            tot_boot.append(boot_nll.project(boot_status.x).sum())
-            tot_boot_acc.append(
-                boot_nll.project(boot_status.x, mc_evaluator=gen_eval).sum()
-            )
-            s0p_boot.append(boot_nll.project_with(boot_status.x, ['Z00+', 'S0+']).sum())
+            tot_boot.append(boot_nll.project(boot_fit.x).sum())
+            tot_boot_acc.append(boot_nll.project(boot_fit.x, mc_evaluator=gen_eval).sum())
+            s0p_boot.append(boot_nll.project_with(boot_fit.x, ['Z00+', 'S0+']).sum())
             s0p_boot_acc.append(
                 boot_nll.project_with(
-                    boot_status.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval
+                    boot_fit.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval
                 ).sum()
             )
-            d2p_boot.append(boot_nll.project_with(boot_status.x, ['Z22+', 'D2+']).sum())
+            d2p_boot.append(boot_nll.project_with(boot_fit.x, ['Z22+', 'D2+']).sum())
             d2p_boot_acc.append(
                 boot_nll.project_with(
-                    boot_status.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval
+                    boot_fit.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval
                 ).sum()
             )
             boot_nll.activate_all()
@@ -444,8 +442,8 @@ def fit_binned(
             {
                 'bin': ibin,
                 'model': model,
-                'best': best_status,
-                'bootstraps': bootstrap_statuses,
+                'best': best_fit,
+                'bootstraps': bootstrap_fites,
             }
         )
     output = {'fits': bin_outputs, 'nbins': bins, 'range': (1.0, 2.0)}
@@ -479,8 +477,8 @@ def fit_unbinned(
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
-    ld.Status,
-    list[ld.Status],
+    ld.MinimizationSummary,
+    list[ld.MinimizationSummary],
     list[str],
 ]:
     logger.info('Starting Unbinned Fit')
@@ -523,7 +521,7 @@ def fit_unbinned(
     rng = np.random.default_rng(0)
 
     best_nll = np.inf
-    best_status = None
+    best_fit = None
     bounds = [
         (0.001, 1.0),
         (0.001, 1.0),
@@ -539,34 +537,34 @@ def fit_unbinned(
         logger.info(f'Fitting Iteration #{iiter}')
         p0 = rng.uniform(-1000.0, 1000.0, 3)
         p0 = np.append([0.8, 0.5], p0)
-        status = nll.minimize(p0, bounds=bounds)
-        if status.fx < best_nll:
-            best_nll = status.fx
-            best_status = status
+        fit = nll.minimize(p0, bounds=bounds)
+        if fit.fx < best_nll:
+            best_nll = fit.fx
+            best_fit = fit
 
-    if best_status is None:
+    if best_fit is None:
         msg = 'All unbinned fits failed!'
         raise RuntimeError(msg)
 
-    tot_weights = nll.project(best_status.x)
-    tot_weights_acc = nll.project(best_status.x, mc_evaluator=gen_eval)
-    s0p_weights = nll.project_with(best_status.x, ['S0+', 'Z00+', 'f0(1500)'])
+    tot_weights = nll.project(best_fit.x)
+    tot_weights_acc = nll.project(best_fit.x, mc_evaluator=gen_eval)
+    s0p_weights = nll.project_with(best_fit.x, ['S0+', 'Z00+', 'f0(1500)'])
     s0p_weights_acc = nll.project_with(
-        best_status.x, ['S0+', 'Z00+', 'f0(1500)'], mc_evaluator=gen_eval
+        best_fit.x, ['S0+', 'Z00+', 'f0(1500)'], mc_evaluator=gen_eval
     )
-    d2p_weights = nll.project_with(best_status.x, ['D2+', 'Z22+', 'f2(1525)'])
+    d2p_weights = nll.project_with(best_fit.x, ['D2+', 'Z22+', 'f2(1525)'])
     d2p_weights_acc = nll.project_with(
-        best_status.x, ['D2+', 'Z22+', 'f2(1525)'], mc_evaluator=gen_eval
+        best_fit.x, ['D2+', 'Z22+', 'f2(1525)'], mc_evaluator=gen_eval
     )
     nll.activate_all()
 
-    boot_statuses = []
+    boot_fites = []
     for iboot in range(nboot):
         logger.info(f'Running bootstrap fit #{iboot}')
         boot_nll = ld.NLL(model, data_ds.bootstrap(iboot), accmc_ds)
-        boot_statuses.append(boot_nll.minimize(best_status.x))
+        boot_fites.append(boot_nll.minimize(best_fit.x))
 
-    output = {'model': model, 'best': best_status, 'bootstraps': boot_statuses}
+    output = {'model': model, 'best': best_fit, 'bootstraps': boot_fites}
     with Path('example_1_unbinned_fit.pkl').open('wb') as out_file:
         pickle.dump(output, out_file)
 
@@ -574,8 +572,8 @@ def fit_unbinned(
         (tot_weights, tot_weights_acc),
         (s0p_weights, s0p_weights_acc),
         (d2p_weights, d2p_weights_acc),
-        best_status,
-        boot_statuses,
+        best_fit,
+        boot_fites,
         nll.parameters,
     )
 

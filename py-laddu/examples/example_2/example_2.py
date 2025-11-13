@@ -255,8 +255,12 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.Dataset.open(script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns)
-        accmc = ld.Dataset.open(script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns)
+        data = ld.Dataset.open(
+            script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns
+        )
+        accmc = ld.Dataset.open(
+            script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns
+        )
         mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
