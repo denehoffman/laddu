@@ -176,13 +176,12 @@ mod tests {
     #[test]
     fn test_phase_space_factor_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut recoil_mass = Mass::new(["proton"]);
-        let mut daughter_1_mass = Mass::new(["kshort1"]);
-        let mut daughter_2_mass = Mass::new(["kshort2"]);
-        let mut resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let mut mandelstam_s = Mandelstam::new(
+        let recoil_mass = Mass::new(["proton"]);
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+        let mandelstam_s = Mandelstam::new(
             ["beam"],
             Vec::<&str>::new(),
             ["kshort1", "kshort2"],
@@ -190,11 +189,6 @@ mod tests {
             Channel::S,
         )
         .unwrap();
-        recoil_mass.bind(metadata).unwrap();
-        daughter_1_mass.bind(metadata).unwrap();
-        daughter_2_mass.bind(metadata).unwrap();
-        resonance_mass.bind(metadata).unwrap();
-        mandelstam_s.bind(metadata).unwrap();
         let amp = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
@@ -217,13 +211,12 @@ mod tests {
     #[test]
     fn test_phase_space_factor_gradient() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut recoil_mass = Mass::new(["proton"]);
-        let mut daughter_1_mass = Mass::new(["kshort1"]);
-        let mut daughter_2_mass = Mass::new(["kshort2"]);
-        let mut resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let mut mandelstam_s = Mandelstam::new(
+        let recoil_mass = Mass::new(["proton"]);
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+        let mandelstam_s = Mandelstam::new(
             ["beam"],
             Vec::<&str>::new(),
             ["kshort1", "kshort2"],
@@ -231,11 +224,6 @@ mod tests {
             Channel::S,
         )
         .unwrap();
-        recoil_mass.bind(metadata).unwrap();
-        daughter_1_mass.bind(metadata).unwrap();
-        daughter_2_mass.bind(metadata).unwrap();
-        resonance_mass.bind(metadata).unwrap();
-        mandelstam_s.bind(metadata).unwrap();
         let amp = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,

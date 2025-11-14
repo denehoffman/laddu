@@ -181,14 +181,10 @@ mod tests {
     #[test]
     fn test_bw_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut daughter_1_mass = Mass::new(["kshort1"]);
-        let mut daughter_2_mass = Mass::new(["kshort2"]);
-        let mut resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        daughter_1_mass.bind(metadata).unwrap();
-        daughter_2_mass.bind(metadata).unwrap();
-        resonance_mass.bind(metadata).unwrap();
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
             parameter("mass"),
@@ -212,14 +208,10 @@ mod tests {
     #[test]
     fn test_bw_gradient() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut daughter_1_mass = Mass::new(["kshort1"]);
-        let mut daughter_2_mass = Mass::new(["kshort2"]);
-        let mut resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        daughter_1_mass.bind(metadata).unwrap();
-        daughter_2_mass.bind(metadata).unwrap();
-        resonance_mass.bind(metadata).unwrap();
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
             parameter("mass"),

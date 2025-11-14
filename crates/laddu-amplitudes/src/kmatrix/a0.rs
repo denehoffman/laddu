@@ -247,10 +247,8 @@ mod tests {
     #[test]
     fn test_a0_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut res_mass = Mass::new(["kshort1", "kshort2"]);
-        res_mass.bind(metadata).unwrap();
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = KopfKMatrixA0::new(
             "a0",
             [
@@ -276,10 +274,8 @@ mod tests {
     #[test]
     fn test_a0_gradient() {
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
         let mut manager = Manager::default();
-        let mut res_mass = Mass::new(["kshort1", "kshort2"]);
-        res_mass.bind(metadata).unwrap();
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = KopfKMatrixA0::new(
             "a0",
             [

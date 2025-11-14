@@ -123,17 +123,13 @@ mod tests {
     fn test_ylm_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut angles = Angles::new(
+        let angles = Angles::new(
             "beam",
             ["proton"],
             ["kshort1"],
             ["kshort1", "kshort2"],
             Frame::Helicity,
         );
-        angles.costheta.bind(metadata).unwrap();
-        angles.phi.bind(metadata).unwrap();
-
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
         let expr = aid.into();
@@ -150,17 +146,13 @@ mod tests {
     fn test_ylm_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut angles = Angles::new(
+        let angles = Angles::new(
             "beam",
             ["proton"],
             ["kshort1"],
             ["kshort1", "kshort2"],
             Frame::Helicity,
         );
-        angles.costheta.bind(metadata).unwrap();
-        angles.phi.bind(metadata).unwrap();
-
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
         let expr = aid.into();

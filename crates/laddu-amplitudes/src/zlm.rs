@@ -284,19 +284,14 @@ mod tests {
     fn test_zlm_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut angles = Angles::new(
+        let angles = Angles::new(
             "beam",
             ["proton"],
             ["kshort1"],
             ["kshort1", "kshort2"],
             Frame::Helicity,
         );
-        angles.costheta.bind(metadata).unwrap();
-        angles.phi.bind(metadata).unwrap();
-        let mut polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
-        polarization.pol_angle.bind(metadata).unwrap();
-        polarization.pol_magnitude.bind(metadata).unwrap();
+        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -314,19 +309,14 @@ mod tests {
     fn test_zlm_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut angles = Angles::new(
+        let angles = Angles::new(
             "beam",
             ["proton"],
             ["kshort1"],
             ["kshort1", "kshort2"],
             Frame::Helicity,
         );
-        angles.costheta.bind(metadata).unwrap();
-        angles.phi.bind(metadata).unwrap();
-        let mut polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
-        polarization.pol_angle.bind(metadata).unwrap();
-        polarization.pol_magnitude.bind(metadata).unwrap();
+        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -342,10 +332,7 @@ mod tests {
     fn test_polphase_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
-        polarization.pol_angle.bind(metadata).unwrap();
-        polarization.pol_magnitude.bind(metadata).unwrap();
+        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
         let amp = PolPhase::new("polphase", &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -363,10 +350,7 @@ mod tests {
     fn test_polphase_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let metadata = dataset.metadata();
-        let mut polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
-        polarization.pol_angle.bind(metadata).unwrap();
-        polarization.pol_magnitude.bind(metadata).unwrap();
+        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
         let amp = PolPhase::new("polphase", &polarization);
         let aid = manager.register(amp).unwrap();
 
