@@ -4,7 +4,7 @@ use laddu_core::{
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
-    LadduError, LadduResult, ScalarID,
+    LadduResult, ScalarID,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -57,19 +57,7 @@ impl PiecewiseScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewiseScalar {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.variable.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids = self
             .values
             .iter()
@@ -77,6 +65,11 @@ impl Amplitude for PiecewiseScalar {
             .collect();
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {
@@ -209,19 +202,7 @@ impl PiecewiseComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewiseComplexScalar {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.variable.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids_re_im = self
             .re_ims
             .iter()
@@ -234,6 +215,11 @@ impl Amplitude for PiecewiseComplexScalar {
             .collect();
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {
@@ -377,19 +363,7 @@ impl PiecewisePolarComplexScalar {
 
 #[typetag::serde]
 impl Amplitude for PiecewisePolarComplexScalar {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.variable.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids_r_theta = self
             .r_thetas
             .iter()
@@ -402,6 +376,11 @@ impl Amplitude for PiecewisePolarComplexScalar {
             .collect();
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {

@@ -6,7 +6,7 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    LadduError, LadduResult,
+    LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
@@ -43,22 +43,15 @@ impl Ylm {
 
 #[typetag::serde]
 impl Amplitude for Ylm {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.angles.costheta.bind(metadata)?;
-            self.angles.phi.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.angles.costheta.bind(metadata)?;
+        self.angles.phi.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {

@@ -4,7 +4,7 @@ use laddu_core::{
     data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    LadduError, LadduResult,
+    LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -149,19 +149,7 @@ impl KopfKMatrixF2 {
 
 #[typetag::serde]
 impl Amplitude for KopfKMatrixF2 {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.mass.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         for i in 0..self.couplings_indices_real.len() {
             self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
             self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
@@ -171,6 +159,11 @@ impl Amplitude for KopfKMatrixF2 {
         self.p_vec_cache_index =
             resources.register_matrix(Some(&format!("KopfKMatrixF2<{}> p_vec", self.name)));
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.mass.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {

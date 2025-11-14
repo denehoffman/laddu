@@ -194,8 +194,6 @@ impl PyEvent {
         self.ensure_metadata()?;
         Ok(self.event.p4(name).copied().map(PyVec4))
     }
-
-
 }
 
 impl PyEvent {

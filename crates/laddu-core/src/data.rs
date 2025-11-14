@@ -1854,11 +1854,7 @@ mod tests {
         let summed = view.get_p4_sum(["kshort1", "kshort2"]);
         assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
 
-        let aux_angle = view
-            .aux()
-            .get("pol_angle")
-            .copied()
-            .expect("pol angle");
+        let aux_angle = view.aux().get("pol_angle").copied().expect("pol angle");
         assert_relative_eq!(aux_angle, dataset[0].aux[1]);
 
         let metadata = dataset.metadata_arc();

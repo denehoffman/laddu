@@ -103,24 +103,21 @@
 //!
 //! #[typetag::serde]
 //! impl Amplitude for MyBreitWigner {
-//!     fn register(
-//!         &mut self,
-//!         resources: &mut Resources,
-//!         metadata: Option<&DatasetMetadata>,
-//!     ) -> LadduResult<AmplitudeID> {
-//!         if let Some(metadata) = metadata {
-//!             self.daughter_1_mass.bind(metadata)?;
-//!             self.daughter_2_mass.bind(metadata)?;
-//!             self.resonance_mass.bind(metadata)?;
-//!             return resources
-//!                 .amplitude_id(&self.name)
-//!                 .ok_or(LadduError::AmplitudeNotFoundError {
-//!                     name: self.name.clone(),
-//!                 });
-//!         }
+//!     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //!         self.pid_mass = resources.register_parameter(&self.mass);
 //!         self.pid_width = resources.register_parameter(&self.width);
 //!         resources.register_amplitude(&self.name)
+//!     }
+//!
+//!     fn bind(
+//!         &mut self,
+//!         resources: &mut Resources,
+//!         metadata: &DatasetMetadata,
+//!     ) -> LadduResult<()> {
+//!         self.daughter_1_mass.bind(metadata)?;
+//!         self.daughter_2_mass.bind(metadata)?;
+//!         self.resonance_mass.bind(metadata)?;
+//!         Ok(())
 //!     }
 //!
 //!     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
@@ -198,24 +195,21 @@
 //! #
 //! # #[typetag::serde]
 //! # impl Amplitude for MyBreitWigner {
-//! #     fn register(
-//! #         &mut self,
-//! #         resources: &mut Resources,
-//! #         metadata: Option<&DatasetMetadata>,
-//! #     ) -> LadduResult<AmplitudeID> {
-//! #         if let Some(metadata) = metadata {
-//! #             self.daughter_1_mass.bind(metadata)?;
-//! #             self.daughter_2_mass.bind(metadata)?;
-//! #             self.resonance_mass.bind(metadata)?;
-//! #             return resources
-//! #                 .amplitude_id(&self.name)
-//! #                 .ok_or(LadduError::AmplitudeNotFoundError {
-//! #                     name: self.name.clone(),
-//! #                 });
-//! #         }
+//! #     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass);
 //! #         self.pid_width = resources.register_parameter(&self.width);
 //! #         resources.register_amplitude(&self.name)
+//! #     }
+//! #
+//! #     fn bind(
+//! #         &mut self,
+//! #         resources: &mut Resources,
+//! #         metadata: &DatasetMetadata,
+//! #     ) -> LadduResult<()> {
+//! #         self.daughter_1_mass.bind(metadata)?;
+//! #         self.daughter_2_mass.bind(metadata)?;
+//! #         self.resonance_mass.bind(metadata)?;
+//! #         Ok(())
 //! #     }
 //! #
 //! #     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {

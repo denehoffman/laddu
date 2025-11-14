@@ -6,7 +6,7 @@ use laddu_core::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    LadduError, LadduResult, Polarization, Sign,
+    LadduResult, Polarization, Sign,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -61,24 +61,17 @@ impl Zlm {
 
 #[typetag::serde]
 impl Amplitude for Zlm {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.angles.costheta.bind(metadata)?;
-            self.angles.phi.bind(metadata)?;
-            self.polarization.pol_angle.bind(metadata)?;
-            self.polarization.pol_magnitude.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.angles.costheta.bind(metadata)?;
+        self.angles.phi.bind(metadata)?;
+        self.polarization.pol_angle.bind(metadata)?;
+        self.polarization.pol_magnitude.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {
@@ -209,22 +202,15 @@ impl PolPhase {
 
 #[typetag::serde]
 impl Amplitude for PolPhase {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.polarization.pol_angle.bind(metadata)?;
-            self.polarization.pol_magnitude.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.polarization.pol_angle.bind(metadata)?;
+        self.polarization.pol_magnitude.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {

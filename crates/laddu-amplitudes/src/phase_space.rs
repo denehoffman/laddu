@@ -3,7 +3,7 @@ use laddu_core::{
     data::{DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
-    LadduError, LadduResult, Mandelstam, Mass, ScalarID, PI,
+    LadduResult, Mandelstam, Mass, ScalarID, PI,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -71,25 +71,18 @@ impl PhaseSpaceFactor {
 
 #[typetag::serde]
 impl Amplitude for PhaseSpaceFactor {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.recoil_mass.bind(metadata)?;
-            self.daughter_1_mass.bind(metadata)?;
-            self.daughter_2_mass.bind(metadata)?;
-            self.resonance_mass.bind(metadata)?;
-            self.mandelstam_s.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.sid = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.recoil_mass.bind(metadata)?;
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        self.mandelstam_s.bind(metadata)?;
+        Ok(())
     }
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {

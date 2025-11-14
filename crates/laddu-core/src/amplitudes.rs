@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     data::{Dataset, DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
-    LadduError, LadduResult, ParameterID, ReadWrite,
+    LadduResult, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -62,16 +62,18 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
     ///
-    /// Implementors are invoked twice: once when an amplitude is first registered with a
-    /// [`Manager`] (no metadata is available at that point and `metadata` will be `None`) and
-    /// again when a [`Model`] is loaded with a concrete [`Dataset`] (the second invocation will
-    /// provide the dataset metadata). Use the first call to allocate parameter/cache state within
-    /// the [`Resources`] object, and the second call to bind any metadata-dependent variables.
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID>;
+    /// [`register`](Amplitude::register) is invoked once when an amplitude is first added to a
+    /// [`Manager`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
+    /// any dataset context.
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID>;
+    /// Bind this [`Amplitude`] to a concrete [`Dataset`] by using the provided metadata to wire up
+    /// [`Variable`](crate::utils::variables::Variable)s or other dataset-specific state. This will
+    /// be invoked when a [`Model`] is loaded with data, after [`register`](Amplitude::register)
+    /// has already succeeded. The default implementation is a no-op for amplitudes that do not
+    /// depend on metadata.
+    fn bind(&mut self, _resources: &mut Resources, _metadata: &DatasetMetadata) -> LadduResult<()> {
+        Ok(())
+    }
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
     /// not on any free parameters in the fit. This method is opt-in since it is not required
@@ -509,10 +511,10 @@ impl Manager {
     /// # Errors
     ///
     /// The [`Amplitude`]'s name must be unique and not already
-    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
+    /// registered, else this will return a [`RegistrationError`][crate::LadduError::RegistrationError].
     pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> LadduResult<AmplitudeID> {
         let mut amp = amplitude.clone();
-        let aid = amp.register(&mut self.resources, None)?;
+        let aid = amp.register(&mut self.resources)?;
         self.amplitudes.push(amp);
         Ok(aid)
     }
@@ -561,7 +563,7 @@ impl Model {
             resources_guard.reserve_cache(dataset.n_events());
             for amplitude in amplitudes.iter_mut() {
                 amplitude
-                    .register(&mut resources_guard, Some(metadata))
+                    .bind(&mut resources_guard, metadata)
                     .expect("Failed to bind amplitude to dataset metadata");
                 amplitude.precompute_all(dataset, &mut resources_guard);
             }
@@ -1175,18 +1177,7 @@ impl TestAmplitude {
 
 #[typetag::serde]
 impl Amplitude for TestAmplitude {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if metadata.is_some() {
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid_re = resources.register_parameter(&self.re);
         self.pid_im = resources.register_parameter(&self.im);
         resources.register_amplitude(&self.name)
@@ -1220,7 +1211,6 @@ mod tests {
     use crate::{
         data::EventData,
         resources::{Cache, ParameterID, Parameters, Resources},
-        LadduError,
     };
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
@@ -1249,18 +1239,7 @@ mod tests {
 
     #[typetag::serde]
     impl Amplitude for ComplexScalar {
-        fn register(
-            &mut self,
-            resources: &mut Resources,
-            metadata: Option<&DatasetMetadata>,
-        ) -> LadduResult<AmplitudeID> {
-            if metadata.is_some() {
-                return resources.amplitude_id(&self.name).ok_or(
-                    LadduError::AmplitudeNotFoundError {
-                        name: self.name.clone(),
-                    },
-                );
-            }
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
             self.pid_re = resources.register_parameter(&self.re);
             self.pid_im = resources.register_parameter(&self.im);
             resources.register_amplitude(&self.name)
