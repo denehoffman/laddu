@@ -149,24 +149,21 @@ impl MyBreitWigner {
 
 #[typetag::serde]
 impl Amplitude for MyBreitWigner {
-    fn register(
-        &mut self,
-        resources: &mut Resources,
-        metadata: Option<&DatasetMetadata>,
-    ) -> LadduResult<AmplitudeID> {
-        if let Some(metadata) = metadata {
-            self.daughter_1_mass.bind(metadata)?;
-            self.daughter_2_mass.bind(metadata)?;
-            self.resonance_mass.bind(metadata)?;
-            return resources
-                .amplitude_id(&self.name)
-                .ok_or(LadduError::AmplitudeNotFoundError {
-                    name: self.name.clone(),
-                });
-        }
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid_mass = resources.register_parameter(&self.mass);
         self.pid_width = resources.register_parameter(&self.width);
         resources.register_amplitude(&self.name)
+    }
+
+    fn bind(
+        &mut self,
+        resources: &mut Resources,
+        metadata: &DatasetMetadata,
+    ) -> LadduResult<()> {
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        Ok(())
     }
 
     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
@@ -193,8 +190,8 @@ We could then write some code to use this amplitude. For demonstration purposes,
 
 ```rust
 use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
-let p4_columns = ["beam", "proton", "kshort1", "kshort2"];
-let aux_columns = ["pol_magnitude", "pol_angle"];
+let p4_names = ["beam", "proton", "kshort1", "kshort2"];
+let aux_names = ["pol_magnitude", "pol_angle"];
 let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
 let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
 let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
