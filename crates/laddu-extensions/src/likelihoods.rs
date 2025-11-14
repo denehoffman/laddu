@@ -1872,6 +1872,7 @@ impl PyNLL {
         }
     }
 
+    #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the NLL with respect to the free parameters in the model
     ///
     /// This method "runs the fit". Given an initial position `p0`, this
@@ -1971,6 +1972,7 @@ impl PyNLL {
     /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
+    #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(
@@ -2150,6 +2152,7 @@ impl PyStochasticNLL {
     fn nll(&self) -> PyNLL {
         PyNLL(Box::new(self.0.nll.clone()))
     }
+    #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the StochasticNLL with respect to the free parameters in the model
     ///
     /// This method "runs the fit". Given an initial position `p0`, this
@@ -2252,6 +2255,7 @@ impl PyStochasticNLL {
     /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
+    #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(
@@ -3268,6 +3272,7 @@ impl PyLikelihoodEvaluator {
             ))
         }
     }
+    #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the LikelihoodTerm with respect to the free parameters in the model
     ///
     /// This method "runs the fit". Given an initial position `p0`, this
@@ -3370,6 +3375,7 @@ impl PyLikelihoodEvaluator {
     /// Singer, S. & Singer, S. (2004). *Efficient Implementation of the Nelder–Mead Search Algorithm*.
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
+    #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(

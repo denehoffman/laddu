@@ -2840,6 +2840,7 @@ pub mod py_ganesh {
             .to_pyarray(py)
     }
 
+    #[cfg_attr(doctest, doc = "```ignore")]
     /// A terminator for MCMC algorithms that monitors autocorrelation according to Karamanis & Beutler (2021).
     ///
     /// Parameters
@@ -2870,6 +2871,7 @@ pub mod py_ganesh {
     ///     summary = evaluator.mcmc(p0, terminators=[terminator])
     ///     print(terminator.taus)
     ///
+    #[cfg_attr(doctest, doc = "```")]
     #[pyclass(name = "AutocorrelationTerminator", module = "laddu")]
     #[derive(Clone)]
     pub struct PyAutocorrelationTerminator(Arc<Mutex<AutocorrelationTerminator>>);
