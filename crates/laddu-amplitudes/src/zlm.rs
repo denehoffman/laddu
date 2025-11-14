@@ -66,7 +66,7 @@ impl Amplitude for Zlm {
         resources.register_amplitude(&self.name)
     }
 
-    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.angles.costheta.bind(metadata)?;
         self.angles.phi.bind(metadata)?;
         self.polarization.pol_angle.bind(metadata)?;
@@ -207,7 +207,7 @@ impl Amplitude for PolPhase {
         resources.register_amplitude(&self.name)
     }
 
-    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.polarization.pol_angle.bind(metadata)?;
         self.polarization.pol_magnitude.bind(metadata)?;
         Ok(())

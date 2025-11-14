@@ -71,7 +71,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// be invoked when a [`Model`] is loaded with data, after [`register`](Amplitude::register)
     /// has already succeeded. The default implementation is a no-op for amplitudes that do not
     /// depend on metadata.
-    fn bind(&mut self, _resources: &mut Resources, _metadata: &DatasetMetadata) -> LadduResult<()> {
+    fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
         Ok(())
     }
     /// This method can be used to do some critical calculations ahead of time and
@@ -563,7 +563,7 @@ impl Model {
             resources_guard.reserve_cache(dataset.n_events());
             for amplitude in amplitudes.iter_mut() {
                 amplitude
-                    .bind(&mut resources_guard, metadata)
+                    .bind(metadata)
                     .expect("Failed to bind amplitude to dataset metadata");
                 amplitude.precompute_all(dataset, &mut resources_guard);
             }

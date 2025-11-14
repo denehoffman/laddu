@@ -161,7 +161,7 @@ impl Amplitude for KopfKMatrixF2 {
         resources.register_amplitude(&self.name)
     }
 
-    fn bind(&mut self, _resources: &mut Resources, metadata: &DatasetMetadata) -> LadduResult<()> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
     }

@@ -157,7 +157,6 @@ impl Amplitude for MyBreitWigner {
 
     fn bind(
         &mut self,
-        resources: &mut Resources,
         metadata: &DatasetMetadata,
     ) -> LadduResult<()> {
         self.daughter_1_mass.bind(metadata)?;
