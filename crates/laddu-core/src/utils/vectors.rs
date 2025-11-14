@@ -662,25 +662,9 @@ mod tests {
         let p1 = Vec4::new(3.0, 4.0, 5.0, 10.0);
         let p2 = Vec4::new(3.4, 2.3, 1.2, 9.0);
         let p1_boosted = p1.boost(&-p2.beta());
-        assert_relative_eq!(
-            p1_boosted.e(),
-            8.157632144622882,
-            epsilon = f64::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            p1_boosted.px(),
-            -0.6489200627053444,
-            epsilon = f64::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            p1_boosted.py(),
-            1.5316128987581492,
-            epsilon = f64::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            p1_boosted.pz(),
-            3.712145860221643,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(p1_boosted.e(), 8.157632144622882);
+        assert_relative_eq!(p1_boosted.px(), -0.6489200627053444);
+        assert_relative_eq!(p1_boosted.py(), 1.5316128987581492);
+        assert_relative_eq!(p1_boosted.pz(), 3.712145860221643);
     }
 }

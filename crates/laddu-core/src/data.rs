@@ -1732,8 +1732,8 @@ mod tests {
         let event = test_event();
         let event_boosted = event.boost_to_rest_frame_of([1, 2, 3]);
         let p4_sum = event_boosted.get_p4_sum([1, 2, 3]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0);
+        assert_relative_eq!(p4_sum.py(), 0.0);
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
@@ -1828,7 +1828,7 @@ mod tests {
 
         let filtered = dataset.filter(&expression).unwrap();
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(mass.value(&filtered[0]), 0.5, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(mass.value(&filtered[0]), 0.5);
     }
 
     #[test]
@@ -1836,8 +1836,8 @@ mod tests {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of(&["proton", "kshort1", "kshort2"]);
         let p4_sum = dataset_boosted[0].get_p4_sum(["proton", "kshort1", "kshort2"]);
-        assert_relative_eq!(p4_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(p4_sum.py(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(p4_sum.px(), 0.0);
+        assert_relative_eq!(p4_sum.py(), 0.0);
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
     }
 
@@ -1861,7 +1861,7 @@ mod tests {
         let boosted = view.boost_to_rest_frame_of(["proton", "kshort1", "kshort2"]);
         let boosted_event = Event::new(Arc::new(boosted), metadata);
         let boosted_sum = boosted_event.get_p4_sum(["proton", "kshort1", "kshort2"]);
-        assert_relative_eq!(boosted_sum.px(), 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(boosted_sum.px(), 0.0);
     }
 
     #[test]

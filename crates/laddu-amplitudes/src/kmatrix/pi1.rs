@@ -209,7 +209,6 @@ pub fn py_kopf_kmatrix_pi1(
 #[cfg(test)]
 mod tests {
     // Note: These tests are not exhaustive, they only check one channel
-    use std::f64;
     use std::sync::Arc;
 
     use super::*;
@@ -230,8 +229,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
-        assert_relative_eq!(result[0].re, -0.11017586, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.26387172, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, -0.11017586807747382);
+        assert_relative_eq!(result[0].im, 0.2638717244927622);
     }
 
     #[test]
@@ -248,8 +247,8 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 
-        assert_relative_eq!(result[0][0].re, -14.7987174, epsilon = f64::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -5.8430094, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -14.798717468937502);
+        assert_relative_eq!(result[0][0].im, -5.843009428873981);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
     }

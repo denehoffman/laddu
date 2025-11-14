@@ -219,7 +219,6 @@ pub fn py_kopf_kmatrix_rho(
 #[cfg(test)]
 mod tests {
     // Note: These tests are not exhaustive, they only check one channel
-    use std::f64;
     use std::sync::Arc;
 
     use super::*;
@@ -248,8 +247,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, 0.09483558, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.26091837, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.09483558754117698);
+        assert_relative_eq!(result[0].im, 0.2609183741271106);
     }
 
     #[test]
@@ -274,12 +273,12 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.0265203, epsilon = f64::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -0.0266026, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, 0.026520319348816407);
+        assert_relative_eq!(result[0][0].im, -0.026602652559793133);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.5172379, epsilon = f64::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 0.1707373, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].re, 0.5172379289201292);
+        assert_relative_eq!(result[0][2].im, 0.17073733305788397);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }

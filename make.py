@@ -48,11 +48,6 @@ def _venv_python() -> Path:
     return VENV_PATH / BIN_DIR / ('python.exe' if os.name == 'nt' else 'python')
 
 
-def _venv_bin(tool: str) -> Path:
-    suffix = '.exe' if os.name == 'nt' else ''
-    return VENV_PATH / BIN_DIR / f'{tool}{suffix}'
-
-
 def _build_env(*, use_venv: bool = False, extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     if use_venv:
@@ -126,14 +121,7 @@ def _run_maturin(
 ) -> None:
     ensure_venv(python_version)
     ensure_dir(project_dir)
-    if os.environ.get(DOCKER_FLAG) == '1':
-        maturin_executable = shutil.which('maturin')
-        if not maturin_executable:
-            msg = 'maturin binary not found inside container PATH'
-            raise CLIError(msg)
-    else:
-        maturin_executable = str(_venv_bin('maturin'))
-    cmd = [maturin_executable, 'develop', '--uv']
+    cmd = ['maturin', 'develop', '--uv']
     if profile:
         cmd.extend(['--profile', profile])
     if extras:
@@ -269,9 +257,7 @@ def _run_inside_docker(image: str) -> int:
     if sys.stdout.isatty():
         cmd.append('-t')
     quoted_args = ' '.join(shlex.quote(a) for a in args)
-    rsync_excludes = " ".join(
-        f"--exclude '{pattern}'" for pattern in ('target/', '.venv/', '__pycache__/')
-    )
+    rsync_excludes = ' '.join(f"--exclude '{pattern}'" for pattern in ('target/', '.venv/', '__pycache__/'))
     inner_cmd = (
         'set -euo pipefail; '
         'mkdir -p /work; '
@@ -347,7 +333,9 @@ def _cmd_develop(args: argparse.Namespace) -> None:
         _confirm_mpi_variant(expected=bool(args.mpi), label='develop')
     except RuntimeError:
         package_to_remove = 'laddu' if args.mpi else 'laddu-mpi'
-        console.print('[yellow]Detected mismatched laddu build during develop; removing conflicting package and retrying.[/]')
+        console.print(
+            '[yellow]Detected mismatched laddu build during develop; removing conflicting package and retrying.[/]'
+        )
         _ensure_laddu_uninstalled(package_to_remove)
         _run(['cargo', 'clean'])
         _run_maturin(project, extras, python_version=args.python_version)
@@ -461,9 +449,7 @@ def _cmd_docker(args: argparse.Namespace) -> None:
         cmd.append('-i')
     if sys.stdout.isatty():
         cmd.append('-t')
-    rsync_excludes = " ".join(
-        f"--exclude '{pattern}'" for pattern in ('target/', '.venv/', '__pycache__/')
-    )
+    rsync_excludes = ' '.join(f"--exclude '{pattern}'" for pattern in ('target/', '.venv/', '__pycache__/'))
     cmd.extend(
         [
             DOCKER_IMAGE,

@@ -37,8 +37,8 @@ def test_zlm_evaluation() -> None:
     model = manager.model(aid)
     evaluator = model.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == 0.04284127
-    assert pytest.approx(result[0].imag) == -0.2385963
+    assert pytest.approx(result[0].real) == 0.042841277026400094
+    assert pytest.approx(result[0].imag) == -0.23859639145706923
 
 
 def test_zlm_gradient() -> None:
@@ -63,8 +63,8 @@ def test_polphase_evaluation() -> None:
     model = manager.model(aid)
     evaluator = model.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == -0.28729145
-    assert pytest.approx(result[0].imag) == -0.25724039
+    assert pytest.approx(result[0].real) == -0.28729144623530045
+    assert pytest.approx(result[0].imag) == -0.2572403892603803
 
 
 def test_polphase_gradient() -> None:

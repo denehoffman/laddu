@@ -294,8 +294,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, -0.84288298, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.01884217, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, -0.8428829840871043);
+        assert_relative_eq!(result[0].im, -0.018842179274928372);
     }
 
     #[test]
@@ -321,12 +321,12 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.3066264, epsilon = f64::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -0.0482575, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, 0.30662648055639463);
+        assert_relative_eq!(result[0][0].im, -0.04825756855221591);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, -1.1803833, epsilon = f64::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 1.3227053, epsilon = f64::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].re, -1.1803833246734015);
+        assert_relative_eq!(result[0][2].im, 1.3227053711279162);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }

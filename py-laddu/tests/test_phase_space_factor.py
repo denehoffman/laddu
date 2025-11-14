@@ -46,9 +46,7 @@ def test_phase_space_factor_evaluation() -> None:
     model = manager.model(aid)
     evaluator = model.load(dataset)
     result = evaluator.evaluate([])
-    assert (
-        pytest.approx(result[0].real) == 0.0000702841757
-    )  # NOTE: change in precision from Rust test
+    assert pytest.approx(result[0].real) == 7.028417575882146e-05
     assert pytest.approx(result[0].imag) == 0.0
 
 

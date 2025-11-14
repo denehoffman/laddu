@@ -995,11 +995,7 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new(["kshort1", "kshort2"]);
         mass.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            mass.value(&dataset[0]),
-            1.37437863,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(mass.value(&dataset[0]), 1.3743786309153077);
     }
 
     #[test]
@@ -1019,11 +1015,7 @@ mod tests {
             Frame::Helicity,
         );
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            -0.4611175,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(costheta.value(&dataset[0]), -0.4611175068834238);
     }
 
     #[test]
@@ -1052,11 +1044,7 @@ mod tests {
             Frame::Helicity,
         );
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            phi.value(&dataset[0]),
-            -2.65746258,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066);
     }
 
     #[test]
@@ -1085,11 +1073,7 @@ mod tests {
             Frame::GottfriedJackson,
         );
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            0.09198832,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(costheta.value(&dataset[0]), 0.09198832278031577);
     }
 
     #[test]
@@ -1103,11 +1087,7 @@ mod tests {
             Frame::GottfriedJackson,
         );
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            phi.value(&dataset[0]),
-            -2.71391319,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907);
     }
 
     #[test]
@@ -1122,16 +1102,8 @@ mod tests {
         );
         angles.costheta.bind(dataset.metadata()).unwrap();
         angles.phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            angles.costheta.value(&dataset[0]),
-            -0.4611175,
-            epsilon = f64::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            angles.phi.value(&dataset[0]),
-            -2.65746258,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(angles.costheta.value(&dataset[0]), -0.4611175068834238);
+        assert_relative_eq!(angles.phi.value(&dataset[0]), -2.657462587335066);
     }
 
     #[test]
@@ -1154,11 +1126,7 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_angle = PolAngle::new("beam", ["proton"], "pol_angle");
         pol_angle.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            pol_angle.value(&dataset[0]),
-            1.93592989,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.93592989);
     }
 
     #[test]
@@ -1175,11 +1143,7 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
         pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            pol_magnitude.value(&dataset[0]),
-            0.38562805,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(pol_magnitude.value(&dataset[0]), 0.38562805);
     }
 
     #[test]
@@ -1197,16 +1161,8 @@ mod tests {
         let mut polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
         polarization.pol_angle.bind(dataset.metadata()).unwrap();
         polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            polarization.pol_angle.value(&dataset[0]),
-            1.93592989,
-            epsilon = f64::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            polarization.pol_magnitude.value(&dataset[0]),
-            0.38562805,
-            epsilon = f64::EPSILON.sqrt()
-        );
+        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.93592989);
+        assert_relative_eq!(polarization.pol_magnitude.value(&dataset[0]), 0.38562805);
     }
 
     #[test]
@@ -1274,11 +1230,11 @@ mod tests {
             variable.bind(metadata).unwrap();
         }
         let event = &dataset[0];
-        assert_relative_eq!(s.value(event), 18.50401105, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(s.value(event), 18.504011052120063);
         assert_relative_eq!(s.value(event), sp.value(event),);
-        assert_relative_eq!(t.value(event), -0.19222859, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(t.value(event), -0.19222859969898076);
         assert_relative_eq!(t.value(event), tp.value(event),);
-        assert_relative_eq!(u.value(event), -14.40419893, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(u.value(event), -14.404198931464428);
         assert_relative_eq!(u.value(event), up.value(event),);
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
@@ -1315,6 +1271,6 @@ mod tests {
 
         let values = mass.value_on(&dataset).unwrap();
         assert_eq!(values.len(), 1);
-        assert_relative_eq!(values[0], 1.37437863, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(values[0], 1.3743786309153077);
     }
 }

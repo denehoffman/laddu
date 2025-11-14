@@ -35,8 +35,8 @@ def test_ylm_evaluation() -> None:
     model = manager.model(aid)
     evaluator = model.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == 0.2713394
-    assert pytest.approx(result[0].imag) == 0.1426897
+    assert pytest.approx(result[0].real) == 0.2713394403451028
+    assert pytest.approx(result[0].imag) == 0.1426897184196572
 
 
 def test_ylm_gradient() -> None:

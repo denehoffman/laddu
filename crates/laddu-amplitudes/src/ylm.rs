@@ -113,7 +113,6 @@ pub fn py_ylm(name: &str, l: usize, m: isize, angles: &PyAngles) -> PyAmplitude 
 
 #[cfg(test)]
 mod tests {
-    use std::f64;
     use std::sync::Arc;
 
     use super::*;
@@ -143,8 +142,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.27133944, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.14268971, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.2713394403451028);
+        assert_relative_eq!(result[0].im, 0.1426897184196572);
     }
 
     #[test]

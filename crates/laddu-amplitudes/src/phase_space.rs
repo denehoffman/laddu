@@ -209,14 +209,9 @@ mod tests {
         let evaluator = model.load(&dataset);
 
         let result = evaluator.evaluate(&[]);
-        println!("{}", recoil_mass.value(&dataset[0]));
-        println!("{}", daughter_1_mass.value(&dataset[0]));
-        println!("{}", daughter_2_mass.value(&dataset[0]));
-        println!("{}", resonance_mass.value(&dataset[0]));
-        println!("{}", mandelstam_s.value(&dataset[0]));
 
-        assert_relative_eq!(result[0].re, 0.0000702838, epsilon = f64::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.0, epsilon = f64::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 7.028417575882146e-5);
+        assert_relative_eq!(result[0].im, 0.0);
     }
 
     #[test]
