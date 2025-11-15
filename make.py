@@ -470,18 +470,6 @@ def _cmd_docker(args: argparse.Namespace) -> None:
     _run(cmd, cwd=REPO_ROOT)
 
 
-def _cmd_ruff(args: argparse.Namespace) -> None:
-    cmd = ['ruff', 'check', '--fix']
-    if args.unsafe_fixes:
-        cmd.append('--unsafe-fixes')
-    cmd.append('.')
-    _run(cmd, cwd=REPO_ROOT)
-
-
-def _cmd_ty(_: argparse.Namespace) -> None:
-    _run(['ty', 'check', 'py-laddu'], cwd=REPO_ROOT)
-
-
 def _cmd_clippy(args: argparse.Namespace) -> None:
     cmd = _cargo_with_features(['cargo', 'clippy', '--all-targets'], use_mpi=args.mpi)
     _run(cmd)
@@ -600,17 +588,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Build the laddu:latest image instead of starting a container shell.',
     )
     docker_parser.set_defaults(handler=_cmd_docker)
-
-    ruff_parser = subparsers.add_parser('ruff', help='Run `uvx ruff check --fix` (optionally with --unsafe-fixes).')
-    ruff_parser.add_argument(
-        '--unsafe-fixes',
-        action='store_true',
-        help='Also pass --unsafe-fixes to ruff.',
-    )
-    ruff_parser.set_defaults(handler=_cmd_ruff)
-
-    ty_parser = subparsers.add_parser('ty', help='Run `uvx ty check` inside py-laddu.')
-    ty_parser.set_defaults(handler=_cmd_ty)
 
     clippy_parser = subparsers.add_parser('clippy', help='Run `cargo clippy --all-targets`.')
     clippy_parser.add_argument(

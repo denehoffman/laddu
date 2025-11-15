@@ -22,10 +22,10 @@ Use `./make.py <command>` from the repo root; each command wires up `uv`, Cargo,
 | `./make.py test [--rust] [--python] [--mpi] [--python-version X.Y]` | Run Rust nextest + doctests and/or Python pytest suites; defaults to both Rust and Python unless flags are provided. |
 | `./make.py docs [--no-clean] [--open {python,rust,all}] [--python-version X.Y]` | Build Sphinx docs (and `cargo doc`) with optional cleanup and automatic browser opening. |
 | `./make.py develop --mpi ...` / `./make.py test --mpi ...` | Mirror the standard develop/test flows for the MPI frontend. |
-| `./make.py ruff [--unsafe-fixes]` / `./make.py ty` | Run linting (`uvx ruff check --fix`) or type checking (`uvx ty check`) inside the managed environment. |
 | `./make.py clippy [--mpi]` | Execute `cargo clippy --all-targets`, optionally enabling MPI features. |
 | `./make.py clean [--python]` / `./make.py venv [--recreate] [--python-version X.Y]` | Clean the Cargo workspace (and optionally the repo venv) or manage the shared `.venv`. |
 | `./make.py docker [--build]` | Build the `laddu:latest` container or drop into a synced shell inside it. |
+| Manual | Run `ruff check` and `ty check py-laddu` yourself after `./make.py develop --tests`; keep the `.venv` activated so the editable install and deps are visible. |
 
 ## Code Coverage
 - Always run `./make.py develop --tests` first so the shared `.venv` contains the pytest extras (including `pytest-cov`) and the Rust/Python artifacts are consistent.
