@@ -643,6 +643,7 @@ pub mod py_ganesh {
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
         types::{PyBytes, PyDict, PyList},
+        Borrowed,
     };
 
     /// A helper trait for parsing Python arguments.
@@ -1257,11 +1258,11 @@ pub mod py_ganesh {
                 .get_item("max_steps")?
                 .map(|ms| ms.extract())
                 .transpose()?;
-            let settings: Bound<PyDict> = d
-                .get_item("settings")?
-                .map(|settings| settings.extract())
-                .transpose()?
-                .unwrap_or_else(|| PyDict::new(d.py()));
+            let settings: Bound<PyDict> = if let Some(settings) = d.get_item("settings")? {
+                settings.extract()?
+            } else {
+                PyDict::new(d.py())
+            };
             if let Some(method) = d.get_item("method")? {
                 match method
                     .extract::<String>()?
@@ -1618,11 +1619,11 @@ pub mod py_ganesh {
                 .get_item("max_steps")?
                 .map(|ms| ms.extract())
                 .transpose()?;
-            let settings: Bound<PyDict> = d
-                .get_item("settings")?
-                .map(|settings| settings.extract())
-                .transpose()?
-                .unwrap_or_else(|| PyDict::new(d.py()));
+            let settings: Bound<PyDict> = if let Some(settings) = d.get_item("settings")? {
+                settings.extract()?
+            } else {
+                PyDict::new(d.py())
+            };
             if let Some(method) = d.get_item("method")? {
                 match method
                     .extract::<String>()?
@@ -2150,9 +2151,10 @@ pub mod py_ganesh {
     /// that takes the current step and a [`PyMinimizationStatus`] as arguments.
     #[derive(Clone)]
     pub struct MinimizationObserver(Arc<Py<PyAny>>);
-    impl FromPyObject<'_> for MinimizationObserver {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(MinimizationObserver(Arc::new(ob.clone().unbind())))
+    impl<'a, 'py> FromPyObject<'a, 'py> for MinimizationObserver {
+        type Error = PyErr;
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            Ok(MinimizationObserver(Arc::new(ob.to_owned().unbind())))
         }
     }
     impl<A, P, C> Observer<A, P, GradientStatus, MaybeThreadPool, LadduError, C>
@@ -2253,9 +2255,10 @@ pub mod py_ganesh {
     #[derive(Clone)]
     pub struct MinimizationTerminator(Arc<Py<PyAny>>);
 
-    impl FromPyObject<'_> for MinimizationTerminator {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(MinimizationTerminator(Arc::new(ob.clone().unbind())))
+    impl<'a, 'py> FromPyObject<'a, 'py> for MinimizationTerminator {
+        type Error = PyErr;
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            Ok(MinimizationTerminator(Arc::new(ob.to_owned().unbind())))
         }
     }
 
@@ -2677,9 +2680,10 @@ pub mod py_ganesh {
     #[derive(Clone)]
     pub struct MCMCObserver(Arc<Py<PyAny>>);
 
-    impl FromPyObject<'_> for MCMCObserver {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(MCMCObserver(Arc::new(ob.clone().unbind())))
+    impl<'a, 'py> FromPyObject<'a, 'py> for MCMCObserver {
+        type Error = PyErr;
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            Ok(MCMCObserver(Arc::new(ob.to_owned().unbind())))
         }
     }
 
@@ -2761,9 +2765,10 @@ pub mod py_ganesh {
     #[derive(Clone)]
     pub struct MCMCTerminator(Arc<Py<PyAny>>);
 
-    impl FromPyObject<'_> for MCMCTerminator {
-        fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-            Ok(MCMCTerminator(Arc::new(ob.clone().unbind())))
+    impl<'a, 'py> FromPyObject<'a, 'py> for MCMCTerminator {
+        type Error = PyErr;
+        fn extract(ob: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            Ok(MCMCTerminator(Arc::new(ob.to_owned().unbind())))
         }
     }
 

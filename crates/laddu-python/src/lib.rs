@@ -191,14 +191,14 @@ pub mod mpi {
 pub trait GetStrExtractObj {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
-        T: for<'py> FromPyObject<'py>;
+        T: for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>;
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl GetStrExtractObj for Bound<'_, PyDict> {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
-        T: for<'py> FromPyObject<'py>,
+        T: for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>,
     {
         self.get_item(key)?
             .map(|value| value.extract::<T>())
