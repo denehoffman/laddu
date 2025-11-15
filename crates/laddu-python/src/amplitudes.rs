@@ -612,7 +612,7 @@ impl PyEvaluator {
     fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.activate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.activate_many(&vec)?;
         } else {
@@ -646,7 +646,7 @@ impl PyEvaluator {
     fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.deactivate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.deactivate_many(&vec)?;
         } else {
@@ -680,7 +680,7 @@ impl PyEvaluator {
     fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.isolate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.isolate_many(&vec)?;
         } else {

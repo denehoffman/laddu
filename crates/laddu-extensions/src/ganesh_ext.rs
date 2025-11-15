@@ -1221,7 +1221,7 @@ pub mod py_ganesh {
                 .transpose()?
                 .unwrap_or(false);
             let observers = if let Some(observers) = d.get_item("observers")? {
-                if let Ok(observers) = observers.downcast::<PyList>() {
+                if let Ok(observers) = observers.cast::<PyList>() {
                     observers.into_iter().map(|observer| {
                         if let Ok(observer) = observer.extract::<MinimizationObserver>() {
                             Ok(observer)
@@ -1238,7 +1238,7 @@ pub mod py_ganesh {
                 vec![]
             };
             let terminators = if let Some(terminators) = d.get_item("terminators")? {
-                if let Ok(terminators) = terminators.downcast::<PyList>() {
+                if let Ok(terminators) = terminators.cast::<PyList>() {
                     terminators.into_iter().map(|terminator| {
                     if let Ok(terminator) = terminator.extract::<MinimizationTerminator>() {
                         Ok(terminator)
@@ -1399,7 +1399,7 @@ pub mod py_ganesh {
         fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = AIESConfig::new(args.to_vec());
             if let Some(moves) = d.get_item("moves")? {
-                let moves_list = moves.downcast::<PyList>()?;
+                let moves_list = moves.cast::<PyList>()?;
                 let mut aies_moves = vec![];
                 for mcmc_move in moves_list {
                     if let Ok(default_move) = mcmc_move.extract::<(String, f64)>() {
@@ -1464,7 +1464,7 @@ pub mod py_ganesh {
         fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
             let mut config = ESSConfig::new(args.to_vec());
             if let Some(moves) = d.get_item("moves")? {
-                let moves_list = moves.downcast::<PyList>()?;
+                let moves_list = moves.cast::<PyList>()?;
                 let mut ess_moves = vec![];
                 for mcmc_move in moves_list {
                     if let Ok(default_move) = mcmc_move.extract::<(String, f64)>() {
@@ -1571,7 +1571,7 @@ pub mod py_ganesh {
                 .transpose()?
                 .unwrap_or(false);
             let observers = if let Some(observers) = d.get_item("observers")? {
-                if let Ok(observers) = observers.downcast::<PyList>() {
+                if let Ok(observers) = observers.cast::<PyList>() {
                     observers.into_iter().map(|observer| {
                         if let Ok(observer) = observer.extract::<MCMCObserver>() {
                             Ok(observer)
@@ -1588,7 +1588,7 @@ pub mod py_ganesh {
                 vec![]
             };
             let terminators = if let Some(terminators) = d.get_item("terminators")? {
-                if let Ok(terminators) = terminators.downcast::<PyList>() {
+                if let Ok(terminators) = terminators.cast::<PyList>() {
                     terminators
                         .into_iter()
                         .map(|terminator| {
