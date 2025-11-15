@@ -53,7 +53,8 @@ To implement this in code, we could imagine a function like
    def get_moment(data: ld.Dataset, *, l: int, m: int) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
+   topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+   ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(topology, 'kshort1')))
        model = manager.model(ylm.conj()) # take the conjugate
        evaluator = model.load(data)
        values = evaluator.evaluate([]) # no free parameters
@@ -123,8 +124,9 @@ Again, we can write this in code in a rather simple way:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        n_l_prime = np.sqrt((2 * l_prime + 1) / (4 * np.pi))
        manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
-       ylm_prime = manager.register(ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])))
+   topo = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+   ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(topo, 'kshort1')))
+   ylm_prime = manager.register(ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
        model = manager.model(ylm.conj() * ylm_prime.real())
        evaluator = model.load(accmc)
        values = evaluator.evaluate([]) # no free parameters

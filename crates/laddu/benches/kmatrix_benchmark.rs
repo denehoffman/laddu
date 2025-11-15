@@ -15,7 +15,7 @@ use laddu::{
     traits::*,
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, Polarization},
+        variables::{Angles, Mass, Polarization, Topology},
     },
 };
 
@@ -30,14 +30,9 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_data = Dataset::open("benches/bench.parquet", &options).unwrap();
     let ds_mc = Dataset::open("benches/bench.parquet", &options).unwrap();
 
-    let angles = Angles::new(
-        "beam",
-        ["proton"],
-        ["kshort1"],
-        ["kshort1", "kshort2"],
-        Frame::Helicity,
-    );
-    let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
+    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
     let resonance_mass = Mass::new(["kshort1", "kshort2"]);
     let mut manager = Manager::default();
     let z00p = manager

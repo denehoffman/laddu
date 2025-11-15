@@ -47,8 +47,9 @@ where the terms with particle names in square brackets still represent the produ
 .. code-block:: python
 
    manager = ld.Manager()
-   angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
-   polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+  topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+  angles = ld.Angles(topology, 'kshort1')
+  polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
 
    z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
    z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))

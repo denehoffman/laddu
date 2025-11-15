@@ -171,7 +171,7 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, Channel, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Channel, Manager};
 
     #[test]
     fn test_phase_space_factor_evaluation() {
@@ -181,14 +181,8 @@ mod tests {
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let mandelstam_s = Mandelstam::new(
-            ["beam"],
-            Vec::<&str>::new(),
-            ["kshort1", "kshort2"],
-            ["proton"],
-            Channel::S,
-        )
-        .unwrap();
+        let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
+        let mandelstam_s = Mandelstam::new(topology, Channel::S);
         let amp = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
@@ -217,13 +211,9 @@ mod tests {
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let mandelstam_s = Mandelstam::new(
-            ["beam"],
-            Vec::<&str>::new(),
-            ["kshort1", "kshort2"],
-            ["proton"],
+            Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
             Channel::S,
-        )
-        .unwrap();
+        );
         let amp = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,

@@ -237,8 +237,9 @@ def main():
     aux_columns = ['pol_magnitude', 'pol_angle']
     ds_data = ld.Dataset.open('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
     ds_mc = ld.Dataset.open('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
-    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'], "Helicity")
-    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    angles = ld.Angles(topology, 'kshort1', "Helicity")
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm("z00p", 0, 0, "+", angles, polarization))
     z00n = manager.register(ld.Zlm("z00n", 0, 0, "-", angles, polarization))

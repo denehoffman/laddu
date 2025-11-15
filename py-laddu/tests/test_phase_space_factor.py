@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import Dataset, Event, Manager, Mandelstam, Mass, PhaseSpaceFactor, Vec3
+from laddu import Dataset, Event, Manager, Mandelstam, Mass, PhaseSpaceFactor, Topology, Vec3
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -26,13 +26,17 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
+def reaction_topology() -> Topology:
+    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+
+
 def test_phase_space_factor_evaluation() -> None:
     manager = Manager()
     recoil_mass = Mass(['proton'])
     daughter_1_mass = Mass(['kshort1'])
     daughter_2_mass = Mass(['kshort2'])
     resonance_mass = Mass(['kshort1', 'kshort2'])
-    mandelstam_s = Mandelstam(['beam'], [], ['kshort1', 'kshort2'], ['proton'], 's')
+    mandelstam_s = Mandelstam(reaction_topology(), 's')
     amp = PhaseSpaceFactor(
         'kappa',
         recoil_mass,
@@ -56,7 +60,7 @@ def test_phase_space_factor_gradient() -> None:
     daughter_1_mass = Mass(['kshort1'])
     daughter_2_mass = Mass(['kshort2'])
     resonance_mass = Mass(['kshort1', 'kshort2'])
-    mandelstam_s = Mandelstam(['beam'], [], ['kshort1', 'kshort2'], ['proton'], 's')
+    mandelstam_s = Mandelstam(reaction_topology(), 's')
     amp = PhaseSpaceFactor(
         'kappa',
         recoil_mass,

@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import Angles, Dataset, Event, Manager, Vec3, Ylm
+from laddu import Angles, Dataset, Event, Manager, Topology, Vec3, Ylm
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -26,9 +26,13 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
+def reaction_topology() -> Topology:
+    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+
+
 def test_ylm_evaluation() -> None:
     manager = Manager()
-    angles = Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'], 'Helicity')
+    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -41,7 +45,7 @@ def test_ylm_evaluation() -> None:
 
 def test_ylm_gradient() -> None:
     manager = Manager()
-    angles = Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'], 'Helicity')
+    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
     aid = manager.register(amp)
     dataset = make_test_dataset()

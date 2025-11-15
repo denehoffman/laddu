@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
-    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -45,14 +46,7 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
     manager = ld.Manager()
-    ylm = manager.register(
-        ld.Ylm(
-            'ylm',
-            l,
-            m,
-            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
-        )
-    )
+    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
     model = manager.model(ylm.conj())
     evaluator = model.load(data)
     values = evaluator.evaluate([])
@@ -74,7 +68,8 @@ def get_norm_int_term(
     const = (
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
-    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
@@ -87,22 +82,8 @@ def get_norm_int_term(
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
     manager = ld.Manager()
-    ylm = manager.register(
-        ld.Ylm(
-            'ylm',
-            l,
-            m,
-            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
-        )
-    )
-    ylpmp = manager.register(
-        ld.Ylm(
-            'ylpmp',
-            lp,
-            mp,
-            ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2']),
-        )
-    )
+    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
+    ylpmp = manager.register(ld.Ylm('ylpmp', lp, mp, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
     model = manager.model(ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real()))
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])

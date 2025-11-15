@@ -334,8 +334,9 @@ def fit_binned(
 ]:
     logger.info('Starting Binned Fit')
     res_mass = ld.Mass(['kshort1', 'kshort2'])
-    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
-    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    angles = ld.Angles(topology, 'kshort1')
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -483,8 +484,9 @@ def fit_unbinned(
 ]:
     logger.info('Starting Unbinned Fit')
     res_mass = ld.Mass(['kshort1', 'kshort2'])
-    angles = ld.Angles('beam', ['proton'], ['kshort1'], ['kshort1', 'kshort2'])
-    polarization = ld.Polarization('beam', ['proton'], 'pol_magnitude', 'pol_angle')
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    angles = ld.Angles(topology, 'kshort1')
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     manager = ld.Manager()
     z00p = manager.register(ld.Zlm('Z00+', 0, 0, '+', angles, polarization))
     z22p = manager.register(ld.Zlm('Z22+', 2, 2, '+', angles, polarization))

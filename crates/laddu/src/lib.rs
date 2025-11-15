@@ -363,7 +363,7 @@ pub use laddu_core::data::{
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization, Topology,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
 pub use laddu_core::PI;

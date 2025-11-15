@@ -16,7 +16,7 @@ Examples
 >>> dataset = Dataset.from_dict(columns)
 >>> mass = Mass(['kshort1', 'kshort2'])
 >>> mass
-Mass { constituents: P4Selection { names: ["kshort1", "kshort2"], indices: [] } }
+Mass { constituents: TopologyVertex { selection: P4Selection { names: ["kshort1", "kshort2"], indices: [] } } }
 """
 
 from laddu.laddu import (
@@ -28,6 +28,7 @@ from laddu.laddu import (
     PolAngle,
     Polarization,
     PolMagnitude,
+    Topology,
     VariableExpression,
 )
 
@@ -40,5 +41,6 @@ __all__ = [
     'PolAngle',
     'PolMagnitude',
     'Polarization',
+    'Topology',
     'VariableExpression',
 ]

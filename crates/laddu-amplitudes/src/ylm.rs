@@ -117,19 +117,17 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, Frame, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame, Manager};
+
+    fn reaction_topology() -> Topology {
+        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    }
 
     #[test]
     fn test_ylm_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(
-            "beam",
-            ["proton"],
-            ["kshort1"],
-            ["kshort1", "kshort2"],
-            Frame::Helicity,
-        );
+        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
         let expr = aid.into();
@@ -146,13 +144,7 @@ mod tests {
     fn test_ylm_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(
-            "beam",
-            ["proton"],
-            ["kshort1"],
-            ["kshort1", "kshort2"],
-            Frame::Helicity,
-        );
+        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         let amp = Ylm::new("ylm", 1, 1, &angles);
         let aid = manager.register(amp).unwrap();
         let expr = aid.into();

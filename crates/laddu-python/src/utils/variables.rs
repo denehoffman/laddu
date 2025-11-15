@@ -3,8 +3,8 @@ use laddu_core::{
     data::{Dataset, DatasetMetadata, EventData},
     traits::Variable,
     utils::variables::{
-        Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
-        VariableExpression,
+        Angles, CosTheta, IntoTopologyVertex, Mandelstam, Mass, Phi, PolAngle, PolMagnitude,
+        Polarization, Topology, TopologyVertex, VariableExpression,
     },
     LadduResult,
 };
@@ -101,6 +101,105 @@ impl PyVariableExpression {
     }
 }
 
+#[derive(Clone, FromPyObject)]
+pub enum PyTopologyVertexInput {
+    #[pyo3(transparent)]
+    Name(String),
+    #[pyo3(transparent)]
+    Names(Vec<String>),
+}
+
+impl PyTopologyVertexInput {
+    fn into_vertex(self) -> TopologyVertex {
+        match self {
+            PyTopologyVertexInput::Name(name) => name.into_vertex(),
+            PyTopologyVertexInput::Names(names) => names.into_vertex(),
+        }
+    }
+}
+
+/// A reusable 2-to-2 reaction description shared by multiple Variables.
+#[pyclass(name = "Topology", module = "laddu")]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyTopology(pub Topology);
+
+#[pymethods]
+impl PyTopology {
+    #[new]
+    fn new(
+        k1: PyTopologyVertexInput,
+        k2: PyTopologyVertexInput,
+        k3: PyTopologyVertexInput,
+        k4: PyTopologyVertexInput,
+    ) -> Self {
+        Self(Topology::new(
+            k1.into_vertex(),
+            k2.into_vertex(),
+            k3.into_vertex(),
+            k4.into_vertex(),
+        ))
+    }
+
+    #[staticmethod]
+    fn missing_k1(k2: PyTopologyVertexInput, k3: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+        Self(Topology::missing_k1(
+            k2.into_vertex(),
+            k3.into_vertex(),
+            k4.into_vertex(),
+        ))
+    }
+
+    #[staticmethod]
+    fn missing_k2(k1: PyTopologyVertexInput, k3: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+        Self(Topology::missing_k2(
+            k1.into_vertex(),
+            k3.into_vertex(),
+            k4.into_vertex(),
+        ))
+    }
+
+    #[staticmethod]
+    fn missing_k3(k1: PyTopologyVertexInput, k2: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+        Self(Topology::missing_k3(
+            k1.into_vertex(),
+            k2.into_vertex(),
+            k4.into_vertex(),
+        ))
+    }
+
+    #[staticmethod]
+    fn missing_k4(k1: PyTopologyVertexInput, k2: PyTopologyVertexInput, k3: PyTopologyVertexInput) -> Self {
+        Self(Topology::missing_k4(
+            k1.into_vertex(),
+            k2.into_vertex(),
+            k3.into_vertex(),
+        ))
+    }
+
+    fn k1_names(&self) -> Option<Vec<String>> {
+        self.0.k1_names().map(|names| names.to_vec())
+    }
+
+    fn k2_names(&self) -> Option<Vec<String>> {
+        self.0.k2_names().map(|names| names.to_vec())
+    }
+
+    fn k3_names(&self) -> Option<Vec<String>> {
+        self.0.k3_names().map(|names| names.to_vec())
+    }
+
+    fn k4_names(&self) -> Option<Vec<String>> {
+        self.0.k4_names().map(|names| names.to_vec())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
+}
+
 /// The invariant mass of an arbitrary combination of constituent particles in an Event
 ///
 /// This variable is calculated by summing up the 4-momenta of each particle listed by index in
@@ -123,7 +222,7 @@ pub struct PyMass(pub Mass);
 impl PyMass {
     #[new]
     fn new(constituents: Vec<String>) -> Self {
-        Self(Mass::new(&constituents))
+        Self(Mass::new(constituents))
     }
     /// The value of this Variable for the given Event
     ///
@@ -211,16 +310,11 @@ impl PyMass {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
-/// recoil : list of str
-///     Names of particles which are combined to form the recoiling particle (particles which
-///     are not `beam` or part of the `resonance`)
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     `resonance`
-/// resonance : list of str
-///     Names of particles which are combined to form the `resonance`
+///     resonance associated with ``k3`` of the topology.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -240,19 +334,11 @@ pub struct PyCosTheta(pub CosTheta);
 #[pymethods]
 impl PyCosTheta {
     #[new]
-    #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
-    fn new(
-        beam: String,
-        recoil: Vec<String>,
-        daughter: Vec<String>,
-        resonance: Vec<String>,
-        frame: &str,
-    ) -> PyResult<Self> {
+    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
+    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
         Ok(Self(CosTheta::new(
-            beam,
-            &recoil,
-            &daughter,
-            &resonance,
+            topology.0.clone(),
+            daughter.into_vertex(),
             frame.parse()?,
         )))
     }
@@ -342,16 +428,11 @@ impl PyCosTheta {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
-/// recoil : list of str
-///     Names of particles which are combined to form the recoiling particle (particles which
-///     are not `beam` or part of the `resonance`)
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     `resonance`
-/// resonance : list of str
-///     Names of particles which are combined to form the `resonance`
+///     resonance associated with ``k3`` of the topology.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -372,19 +453,11 @@ pub struct PyPhi(pub Phi);
 #[pymethods]
 impl PyPhi {
     #[new]
-    #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
-    fn new(
-        beam: String,
-        recoil: Vec<String>,
-        daughter: Vec<String>,
-        resonance: Vec<String>,
-        frame: &str,
-    ) -> PyResult<Self> {
+    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
+    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
         Ok(Self(Phi::new(
-            beam,
-            &recoil,
-            &daughter,
-            &resonance,
+            topology.0.clone(),
+            daughter.into_vertex(),
             frame.parse()?,
         )))
     }
@@ -460,16 +533,11 @@ impl PyPhi {
 ///
 /// Parameters
 /// ----------
-/// beam : int
-///     The index of the `beam` particle
-/// recoil : list of str
-///     Names of particles which are combined to form the recoiling particle (particles which
-///     are not `beam` or part of the `resonance`)
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     `resonance`
-/// resonance : list of str
-///     Names of particles which are combined to form the `resonance`
+///     resonance associated with ``k3`` of the topology.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -489,19 +557,11 @@ pub struct PyAngles(pub Angles);
 #[pymethods]
 impl PyAngles {
     #[new]
-    #[pyo3(signature=(beam, recoil, daughter, resonance, frame="Helicity"))]
-    fn new(
-        beam: String,
-        recoil: Vec<String>,
-        daughter: Vec<String>,
-        resonance: Vec<String>,
-        frame: &str,
-    ) -> PyResult<Self> {
+    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
+    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
         Ok(Self(Angles::new(
-            beam,
-            &recoil,
-            &daughter,
-            &resonance,
+            topology.0.clone(),
+            daughter.into_vertex(),
             frame.parse()?,
         )))
     }
@@ -540,10 +600,8 @@ impl PyAngles {
 ///
 /// Parameters
 /// ----------
-/// beam : str
-///     Name of the beam four-momentum
-/// recoil : list of str
-///     Names of four-momenta combined to form the recoil system
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
 /// angle_aux : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
@@ -554,8 +612,8 @@ pub struct PyPolAngle(pub PolAngle);
 #[pymethods]
 impl PyPolAngle {
     #[new]
-    fn new(beam: String, recoil: Vec<String>, angle_aux: String) -> Self {
-        Self(PolAngle::new(beam, &recoil, angle_aux))
+    fn new(topology: PyTopology, angle_aux: String) -> Self {
+        Self(PolAngle::new(topology.0.clone(), angle_aux))
     }
     /// The value of this Variable for the given Event
     ///
@@ -718,10 +776,8 @@ impl PyPolMagnitude {
 ///
 /// Parameters
 /// ----------
-/// beam : str
-///     Name of the beam four-momentum
-/// recoil : list of str
-///     Names of four-momenta combined to form the recoil system
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
 /// magnitude_aux : str
 ///     Name of the auxiliary scalar storing the polarization magnitude
 /// angle_aux : str
@@ -738,18 +794,13 @@ pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
     #[new]
-    fn new(
-        beam: String,
-        recoil: Vec<String>,
-        magnitude_aux: String,
-        angle_aux: String,
-    ) -> PyResult<Self> {
+    fn new(topology: PyTopology, magnitude_aux: String, angle_aux: String) -> PyResult<Self> {
         if magnitude_aux == angle_aux {
             return Err(PyValueError::new_err(
                 "`magnitude_aux` and `angle_aux` must reference distinct auxiliary columns",
             ));
         }
-        let polarization = Polarization::new(beam, &recoil, magnitude_aux, angle_aux);
+        let polarization = Polarization::new(topology.0.clone(), magnitude_aux, angle_aux);
         Ok(PyPolarization(polarization))
     }
     /// The Variable representing the magnitude of the polarization vector
@@ -793,14 +844,8 @@ impl PyPolarization {
 ///
 /// Parameters
 /// ----------
-/// p1: list of str
-///     Names of particles to combine to create :math:`p_1` in the diagram
-/// p2: list of str
-///     Names of particles to combine to create :math:`p_2` in the diagram
-/// p3: list of str
-///     Names of particles to combine to create :math:`p_3` in the diagram
-/// p4: list of str
-///     Names of particles to combine to create :math:`p_4` in the diagram
+/// topology : laddu.Topology
+///     Topology describing the 2-to-2 kinematics whose Mandelstam channels should be evaluated.
 /// channel: {'s', 't', 'u', 'S', 'T', 'U'}
 ///     The Mandelstam channel to calculate
 ///
@@ -825,14 +870,8 @@ pub struct PyMandelstam(pub Mandelstam);
 #[pymethods]
 impl PyMandelstam {
     #[new]
-    fn new(
-        p1: Vec<String>,
-        p2: Vec<String>,
-        p3: Vec<String>,
-        p4: Vec<String>,
-        channel: &str,
-    ) -> PyResult<Self> {
-        Ok(Self(Mandelstam::new(p1, p2, p3, p4, channel.parse()?)?))
+    fn new(topology: PyTopology, channel: &str) -> PyResult<Self> {
+        Ok(Self(Mandelstam::new(topology.0.clone(), channel.parse()? )))
     }
     /// The value of this Variable for the given Event
     ///

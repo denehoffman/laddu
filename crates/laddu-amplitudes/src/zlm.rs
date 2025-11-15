@@ -278,20 +278,19 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, Frame, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame, Manager};
+
+    fn reaction_topology() -> Topology {
+        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    }
 
     #[test]
     fn test_zlm_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(
-            "beam",
-            ["proton"],
-            ["kshort1"],
-            ["kshort1", "kshort2"],
-            Frame::Helicity,
-        );
-        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+        let topology = reaction_topology();
+        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -309,14 +308,9 @@ mod tests {
     fn test_zlm_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(
-            "beam",
-            ["proton"],
-            ["kshort1"],
-            ["kshort1", "kshort2"],
-            Frame::Helicity,
-        );
-        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+        let topology = reaction_topology();
+        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
         let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -332,7 +326,7 @@ mod tests {
     fn test_polphase_evaluation() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         let amp = PolPhase::new("polphase", &polarization);
         let aid = manager.register(amp).unwrap();
 
@@ -350,7 +344,7 @@ mod tests {
     fn test_polphase_gradient() {
         let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
-        let polarization = Polarization::new("beam", ["proton"], "pol_magnitude", "pol_angle");
+        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         let amp = PolPhase::new("polphase", &polarization);
         let aid = manager.register(amp).unwrap();
 
