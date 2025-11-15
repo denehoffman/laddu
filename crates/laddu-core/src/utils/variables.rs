@@ -392,7 +392,7 @@ impl IntoTopologyVertex for TopologyVertex {
     }
 }
 
-impl<'a> IntoTopologyVertex for &'a TopologyVertex {
+impl IntoTopologyVertex for &TopologyVertex {
     fn into_vertex(self) -> TopologyVertex {
         self.clone()
     }
@@ -425,7 +425,7 @@ where
     }
 }
 
-impl<'a, S> IntoTopologyVertex for &'a [S]
+impl<S> IntoTopologyVertex for &[S]
 where
     S: Clone + Into<String>,
 {
@@ -443,7 +443,7 @@ where
     }
 }
 
-impl<'a, S, const N: usize> IntoTopologyVertex for &'a [S; N]
+impl<S, const N: usize> IntoTopologyVertex for &[S; N]
 where
     S: Clone + Into<String>,
 {

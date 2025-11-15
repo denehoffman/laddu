@@ -56,6 +56,11 @@ pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]
 mpi = ["dep:mpi"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(coverage,coverage_nightly)',
+] }
+
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

@@ -2,13 +2,37 @@ from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
+from typing_extensions import TypeAlias
 
 from laddu.data import Dataset, Event
+
+TopologyVertex: TypeAlias = str | list[str]
 
 class VariableExpression:
     def __and__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __or__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __invert__(self) -> VariableExpression: ...
+
+class Topology:
+    def __init__(
+        self,
+        k1: TopologyVertex,
+        k2: TopologyVertex,
+        k3: TopologyVertex,
+        k4: TopologyVertex,
+    ) -> None: ...
+    @staticmethod
+    def missing_k1(k2: TopologyVertex, k3: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    @staticmethod
+    def missing_k2(k1: TopologyVertex, k3: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    @staticmethod
+    def missing_k3(k1: TopologyVertex, k2: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    @staticmethod
+    def missing_k4(k1: TopologyVertex, k2: TopologyVertex, k3: TopologyVertex) -> Topology: ...
+    def k1_names(self) -> list[str] | None: ...
+    def k2_names(self) -> list[str] | None: ...
+    def k3_names(self) -> list[str] | None: ...
+    def k4_names(self) -> list[str] | None: ...
 
 class Mass:
     def __init__(self, constituents: list[str]) -> None: ...
@@ -23,10 +47,8 @@ class Mass:
 class CosTheta:
     def __init__(
         self,
-        beam: str,
-        recoil: list[str],
-        daughter: list[str],
-        resonance: list[str],
+        topology: Topology,
+        daughter: TopologyVertex,
         frame: Literal[
             'Helicity',
             'HX',
@@ -48,10 +70,8 @@ class CosTheta:
 class Phi:
     def __init__(
         self,
-        beam: str,
-        recoil: list[str],
-        daughter: list[str],
-        resonance: list[str],
+        topology: Topology,
+        daughter: TopologyVertex,
         frame: Literal[
             'Helicity',
             'HX',
@@ -76,10 +96,8 @@ class Angles:
 
     def __init__(
         self,
-        beam: str,
-        recoil: list[str],
-        daughter: list[str],
-        resonance: list[str],
+        topology: Topology,
+        daughter: TopologyVertex,
         frame: Literal[
             'Helicity',
             'HX',
@@ -92,12 +110,7 @@ class Angles:
     ) -> None: ...
 
 class PolAngle:
-    def __init__(
-        self,
-        beam: str,
-        recoil: list[str],
-        angle_aux: str,
-    ) -> None: ...
+    def __init__(self, topology: Topology, angle_aux: str) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...
@@ -107,10 +120,7 @@ class PolAngle:
     def __ge__(self, value: float) -> VariableExpression: ...
 
 class PolMagnitude:
-    def __init__(
-        self,
-        magnitude_aux: str,
-    ) -> None: ...
+    def __init__(self, magnitude_aux: str) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...
@@ -125,21 +135,13 @@ class Polarization:
 
     def __init__(
         self,
-        beam: str,
-        recoil: list[str],
+        topology: Topology,
         magnitude_aux: str,
         angle_aux: str,
     ) -> None: ...
 
 class Mandelstam:
-    def __init__(
-        self,
-        p1: list[str],
-        p2: list[str],
-        p3: list[str],
-        p4: list[str],
-        channel: Literal['s', 't', 'u'],
-    ) -> None: ...
+    def __init__(self, topology: Topology, channel: Literal['s', 't', 'u', 'S', 'T', 'U']) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...

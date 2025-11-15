@@ -1,4 +1,3 @@
-from typing import Literal
 
 import numpy.typing as npt
 
@@ -17,8 +16,8 @@ def BinnedGuideTerm(
 def Regularizer(
     parameters: list[str],
     lda: float,
-    p: Literal[1, 2],
-    weights: npt.NDArray | None = None,
+    p: int = 1,
+    weights: list[float] | npt.NDArray | None = None,
 ) -> LikelihoodTerm: ...
 
 __all__ = ['BinnedGuideTerm', 'Regularizer']

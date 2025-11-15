@@ -52,6 +52,7 @@ from laddu.utils.variables import (
     PolAngle,
     Polarization,
     PolMagnitude,
+    Topology,
 )
 from laddu.utils.vectors import Vec3, Vec4
 
@@ -103,6 +104,7 @@ __all__ = [
     'StochasticNLL',
     'Swarm',
     'SwarmParticle',
+    'Topology',
     'Vec3',
     'Vec4',
     'Walker',

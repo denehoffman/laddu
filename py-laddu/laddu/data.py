@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -27,7 +26,7 @@ def _import_optional_dependency(
     *,
     extra: str,
     feature: str,
-) -> ModuleType:
+) -> Any:
     try:
         return import_module(module_name)
     except ModuleNotFoundError as exc:
