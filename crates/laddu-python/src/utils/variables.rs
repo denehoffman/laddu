@@ -141,7 +141,11 @@ impl PyTopology {
     }
 
     #[staticmethod]
-    fn missing_k1(k2: PyTopologyVertexInput, k3: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+    fn missing_k1(
+        k2: PyTopologyVertexInput,
+        k3: PyTopologyVertexInput,
+        k4: PyTopologyVertexInput,
+    ) -> Self {
         Self(Topology::missing_k1(
             k2.into_vertex(),
             k3.into_vertex(),
@@ -150,7 +154,11 @@ impl PyTopology {
     }
 
     #[staticmethod]
-    fn missing_k2(k1: PyTopologyVertexInput, k3: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+    fn missing_k2(
+        k1: PyTopologyVertexInput,
+        k3: PyTopologyVertexInput,
+        k4: PyTopologyVertexInput,
+    ) -> Self {
         Self(Topology::missing_k2(
             k1.into_vertex(),
             k3.into_vertex(),
@@ -159,7 +167,11 @@ impl PyTopology {
     }
 
     #[staticmethod]
-    fn missing_k3(k1: PyTopologyVertexInput, k2: PyTopologyVertexInput, k4: PyTopologyVertexInput) -> Self {
+    fn missing_k3(
+        k1: PyTopologyVertexInput,
+        k2: PyTopologyVertexInput,
+        k4: PyTopologyVertexInput,
+    ) -> Self {
         Self(Topology::missing_k3(
             k1.into_vertex(),
             k2.into_vertex(),
@@ -168,7 +180,11 @@ impl PyTopology {
     }
 
     #[staticmethod]
-    fn missing_k4(k1: PyTopologyVertexInput, k2: PyTopologyVertexInput, k3: PyTopologyVertexInput) -> Self {
+    fn missing_k4(
+        k1: PyTopologyVertexInput,
+        k2: PyTopologyVertexInput,
+        k3: PyTopologyVertexInput,
+    ) -> Self {
         Self(Topology::missing_k4(
             k1.into_vertex(),
             k2.into_vertex(),
@@ -871,7 +887,7 @@ pub struct PyMandelstam(pub Mandelstam);
 impl PyMandelstam {
     #[new]
     fn new(topology: PyTopology, channel: &str) -> PyResult<Self> {
-        Ok(Self(Mandelstam::new(topology.0.clone(), channel.parse()? )))
+        Ok(Self(Mandelstam::new(topology.0.clone(), channel.parse()?)))
     }
     /// The value of this Variable for the given Event
     ///

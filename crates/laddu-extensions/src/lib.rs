@@ -79,7 +79,11 @@ mod tests {
         assert!(sample.iter().all(|&value| value < 16));
         let mut sorted: Vec<_> = sample.iter().copied().collect();
         sorted.sort_unstable();
-        assert_eq!(sorted, vec![0, 1, 4, 7], "sampling should be deterministic with seed");
+        assert_eq!(
+            sorted,
+            vec![0, 1, 4, 7],
+            "sampling should be deterministic with seed"
+        );
     }
 
     #[test]
@@ -91,7 +95,11 @@ mod tests {
         assert_eq!(unique.len(), picks.len(), "values must be unique");
         let missing: Vec<_> = (0..10).filter(|idx| !unique.contains(idx)).collect();
         assert_eq!(missing.len(), 2, "exactly n-m elements should be excluded");
-        assert_eq!(missing, vec![0, 5], "complement should be deterministic with seed 0");
+        assert_eq!(
+            missing,
+            vec![0, 5],
+            "complement should be deterministic with seed 0"
+        );
     }
 
     #[test]
@@ -102,7 +110,14 @@ mod tests {
         assert!(picks.iter().all(|&value| value < 10));
         let mut sorted = picks.clone();
         sorted.sort_unstable();
-        assert!(sorted.windows(2).all(|pair| pair[0] != pair[1]), "duplicates detected");
-        assert_eq!(sorted, vec![0, 4, 9], "sample should be deterministic with seed 0");
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] != pair[1]),
+            "duplicates detected"
+        );
+        assert_eq!(
+            sorted,
+            vec![0, 4, 9],
+            "sample should be deterministic with seed 0"
+        );
     }
 }

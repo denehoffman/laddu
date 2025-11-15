@@ -3703,7 +3703,10 @@ mod tests {
         let beta = manager.register(LikelihoodScalar::new("beta"));
         let expr = LikelihoodExpression::Add(Box::new(term(&alpha)), Box::new(term(&beta)));
         let evaluator = manager.load(&expr);
-        assert_eq!(manager.parameters(), vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(
+            manager.parameters(),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
         let params = vec![2.0, 3.0];
         assert_relative_eq!(evaluator.evaluate(&params), 5.0);
         let grad = evaluator.evaluate_gradient(&params);
