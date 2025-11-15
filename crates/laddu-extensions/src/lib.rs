@@ -65,3 +65,44 @@ impl RngSubsetExtension for Rng {
         floyd_sample(m, n, self).into_iter().collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn floyd_sample_draws_unique_values() {
+        let mut rng = Rng::with_seed(0);
+        let sample = floyd_sample(4, 16, &mut rng);
+        assert_eq!(sample.len(), 4, "must return exactly m entries");
+        assert!(sample.iter().all(|&value| value < 16));
+        let mut sorted: Vec<_> = sample.iter().copied().collect();
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec![0, 1, 4, 7], "sampling should be deterministic with seed");
+    }
+
+    #[test]
+    fn subset_prefers_complement_for_large_m() {
+        let mut rng = Rng::with_seed(0);
+        let picks = rng.subset(8, 10);
+        assert_eq!(picks.len(), 8);
+        let unique: HashSet<_> = picks.iter().copied().collect();
+        assert_eq!(unique.len(), picks.len(), "values must be unique");
+        let missing: Vec<_> = (0..10).filter(|idx| !unique.contains(idx)).collect();
+        assert_eq!(missing.len(), 2, "exactly n-m elements should be excluded");
+        assert_eq!(missing, vec![0, 5], "complement should be deterministic with seed 0");
+    }
+
+    #[test]
+    fn subset_handles_small_samples() {
+        let mut rng = Rng::with_seed(0);
+        let picks = rng.subset(3, 10);
+        assert_eq!(picks.len(), 3);
+        assert!(picks.iter().all(|&value| value < 10));
+        let mut sorted = picks.clone();
+        sorted.sort_unstable();
+        assert!(sorted.windows(2).all(|pair| pair[0] != pair[1]), "duplicates detected");
+        assert_eq!(sorted, vec![0, 4, 9], "sample should be deterministic with seed 0");
+    }
+}

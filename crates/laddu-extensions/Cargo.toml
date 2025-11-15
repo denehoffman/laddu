@@ -43,5 +43,10 @@ numpy = ["dep:numpy"]
 num_cpus = ["dep:num_cpus"]
 mpi = ["dep:mpi", "laddu-core/mpi"]
 
+[dev-dependencies]
+approx = { workspace = true }
+serde = { workspace = true }
+typetag = { workspace = true }
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

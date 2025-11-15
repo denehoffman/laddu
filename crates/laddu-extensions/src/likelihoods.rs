@@ -1560,7 +1560,7 @@ impl PyNLL {
     fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.activate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.activate_many(&vec)?;
         } else {
@@ -1594,7 +1594,7 @@ impl PyNLL {
     fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.deactivate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.deactivate_many(&vec)?;
         } else {
@@ -1628,7 +1628,7 @@ impl PyNLL {
     fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
             self.0.isolate(&string_arg)?;
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             self.0.isolate_many(&vec)?;
         } else {
@@ -1831,7 +1831,7 @@ impl PyNLL {
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let names = if let Ok(string_arg) = arg.extract::<String>() {
             vec![string_arg]
-        } else if let Ok(list_arg) = arg.downcast::<PyList>() {
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
             vec
         } else {
@@ -3597,4 +3597,151 @@ impl LikelihoodTerm for LikelihoodScalar {
 #[pyfunction(name = "LikelihoodScalar")]
 pub fn py_likelihood_scalar(name: String) -> PyLikelihoodTerm {
     PyLikelihoodTerm(LikelihoodScalar::new(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodScalar, LikelihoodTerm,
+        NLL,
+    };
+    use approx::assert_relative_eq;
+    use laddu_core::{
+        amplitudes::{parameter, Amplitude, AmplitudeID, Manager, ParameterLike},
+        data::{Dataset, DatasetMetadata, EventData},
+        resources::{Cache, ParameterID, Parameters, Resources},
+        utils::vectors::Vec4,
+    };
+    use nalgebra::DVector;
+    use num::complex::Complex64;
+    use serde::{Deserialize, Serialize};
+    use std::sync::Arc;
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct ConstantAmplitude {
+        name: String,
+        parameter: ParameterLike,
+        pid: ParameterID,
+    }
+
+    impl ConstantAmplitude {
+        fn new(name: &str, parameter: ParameterLike) -> Box<Self> {
+            Self {
+                name: name.to_string(),
+                parameter,
+                pid: ParameterID::default(),
+            }
+            .into()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for ConstantAmplitude {
+        fn register(&mut self, resources: &mut Resources) -> laddu_core::LadduResult<AmplitudeID> {
+            self.pid = resources.register_parameter(&self.parameter);
+            resources.register_amplitude(&self.name)
+        }
+
+        fn compute(
+            &self,
+            parameters: &Parameters,
+            _event: &EventData,
+            _cache: &Cache,
+        ) -> Complex64 {
+            Complex64::new(parameters.get(self.pid), 0.0)
+        }
+
+        fn compute_gradient(
+            &self,
+            _parameters: &Parameters,
+            _event: &EventData,
+            _cache: &Cache,
+            gradient: &mut DVector<Complex64>,
+        ) {
+            if let ParameterID::Parameter(index) = self.pid {
+                gradient[index] = Complex64::ONE;
+            }
+        }
+    }
+
+    fn dataset_with_weights(weights: &[f64]) -> Arc<Dataset> {
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = weights
+            .iter()
+            .map(|&weight| {
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                    aux: vec![],
+                    weight,
+                })
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    fn make_constant_nll() -> (Box<NLL>, Vec<f64>) {
+        let mut manager = Manager::default();
+        let aid = manager
+            .register(ConstantAmplitude::new("amp", parameter("scale")))
+            .expect("register amplitude");
+        let expr = aid.norm_sqr();
+        let model = manager.model(&expr);
+        let data = dataset_with_weights(&[1.0, 2.0]);
+        let mc = dataset_with_weights(&[0.5, 1.5]);
+        let nll = NLL::new(&model, &data, &mc);
+        (nll, vec![2.0])
+    }
+
+    fn term(id: &LikelihoodID) -> LikelihoodExpression {
+        LikelihoodExpression::Term(id.clone())
+    }
+
+    #[test]
+    fn likelihood_manager_evaluates_scalar_sum() {
+        let mut manager = LikelihoodManager::default();
+        let alpha = manager.register(LikelihoodScalar::new("alpha"));
+        let beta = manager.register(LikelihoodScalar::new("beta"));
+        let expr = LikelihoodExpression::Add(Box::new(term(&alpha)), Box::new(term(&beta)));
+        let evaluator = manager.load(&expr);
+        assert_eq!(manager.parameters(), vec!["alpha".to_string(), "beta".to_string()]);
+        let params = vec![2.0, 3.0];
+        assert_relative_eq!(evaluator.evaluate(&params), 5.0);
+        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(grad[0], 1.0);
+        assert_relative_eq!(grad[1], 1.0);
+    }
+
+    #[test]
+    fn likelihood_manager_evaluates_scalar_product() {
+        let mut manager = LikelihoodManager::default();
+        let alpha = manager.register(LikelihoodScalar::new("alpha"));
+        let beta = manager.register(LikelihoodScalar::new("beta"));
+        let expr = LikelihoodExpression::Mul(Box::new(term(&alpha)), Box::new(term(&beta)));
+        let evaluator = manager.load(&expr);
+        let params = vec![2.0, 3.0];
+        assert_relative_eq!(evaluator.evaluate(&params), 6.0);
+        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(grad[0], 3.0);
+        assert_relative_eq!(grad[1], 2.0);
+    }
+
+    #[test]
+    fn nll_evaluate_and_gradient_match_closed_form() {
+        let (nll, params) = make_constant_nll();
+        let intensity = params[0] * params[0];
+        let weight_sum = 3.0;
+        let expected = -2.0 * (weight_sum * intensity.ln() - intensity);
+        assert_relative_eq!(nll.evaluate(&params), expected, epsilon = 1e-12);
+        let grad = nll.evaluate_gradient(&params);
+        let expected_grad = -4.0 * (weight_sum / params[0] - params[0]);
+        assert_relative_eq!(grad[0], expected_grad, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_project_returns_weighted_intensity() {
+        let (nll, params) = make_constant_nll();
+        let projection = nll.project_local(&params, None);
+        assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
 }

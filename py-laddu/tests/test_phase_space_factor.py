@@ -1,6 +1,15 @@
 import pytest
 
-from laddu import Dataset, Event, Manager, Mandelstam, Mass, PhaseSpaceFactor, Topology, Vec3
+from laddu import (
+    Dataset,
+    Event,
+    Manager,
+    Mandelstam,
+    Mass,
+    PhaseSpaceFactor,
+    Topology,
+    Vec3,
+)
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']

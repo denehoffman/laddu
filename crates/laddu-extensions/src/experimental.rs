@@ -385,3 +385,47 @@ pub fn py_regularizer(
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Regularizer;
+    use crate::likelihoods::LikelihoodTerm;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn l1_regularizer_respects_weights() {
+        let reg = Regularizer::<1>::new(["alpha", "beta"], 2.0, Some([1.0, 0.5])).unwrap();
+        let values: [f64; 2] = [1.5, -2.0];
+        assert_relative_eq!(reg.evaluate(&values), 7.0);
+        let grad = reg.evaluate_gradient(&values);
+        assert_relative_eq!(grad[0], 2.0);
+        assert_relative_eq!(grad[1], -1.0);
+    }
+
+    #[test]
+    fn l2_regularizer_gradient_scales_parameters() {
+        let reg = Regularizer::<2>::new(["x", "y"], 3.0, Some([1.0, 2.0])).unwrap();
+        let values: [f64; 2] = [3.0_f64, 4.0_f64];
+        assert_relative_eq!(reg.evaluate(&values), 15.0);
+        let grad = reg.evaluate_gradient(&values);
+        let denom = (1.0 * values[0].powi(2) + 2.0 * values[1].powi(2)).sqrt();
+        assert_relative_eq!(grad[0], 3.0 * values[0] / denom);
+        assert_relative_eq!(grad[1], 3.0 * values[1] / denom);
+    }
+
+    #[test]
+    fn regularizer_rejects_weight_mismatch() {
+        let err = Regularizer::<1>::new(["alpha", "beta"], 1.0, Some([1.0]));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn regularizer_defaults_to_unit_weights() {
+        let reg = Regularizer::<1>::new(["alpha", "beta"], 1.5, None::<Vec<f64>>).unwrap();
+        let values: [f64; 2] = [1.0, -2.0];
+        assert_relative_eq!(reg.evaluate(&values), 4.5);
+        let grad = reg.evaluate_gradient(&values);
+        assert_relative_eq!(grad[0], 1.5);
+        assert_relative_eq!(grad[1], -1.5);
+    }
+}
