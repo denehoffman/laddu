@@ -1872,6 +1872,35 @@ mod tests {
     }
 
     #[test]
+    fn test_dataset_metadata_rejects_duplicate_names() {
+        let err = DatasetMetadata::new(vec!["beam", "beam"], Vec::<String>::new());
+        assert!(matches!(
+            err,
+            Err(LadduError::DuplicateName { category, .. }) if category == "p4"
+        ));
+        let err = DatasetMetadata::new(
+            vec!["beam"],
+            vec!["pol_angle".to_string(), "pol_angle".to_string()],
+        );
+        assert!(matches!(
+            err,
+            Err(LadduError::DuplicateName { category, .. }) if category == "aux"
+        ));
+    }
+
+    #[test]
+    fn test_dataset_lookup_by_name() {
+        let dataset = test_dataset();
+        let proton = dataset.p4_by_name(0, "proton").expect("proton p4");
+        let proton_idx = dataset.metadata().p4_index("proton").unwrap();
+        assert_relative_eq!(proton.e(), dataset[0].p4s[proton_idx].e());
+        assert!(dataset.p4_by_name(0, "unknown").is_none());
+        let angle = dataset.aux_by_name(0, "pol_angle").expect("pol_angle");
+        assert_relative_eq!(angle, dataset[0].aux[1]);
+        assert!(dataset.aux_by_name(0, "missing").is_none());
+    }
+
+    #[test]
     fn test_binned_dataset() {
         let dataset = Dataset::new(vec![
             Arc::new(EventData {

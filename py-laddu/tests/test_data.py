@@ -168,6 +168,18 @@ def test_dataset_conversion() -> None:
     assert ds_from_polars[2].p4s['proton'].e == 100.0
 
 
+def test_dataset_rejects_duplicate_p4_names() -> None:
+    event = make_test_event()
+    with pytest.raises(ValueError):
+        Dataset([event], p4_names=['beam', 'beam'], aux_names=AUX_NAMES)
+
+
+def test_dataset_rejects_duplicate_aux_names() -> None:
+    event = make_test_event()
+    with pytest.raises(ValueError):
+        Dataset([event], p4_names=P4_NAMES, aux_names=['aux', 'aux'])
+
+
 def test_dataset_size_check() -> None:
     dataset = Dataset([])
     assert len(dataset) == 0
@@ -198,6 +210,17 @@ def test_dataset_weights() -> None:
     assert weights[0] == 0.48
     assert weights[1] == 0.52
     assert dataset.n_events_weighted == 1.0
+
+
+def test_dataset_from_dict_missing_components() -> None:
+    data = {'beam_px': [1.0]}
+    with pytest.raises(KeyError):
+        Dataset.from_dict(data)
+
+
+def test_dataset_from_dict_requires_p4_columns() -> None:
+    with pytest.raises(ValueError):
+        Dataset.from_dict({'weight': [1.0]})
 
 
 def test_dataset_sum() -> None:
