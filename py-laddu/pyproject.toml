@@ -22,18 +22,17 @@ classifiers = [
 dynamic = ["version", "license", "description", "readme"]
 dependencies = [
   "numpy",
-  "docopt-ng",
-  "uproot",
-  "pandas",
-  "polars",
 ]
 
 [project.urls]
 Documentation = "https://laddu.readthedocs.io/en/stable/"
 
 [project.optional-dependencies]
-tests = ["pytest"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
+pandas = ["pandas"]
+polars = ["polars"]
+tests = ["pytest", "pandas", "polars", "uproot"]
+uproot = ["uproot"]
 
 [tool.maturin]
 bindings = "pyo3"

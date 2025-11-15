@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-import uproot
 
 from laddu.laddu import BinnedDataset, Event
 from laddu.laddu import Dataset as _DatasetCore
@@ -14,10 +15,28 @@ from laddu.utils.vectors import Vec4
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
+    import uproot
     from numpy.typing import NDArray
 
 
 _NATIVE_DATASET_OPEN = _DatasetCore.open
+
+
+def _import_optional_dependency(
+    module_name: str,
+    *,
+    extra: str,
+    feature: str,
+) -> ModuleType:
+    try:
+        return import_module(module_name)
+    except ModuleNotFoundError as exc:
+        msg = (
+            f"{feature} requires the optional dependency '{module_name}'. "
+            f"Install it with `pip install laddu[{extra}]` "
+            f"or `pip install laddu-mpi[{extra}]`."
+        )
+        raise ModuleNotFoundError(msg) from exc
 
 
 class _DatasetExtensions:
@@ -140,6 +159,11 @@ class _DatasetExtensions:
         cls, data: pd.DataFrame, rest_frame_of: list[str] | None = None
     ) -> _DatasetCore:
         """Materialise a dataset from a :class:`pandas.DataFrame`."""
+        _import_optional_dependency(
+            'pandas',
+            extra='pandas',
+            feature='Dataset.from_pandas',
+        )
         converted = {col: data[col].to_list() for col in data.columns}
         return cls.from_dict(converted, rest_frame_of=rest_frame_of)
 
@@ -148,6 +172,11 @@ class _DatasetExtensions:
         cls, data: pl.DataFrame, rest_frame_of: list[str] | None = None
     ) -> _DatasetCore:
         """Materialise a dataset from a :class:`polars.DataFrame`."""
+        _import_optional_dependency(
+            'polars',
+            extra='polars',
+            feature='Dataset.from_polars',
+        )
         converted = {col: data[col].to_list() for col in data.columns}
         return cls.from_dict(converted, rest_frame_of=rest_frame_of)
 
@@ -253,7 +282,12 @@ class _DatasetExtensions:
         boost_to_restframe_of: list[str] | None,
         uproot_kwargs: dict[str, Any],
     ) -> _DatasetCore:
-        with uproot.open(path) as root_file:
+        uproot_module = _import_optional_dependency(
+            'uproot',
+            extra='uproot',
+            feature="Dataset.open(... backend='uproot')",
+        )
+        with uproot_module.open(path) as root_file:
             tree_obj = cls._select_uproot_tree(root_file, tree)
             arrays = tree_obj.arrays(library='np', **uproot_kwargs)
 
@@ -465,10 +499,15 @@ def _load_amptools_arrays(
     *,
     entry_stop: int | None,
 ) -> tuple[np.ndarray, ...]:
-    with uproot.open(path) as file:
+    uproot_module = _import_optional_dependency(
+        'uproot',
+        extra='uproot',
+        feature="Dataset.open(... backend='amptools')",
+    )
+    with uproot_module.open(path) as file:
         try:
             tree = file[tree_name]
-        except uproot.KeyInFileError as exc:
+        except uproot_module.KeyInFileError as exc:
             msg = f"Input file must contain a tree named '{tree_name}'"
             raise KeyError(msg) from exc
 

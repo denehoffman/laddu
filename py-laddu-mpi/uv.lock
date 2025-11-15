@@ -656,15 +656,6 @@ wheels = [
 ]
 
 [[package]]
-name = "docopt-ng"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e4/50/8d6806cf13138127692ae6ff79ddeb4e25eb3b0bcc3c1bd033e7e04531a9/docopt_ng-0.9.0.tar.gz", hash = "sha256:91c6da10b5bb6f2e9e25345829fb8278c78af019f6fc40887ad49b060483b1d7", size = 32264, upload-time = "2023-05-30T20:46:25.064Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/4a/c3b77fc1a24510b08918b43a473410c0168f6e657118807015f1f1edceea/docopt_ng-0.9.0-py3-none-any.whl", hash = "sha256:bfe4c8b03f9fca424c24ee0b4ffa84bf7391cb18c29ce0f6a8227a3b01b81ff9", size = 16689, upload-time = "2023-05-30T20:46:45.294Z" },
-]
-
-[[package]]
 name = "docutils"
 version = "0.19"
 source = { registry = "https://pypi.org/simple" }
@@ -930,22 +921,11 @@ wheels = [
 name = "laddu-mpi"
 source = { editable = "." }
 dependencies = [
-    { name = "docopt-ng" },
     { name = "numpy", version = "1.21.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
     { name = "numpy", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pandas", version = "1.1.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.7.1'" },
-    { name = "pandas", version = "1.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.7.1' and python_full_version < '3.8'" },
-    { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
-    { name = "polars", version = "0.18.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
-    { name = "polars", version = "1.8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
-    { name = "polars", version = "1.35.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
-    { name = "uproot", version = "5.0.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
-    { name = "uproot", version = "5.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
-    { name = "uproot", version = "5.6.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
 
 [package.optional-dependencies]
@@ -959,26 +939,54 @@ docs = [
     { name = "sphinx-rtd-theme", version = "2.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
     { name = "sphinx-rtd-theme", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.8'" },
 ]
+pandas = [
+    { name = "pandas", version = "1.1.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.7.1'" },
+    { name = "pandas", version = "1.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.7.1' and python_full_version < '3.8'" },
+    { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+]
+polars = [
+    { name = "polars", version = "0.18.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
+    { name = "polars", version = "1.8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "polars", version = "1.35.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+]
 tests = [
+    { name = "pandas", version = "1.1.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.7.1'" },
+    { name = "pandas", version = "1.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.7.1' and python_full_version < '3.8'" },
+    { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "polars", version = "0.18.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
+    { name = "polars", version = "1.8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "polars", version = "1.35.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pytest", version = "7.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
     { name = "pytest", version = "8.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "pytest", version = "9.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "uproot", version = "5.0.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
+    { name = "uproot", version = "5.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "uproot", version = "5.6.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+]
+uproot = [
+    { name = "uproot", version = "5.0.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.8'" },
+    { name = "uproot", version = "5.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.8.*'" },
+    { name = "uproot", version = "5.6.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "docopt-ng" },
     { name = "numpy" },
-    { name = "pandas" },
-    { name = "polars" },
+    { name = "pandas", marker = "extra == 'pandas'" },
+    { name = "pandas", marker = "extra == 'tests'" },
+    { name = "polars", marker = "extra == 'polars'" },
+    { name = "polars", marker = "extra == 'tests'" },
     { name = "pytest", marker = "extra == 'tests'" },
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinx-copybutton", marker = "extra == 'docs'" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'" },
-    { name = "uproot" },
+    { name = "uproot", marker = "extra == 'tests'" },
+    { name = "uproot", marker = "extra == 'uproot'" },
 ]
-provides-extras = ["tests", "docs"]
+provides-extras = ["docs", "pandas", "polars", "tests", "uproot"]
 
 [[package]]
 name = "markupsafe"
