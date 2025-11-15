@@ -2,6 +2,7 @@
 
 ## Tooling Defaults
 - Python lives under `py-laddu`/`py-laddu-mpi`; always use `uv` for environment management, installation, and running commands (the `./make.py` entry points wrap `uv pip`, `uv run`, and `maturin` so you rarely need to call them directly).
+- Regenerate Python lockfiles by running `uv lock` in each package directory (`py-laddu`, `py-laddu-mpi`) whenever their dependencies change.
 - Run `ruff` for linting/formatting Python code; prefer `./make.py ruff` (or `uv run ruff ...`) so it shares the same virtual environment that `./make.py develop` maintains.
 - For Rust crates, make `cargo clippy --all-targets --all-features` part of your pre-commit check, alongside the existing test targets below.
 
