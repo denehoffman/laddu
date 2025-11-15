@@ -1,3 +1,4 @@
+# ruff: noqa: RUF002
 """High-level amplitude construction helpers.
 
 This module re-exports the Rust-backed amplitude building blocks as a cohesive Python API.

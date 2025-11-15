@@ -1,3 +1,4 @@
+# ruff: noqa: RUF002
 """Elementary scalar amplitude components.
 
 ``Scalar`` returns a real-valued scaling parameter, ``ComplexScalar`` exposes
