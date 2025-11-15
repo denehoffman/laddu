@@ -54,9 +54,7 @@ jobs:
         with:
           working-directory: "py-laddu"
           command: develop
-          args: --uv
-      - name: Install pytest
-        run: uv pip install pytest pytest-cov
+          args: --uv --extras tests
       - name: Generate Python code coverage
         run: .venv/bin/pytest --cov --cov-report xml:coverage-python.xml
       - name: Upload coverage report

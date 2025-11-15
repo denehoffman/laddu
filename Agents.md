@@ -27,6 +27,13 @@ Use `./make.py <command>` from the repo root; each command wires up `uv`, Cargo,
 | `./make.py clean [--python]` / `./make.py venv [--recreate] [--python-version X.Y]` | Clean the Cargo workspace (and optionally the repo venv) or manage the shared `.venv`. |
 | `./make.py docker [--build]` | Build the `laddu:latest` container or drop into a synced shell inside it. |
 
+## Code Coverage
+- Always run `./make.py develop --tests` first so the shared `.venv` contains the pytest extras (including `pytest-cov`) and the Rust/Python artifacts are consistent.
+- **Rust**: run `cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu -F rayon` from the repo root. This mirrors `.github/workflows/coverage.yml` (nightly toolchain + rayon feature) and emits an LCOV file that Codecov ingests.
+- **Python**: with the `.venv` activated (or by calling the interpreter directly), execute `.venv/bin/python -m pytest --cov --cov-report xml:coverage-python.xml` from the repo root. `pytest.toml` already points at `py-laddu/tests` and the package modules, so no extra flags are needed.
+- We currently treat MPI-heavy paths and PyO3 shims inside `laddu-python` as out-of-scope for unit coverage because MPI coordination is difficult to exercise locally and the Python tests already hit the exposed bindings. The Python coverage config omits `laddu/mpi.py`, and the Rust MPI module is wrapped in `#[cfg_attr(coverage_nightly, coverage(off))]` so `cargo llvm-cov` won't report it.
+- When adding tests, aim for parity between Rust and Python suites: if logic exists on both sides (e.g., bindings that mirror a Rust helper), keep the scenarios aligned. It's fine for a test to live in just one language when the behavior is language-specific, but default to keeping feature coverage in sync.
+
 ## Working Style Checklist
 1. Run `./make.py develop ...` (add `--tests`/`--docs` as needed) before touching Python code so the managed `uv` environment lines up.
 2. Keep `ruff` and `cargo clippy` clean alongside the standard Cargo/Python tests (`./make.py test`). Use `./make.py ruff` and `./make.py ty` to make sure the Python files are clear of type errors and poor syntax choices.

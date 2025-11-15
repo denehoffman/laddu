@@ -31,7 +31,7 @@ Documentation = "https://laddu.readthedocs.io/en/stable/"
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
 pandas = ["pandas"]
 polars = ["polars"]
-tests = ["pytest", "pandas", "polars", "uproot"]
+tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
 uproot = ["uproot"]
 
 [tool.maturin]
@@ -138,7 +138,12 @@ docstring-code-line-length = "dynamic"
 
 [tool.coverage.run]
 source = ["laddu"]
-omit = ["tests/*", "docs/*"]
+omit = [
+  "tests/*",
+  "docs/*",
+  "laddu/mpi.py",
+  "*/laddu/mpi.py",
+]
 branch = true
 
 [tool.coverage.report]
