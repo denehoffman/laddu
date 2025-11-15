@@ -1203,6 +1203,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_borrows_for_generic_args)]
     fn test_topology_accepts_varied_inputs() {
         let topo = Topology::new(
             "particle1",
