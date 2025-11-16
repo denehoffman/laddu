@@ -666,7 +666,7 @@ impl PyAngles {
 /// ----------
 /// topology : laddu.Topology
 ///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
-/// angle_aux : str
+/// pol_angle : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
 #[pyclass(name = "PolAngle", module = "laddu")]
@@ -676,8 +676,8 @@ pub struct PyPolAngle(pub PolAngle);
 #[pymethods]
 impl PyPolAngle {
     #[new]
-    fn new(topology: PyTopology, angle_aux: String) -> Self {
-        Self(PolAngle::new(topology.0.clone(), angle_aux))
+    fn new(topology: PyTopology, pol_angle: String) -> Self {
+        Self(PolAngle::new(topology.0.clone(), pol_angle))
     }
     /// The value of this Variable for the given Event
     ///
@@ -751,7 +751,7 @@ impl PyPolAngle {
 ///
 /// Parameters
 /// ----------
-/// magnitude_aux : str
+/// pol_magnitude : str
 ///     Name of the auxiliary scalar column storing the magnitude of the polarization vector
 ///
 /// See Also
@@ -765,8 +765,8 @@ pub struct PyPolMagnitude(pub PolMagnitude);
 #[pymethods]
 impl PyPolMagnitude {
     #[new]
-    fn new(beam_polarization: String) -> Self {
-        Self(PolMagnitude::new(beam_polarization))
+    fn new(pol_magnitude: String) -> Self {
+        Self(PolMagnitude::new(pol_magnitude))
     }
     /// The value of this Variable for the given Event
     ///
@@ -842,9 +842,9 @@ impl PyPolMagnitude {
 /// ----------
 /// topology : laddu.Topology
 ///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
-/// magnitude_aux : str
+/// pol_magnitude : str
 ///     Name of the auxiliary scalar storing the polarization magnitude
-/// angle_aux : str
+/// pol_angle : str
 ///     Name of the auxiliary scalar storing the polarization angle in radians
 ///
 /// See Also
@@ -858,13 +858,14 @@ pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
     #[new]
-    fn new(topology: PyTopology, magnitude_aux: String, angle_aux: String) -> PyResult<Self> {
-        if magnitude_aux == angle_aux {
+    #[pyo3(signature=(topology, *, pol_magnitude, pol_angle))]
+    fn new(topology: PyTopology, pol_magnitude: String, pol_angle: String) -> PyResult<Self> {
+        if pol_magnitude == pol_angle {
             return Err(PyValueError::new_err(
-                "`magnitude_aux` and `angle_aux` must reference distinct auxiliary columns",
+                "`pol_magnitude` and `pol_angle` must reference distinct auxiliary columns",
             ));
         }
-        let polarization = Polarization::new(topology.0.clone(), magnitude_aux, angle_aux);
+        let polarization = Polarization::new(topology.0.clone(), pol_magnitude, pol_angle);
         Ok(PyPolarization(polarization))
     }
     /// The Variable representing the magnitude of the polarization vector

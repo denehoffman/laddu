@@ -35,7 +35,7 @@ def test_zlm_evaluation() -> None:
     manager = Manager()
     topo = reaction_topology()
     angles = Angles(topo, 'kshort1', 'Helicity')
-    polarization = Polarization(reaction_topology(), 'pol_magnitude', 'pol_angle')
+    polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -49,7 +49,7 @@ def test_zlm_evaluation() -> None:
 def test_zlm_gradient() -> None:
     manager = Manager()
     angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
-    polarization = Polarization(reaction_topology(), 'pol_magnitude', 'pol_angle')
+    polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -61,7 +61,7 @@ def test_zlm_gradient() -> None:
 
 def test_polphase_evaluation() -> None:
     manager = Manager()
-    polarization = Polarization(reaction_topology(), 'pol_magnitude', 'pol_angle')
+    polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = PolPhase('polphase', polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
@@ -74,7 +74,7 @@ def test_polphase_evaluation() -> None:
 
 def test_polphase_gradient() -> None:
     manager = Manager()
-    polarization = Polarization(reaction_topology(), 'pol_magnitude', 'pol_angle')
+    polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = PolPhase('polphase', polarization)
     aid = manager.register(amp)
     dataset = make_test_dataset()
