@@ -300,8 +300,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.042841277026400094);
-        assert_relative_eq!(result[0].im, -0.23859639145706923);
+        assert_relative_eq!(result[0].re, 0.042841277808013944);
+        assert_relative_eq!(result[0].im, -0.23859639139484332);
     }
 
     #[test]
@@ -336,8 +336,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, -0.28729144623530045);
-        assert_relative_eq!(result[0].im, -0.2572403892603803);
+        assert_relative_eq!(result[0].re, -0.2872914473575512);
+        assert_relative_eq!(result[0].im, -0.2572403880070272);
     }
 
     #[test]

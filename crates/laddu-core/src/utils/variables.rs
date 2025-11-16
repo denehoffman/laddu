@@ -352,8 +352,7 @@ impl P4Selection {
 /// A vertex participating in a [`Topology`].
 ///
 /// Each vertex is represented as the sum of one or more four-momenta identified by their
-/// metadata names. This wrapper intentionally mimics [`P4Selection`] so that a topology can be
-/// bound once and reused across several kinematic variables.
+/// metadata names.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TopologyVertex {
     selection: P4Selection,
@@ -454,57 +453,70 @@ where
 
 /// A reusable 2-to-2 reaction description shared by several kinematic variables.
 ///
-/// A topology records the four canonical vertices $`k_1 + k_2 \to k_3 + k_4`$ (matching the
-/// traditional $`p_1 \ldots p_4`$ notation) in the center-of-momentum frame. When one vertex is
-/// omitted, it is reconstructed by enforcing four-momentum conservation, which is unambiguous in
-/// that frame.
+/// A topology records the four canonical vertices $`k_1 + k_2 \to k_3 + k_4`$.
+/// When one vertex is omitted, it is reconstructed by enforcing four-momentum
+/// conservation, which is unambiguous in that frame. Use [`Topology::com_boost_vector`]
+/// and the `*_com` helpers to access particles in the center-of-momentum frame.
+///
+/// ```text
+/// k1  k3
+///  ╲  ╱
+///   ╭╮
+///   ╰╯
+///  ╱  ╲
+/// k2  k4
+/// ```
+///
+/// Note that variables are typically designed to use $`k_1`$ as the incoming beam, $`k_2`$ as a
+/// target, $`k_3`$ as some resonance, and $`k_4`$ as the recoiling target particle, but this
+/// notation should be extensible to any 2-to-2 reaction.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Topology {
     /// All four vertices are explicitly provided.
     Full {
-        /// Incoming beam (`k1`, often labeled `p1`).
+        /// First incoming vertex.
         k1: TopologyVertex,
-        /// Target or recoil stand-in (`k2`, `p2`).
+        /// Second incoming vertex.
         k2: TopologyVertex,
-        /// Produced resonance (`k3`, `p3`).
+        /// First outgoing vertex.
         k3: TopologyVertex,
-        /// Recoil particle (`k4`, `p4`).
+        /// Second outgoing vertex.
         k4: TopologyVertex,
     },
-    /// The beam (`k1`) is reconstructed.
+    /// The first incoming vertex (`k1`) is reconstructed.
     MissingK1 {
-        /// Target or recoil stand-in (`k2`).
+        /// Second incoming vertex.
         k2: TopologyVertex,
-        /// Produced resonance (`k3`).
+        /// First outgoing vertex.
         k3: TopologyVertex,
-        /// Recoil particle (`k4`).
+        /// Second outgoing vertex.
         k4: TopologyVertex,
     },
-    /// The target (`k2`) is reconstructed.
+    /// The second incoming vertex (`k2`) is reconstructed.
     MissingK2 {
-        /// Incoming beam (`k1`).
+        /// First incoming vertex.
         k1: TopologyVertex,
-        /// Produced resonance (`k3`).
+        /// First outgoing vertex.
         k3: TopologyVertex,
-        /// Recoil particle (`k4`).
+        /// Second outgoing vertex.
         k4: TopologyVertex,
     },
-    /// The resonance (`k3`) is reconstructed.
+    /// The first outgoing vertex (`k3`) is reconstructed.
     MissingK3 {
-        /// Incoming beam (`k1`).
+        /// First incoming vertex.
         k1: TopologyVertex,
-        /// Target or recoil stand-in (`k2`).
+        /// Second incoming vertex.
         k2: TopologyVertex,
-        /// Recoil particle (`k4`).
+        /// Second outgoing vertex.
         k4: TopologyVertex,
     },
-    /// The recoil (`k4`) is reconstructed.
+    /// The second outgoing vertex (`k4`) is reconstructed.
     MissingK4 {
-        /// Incoming beam (`k1`).
+        /// First incoming vertex.
         k1: TopologyVertex,
-        /// Target or recoil stand-in (`k2`).
+        /// Second incoming vertex.
         k2: TopologyVertex,
-        /// Produced resonance (`k3`).
+        /// First outgoing vertex.
         k3: TopologyVertex,
     },
 }
@@ -526,7 +538,7 @@ impl Topology {
         }
     }
 
-    /// Construct a topology when the beam (`k1`) is omitted.
+    /// Construct a topology when the first incoming vertex (`k1`) is omitted.
     pub fn missing_k1<K2, K3, K4>(k2: K2, k3: K3, k4: K4) -> Self
     where
         K2: IntoTopologyVertex,
@@ -540,7 +552,7 @@ impl Topology {
         }
     }
 
-    /// Construct a topology when the target (`k2`) is omitted.
+    /// Construct a topology when the second incoming vertex (`k2`) is omitted.
     pub fn missing_k2<K1, K3, K4>(k1: K1, k3: K3, k4: K4) -> Self
     where
         K1: IntoTopologyVertex,
@@ -554,7 +566,7 @@ impl Topology {
         }
     }
 
-    /// Construct a topology when the resonance (`k3`) is omitted.
+    /// Construct a topology when the first outgoing vertex (`k3`) is omitted.
     pub fn missing_k3<K1, K2, K4>(k1: K1, k2: K2, k4: K4) -> Self
     where
         K1: IntoTopologyVertex,
@@ -568,7 +580,7 @@ impl Topology {
         }
     }
 
-    /// Construct a topology when the recoil (`k4`) is omitted.
+    /// Construct a topology when the second outgoing vertex (`k4`) is omitted.
     pub fn missing_k4<K1, K2, K3>(k1: K1, k2: K2, k3: K3) -> Self
     where
         K1: IntoTopologyVertex,
@@ -613,6 +625,21 @@ impl Topology {
             }
         }
         Ok(())
+    }
+
+    /// Return the velocity vector that boosts lab-frame momenta into the diagram's
+    /// center-of-momentum frame.
+    pub fn com_boost_vector(&self, event: &EventData) -> Vec3 {
+        match self {
+            Topology::Full { k3, k4, .. }
+            | Topology::MissingK1 { k3, k4, .. }
+            | Topology::MissingK2 { k3, k4, .. } => {
+                -(k3.momentum(event) + k4.momentum(event)).beta()
+            }
+            Topology::MissingK3 { k1, k2, .. } | Topology::MissingK4 { k1, k2, .. } => {
+                -(k1.momentum(event) + k2.momentum(event)).beta()
+            }
+        }
     }
 
     /// Convenience helper returning the beam four-momentum (`k1`).
@@ -665,6 +692,26 @@ impl Topology {
                 k1.momentum(event) + k2.momentum(event) - k3.momentum(event)
             }
         }
+    }
+
+    /// Beam four-momentum (`k1`) expressed in the center-of-momentum frame.
+    pub fn k1_com(&self, event: &EventData) -> Vec4 {
+        self.k1(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Target four-momentum (`k2`) expressed in the center-of-momentum frame.
+    pub fn k2_com(&self, event: &EventData) -> Vec4 {
+        self.k2(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Resonance four-momentum (`k3`) expressed in the center-of-momentum frame.
+    pub fn k3_com(&self, event: &EventData) -> Vec4 {
+        self.k3(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Recoil four-momentum (`k4`) expressed in the center-of-momentum frame.
+    pub fn k4_com(&self, event: &EventData) -> Vec4 {
+        self.k4(event).boost(&self.com_boost_vector(event))
     }
 
     /// Returns the resolved names for `k1` if it was explicitly provided.
@@ -840,6 +887,7 @@ impl CosTheta {
         }
     }
 }
+
 #[typetag::serde]
 impl Variable for CosTheta {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -849,37 +897,31 @@ impl Variable for CosTheta {
     }
 
     fn value(&self, event: &EventData) -> f64 {
-        let beam = self.topology.k1(event);
-        let recoil = self.topology.k4(event);
-        let daughter = self.daughter.momentum(event);
-        let resonance = self.topology.k3(event);
+        let com_boost = self.topology.com_boost_vector(event);
+        let beam = self.topology.k1_com(event);
+        let resonance = self.topology.k3_com(event);
+        let daughter = self.daughter.momentum(event).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
-        match self.frame {
+        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
+        let z = match self.frame {
             Frame::Helicity => {
+                let recoil = self.topology.k4_com(event);
                 let recoil_res = recoil.boost(&-resonance.beta());
-                let z = -recoil_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.costheta()
+                (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => {
                 let beam_res = beam.boost(&-resonance.beta());
-                let z = beam_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.costheta()
+                beam_res.vec3().unit()
             }
-        }
+        };
+        let x = plane_normal.cross(&z).unit();
+        let y = z.cross(&x).unit();
+        let angles = Vec3::new(
+            daughter_res.vec3().dot(&x),
+            daughter_res.vec3().dot(&y),
+            daughter_res.vec3().dot(&z),
+        );
+        angles.costheta()
     }
 }
 
@@ -926,37 +968,31 @@ impl Variable for Phi {
     }
 
     fn value(&self, event: &EventData) -> f64 {
-        let beam = self.topology.k1(event);
-        let recoil = self.topology.k4(event);
-        let daughter = self.daughter.momentum(event);
-        let resonance = self.topology.k3(event);
+        let com_boost = self.topology.com_boost_vector(event);
+        let beam = self.topology.k1_com(event);
+        let resonance = self.topology.k3_com(event);
+        let daughter = self.daughter.momentum(event).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
-        match self.frame {
+        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
+        let z = match self.frame {
             Frame::Helicity => {
+                let recoil = self.topology.k4_com(event);
                 let recoil_res = recoil.boost(&-resonance.beta());
-                let z = -recoil_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.phi()
+                (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => {
                 let beam_res = beam.boost(&-resonance.beta());
-                let z = beam_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.phi()
+                beam_res.vec3().unit()
             }
-        }
+        };
+        let x = plane_normal.cross(&z).unit();
+        let y = z.cross(&x).unit();
+        let angles = Vec3::new(
+            daughter_res.vec3().dot(&x),
+            daughter_res.vec3().dot(&y),
+            daughter_res.vec3().dot(&z),
+        );
+        angles.phi()
     }
 }
 
@@ -1032,7 +1068,14 @@ impl Variable for PolAngle {
     }
 
     fn value(&self, event: &EventData) -> f64 {
-        event.aux[self.angle_aux.index()]
+        let beam = self.topology.k1(event);
+        let recoil = self.topology.k4(event);
+        let pol_angle = event.aux[self.angle_aux.index()];
+        let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
+        let y = beam.vec3().cross(&-recoil.vec3()).unit();
+        let numerator = y.dot(&polarization);
+        let denominator = beam.vec3().unit().dot(&polarization.cross(&y));
+        f64::atan2(numerator, denominator)
     }
 }
 
@@ -1263,6 +1306,19 @@ mod tests {
     }
 
     #[test]
+    fn test_topology_com_helpers_match_manual_boost() {
+        let metadata = topology_test_metadata();
+        let event = topology_test_event();
+        let mut topo = Topology::new("beam", "target", "resonance", "recoil");
+        topo.bind(&metadata).unwrap();
+        let beta = topo.com_boost_vector(&event);
+        assert_relative_eq!(topo.k1_com(&event), topo.k1(&event).boost(&beta));
+        assert_relative_eq!(topo.k2_com(&event), topo.k2(&event).boost(&beta));
+        assert_relative_eq!(topo.k3_com(&event), topo.k3(&event).boost(&beta));
+        assert_relative_eq!(topo.k4_com(&event), topo.k4(&event).boost(&beta));
+    }
+
+    #[test]
     fn test_mass_single_particle() {
         let dataset = test_dataset();
         let mut mass = Mass::new("proton");
@@ -1289,7 +1345,11 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(costheta.value(&dataset[0]), -0.4611175068834238);
+        assert_relative_eq!(
+            costheta.value(&dataset[0]),
+            -0.4611175068834238,
+            epsilon = 1e-12
+        );
     }
 
     #[test]
@@ -1306,7 +1366,7 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066);
+        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066, epsilon = 1e-12);
     }
 
     #[test]
@@ -1323,7 +1383,11 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(costheta.value(&dataset[0]), 0.09198832278031577);
+        assert_relative_eq!(
+            costheta.value(&dataset[0]),
+            0.09198832278031577,
+            epsilon = 1e-12
+        );
     }
 
     #[test]
@@ -1331,7 +1395,7 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907);
+        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907, epsilon = 1e-12);
     }
 
     #[test]
@@ -1340,8 +1404,16 @@ mod tests {
         let mut angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         angles.costheta.bind(dataset.metadata()).unwrap();
         angles.phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(angles.costheta.value(&dataset[0]), -0.4611175068834238);
-        assert_relative_eq!(angles.phi.value(&dataset[0]), -2.657462587335066);
+        assert_relative_eq!(
+            angles.costheta.value(&dataset[0]),
+            -0.4611175068834238,
+            epsilon = 1e-12
+        );
+        assert_relative_eq!(
+            angles.phi.value(&dataset[0]),
+            -2.657462587335066,
+            epsilon = 1e-12
+        );
     }
 
     #[test]
@@ -1358,7 +1430,7 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
         pol_angle.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.93592989);
+        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.935929887818673);
     }
 
     #[test]
@@ -1393,7 +1465,7 @@ mod tests {
         let mut polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         polarization.pol_angle.bind(dataset.metadata()).unwrap();
         polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.93592989);
+        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.935929887818673);
         assert_relative_eq!(polarization.pol_magnitude.value(&dataset[0]), 0.38562805);
     }
 

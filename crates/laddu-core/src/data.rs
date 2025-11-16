@@ -38,6 +38,8 @@ use indexmap::{IndexMap, IndexSet};
 /// $`\gamma p \to K_S^0 K_S^0 p`$ with a polarized photon beam.
 pub fn test_event() -> EventData {
     use crate::utils::vectors::*;
+    let pol_magnitude = 0.38562805;
+    let pol_angle = 0.05708078;
     EventData {
         p4s: vec![
             Vec3::new(0.0, 0.0, 8.747).with_mass(0.0),         // beam
@@ -45,7 +47,7 @@ pub fn test_event() -> EventData {
             Vec3::new(-0.112, 0.293, 3.081).with_mass(0.498),  // "kaon"
             Vec3::new(-0.007, -0.667, 5.446).with_mass(0.498), // "kaon"
         ],
-        aux: vec![0.38562805, 1.93592989],
+        aux: vec![pol_magnitude, pol_angle],
         weight: 0.48,
     }
 }
@@ -913,8 +915,7 @@ impl Dataset {
     /// ``{identifier}_px``, ``{identifier}_py``, ``{identifier}_pz``, and ``{identifier}_e`` for
     /// each identifier (component suffixes are matched case-insensitively). Auxiliary scalars are
     /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
-    /// `Float32` or `Float64` and are promoted to `f64` on load. If `boost_to_restframe_of` is
-    /// provided, the method boosts every event to the rest frame of the specified particles.
+    /// `Float32` or `Float64` and are promoted to `f64` on load.
     ///
     /// This method currently supports Parquet files and ROOT TTrees. When reading
     /// ROOT files containing multiple trees, set [`DatasetReadOptions::tree`] to select one.
@@ -948,8 +949,7 @@ impl Dataset {
         options: &DatasetReadOptions,
     ) -> LadduResult<Arc<Dataset>> {
         let (detected_p4_names, detected_aux_names) = detect_columns(&file_path)?;
-        let (metadata, boost_indices) =
-            options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+        let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let reader = builder.build()?;
@@ -957,17 +957,9 @@ impl Dataset {
 
         #[cfg(feature = "rayon")]
         let events: Vec<Arc<EventData>> = {
-            let boost_indices = boost_indices.as_deref();
             let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
                 .into_par_iter()
-                .map(|batch| {
-                    record_batch_to_events(
-                        batch,
-                        &metadata.p4_names,
-                        &metadata.aux_names,
-                        boost_indices,
-                    )
-                })
+                .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
                 .collect();
             let mut events = Vec::new();
             for batch in batch_events {
@@ -979,17 +971,9 @@ impl Dataset {
 
         #[cfg(not(feature = "rayon"))]
         let events: Vec<Arc<EventData>> = {
-            let boost_indices = boost_indices.as_deref();
             batches
                 .into_iter()
-                .map(|batch| {
-                    record_batch_to_events(
-                        batch,
-                        &metadata.p4_names,
-                        &metadata.aux_names,
-                        boost_indices,
-                    )
-                })
+                .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
                 .collect::<LadduResult<Vec<_>>>()?
                 .into_iter()
                 .flatten()
@@ -1028,8 +1012,7 @@ impl Dataset {
 
         let column_names: Vec<&str> = lookup.keys().copied().collect();
         let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
-        let (metadata, boost_indices) =
-            options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+        let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
 
         let weight_values = read_branch_values(&lookup, "weight")?;
         let n_events = weight_values.len();
@@ -1081,8 +1064,6 @@ impl Dataset {
             aux_columns.push(values);
         }
 
-        let boost_indices_slice = boost_indices.as_deref();
-
         let mut events = Vec::with_capacity(n_events);
         for row in 0..n_events {
             let mut p4s = Vec::with_capacity(p4_columns.len());
@@ -1100,16 +1081,11 @@ impl Dataset {
                 aux.push(column[row]);
             }
 
-            let mut event = EventData {
+            let event = EventData {
                 p4s,
                 aux,
                 weight: weight_values[row],
             };
-            if let Some(indices) = boost_indices_slice {
-                if !indices.is_empty() {
-                    event = event.boost_to_rest_frame_of(indices);
-                }
-            }
             events.push(Arc::new(event));
         }
 
@@ -1141,8 +1117,6 @@ pub struct DatasetReadOptions {
     pub p4_names: Option<Vec<String>>,
     /// Auxiliary scalar names to read from the data file.
     pub aux_names: Option<Vec<String>>,
-    /// Particles whose rest frame should be used to boost each event.
-    pub boost_to_restframe_of: Option<Vec<String>>,
     /// Name of the tree to read when loading ROOT files. When absent and the file contains a
     /// single tree, it will be selected automatically.
     pub tree: Option<String>,
@@ -1176,17 +1150,6 @@ impl DatasetReadOptions {
         self
     }
 
-    /// If provided, [`Event`]s in the [`Dataset`] will be boosted to the rest frame of the specified particles.
-    pub fn boost_to_restframe_of<I, S>(mut self, names: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        self.boost_to_restframe_of =
-            Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
-        self
-    }
-
     /// Select the tree to read when opening ROOT files.
     pub fn tree<S>(mut self, name: S) -> Self
     where
@@ -1200,29 +1163,11 @@ impl DatasetReadOptions {
         &self,
         detected_p4_names: Vec<String>,
         detected_aux_names: Vec<String>,
-    ) -> LadduResult<(Arc<DatasetMetadata>, Option<Vec<usize>>)> {
+    ) -> LadduResult<Arc<DatasetMetadata>> {
         let p4_names_vec = self.p4_names.clone().unwrap_or(detected_p4_names);
         let aux_names_vec = self.aux_names.clone().unwrap_or(detected_aux_names);
 
-        let metadata = Arc::new(DatasetMetadata::new(p4_names_vec, aux_names_vec)?);
-
-        let boost_indices = if let Some(names) = self.boost_to_restframe_of.clone() {
-            let mut indices = Vec::with_capacity(names.len());
-            for name in names {
-                let idx = metadata
-                    .p4_index(&name)
-                    .ok_or_else(|| LadduError::UnknownName {
-                        category: "p4",
-                        name: name.to_string(),
-                    })?;
-                indices.push(idx);
-            }
-            Some(indices)
-        } else {
-            None
-        };
-
-        Ok((metadata, boost_indices))
+        Ok(Arc::new(DatasetMetadata::new(p4_names_vec, aux_names_vec)?))
     }
 }
 
@@ -1490,7 +1435,6 @@ fn record_batch_to_events(
     batch: RecordBatch,
     p4_names: &[String],
     aux_names: &[String],
-    boost_indices: Option<&[usize]>,
 ) -> LadduResult<Vec<Arc<EventData>>> {
     let batch_ref = &batch;
     let p4_columns: Vec<P4Columns<'_>> = p4_names
@@ -1521,16 +1465,11 @@ fn record_batch_to_events(
             aux.push(column.value(row));
         }
 
-        let mut event = EventData {
+        let event = EventData {
             p4s,
             aux,
             weight: weight_column.value(row),
         };
-        if let Some(indices) = boost_indices {
-            if !indices.is_empty() {
-                event = event.boost_to_rest_frame_of(indices);
-            }
-        }
         events.push(Arc::new(event));
     }
     Ok(events)
@@ -1987,7 +1926,7 @@ mod tests {
         assert!(display_string.contains("p4s:"));
         assert!(display_string.contains("aux:"));
         assert!(display_string.contains("aux[0]: 0.38562805"));
-        assert!(display_string.contains("aux[1]: 1.93592989"));
+        assert!(display_string.contains("aux[1]: 0.05708078"));
         assert!(display_string.contains("weight:"));
     }
 

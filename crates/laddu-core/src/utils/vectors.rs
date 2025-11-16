@@ -432,6 +432,9 @@ impl Vec4 {
     /// Gives the vector boosted along a $`\vec{\beta}`$ vector.
     pub fn boost(&self, beta: &Vec3) -> Self {
         let b2 = beta.dot(beta);
+        if b2 == 0.0 {
+            return *self;
+        }
         let gamma = 1.0 / f64::sqrt(1.0 - b2);
         let p3 = self.vec3() + beta * ((gamma - 1.0) * self.vec3().dot(beta) / b2 + gamma * self.t);
         Vec4::new(p3.x, p3.y, p3.z, gamma * (self.t + beta.dot(&self.vec3())))

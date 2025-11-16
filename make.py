@@ -38,6 +38,7 @@ console = Console()
 
 
 class Target(str, Enum):
+
     """Available Python frontends."""
 
     laddu = 'laddu'
@@ -215,6 +216,7 @@ def _build_docs(*, clean: bool, python_version: str | None = None) -> None:
 
 
 class CLIError(RuntimeError):
+
     """Raised for predictable CLI failures."""
 
 

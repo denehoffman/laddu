@@ -136,7 +136,7 @@ mod tests {
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.2713394403451028);
+        assert_relative_eq!(result[0].re, 0.2713394403451035);
         assert_relative_eq!(result[0].im, 0.1426897184196572);
     }
 
