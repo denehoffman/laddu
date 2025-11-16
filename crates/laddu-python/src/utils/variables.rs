@@ -271,8 +271,8 @@ impl PyTopology {
 ///
 /// Parameters
 /// ----------
-/// constituents : list of str
-///     The names of particles to combine to create the final 4-momentum
+/// constituents : str or list of str
+///     Particle names to combine when constructing the final four-momentum
 ///
 /// See Also
 /// --------
@@ -285,8 +285,8 @@ pub struct PyMass(pub Mass);
 #[pymethods]
 impl PyMass {
     #[new]
-    fn new(constituents: Vec<String>) -> Self {
-        Self(Mass::new(constituents))
+    fn new(constituents: PyP4SelectionInput) -> Self {
+        Self(Mass::new(constituents.into_selection()))
     }
     /// The value of this Variable for the given Event
     ///

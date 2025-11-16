@@ -131,6 +131,13 @@ def test_event_evaluate() -> None:
     assert event.evaluate(mass) == 1.007
 
 
+def test_mass_accepts_string_input() -> None:
+    dataset = make_test_dataset()
+    mass_list = Mass(['proton'])
+    mass_str = Mass('proton')
+    assert mass_list.value(dataset[0]) == mass_str.value(dataset[0])
+
+
 def test_event_evaluate_without_metadata() -> None:
     event = Event(
         [Vec3(0, 0, 1).with_mass(1.0)],
@@ -416,6 +423,18 @@ def test_dataset_open_with_aliases() -> None:
     alias_vec = dataset[0].p4('resonance')
     expected = dataset[0].get_p4_sum(['kshort1', 'kshort2'])
     _assert_vec4_close(alias_vec, expected)
+
+
+def test_mass_uses_alias_string() -> None:
+    dataset = Dataset.open(
+        DATA_F32_PARQUET,
+        aliases={'resonance': ['kshort1', 'kshort2']},
+    )
+    mass_alias = Mass('resonance')
+    mass_direct = Mass(['kshort1', 'kshort2'])
+    alias_values = mass_alias.value_on(dataset)
+    direct_values = mass_direct.value_on(dataset)
+    np.testing.assert_allclose(alias_values, direct_values)
 
 
 def test_dataset_open_amptools_matches_native_vectors() -> None:
