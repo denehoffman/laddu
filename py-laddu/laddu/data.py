@@ -186,7 +186,6 @@ class _DatasetExtensions:
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
-        boost_to_restframe_of: list[str] | None = None,
         backend: str | None = None,
         tree: str | None = None,
         uproot_kwargs: dict[str, Any] | None = None,
@@ -202,8 +201,6 @@ class _DatasetExtensions:
             Ordered list of particle base names (e.g. ``['beam', 'kshort1']``).
         aux:
             Auxiliary scalar columns to retain (such as ``pol_magnitude``).
-        boost_to_restframe_of:
-            Optional list of particle combinations used for rest-frame boosts.
         backend:
             Backend to use for ROOT files. Supported values are ``'oxyroot'``
             (Rust loader, default for ``.root``), ``'uproot'`` (Python loader),
@@ -217,8 +214,7 @@ class _DatasetExtensions:
         amptools_kwargs:
             Keyword arguments forwarded to the AmpTools-format backend.
             Supports ``pol_in_beam``, ``pol_angle``, ``pol_magnitude``,
-            ``pol_magnitude_name``, ``pol_angle_name``, ``num_entries``, and
-            ``boost_to_com``.
+            ``pol_magnitude_name``, ``pol_angle_name``, and ``num_entries``.
         """
         path_obj = Path(path)
         backend_name = (
@@ -232,7 +228,6 @@ class _DatasetExtensions:
                 path_obj,
                 p4s=p4s,
                 aux=aux,
-                boost_to_restframe_of=boost_to_restframe_of,
                 tree=tree,
             )
 
@@ -244,7 +239,6 @@ class _DatasetExtensions:
                 tree=backend_tree,
                 p4s=p4s,
                 aux=aux,
-                boost_to_restframe_of=boost_to_restframe_of,
                 uproot_kwargs=kwargs,
             )
 
@@ -256,8 +250,6 @@ class _DatasetExtensions:
                 tree=backend_tree,
                 amptools_kwargs=kwargs,
             )
-            if boost_to_restframe_of:
-                return dataset.boost_to_rest_frame_of(boost_to_restframe_of)
             return dataset
 
         msg = (
@@ -278,7 +270,6 @@ class _DatasetExtensions:
         tree: str | None,
         p4s: list[str] | None,
         aux: list[str] | None,
-        boost_to_restframe_of: list[str] | None,
         uproot_kwargs: dict[str, Any],
     ) -> _DatasetCore:
         uproot_module = _import_optional_dependency(
@@ -292,7 +283,7 @@ class _DatasetExtensions:
 
         columns = {name: np.asarray(values) for name, values in arrays.items()}
         selected = cls._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
-        return cls.from_numpy(selected, rest_frame_of=boost_to_restframe_of)
+        return cls.from_numpy(selected)
 
     @classmethod
     def _open_amptools_format(
@@ -309,7 +300,6 @@ class _DatasetExtensions:
         pol_magnitude_name = kwargs.pop('pol_magnitude_name', 'pol_magnitude')
         pol_angle_name = kwargs.pop('pol_angle_name', 'pol_angle')
         num_entries = kwargs.pop('num_entries', None)
-        boost_to_com = kwargs.pop('boost_to_com', True)
         if kwargs:
             unknown = ', '.join(sorted(kwargs))
             msg = f'Unsupported AmpTools options: {unknown}'
@@ -351,7 +341,6 @@ class _DatasetExtensions:
             else:
                 aux_names = [f'aux_{i}' for i in range(len(aux_rows[0]))]
 
-        rest_frame_of = p4_names[1:] if boost_to_com else None
         events: list[Event] = []
         for p4s, aux, weight in zip(p4s_list, aux_rows, weight_list):
             p4_vectors = [Vec4.from_array(p4) for p4 in p4s]
@@ -361,7 +350,6 @@ class _DatasetExtensions:
                     p4_vectors,
                     aux_values,
                     float(weight),
-                    rest_frame_of=rest_frame_of,
                     p4_names=p4_names,
                     aux_names=aux_names,
                 )
@@ -457,13 +445,11 @@ def open(
     *,
     p4s: list[str],
     aux: list[str] | None = None,
-    boost_to_restframe_of: list[str] | None = None,
 ) -> Dataset:
     return Dataset.open(
         path,
         p4s=p4s,
         aux=aux,
-        boost_to_restframe_of=boost_to_restframe_of,
     )
 
 

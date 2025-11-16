@@ -51,7 +51,6 @@ class Dataset:
         *,
         p4s: list[str] | None = ...,
         aux: list[str] | None = ...,
-        boost_to_restframe_of: list[str] | None = ...,
         backend: str | None = ...,
         tree: str | None = ...,
         uproot_kwargs: dict[str, Any] | None = ...,

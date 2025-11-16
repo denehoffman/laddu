@@ -1,4 +1,7 @@
-use crate::data::{PyDataset, PyEvent};
+use crate::{
+    data::{PyDataset, PyEvent},
+    utils::vectors::{PyVec3, PyVec4},
+};
 use laddu_core::{
     data::{Dataset, DatasetMetadata, EventData},
     traits::Variable,
@@ -208,11 +211,72 @@ impl PyTopology {
         self.0.k4_names().map(|names| names.to_vec())
     }
 
+    fn com_boost_vector(&self, event: &PyEvent) -> PyResult<PyVec3> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec3(topology.com_boost_vector(event_data)))
+    }
+
+    fn k1(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k1(event_data)))
+    }
+
+    fn k2(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k2(event_data)))
+    }
+
+    fn k3(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k3(event_data)))
+    }
+
+    fn k4(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k4(event_data)))
+    }
+
+    fn k1_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k1_com(event_data)))
+    }
+
+    fn k2_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k2_com(event_data)))
+    }
+
+    fn k3_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k3_com(event_data)))
+    }
+
+    fn k4_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
+        let (topology, event_data) = self.topology_for_event(event)?;
+        Ok(PyVec4(topology.k4_com(event_data)))
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
     fn __str__(&self) -> String {
         format!("{}", self.0)
+    }
+}
+
+impl PyTopology {
+    fn topology_for_event<'event>(
+        &self,
+        event: &'event PyEvent,
+    ) -> PyResult<(Topology, &'event EventData)> {
+        let metadata = event.metadata_opt().ok_or_else(|| {
+            PyValueError::new_err(
+                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
+            )
+        })?;
+        let mut topology = self.0.clone();
+        topology.bind(metadata).map_err(PyErr::from)?;
+        Ok((topology, event.event.data()))
     }
 }
 

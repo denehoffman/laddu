@@ -70,7 +70,7 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [0.38562805, 1.93592989],
+        [0.38562805, 0.05708078],
         0.48,
         p4_names=P4_NAMES,
         aux_names=AUX_NAMES,
@@ -195,7 +195,7 @@ def test_dataset_weights() -> None:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [0.38562805, 1.93592989],
+        [0.38562805, 0.05708078],
         0.52,
         p4_names=P4_NAMES,
         aux_names=AUX_NAMES,
@@ -234,7 +234,7 @@ def test_dataset_sum() -> None:
                     Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
                     Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
                 ],
-                [0.38562805, 1.93592989],
+                [0.38562805, 0.05708078],
                 0.52,
                 p4_names=P4_NAMES,
                 aux_names=AUX_NAMES,
@@ -376,7 +376,7 @@ def test_event_display() -> None:
     assert 'p4s:' in display_string
     assert 'aux:' in display_string
     assert 'aux[0]: 0.38562805' in display_string
-    assert 'aux[1]: 1.93592989' in display_string
+    assert 'aux[1]: 0.05708078' in display_string
     assert 'weight:' in display_string
 
 
@@ -410,11 +410,7 @@ def test_dataset_open_root_matches_parquet() -> None:
 
 def test_dataset_open_amptools_matches_native_vectors() -> None:
     native = Dataset.open(DATA_F32_PARQUET)
-    amptools = Dataset.open(
-        DATA_AMPTOOLS_ROOT,
-        backend='amptools',
-        amptools_kwargs={'boost_to_com': False},
-    )
+    amptools = Dataset.open(DATA_AMPTOOLS_ROOT, backend='amptools')
     assert amptools.p4_names == [
         'beam',
         'final_state_0',
@@ -438,7 +434,7 @@ def test_dataset_open_amptools_pol_in_beam_columns() -> None:
     amptools = Dataset.open(
         DATA_AMPTOOLS_POL_ROOT,
         backend='amptools',
-        amptools_kwargs={'pol_in_beam': True, 'boost_to_com': False},
+        amptools_kwargs={'pol_in_beam': True},
     )
     assert amptools.aux_names == AUX_NAMES
     for idx in range(native.n_events):
@@ -463,7 +459,6 @@ def test_dataset_open_amptools_custom_polarization_names() -> None:
             'pol_magnitude': 0.75,
             'pol_angle_name': 'phi_pol',
             'pol_magnitude_name': 'mag_pol',
-            'boost_to_com': False,
         },
     )
     assert dataset.aux_names == ['mag_pol', 'phi_pol']

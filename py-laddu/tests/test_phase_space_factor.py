@@ -13,7 +13,7 @@ from laddu import (
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
-AUX_VALUES = [0.38562805, 1.93592989]
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:

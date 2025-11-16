@@ -68,7 +68,6 @@ def load_dataset() -> ld.Dataset:
     return ld.Dataset.open(
         data_file,
         p4s=['beam', 'proton', 'kshort1', 'kshort2'],
-        boost_to_restframe_of=['proton', 'kshort1', 'kshort2'],
     )
 
 

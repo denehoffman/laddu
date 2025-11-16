@@ -101,7 +101,6 @@ class Dataset(Sequence[Event]):
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
-        boost_to_restframe_of: list[str] | None = None,
         backend: str | None = None,
         tree: str | None = None,
         uproot_kwargs: dict[str, Any] | None = None,
@@ -124,5 +123,4 @@ def open(
     *,
     p4s: list[str],
     aux: list[str] | None = None,
-    boost_to_restframe_of: list[str] | None = None,
 ) -> Dataset: ...
