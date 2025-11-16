@@ -408,6 +408,16 @@ def test_dataset_open_root_matches_parquet() -> None:
     _assert_datasets_close(root_auto, root_named)
 
 
+def test_dataset_open_with_aliases() -> None:
+    dataset = Dataset.open(
+        DATA_F32_PARQUET,
+        aliases={'resonance': ['kshort1', 'kshort2']},
+    )
+    alias_vec = dataset[0].p4('resonance')
+    expected = dataset[0].get_p4_sum(['kshort1', 'kshort2'])
+    _assert_vec4_close(alias_vec, expected)
+
+
 def test_dataset_open_amptools_matches_native_vectors() -> None:
     native = Dataset.open(DATA_F32_PARQUET)
     amptools = Dataset.open(DATA_AMPTOOLS_ROOT, backend='amptools')

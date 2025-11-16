@@ -26,7 +26,7 @@ use crate::mpi::LadduMPI;
 use crate::utils::get_bin_edges;
 use crate::{
     utils::{
-        variables::{Variable, VariableExpression},
+        variables::{IntoP4Selection, P4Selection, Variable, VariableExpression},
         vectors::Vec4,
     },
     LadduError, LadduResult,
@@ -135,6 +135,7 @@ pub struct DatasetMetadata {
     pub(crate) aux_names: Vec<String>,
     pub(crate) p4_lookup: IndexMap<String, usize>,
     pub(crate) aux_lookup: IndexMap<String, usize>,
+    pub(crate) p4_selections: IndexMap<String, P4Selection>,
 }
 
 impl DatasetMetadata {
@@ -145,6 +146,7 @@ impl DatasetMetadata {
     ) -> LadduResult<Self> {
         let mut p4_lookup = IndexMap::with_capacity(p4_names.len());
         let mut aux_lookup = IndexMap::with_capacity(aux_names.len());
+        let mut p4_selections = IndexMap::with_capacity(p4_names.len());
         let p4_names: Vec<String> = p4_names
             .into_iter()
             .enumerate()
@@ -157,6 +159,10 @@ impl DatasetMetadata {
                     });
                 }
                 p4_lookup.insert(name.clone(), idx);
+                p4_selections.insert(
+                    name.clone(),
+                    P4Selection::with_indices(vec![name.clone()], vec![idx]),
+                );
                 Ok(name)
             })
             .collect::<Result<_, _>>()?;
@@ -180,6 +186,7 @@ impl DatasetMetadata {
             aux_names,
             p4_lookup,
             aux_lookup,
+            p4_selections,
         })
     }
 
@@ -190,6 +197,7 @@ impl DatasetMetadata {
             aux_names: Vec::new(),
             p4_lookup: IndexMap::new(),
             aux_lookup: IndexMap::new(),
+            p4_selections: IndexMap::new(),
         }
     }
 
@@ -201,6 +209,55 @@ impl DatasetMetadata {
     /// Resolve the index of an auxiliary scalar by name.
     pub fn aux_index(&self, name: &str) -> Option<usize> {
         self.aux_lookup.get(name).copied()
+    }
+
+    /// Look up a resolved four-momentum selection by name (canonical or alias).
+    pub fn p4_selection(&self, name: &str) -> Option<&P4Selection> {
+        self.p4_selections.get(name)
+    }
+
+    /// Register an alias mapping to one or more existing four-momenta.
+    pub fn add_p4_alias<N>(&mut self, alias: N, mut selection: P4Selection) -> LadduResult<()>
+    where
+        N: Into<String>,
+    {
+        let alias = alias.into();
+        if self.p4_selections.contains_key(&alias) {
+            return Err(LadduError::DuplicateName {
+                category: "alias",
+                name: alias,
+            });
+        }
+        selection.bind(self)?;
+        self.p4_selections.insert(alias, selection);
+        Ok(())
+    }
+
+    /// Register multiple aliases at once.
+    pub fn add_p4_aliases<I, N>(&mut self, entries: I) -> LadduResult<()>
+    where
+        I: IntoIterator<Item = (N, P4Selection)>,
+        N: Into<String>,
+    {
+        for (alias, selection) in entries {
+            self.add_p4_alias(alias, selection)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn append_indices_for_name(
+        &self,
+        name: &str,
+        target: &mut Vec<usize>,
+    ) -> LadduResult<()> {
+        if let Some(selection) = self.p4_selections.get(name) {
+            target.extend_from_slice(selection.indices());
+            return Ok(());
+        }
+        Err(LadduError::UnknownName {
+            category: "p4",
+            name: name.to_string(),
+        })
     }
 }
 
@@ -278,11 +335,11 @@ impl Event {
         self.metadata.clone()
     }
 
-    /// Retrieve a four-momentum by name.
-    pub fn p4(&self, name: &str) -> Option<&Vec4> {
+    /// Retrieve a four-momentum (or aliased sum) by name.
+    pub fn p4(&self, name: &str) -> Option<Vec4> {
         self.metadata
-            .p4_index(name)
-            .and_then(|idx| self.event.p4s.get(idx))
+            .p4_selection(name)
+            .map(|selection| selection.momentum(&self.event))
     }
 
     fn resolve_p4_indices<N>(&self, names: N) -> Vec<usize>
@@ -290,15 +347,16 @@ impl Event {
         N: IntoIterator,
         N::Item: AsRef<str>,
     {
-        names
-            .into_iter()
-            .map(|name| {
-                let name_ref = name.as_ref();
-                self.metadata
-                    .p4_index(name_ref)
-                    .unwrap_or_else(|| panic!("Unknown particle name '{name}'", name = name_ref))
-            })
-            .collect()
+        let mut indices = Vec::new();
+        for name in names {
+            let name_ref = name.as_ref();
+            if let Some(selection) = self.metadata.p4_selection(name_ref) {
+                indices.extend_from_slice(selection.indices());
+            } else {
+                panic!("Unknown particle name '{name}'", name = name_ref);
+            }
+        }
+        indices
     }
 
     /// Return a four-momentum formed by summing four-momenta with the specified names.
@@ -379,11 +437,9 @@ impl Dataset {
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
     pub fn p4_by_name(&self, event_index: usize, name: &str) -> Option<Vec4> {
-        let idx = self.p4_index(name)?;
         self.events
             .get(event_index)
-            .and_then(|event| event.p4s.get(idx))
-            .copied()
+            .and_then(|event| event.p4(name))
     }
 
     /// Retrieve an auxiliary scalar by name for the event at `event_index`.
@@ -878,15 +934,15 @@ impl Dataset {
     where
         S: AsRef<str>,
     {
-        let indices: Vec<usize> = names
-            .iter()
-            .map(|name| {
-                let name_ref = name.as_ref();
-                self.metadata
-                    .p4_index(name_ref)
-                    .unwrap_or_else(|| panic!("Unknown particle name '{name}'", name = name_ref))
-            })
-            .collect();
+        let mut indices: Vec<usize> = Vec::new();
+        for name in names {
+            let name_ref = name.as_ref();
+            if let Some(selection) = self.metadata.p4_selection(name_ref) {
+                indices.extend_from_slice(selection.indices());
+            } else {
+                panic!("Unknown particle name '{name}'", name = name_ref);
+            }
+        }
         #[cfg(feature = "rayon")]
         let boosted_events: Vec<Arc<EventData>> = self
             .events
@@ -1120,6 +1176,8 @@ pub struct DatasetReadOptions {
     /// Name of the tree to read when loading ROOT files. When absent and the file contains a
     /// single tree, it will be selected automatically.
     pub tree: Option<String>,
+    /// Optional aliases mapping logical names to selections of four-momenta.
+    pub aliases: IndexMap<String, P4Selection>,
 }
 impl DatasetReadOptions {
     /// Create a new [`Default`] set of [`DatasetReadOptions`].
@@ -1159,6 +1217,29 @@ impl DatasetReadOptions {
         self
     }
 
+    /// Register an alias for one or more existing four-momenta.
+    pub fn alias<N, S>(mut self, name: N, selection: S) -> Self
+    where
+        N: Into<String>,
+        S: IntoP4Selection,
+    {
+        self.aliases.insert(name.into(), selection.into_selection());
+        self
+    }
+
+    /// Register multiple aliases for four-momenta selections.
+    pub fn aliases<I, N, S>(mut self, aliases: I) -> Self
+    where
+        I: IntoIterator<Item = (N, S)>,
+        N: Into<String>,
+        S: IntoP4Selection,
+    {
+        for (name, selection) in aliases {
+            self = self.alias(name, selection);
+        }
+        self
+    }
+
     fn resolve_metadata(
         &self,
         detected_p4_names: Vec<String>,
@@ -1167,7 +1248,11 @@ impl DatasetReadOptions {
         let p4_names_vec = self.p4_names.clone().unwrap_or(detected_p4_names);
         let aux_names_vec = self.aux_names.clone().unwrap_or(detected_aux_names);
 
-        Ok(Arc::new(DatasetMetadata::new(p4_names_vec, aux_names_vec)?))
+        let mut metadata = DatasetMetadata::new(p4_names_vec, aux_names_vec)?;
+        if !self.aliases.is_empty() {
+            metadata.add_p4_aliases(self.aliases.clone())?;
+        }
+        Ok(Arc::new(metadata))
     }
 }
 
@@ -1610,6 +1695,21 @@ mod tests {
         expected_aux.sort_unstable();
         assert_eq!(detected_aux, expected_aux);
         assert_datasets_close(&auto, &explicit, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_open_parquet_with_aliases() {
+        let dataset = open_test_dataset(
+            "data_f32.parquet",
+            DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
+        );
+        let event = dataset.named_event(0);
+        let alias_vec = event.p4("resonance").expect("alias vector");
+        let expected = event.get_p4_sum(["kshort1", "kshort2"]);
+        assert_relative_eq!(alias_vec.px(), expected.px(), epsilon = 1e-9);
+        assert_relative_eq!(alias_vec.py(), expected.py(), epsilon = 1e-9);
+        assert_relative_eq!(alias_vec.pz(), expected.pz(), epsilon = 1e-9);
+        assert_relative_eq!(alias_vec.e(), expected.e(), epsilon = 1e-9);
     }
 
     #[test]

@@ -51,6 +51,7 @@ class Dataset:
         *,
         p4s: list[str] | None = ...,
         aux: list[str] | None = ...,
+        aliases: dict[str, str | list[str]] | None = ...,
         backend: str | None = ...,
         tree: str | None = ...,
         uproot_kwargs: dict[str, Any] | None = ...,

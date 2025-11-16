@@ -191,7 +191,10 @@ We could then write some code to use this amplitude. For demonstration purposes,
 use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
 let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 let aux_names = ["pol_magnitude", "pol_angle"];
-let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
+let options = DatasetReadOptions::default()
+    .p4_names(p4_names)
+    .aux_names(aux_names)
+    .alias("resonance", ["kshort1", "kshort2"]);
 let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
 let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
 

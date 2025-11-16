@@ -16,7 +16,7 @@ Examples
 >>> dataset = Dataset.from_dict(columns)
 >>> mass = Mass(['kshort1', 'kshort2'])
 >>> mass
-Mass { constituents: TopologyVertex { selection: P4Selection { names: ["kshort1", "kshort2"], indices: [] } } }
+Mass { constituents: P4Selection { names: ["kshort1", "kshort2"], indices: [] } }
 """
 
 from laddu.laddu import (

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -186,6 +186,7 @@ class _DatasetExtensions:
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
         backend: str | None = None,
         tree: str | None = None,
         uproot_kwargs: dict[str, Any] | None = None,
@@ -201,6 +202,12 @@ class _DatasetExtensions:
             Ordered list of particle base names (e.g. ``['beam', 'kshort1']``).
         aux:
             Auxiliary scalar columns to retain (such as ``pol_magnitude``).
+        aliases:
+            Mapping of alternate particle identifiers to canonical ones. Values can be
+            either a string (for simple renames like ``{'photon': 'beam'}``) or a
+            sequence of strings when grouping multiple four-momenta together
+            (e.g. ``{'ks_pair': ['kshort1', 'kshort2']}``). Aliases are only
+            supported by the native (Rust) backend.
         backend:
             Backend to use for ROOT files. Supported values are ``'oxyroot'``
             (Rust loader, default for ``.root``), ``'uproot'`` (Python loader),
@@ -223,13 +230,20 @@ class _DatasetExtensions:
         if backend_name == 'auto':
             backend_name = cls._default_backend_for_path(path_obj)
 
+        native_aliases = dict(aliases) if aliases is not None else None
+
         if backend_name in {'native', 'parquet', 'rust', 'oxyroot'}:
             return _NATIVE_DATASET_OPEN(
                 path_obj,
                 p4s=p4s,
                 aux=aux,
                 tree=tree,
+                aliases=native_aliases,
             )
+
+        if native_aliases:
+            msg = "'aliases' are only supported when backend='native'/'parquet'"
+            raise ValueError(msg)
 
         if backend_name == 'uproot':
             kwargs = dict(uproot_kwargs or {})
@@ -445,11 +459,14 @@ def open(
     *,
     p4s: list[str],
     aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
+    alias_dict = dict(aliases) if aliases is not None else None
     return Dataset.open(
         path,
         p4s=p4s,
         aux=aux,
+        aliases=alias_dict,
     )
 
 

@@ -6,8 +6,8 @@ use laddu_core::{
     data::{Dataset, DatasetMetadata, EventData},
     traits::Variable,
     utils::variables::{
-        Angles, CosTheta, IntoTopologyVertex, Mandelstam, Mass, Phi, PolAngle, PolMagnitude,
-        Polarization, Topology, TopologyVertex, VariableExpression,
+        Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
+        PolMagnitude, Polarization, Topology, VariableExpression,
     },
     LadduResult,
 };
@@ -105,18 +105,18 @@ impl PyVariableExpression {
 }
 
 #[derive(Clone, FromPyObject)]
-pub enum PyTopologyVertexInput {
+pub enum PyP4SelectionInput {
     #[pyo3(transparent)]
     Name(String),
     #[pyo3(transparent)]
     Names(Vec<String>),
 }
 
-impl PyTopologyVertexInput {
-    fn into_vertex(self) -> TopologyVertex {
+impl PyP4SelectionInput {
+    fn into_selection(self) -> P4Selection {
         match self {
-            PyTopologyVertexInput::Name(name) => name.into_vertex(),
-            PyTopologyVertexInput::Names(names) => names.into_vertex(),
+            PyP4SelectionInput::Name(name) => name.into_selection(),
+            PyP4SelectionInput::Names(names) => names.into_selection(),
         }
     }
 }
@@ -130,68 +130,52 @@ pub struct PyTopology(pub Topology);
 impl PyTopology {
     #[new]
     fn new(
-        k1: PyTopologyVertexInput,
-        k2: PyTopologyVertexInput,
-        k3: PyTopologyVertexInput,
-        k4: PyTopologyVertexInput,
+        k1: PyP4SelectionInput,
+        k2: PyP4SelectionInput,
+        k3: PyP4SelectionInput,
+        k4: PyP4SelectionInput,
     ) -> Self {
         Self(Topology::new(
-            k1.into_vertex(),
-            k2.into_vertex(),
-            k3.into_vertex(),
-            k4.into_vertex(),
+            k1.into_selection(),
+            k2.into_selection(),
+            k3.into_selection(),
+            k4.into_selection(),
         ))
     }
 
     #[staticmethod]
-    fn missing_k1(
-        k2: PyTopologyVertexInput,
-        k3: PyTopologyVertexInput,
-        k4: PyTopologyVertexInput,
-    ) -> Self {
+    fn missing_k1(k2: PyP4SelectionInput, k3: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
         Self(Topology::missing_k1(
-            k2.into_vertex(),
-            k3.into_vertex(),
-            k4.into_vertex(),
+            k2.into_selection(),
+            k3.into_selection(),
+            k4.into_selection(),
         ))
     }
 
     #[staticmethod]
-    fn missing_k2(
-        k1: PyTopologyVertexInput,
-        k3: PyTopologyVertexInput,
-        k4: PyTopologyVertexInput,
-    ) -> Self {
+    fn missing_k2(k1: PyP4SelectionInput, k3: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
         Self(Topology::missing_k2(
-            k1.into_vertex(),
-            k3.into_vertex(),
-            k4.into_vertex(),
+            k1.into_selection(),
+            k3.into_selection(),
+            k4.into_selection(),
         ))
     }
 
     #[staticmethod]
-    fn missing_k3(
-        k1: PyTopologyVertexInput,
-        k2: PyTopologyVertexInput,
-        k4: PyTopologyVertexInput,
-    ) -> Self {
+    fn missing_k3(k1: PyP4SelectionInput, k2: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
         Self(Topology::missing_k3(
-            k1.into_vertex(),
-            k2.into_vertex(),
-            k4.into_vertex(),
+            k1.into_selection(),
+            k2.into_selection(),
+            k4.into_selection(),
         ))
     }
 
     #[staticmethod]
-    fn missing_k4(
-        k1: PyTopologyVertexInput,
-        k2: PyTopologyVertexInput,
-        k3: PyTopologyVertexInput,
-    ) -> Self {
+    fn missing_k4(k1: PyP4SelectionInput, k2: PyP4SelectionInput, k3: PyP4SelectionInput) -> Self {
         Self(Topology::missing_k4(
-            k1.into_vertex(),
-            k2.into_vertex(),
-            k3.into_vertex(),
+            k1.into_selection(),
+            k2.into_selection(),
+            k3.into_selection(),
         ))
     }
 
@@ -415,10 +399,10 @@ pub struct PyCosTheta(pub CosTheta);
 impl PyCosTheta {
     #[new]
     #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
+    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
         Ok(Self(CosTheta::new(
             topology.0.clone(),
-            daughter.into_vertex(),
+            daughter.into_selection(),
             frame.parse()?,
         )))
     }
@@ -534,10 +518,10 @@ pub struct PyPhi(pub Phi);
 impl PyPhi {
     #[new]
     #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
+    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
         Ok(Self(Phi::new(
             topology.0.clone(),
-            daughter.into_vertex(),
+            daughter.into_selection(),
             frame.parse()?,
         )))
     }
@@ -638,10 +622,10 @@ pub struct PyAngles(pub Angles);
 impl PyAngles {
     #[new]
     #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyTopologyVertexInput, frame: &str) -> PyResult<Self> {
+    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
         Ok(Self(Angles::new(
             topology.0.clone(),
-            daughter.into_vertex(),
+            daughter.into_selection(),
             frame.parse()?,
         )))
     }

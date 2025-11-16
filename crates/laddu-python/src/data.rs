@@ -76,15 +76,14 @@ impl PyEvent {
                     "`rest_frame_of` requires specifying `p4_names` to resolve particle names",
                 ));
             }
-            let indices = names
-                .iter()
-                .map(|name| {
-                    metadata.p4_index(name).ok_or_else(|| {
-                        PyKeyError::new_err(format!("Unknown particle name '{name}'"))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            event = event.boost_to_rest_frame_of(indices);
+            let mut resolved = Vec::new();
+            for name in &names {
+                let selection = metadata.p4_selection(name).ok_or_else(|| {
+                    PyKeyError::new_err(format!("Unknown particle name '{name}'"))
+                })?;
+                resolved.extend_from_slice(selection.indices());
+            }
+            event = event.boost_to_rest_frame_of(resolved);
         }
         let event = Event::new(Arc::new(event), metadata);
         Ok(Self {
@@ -192,7 +191,7 @@ impl PyEvent {
     /// Retrieve a four-momentum by name (if present).
     fn p4(&self, name: &str) -> PyResult<Option<PyVec4>> {
         self.ensure_metadata()?;
-        Ok(self.event.p4(name).copied().map(PyVec4))
+        Ok(self.event.p4(name).map(PyVec4))
     }
 }
 
@@ -209,14 +208,14 @@ impl PyEvent {
 
     fn resolve_p4_indices(&self, names: &[String]) -> PyResult<Vec<usize>> {
         let metadata = self.ensure_metadata()?;
-        names
-            .iter()
-            .map(|name| {
-                metadata
-                    .p4_index(name)
-                    .ok_or_else(|| PyKeyError::new_err(format!("Unknown particle name '{name}'")))
-            })
-            .collect()
+        let mut resolved = Vec::new();
+        for name in names {
+            let selection = metadata
+                .p4_selection(name)
+                .ok_or_else(|| PyKeyError::new_err(format!("Unknown particle name '{name}'")))?;
+            resolved.extend_from_slice(selection.indices());
+        }
+        Ok(resolved)
     }
 
     pub(crate) fn metadata_opt(&self) -> Option<&DatasetMetadata> {
@@ -307,12 +306,13 @@ impl PyDataset {
     /// four-momentum, otherwise they will be read as auxiliary scalars.
     ///
     #[staticmethod]
-    #[pyo3(signature = (path, *, p4s=None, aux=None, tree=None))]
+    #[pyo3(signature = (path, *, p4s=None, aux=None, tree=None, aliases=None))]
     fn open(
         path: Bound<PyAny>,
         p4s: Option<Vec<String>>,
         aux: Option<Vec<String>>,
         tree: Option<String>,
+        aliases: Option<Bound<PyDict>>,
     ) -> PyResult<Self> {
         let path_str = if let Ok(s) = path.extract::<String>() {
             Ok(s)
@@ -331,6 +331,27 @@ impl PyDataset {
         }
         if let Some(tree) = tree {
             read_options = read_options.tree(tree);
+        }
+        if let Some(aliases) = aliases {
+            for (key, value) in aliases.iter() {
+                let alias_name = key.extract::<String>()?;
+                let selection = if let Ok(single) = value.extract::<String>() {
+                    vec![single]
+                } else {
+                    let seq = value.extract::<Vec<String>>().map_err(|_| {
+                        PyTypeError::new_err(
+                            "Alias values must be a string or a sequence of strings",
+                        )
+                    })?;
+                    if seq.is_empty() {
+                        return Err(PyValueError::new_err(format!(
+                            "Alias '{alias_name}' must reference at least one particle",
+                        )));
+                    }
+                    seq
+                };
+                read_options = read_options.alias(alias_name, selection);
+            }
         }
         let dataset = Dataset::open(&path_str, &read_options)?;
 

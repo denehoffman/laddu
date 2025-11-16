@@ -7,7 +7,7 @@ from typing_extensions import TypeAlias
 from laddu.data import Dataset, Event
 from laddu.utils.vectors import Vec3, Vec4
 
-TopologyVertex: TypeAlias = str | list[str]
+P4Selection: TypeAlias = str | list[str]
 
 
 class VariableExpression:
@@ -19,19 +19,19 @@ class VariableExpression:
 class Topology:
     def __init__(
         self,
-        k1: TopologyVertex,
-        k2: TopologyVertex,
-        k3: TopologyVertex,
-        k4: TopologyVertex,
+        k1: P4Selection,
+        k2: P4Selection,
+        k3: P4Selection,
+        k4: P4Selection,
     ) -> None: ...
     @staticmethod
-    def missing_k1(k2: TopologyVertex, k3: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    def missing_k1(k2: P4Selection, k3: P4Selection, k4: P4Selection) -> Topology: ...
     @staticmethod
-    def missing_k2(k1: TopologyVertex, k3: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    def missing_k2(k1: P4Selection, k3: P4Selection, k4: P4Selection) -> Topology: ...
     @staticmethod
-    def missing_k3(k1: TopologyVertex, k2: TopologyVertex, k4: TopologyVertex) -> Topology: ...
+    def missing_k3(k1: P4Selection, k2: P4Selection, k4: P4Selection) -> Topology: ...
     @staticmethod
-    def missing_k4(k1: TopologyVertex, k2: TopologyVertex, k3: TopologyVertex) -> Topology: ...
+    def missing_k4(k1: P4Selection, k2: P4Selection, k3: P4Selection) -> Topology: ...
     def k1_names(self) -> list[str] | None: ...
     def k2_names(self) -> list[str] | None: ...
     def k3_names(self) -> list[str] | None: ...
@@ -48,7 +48,7 @@ class Topology:
 
 
 class Mass:
-    def __init__(self, constituents: TopologyVertex) -> None: ...
+    def __init__(self, constituents: P4Selection) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...
@@ -62,7 +62,7 @@ class CosTheta:
     def __init__(
         self,
         topology: Topology,
-        daughter: TopologyVertex,
+        daughter: P4Selection,
         frame: Literal[
             'Helicity',
             'HX',
@@ -86,7 +86,7 @@ class Phi:
     def __init__(
         self,
         topology: Topology,
-        daughter: TopologyVertex,
+        daughter: P4Selection,
         frame: Literal[
             'Helicity',
             'HX',
@@ -113,7 +113,7 @@ class Angles:
     def __init__(
         self,
         topology: Topology,
-        daughter: TopologyVertex,
+        daughter: P4Selection,
         frame: Literal[
             'Helicity',
             'HX',

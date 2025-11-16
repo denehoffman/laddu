@@ -306,8 +306,13 @@ fn names_to_string(names: &[String]) -> String {
     names.join(", ")
 }
 
+/// A reusable selection that may span one or more four-momentum names.
+///
+/// Instances are constructed from metadata-facing identifiers and later bound to
+/// column indices so that variable evaluators can resolve aliases or grouped
+/// particles efficiently.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct P4Selection {
+pub struct P4Selection {
     names: Vec<String>,
     #[serde(skip, default)]
     indices: Vec<usize>,
@@ -325,129 +330,110 @@ impl P4Selection {
         }
     }
 
-    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+    pub(crate) fn with_indices<I, S>(names: I, indices: Vec<usize>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            names: names.into_iter().map(Into::into).collect(),
+            indices,
+        }
+    }
+
+    /// Returns the metadata names contributing to this selection.
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    pub(crate) fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         let mut resolved = Vec::with_capacity(self.names.len());
         for name in &self.names {
-            let idx = metadata
-                .p4_index(name)
-                .ok_or_else(|| LadduError::UnknownName {
-                    category: "p4",
-                    name: name.clone(),
-                })?;
-            resolved.push(idx);
+            metadata.append_indices_for_name(name, &mut resolved)?;
         }
         self.indices = resolved;
         Ok(())
     }
 
-    fn indices(&self) -> &[usize] {
+    /// The resolved column indices backing this selection.
+    pub fn indices(&self) -> &[usize] {
         &self.indices
     }
 
-    fn names(&self) -> &[String] {
-        &self.names
+    pub(crate) fn momentum(&self, event: &EventData) -> Vec4 {
+        event.get_p4_sum(self.indices())
     }
 }
 
-/// A vertex participating in a [`Topology`].
-///
-/// Each vertex is represented as the sum of one or more four-momenta identified by their
-/// metadata names.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TopologyVertex {
-    selection: P4Selection,
+/// Helper trait to convert common particle specifications into [`P4Selection`] instances.
+pub trait IntoP4Selection {
+    /// Convert the input into a [`P4Selection`].
+    fn into_selection(self) -> P4Selection;
 }
 
-impl TopologyVertex {
-    fn from_names(names: Vec<String>) -> Self {
-        Self {
-            selection: P4Selection::new_many(names),
-        }
-    }
-
-    /// Returns the metadata names contributing to this vertex.
-    pub fn names(&self) -> &[String] {
-        self.selection.names()
-    }
-
-    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
-        self.selection.bind(metadata)
-    }
-
-    fn momentum(&self, event: &EventData) -> Vec4 {
-        event.get_p4_sum(self.selection.indices())
-    }
-}
-
-/// Helper trait to convert common particle specifications into [`TopologyVertex`] instances.
-pub trait IntoTopologyVertex {
-    /// Convert the input into a [`TopologyVertex`].
-    fn into_vertex(self) -> TopologyVertex;
-}
-
-impl IntoTopologyVertex for TopologyVertex {
-    fn into_vertex(self) -> TopologyVertex {
+impl IntoP4Selection for P4Selection {
+    fn into_selection(self) -> P4Selection {
         self
     }
 }
 
-impl IntoTopologyVertex for &TopologyVertex {
-    fn into_vertex(self) -> TopologyVertex {
+impl IntoP4Selection for &P4Selection {
+    fn into_selection(self) -> P4Selection {
         self.clone()
     }
 }
 
-impl IntoTopologyVertex for String {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(vec![self])
+impl IntoP4Selection for String {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self])
     }
 }
 
-impl IntoTopologyVertex for &String {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(vec![self.clone()])
+impl IntoP4Selection for &String {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self.clone()])
     }
 }
 
-impl IntoTopologyVertex for &str {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(vec![self.to_string()])
+impl IntoP4Selection for &str {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self.to_string()])
     }
 }
 
-impl<S> IntoTopologyVertex for Vec<S>
+impl<S> IntoP4Selection for Vec<S>
 where
     S: Into<String>,
 {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(self.into_iter().map(Into::into).collect())
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.into_iter().map(Into::into).collect::<Vec<_>>())
     }
 }
 
-impl<S> IntoTopologyVertex for &[S]
+impl<S> IntoP4Selection for &[S]
 where
     S: Clone + Into<String>,
 {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(self.iter().cloned().map(Into::into).collect())
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.iter().cloned().map(Into::into).collect::<Vec<_>>())
     }
 }
 
-impl<S, const N: usize> IntoTopologyVertex for [S; N]
+impl<S, const N: usize> IntoP4Selection for [S; N]
 where
     S: Into<String>,
 {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(self.into_iter().map(Into::into).collect())
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.into_iter().map(Into::into).collect::<Vec<_>>())
     }
 }
 
-impl<S, const N: usize> IntoTopologyVertex for &[S; N]
+impl<S, const N: usize> IntoP4Selection for &[S; N]
 where
     S: Clone + Into<String>,
 {
-    fn into_vertex(self) -> TopologyVertex {
-        TopologyVertex::from_names(self.iter().cloned().map(Into::into).collect())
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.iter().cloned().map(Into::into).collect::<Vec<_>>())
     }
 }
 
@@ -475,49 +461,49 @@ pub enum Topology {
     /// All four vertices are explicitly provided.
     Full {
         /// First incoming vertex.
-        k1: TopologyVertex,
+        k1: P4Selection,
         /// Second incoming vertex.
-        k2: TopologyVertex,
+        k2: P4Selection,
         /// First outgoing vertex.
-        k3: TopologyVertex,
+        k3: P4Selection,
         /// Second outgoing vertex.
-        k4: TopologyVertex,
+        k4: P4Selection,
     },
     /// The first incoming vertex (`k1`) is reconstructed.
     MissingK1 {
         /// Second incoming vertex.
-        k2: TopologyVertex,
+        k2: P4Selection,
         /// First outgoing vertex.
-        k3: TopologyVertex,
+        k3: P4Selection,
         /// Second outgoing vertex.
-        k4: TopologyVertex,
+        k4: P4Selection,
     },
     /// The second incoming vertex (`k2`) is reconstructed.
     MissingK2 {
         /// First incoming vertex.
-        k1: TopologyVertex,
+        k1: P4Selection,
         /// First outgoing vertex.
-        k3: TopologyVertex,
+        k3: P4Selection,
         /// Second outgoing vertex.
-        k4: TopologyVertex,
+        k4: P4Selection,
     },
     /// The first outgoing vertex (`k3`) is reconstructed.
     MissingK3 {
         /// First incoming vertex.
-        k1: TopologyVertex,
+        k1: P4Selection,
         /// Second incoming vertex.
-        k2: TopologyVertex,
+        k2: P4Selection,
         /// Second outgoing vertex.
-        k4: TopologyVertex,
+        k4: P4Selection,
     },
     /// The second outgoing vertex (`k4`) is reconstructed.
     MissingK4 {
         /// First incoming vertex.
-        k1: TopologyVertex,
+        k1: P4Selection,
         /// Second incoming vertex.
-        k2: TopologyVertex,
+        k2: P4Selection,
         /// First outgoing vertex.
-        k3: TopologyVertex,
+        k3: P4Selection,
     },
 }
 
@@ -525,72 +511,72 @@ impl Topology {
     /// Construct a topology with all four vertices explicitly defined.
     pub fn new<K1, K2, K3, K4>(k1: K1, k2: K2, k3: K3, k4: K4) -> Self
     where
-        K1: IntoTopologyVertex,
-        K2: IntoTopologyVertex,
-        K3: IntoTopologyVertex,
-        K4: IntoTopologyVertex,
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
     {
         Self::Full {
-            k1: k1.into_vertex(),
-            k2: k2.into_vertex(),
-            k3: k3.into_vertex(),
-            k4: k4.into_vertex(),
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
         }
     }
 
     /// Construct a topology when the first incoming vertex (`k1`) is omitted.
     pub fn missing_k1<K2, K3, K4>(k2: K2, k3: K3, k4: K4) -> Self
     where
-        K2: IntoTopologyVertex,
-        K3: IntoTopologyVertex,
-        K4: IntoTopologyVertex,
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
     {
         Self::MissingK1 {
-            k2: k2.into_vertex(),
-            k3: k3.into_vertex(),
-            k4: k4.into_vertex(),
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
         }
     }
 
     /// Construct a topology when the second incoming vertex (`k2`) is omitted.
     pub fn missing_k2<K1, K3, K4>(k1: K1, k3: K3, k4: K4) -> Self
     where
-        K1: IntoTopologyVertex,
-        K3: IntoTopologyVertex,
-        K4: IntoTopologyVertex,
+        K1: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
     {
         Self::MissingK2 {
-            k1: k1.into_vertex(),
-            k3: k3.into_vertex(),
-            k4: k4.into_vertex(),
+            k1: k1.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
         }
     }
 
     /// Construct a topology when the first outgoing vertex (`k3`) is omitted.
     pub fn missing_k3<K1, K2, K4>(k1: K1, k2: K2, k4: K4) -> Self
     where
-        K1: IntoTopologyVertex,
-        K2: IntoTopologyVertex,
-        K4: IntoTopologyVertex,
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K4: IntoP4Selection,
     {
         Self::MissingK3 {
-            k1: k1.into_vertex(),
-            k2: k2.into_vertex(),
-            k4: k4.into_vertex(),
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k4: k4.into_selection(),
         }
     }
 
     /// Construct a topology when the second outgoing vertex (`k4`) is omitted.
     pub fn missing_k4<K1, K2, K3>(k1: K1, k2: K2, k3: K3) -> Self
     where
-        K1: IntoTopologyVertex,
-        K2: IntoTopologyVertex,
-        K3: IntoTopologyVertex,
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
     {
         Self::MissingK4 {
-            k1: k1.into_vertex(),
-            k2: k2.into_vertex(),
-            k3: k3.into_vertex(),
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
         }
     }
 
@@ -819,17 +805,17 @@ impl AuxSelection {
 /// together multiple four-momenta if more than one entry is given.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mass {
-    constituents: TopologyVertex,
+    constituents: P4Selection,
 }
 impl Mass {
     /// Create a new [`Mass`] from the sum of the four-momenta identified by `constituents` in the
     /// [`EventData`]'s `p4s` field.
     pub fn new<C>(constituents: C) -> Self
     where
-        C: IntoTopologyVertex,
+        C: IntoP4Selection,
     {
         Self {
-            constituents: constituents.into_vertex(),
+            constituents: constituents.into_selection(),
         }
     }
 }
@@ -858,7 +844,7 @@ impl Variable for Mass {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CosTheta {
     topology: Topology,
-    daughter: TopologyVertex,
+    daughter: P4Selection,
     frame: Frame,
 }
 impl Display for CosTheta {
@@ -878,11 +864,11 @@ impl CosTheta {
     /// frame.
     pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
     where
-        D: IntoTopologyVertex,
+        D: IntoP4Selection,
     {
         Self {
             topology,
-            daughter: daughter.into_vertex(),
+            daughter: daughter.into_selection(),
             frame,
         }
     }
@@ -930,7 +916,7 @@ impl Variable for CosTheta {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Phi {
     topology: Topology,
-    daughter: TopologyVertex,
+    daughter: P4Selection,
     frame: Frame,
 }
 impl Display for Phi {
@@ -950,11 +936,11 @@ impl Phi {
     /// reference frame.
     pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
     where
-        D: IntoTopologyVertex,
+        D: IntoP4Selection,
     {
         Self {
             topology,
-            daughter: daughter.into_vertex(),
+            daughter: daughter.into_selection(),
             frame,
         }
     }
@@ -1021,9 +1007,9 @@ impl Angles {
     /// See [`Frame`] for options regarding the reference frame.
     pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
     where
-        D: IntoTopologyVertex,
+        D: IntoP4Selection,
     {
-        let daughter_vertex = daughter.into_vertex();
+        let daughter_vertex = daughter.into_selection();
         let costheta = CosTheta::new(topology.clone(), daughter_vertex.clone(), frame);
         let phi = Phi::new(topology, daughter_vertex, frame);
         Self { costheta, phi }
