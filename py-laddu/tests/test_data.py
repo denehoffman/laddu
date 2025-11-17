@@ -125,6 +125,76 @@ def test_event_name_lookup() -> None:
         _ = event.p4s['unknown']
 
 
+def test_event_alias_lookup() -> None:
+    event = Event(
+        [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.1, 0.0, 2.0).with_mass(0.5)],
+        [],
+        1.0,
+        p4_names=['beam', 'kshort'],
+        aux_names=[],
+        aliases={'resonance': ['beam', 'kshort'], 'projectile': 'beam'},
+    )
+
+    alias_vec = event.p4('resonance')
+    expected = event.get_p4_sum(['beam', 'kshort'])
+    _assert_vec4_close(alias_vec, expected)
+
+    single_alias = event.p4('projectile')
+    _assert_vec4_close(single_alias, event.p4s['beam'])
+
+
+def test_event_alias_requires_p4_names() -> None:
+    with pytest.raises(ValueError, match='p4_names'):
+        Event([Vec3(0.0, 0.0, 1.0).with_mass(0.0)], [], 1.0, aliases={'p': 'beam'})
+
+
+def test_dataset_alias_overrides_event_metadata() -> None:
+    base_event = Event(
+        [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.1, 0.0, 2.0).with_mass(0.5)],
+        [],
+        1.0,
+        p4_names=['beam', 'kshort'],
+        aliases={'resonance': 'beam'},
+    )
+
+    dataset = Dataset(
+        [base_event],
+        aliases={'resonance': ['beam', 'kshort']},
+    )
+    expected = dataset[0].get_p4_sum(['beam', 'kshort'])
+    alias_vec = dataset[0].p4('resonance')
+    _assert_vec4_close(alias_vec, expected)
+
+
+def test_dataset_constructor_metadata_precedence() -> None:
+    event = Event(
+        [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.2, 0.1, 1.5).with_mass(0.3)],
+        [],
+        1.0,
+        p4_names=['legacy_beam', 'legacy_kshort'],
+        aliases={'pair': 'legacy_beam'},
+    )
+
+    dataset = Dataset(
+        [event],
+        p4_names=['beam', 'kshort'],
+        aliases={'pair': ['beam', 'kshort']},
+    )
+    assert dataset.p4_names == ['beam', 'kshort']
+    alias_vec = dataset[0].p4('pair')
+    expected = dataset[0].get_p4_sum(['beam', 'kshort'])
+    _assert_vec4_close(alias_vec, expected)
+    with pytest.raises(KeyError):
+        _ = dataset[0].p4s['legacy_beam']
+
+
+def test_dataset_alias_requires_metadata() -> None:
+    event = Event([Vec3(0.0, 0.0, 1.0).with_mass(0.0)], [], 1.0)
+
+    with pytest.raises(ValueError, match='aliases'):
+        Dataset([event], aliases={'p': 'beam'})
+
+
 def test_event_evaluate() -> None:
     event = make_test_event()
     mass = Mass(['proton'])

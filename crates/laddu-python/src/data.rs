@@ -1,6 +1,7 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData},
+    utils::variables::IntoP4Selection,
     DatasetReadOptions,
 };
 use numpy::PyArray1;
@@ -13,6 +14,33 @@ use pyo3::{
 use std::{path::PathBuf, sync::Arc};
 
 use crate::utils::vectors::PyVec4;
+
+fn parse_aliases(aliases: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, Vec<String>)>> {
+    let Some(aliases) = aliases else {
+        return Ok(Vec::new());
+    };
+
+    let mut parsed = Vec::new();
+    for (key, value) in aliases.iter() {
+        let alias_name = key.extract::<String>()?;
+        let selection = if let Ok(single) = value.extract::<String>() {
+            vec![single]
+        } else {
+            let seq = value.extract::<Vec<String>>().map_err(|_| {
+                PyTypeError::new_err("Alias values must be a string or a sequence of strings")
+            })?;
+            if seq.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "Alias '{alias_name}' must reference at least one particle",
+                )));
+            }
+            seq
+        };
+        parsed.push((alias_name, selection));
+    }
+
+    Ok(parsed)
+}
 
 /// A single event
 ///
@@ -28,13 +56,26 @@ use crate::utils::vectors::PyVec4;
 ///     Scalar auxiliary data associated with the event
 /// weight : float
 ///     The weight associated with this event
-/// rest_frame_of : list of str, optional
-///     If supplied, the event will be boosted to the rest frame of the named four-momenta
 /// p4_names : list of str, optional
 ///     Human-readable aliases for each four-momentum. Providing names enables name-based
 ///     lookups when evaluating variables.
 /// aux_names : list of str, optional
 ///     Aliases for auxiliary scalars corresponding to ``aux``.
+/// aliases : dict of {str: str or list[str]}, optional
+///     Additional particle identifiers that reference one or more entries from ``p4_names``.
+///
+/// Examples
+/// --------
+/// >>> from laddu import Event, Vec3  # doctest: +SKIP
+/// >>> event = Event(  # doctest: +SKIP
+/// ...     [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.0, 0.0, 1.0).with_mass(0.0)],
+/// ...     [],
+/// ...     1.0,
+/// ...     p4_names=['kshort1', 'kshort2'],
+/// ...     aliases={'pair': ['kshort1', 'kshort2']},
+/// ... )
+/// >>> event.p4('pair')  # doctest: +SKIP
+/// Vec4(px=0.0, py=0.0, pz=2.0, e=2.0)
 ///
 #[pyclass(name = "Event", module = "laddu")]
 #[derive(Clone)]
@@ -46,45 +87,51 @@ pub struct PyEvent {
 #[pymethods]
 impl PyEvent {
     #[new]
-    #[pyo3(signature = (p4s, aux, weight, *, rest_frame_of=None, p4_names=None, aux_names=None))]
+    #[pyo3(signature = (p4s, aux, weight, *, p4_names=None, aux_names=None, aliases=None))]
     fn new(
         p4s: Vec<PyVec4>,
         aux: Vec<f64>,
         weight: f64,
-        rest_frame_of: Option<Vec<String>>,
         p4_names: Option<Vec<String>>,
         aux_names: Option<Vec<String>>,
+        aliases: Option<Bound<PyDict>>,
     ) -> PyResult<Self> {
         let mut event = EventData {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
             aux,
             weight,
         };
-        let (metadata, metadata_provided) = if p4_names.is_some() || aux_names.is_some() {
+        let aliases = parse_aliases(aliases)?;
+
+        let missing_p4_names = p4_names
+            .as_ref()
+            .map(|names| names.is_empty())
+            .unwrap_or(true);
+
+        if !aliases.is_empty() && missing_p4_names {
+            return Err(PyValueError::new_err(
+                "`aliases` requires `p4_names` so selections can be resolved",
+            ));
+        }
+
+        let metadata_provided = p4_names.is_some() || aux_names.is_some() || !aliases.is_empty();
+        let metadata = if metadata_provided {
             let p4_names = p4_names.unwrap_or_default();
             let aux_names = aux_names.unwrap_or_default();
-            (
-                Arc::new(DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?),
-                true,
-            )
+            let mut metadata = DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?;
+            if !aliases.is_empty() {
+                metadata
+                    .add_p4_aliases(
+                        aliases.into_iter().map(|(alias_name, selection)| {
+                            (alias_name, selection.into_selection())
+                        }),
+                    )
+                    .map_err(PyErr::from)?;
+            }
+            Arc::new(metadata)
         } else {
-            (Arc::new(DatasetMetadata::empty()), false)
+            Arc::new(DatasetMetadata::empty())
         };
-        if let Some(names) = rest_frame_of {
-            if !metadata_provided {
-                return Err(PyValueError::new_err(
-                    "`rest_frame_of` requires specifying `p4_names` to resolve particle names",
-                ));
-            }
-            let mut resolved = Vec::new();
-            for name in &names {
-                let selection = metadata.p4_selection(name).ok_or_else(|| {
-                    PyKeyError::new_err(format!("Unknown particle name '{name}'"))
-                })?;
-                resolved.extend_from_slice(selection.indices());
-            }
-            event = event.boost_to_rest_frame_of(resolved);
-        }
         let event = Event::new(Arc::new(event), metadata);
         Ok(Self {
             event,
@@ -236,6 +283,13 @@ impl PyEvent {
 ///     Names assigned to each four-momentum; enables name-based lookups if provided.
 /// aux_names : list of str, optional
 ///     Names for auxiliary scalars stored alongside the events.
+/// aliases : dict of {str: str or list[str]}, optional
+///     Additional particle identifiers that override aliases stored on the Events.
+///
+/// Notes
+/// -----
+/// Explicit metadata provided here takes precedence over metadata embedded in the
+/// input Events.
 ///
 /// See Also
 /// --------
@@ -248,26 +302,53 @@ pub struct PyDataset(pub Arc<Dataset>);
 #[pymethods]
 impl PyDataset {
     #[new]
-    #[pyo3(signature = (events, *, p4_names=None, aux_names=None))]
+    #[pyo3(signature = (events, *, p4_names=None, aux_names=None, aliases=None))]
     fn new(
         events: Vec<PyEvent>,
         p4_names: Option<Vec<String>>,
         aux_names: Option<Vec<String>>,
+        aliases: Option<Bound<PyDict>>,
     ) -> PyResult<Self> {
         let inferred_metadata = events
             .iter()
             .find_map(|event| event.has_metadata.then(|| event.event.metadata_arc()));
 
-        let use_explicit_names = p4_names.is_some() || aux_names.is_some();
-        let metadata = if use_explicit_names {
-            let p4_names = p4_names.unwrap_or_default();
-            let aux_names = aux_names.unwrap_or_default();
-            Some(Arc::new(
-                DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?,
-            ))
-        } else {
-            inferred_metadata
-        };
+        let aliases = parse_aliases(aliases)?;
+        let use_explicit_metadata =
+            p4_names.is_some() || aux_names.is_some() || !aliases.is_empty();
+
+        let metadata =
+            if use_explicit_metadata {
+                let resolved_p4_names = match (p4_names, inferred_metadata.as_ref()) {
+                    (Some(names), _) => names,
+                    (None, Some(metadata)) => metadata.p4_names().to_vec(),
+                    (None, None) => Vec::new(),
+                };
+                let resolved_aux_names = match (aux_names, inferred_metadata.as_ref()) {
+                    (Some(names), _) => names,
+                    (None, Some(metadata)) => metadata.aux_names().to_vec(),
+                    (None, None) => Vec::new(),
+                };
+
+                if !aliases.is_empty() && resolved_p4_names.is_empty() {
+                    return Err(PyValueError::new_err(
+                        "`aliases` requires `p4_names` or events with metadata for resolution",
+                    ));
+                }
+
+                let mut metadata = DatasetMetadata::new(resolved_p4_names, resolved_aux_names)
+                    .map_err(PyErr::from)?;
+                if !aliases.is_empty() {
+                    metadata
+                        .add_p4_aliases(aliases.into_iter().map(|(alias_name, selection)| {
+                            (alias_name, selection.into_selection())
+                        }))
+                        .map_err(PyErr::from)?;
+                }
+                Some(Arc::new(metadata))
+            } else {
+                inferred_metadata
+            };
 
         let events: Vec<Arc<EventData>> = events
             .into_iter()
@@ -332,26 +413,8 @@ impl PyDataset {
         if let Some(tree) = tree {
             read_options = read_options.tree(tree);
         }
-        if let Some(aliases) = aliases {
-            for (key, value) in aliases.iter() {
-                let alias_name = key.extract::<String>()?;
-                let selection = if let Ok(single) = value.extract::<String>() {
-                    vec![single]
-                } else {
-                    let seq = value.extract::<Vec<String>>().map_err(|_| {
-                        PyTypeError::new_err(
-                            "Alias values must be a string or a sequence of strings",
-                        )
-                    })?;
-                    if seq.is_empty() {
-                        return Err(PyValueError::new_err(format!(
-                            "Alias '{alias_name}' must reference at least one particle",
-                        )));
-                    }
-                    seq
-                };
-                read_options = read_options.alias(alias_name, selection);
-            }
+        for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+            read_options = read_options.alias(alias_name, selection);
         }
         let dataset = Dataset::open(&path_str, &read_options)?;
 

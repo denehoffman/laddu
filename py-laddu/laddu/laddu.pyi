@@ -45,6 +45,14 @@ class VariableExpression: ...
 class BinnedDataset: ...
 
 class Dataset:
+    def __init__(
+        self,
+        events: list[Event],
+        *,
+        p4_names: list[str] | None = ...,
+        aux_names: list[str] | None = ...,
+        aliases: dict[str, str | list[str]] | None = ...,
+    ) -> None: ...
     @staticmethod
     def open(
         path: str | Path,
@@ -65,9 +73,9 @@ class Event:
         aux: list[float],
         weight: float,
         *,
-        rest_frame_of: list[str] | None = ...,
-        p4_names: list[str],
-        aux_names: list[str],
+        p4_names: list[str] | None = ...,
+        aux_names: list[str] | None = ...,
+        aliases: dict[str, str | list[str]] | None = ...,
     ) -> None: ...
 
 class NLL: ...

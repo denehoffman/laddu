@@ -32,8 +32,8 @@ def _import_optional_dependency(
     except ModuleNotFoundError as exc:
         msg = (
             f"{feature} requires the optional dependency '{module_name}'. "
-            f"Install it with `pip install laddu[{extra}]` "
-            f"or `pip install laddu-mpi[{extra}]`."
+            f'Install it with `pip install laddu[{extra}]` '
+            f'or `pip install laddu-mpi[{extra}]`.'
         )
         raise ModuleNotFoundError(msg) from exc
 
@@ -59,9 +59,6 @@ class _DatasetExtensions:
 
     @staticmethod
     def _infer_p4_names(columns: dict[str, Any]) -> list[str]:
-        if any(key.startswith('p4_') for key in columns):  # legacy format
-            msg = 'Legacy column format detected (p4_N_*). Please run convert_legacy_parquet.py first.'
-            raise ValueError(msg)
         p4_names: list[str] = []
         for key in columns:
             if key.endswith('_px'):
@@ -88,9 +85,7 @@ class _DatasetExtensions:
         return aux_names
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, Any], rest_frame_of: list[str] | None = None
-    ) -> _DatasetCore:
+    def from_dict(cls, data: dict[str, Any]) -> _DatasetCore:
         """Create a dataset from iterables keyed by column name.
 
         Parameters
@@ -98,21 +93,14 @@ class _DatasetExtensions:
         data:
             Mapping whose keys are column names (e.g. ``beam_px``) and values are
             indexable sequences.
-        rest_frame_of:
-            Optional list of particle names whose combined rest frame should be
-            used to boost each event (useful for quasi-two-body systems).
         """
         columns = {name: np.asarray(values) for name, values in data.items()}
         p4_names = cls._infer_p4_names(columns)
-        component_names = {
-            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-        }
+        component_names = {f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')}
         aux_names = cls._infer_aux_names(columns, component_names)
 
         n_events = len(columns[f'{p4_names[0]}_px'])
-        weights = np.asarray(
-            columns.get('weight', np.ones(n_events, dtype=float)), dtype=float
-        )
+        weights = np.asarray(columns.get('weight', np.ones(n_events, dtype=float)), dtype=float)
 
         events: list[Event] = []
         for i in range(n_events):
@@ -133,7 +121,6 @@ class _DatasetExtensions:
                     p4s,
                     aux_values,
                     float(weights[i]),
-                    rest_frame_of=rest_frame_of,
                     p4_names=p4_names,
                     aux_names=aux_names,
                 )
@@ -142,21 +129,17 @@ class _DatasetExtensions:
         return cls(events, p4_names=p4_names, aux_names=aux_names)
 
     @classmethod
-    def from_numpy(
-        cls, data: dict[str, NDArray[np.floating]], rest_frame_of: list[str] | None = None
-    ) -> _DatasetCore:
+    def from_numpy(cls, data: dict[str, NDArray[np.floating]]) -> _DatasetCore:
         """Create a dataset from arrays without copying.
 
         Accepts any mapping of column names to ``ndarray`` objects and mirrors
         :meth:`from_dict`.
         """
         converted = {key: np.asarray(value) for key, value in data.items()}
-        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted)
 
     @classmethod
-    def from_pandas(
-        cls, data: pd.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> _DatasetCore:
+    def from_pandas(cls, data: pd.DataFrame) -> _DatasetCore:
         """Materialise a dataset from a :class:`pandas.DataFrame`."""
         _import_optional_dependency(
             'pandas',
@@ -164,12 +147,10 @@ class _DatasetExtensions:
             feature='Dataset.from_pandas',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted)
 
     @classmethod
-    def from_polars(
-        cls, data: pl.DataFrame, rest_frame_of: list[str] | None = None
-    ) -> _DatasetCore:
+    def from_polars(cls, data: pl.DataFrame) -> _DatasetCore:
         """Materialise a dataset from a :class:`polars.DataFrame`."""
         _import_optional_dependency(
             'polars',
@@ -177,7 +158,7 @@ class _DatasetExtensions:
             feature='Dataset.from_polars',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted, rest_frame_of=rest_frame_of)
+        return cls.from_dict(converted)
 
     @classmethod
     def open(
@@ -224,9 +205,7 @@ class _DatasetExtensions:
             ``pol_magnitude_name``, ``pol_angle_name``, and ``num_entries``.
         """
         path_obj = Path(path)
-        backend_name = (
-            backend.lower() if backend else cls._default_backend_for_path(path_obj)
-        )
+        backend_name = backend.lower() if backend else cls._default_backend_for_path(path_obj)
         if backend_name == 'auto':
             backend_name = cls._default_backend_for_path(path_obj)
 
@@ -320,9 +299,7 @@ class _DatasetExtensions:
             raise TypeError(msg)
 
         pol_angle_rad = pol_angle * np.pi / 180 if pol_angle is not None else None
-        polarisation_requested = pol_in_beam or (
-            pol_angle is not None and pol_magnitude is not None
-        )
+        polarisation_requested = pol_in_beam or (pol_angle is not None and pol_magnitude is not None)
         p4s_list, aux_rows, weight_list = _read_amptools_events(
             path,
             tree or 'kin',
@@ -371,9 +348,7 @@ class _DatasetExtensions:
         return cls(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
-    def _select_uproot_tree(
-        file: uproot.ReadOnlyDirectory, tree_name: str | None
-    ) -> uproot.TTree:
+    def _select_uproot_tree(file: uproot.ReadOnlyDirectory, tree_name: str | None) -> uproot.TTree:
         if tree_name:
             try:
                 return file[tree_name]
@@ -381,11 +356,7 @@ class _DatasetExtensions:
                 msg = f"Tree '{tree_name}' not found in ROOT file"
                 raise KeyError(msg) from exc
 
-        tree_candidates = [
-            key.split(';')[0]
-            for key, classname in file.classnames().items()
-            if classname == 'TTree'
-        ]
+        tree_candidates = [key.split(';')[0] for key, classname in file.classnames().items() if classname == 'TTree']
         if not tree_candidates:
             msg = 'ROOT file does not contain any TTrees'
             raise ValueError(msg)
@@ -409,9 +380,7 @@ class _DatasetExtensions:
         data = {name: np.asarray(values) for name, values in columns.items()}
         p4_names = cls._infer_p4_names(data) if p4s is None else p4s
 
-        component_columns = [
-            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-        ]
+        component_columns = [f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')]
         missing_components = [col for col in component_columns if col not in data]
         if missing_components:
             msg = f'Missing components {missing_components} in ROOT data'
@@ -557,9 +526,7 @@ def _derive_amptools_polarization(
     if pol_in_beam:
         transverse_sq = px_beam.astype(np.float64) ** 2 + py_beam.astype(np.float64) ** 2
         pol_magnitude_arr = np.sqrt(transverse_sq).astype(np.float32)
-        pol_angle_arr = np.arctan2(
-            py_beam.astype(np.float64), px_beam.astype(np.float64)
-        ).astype(np.float32)
+        pol_angle_arr = np.arctan2(py_beam.astype(np.float64), px_beam.astype(np.float64)).astype(np.float32)
         beam_px.fill(0.0)
         beam_py.fill(0.0)
     elif pol_angle_rad is not None and pol_magnitude is not None:

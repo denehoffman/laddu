@@ -2,13 +2,9 @@ from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
-from typing_extensions import TypeAlias
 
 from laddu.data import Dataset, Event
 from laddu.utils.vectors import Vec3, Vec4
-
-P4Selection: TypeAlias = str | list[str]
-
 
 class VariableExpression:
     def __and__(self, rhs: VariableExpression) -> VariableExpression: ...
@@ -19,19 +15,19 @@ class VariableExpression:
 class Topology:
     def __init__(
         self,
-        k1: P4Selection,
-        k2: P4Selection,
-        k3: P4Selection,
-        k4: P4Selection,
+        k1: str | list[str],
+        k2: str | list[str],
+        k3: str | list[str],
+        k4: str | list[str],
     ) -> None: ...
     @staticmethod
-    def missing_k1(k2: P4Selection, k3: P4Selection, k4: P4Selection) -> Topology: ...
+    def missing_k1(k2: str | list[str], k3: str | list[str], k4: str | list[str]) -> Topology: ...
     @staticmethod
-    def missing_k2(k1: P4Selection, k3: P4Selection, k4: P4Selection) -> Topology: ...
+    def missing_k2(k1: str | list[str], k3: str | list[str], k4: str | list[str]) -> Topology: ...
     @staticmethod
-    def missing_k3(k1: P4Selection, k2: P4Selection, k4: P4Selection) -> Topology: ...
+    def missing_k3(k1: str | list[str], k2: str | list[str], k4: str | list[str]) -> Topology: ...
     @staticmethod
-    def missing_k4(k1: P4Selection, k2: P4Selection, k3: P4Selection) -> Topology: ...
+    def missing_k4(k1: str | list[str], k2: str | list[str], k3: str | list[str]) -> Topology: ...
     def k1_names(self) -> list[str] | None: ...
     def k2_names(self) -> list[str] | None: ...
     def k3_names(self) -> list[str] | None: ...
@@ -48,7 +44,7 @@ class Topology:
 
 
 class Mass:
-    def __init__(self, constituents: P4Selection) -> None: ...
+    def __init__(self, constituents: str | list[str]) -> None: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...
@@ -62,7 +58,7 @@ class CosTheta:
     def __init__(
         self,
         topology: Topology,
-        daughter: P4Selection,
+        daughter: str | list[str],
         frame: Literal[
             'Helicity',
             'HX',
@@ -86,7 +82,7 @@ class Phi:
     def __init__(
         self,
         topology: Topology,
-        daughter: P4Selection,
+        daughter: str | list[str],
         frame: Literal[
             'Helicity',
             'HX',
@@ -113,7 +109,7 @@ class Angles:
     def __init__(
         self,
         topology: Topology,
-        daughter: P4Selection,
+        daughter: str | list[str],
         frame: Literal[
             'Helicity',
             'HX',

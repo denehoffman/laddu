@@ -206,9 +206,19 @@ impl DatasetMetadata {
         self.p4_lookup.get(name).copied()
     }
 
+    /// Registered four-momentum names in declaration order.
+    pub fn p4_names(&self) -> &[String] {
+        &self.p4_names
+    }
+
     /// Resolve the index of an auxiliary scalar by name.
     pub fn aux_index(&self, name: &str) -> Option<usize> {
         self.aux_lookup.get(name).copied()
+    }
+
+    /// Registered auxiliary scalar names in declaration order.
+    pub fn aux_names(&self) -> &[String] {
+        &self.aux_names
     }
 
     /// Look up a resolved four-momentum selection by name (canonical or alias).
