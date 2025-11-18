@@ -269,13 +269,12 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
 
     #[test]
     fn test_resampled_evaluation() {
-        let mut manager = Manager::default();
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixA0::new(
+        let expr = KopfKMatrixA0::new(
             "a0",
             [
                 [parameter("p0"), parameter("p1")],
@@ -284,13 +283,11 @@ mod tests {
             1,
             &res_mass,
             Some(1),
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
@@ -300,9 +297,8 @@ mod tests {
 
     #[test]
     fn test_resampled_gradient() {
-        let mut manager = Manager::default();
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixA0::new(
+        let expr = KopfKMatrixA0::new(
             "a0",
             [
                 [parameter("p0"), parameter("p1")],
@@ -311,13 +307,11 @@ mod tests {
             1,
             &res_mass,
             Some(1),
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 

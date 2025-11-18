@@ -1,11 +1,11 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
     data::EventData,
     resources::{Cache, ParameterID, Parameters, Resources},
     LadduResult,
 };
 #[cfg(feature = "python")]
-use laddu_python::amplitudes::{PyAmplitude, PyParameterLike};
+use laddu_python::amplitudes::{PyExpression, PyParameterLike};
 use nalgebra::DVector;
 use num::complex::Complex64;
 #[cfg(feature = "python")]
@@ -22,13 +22,13 @@ pub struct Scalar {
 
 impl Scalar {
     /// Create a new [`Scalar`] with the given name and parameter value.
-    pub fn new(name: &str, value: ParameterLike) -> Box<Self> {
+    pub fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             value,
             pid: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -67,17 +67,13 @@ impl Amplitude for Scalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "Scalar")]
-pub fn py_scalar(name: &str, value: PyParameterLike) -> PyAmplitude {
-    PyAmplitude(Scalar::new(name, value.0))
+pub fn py_scalar(name: &str, value: PyParameterLike) -> PyResult<PyExpression> {
+    Ok(PyExpression(Scalar::new(name, value.0)?))
 }
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its real and
@@ -93,7 +89,7 @@ pub struct ComplexScalar {
 
 impl ComplexScalar {
     /// Create a new [`ComplexScalar`] with the given name, real, and imaginary part.
-    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
+    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             re,
@@ -101,7 +97,7 @@ impl ComplexScalar {
             im,
             pid_im: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -146,17 +142,17 @@ impl Amplitude for ComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "ComplexScalar")]
-pub fn py_complex_scalar(name: &str, re: PyParameterLike, im: PyParameterLike) -> PyAmplitude {
-    PyAmplitude(ComplexScalar::new(name, re.0, im.0))
+pub fn py_complex_scalar(
+    name: &str,
+    re: PyParameterLike,
+    im: PyParameterLike,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(ComplexScalar::new(name, re.0, im.0)?))
 }
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its magnitude and
@@ -172,7 +168,7 @@ pub struct PolarComplexScalar {
 
 impl PolarComplexScalar {
     /// Create a new [`PolarComplexScalar`] with the given name, magnitude (`r`), and phase (`theta`).
-    pub fn new(name: &str, r: ParameterLike, theta: ParameterLike) -> Box<Self> {
+    pub fn new(name: &str, r: ParameterLike, theta: ParameterLike) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             r,
@@ -180,7 +176,7 @@ impl PolarComplexScalar {
             theta,
             pid_theta: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -227,12 +223,8 @@ impl Amplitude for PolarComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "PolarComplexScalar")]
@@ -240,28 +232,23 @@ pub fn py_polar_complex_scalar(
     name: &str,
     r: PyParameterLike,
     theta: PyParameterLike,
-) -> PyAmplitude {
-    PyAmplitude(PolarComplexScalar::new(name, r.0, theta.0))
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PolarComplexScalar::new(name, r.0, theta.0)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, PI};
+    use laddu_core::{data::test_dataset, parameter, PI};
     use std::f64;
     use std::sync::Arc;
 
     #[test]
     fn test_scalar_creation_and_evaluation() {
-        let mut manager = Manager::default();
-        let amp = Scalar::new("test_scalar", parameter("test_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // Direct amplitude evaluation
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Scalar::new("test_scalar", parameter("test_param")).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.5];
         let result = evaluator.evaluate(&params);
@@ -272,14 +259,11 @@ mod tests {
 
     #[test]
     fn test_scalar_gradient() {
-        let mut manager = Manager::default();
-        let amp = Scalar::new("test_scalar", parameter("test_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Scalar::new("test_scalar", parameter("test_param"))
+            .unwrap()
+            .norm_sqr(); // |f(x)|^2
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -291,14 +275,10 @@ mod tests {
 
     #[test]
     fn test_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"))
+            .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
         let result = evaluator.evaluate(&params);
@@ -309,14 +289,11 @@ mod tests {
 
     #[test]
     fn test_complex_scalar_gradient() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x + iy)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"))
+            .unwrap()
+            .norm_sqr(); // |f(x + iy)|^2
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
         let gradient = evaluator.evaluate_gradient(&params);
@@ -330,15 +307,11 @@ mod tests {
 
     #[test]
     fn test_polar_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
-        let amp =
-            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr =
+            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"))
+                .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
@@ -352,15 +325,11 @@ mod tests {
 
     #[test]
     fn test_polar_complex_scalar_gradient() {
-        let mut manager = Manager::default();
-        let amp =
-            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"));
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // f(r,θ) = re^(iθ)
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr =
+            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"))
+                .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;

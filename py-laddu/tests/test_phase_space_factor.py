@@ -3,7 +3,6 @@ import pytest
 from laddu import (
     Dataset,
     Event,
-    Manager,
     Mandelstam,
     Mass,
     PhaseSpaceFactor,
@@ -40,7 +39,6 @@ def reaction_topology() -> Topology:
 
 
 def test_phase_space_factor_evaluation() -> None:
-    manager = Manager()
     recoil_mass = Mass(['proton'])
     daughter_1_mass = Mass(['kshort1'])
     daughter_2_mass = Mass(['kshort2'])
@@ -54,17 +52,14 @@ def test_phase_space_factor_evaluation() -> None:
         resonance_mass,
         mandelstam_s,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
     assert pytest.approx(result[0].real) == 7.028417575882146e-05
     assert pytest.approx(result[0].imag) == 0.0
 
 
 def test_phase_space_factor_gradient() -> None:
-    manager = Manager()
     recoil_mass = Mass(['proton'])
     daughter_1_mass = Mass(['kshort1'])
     daughter_2_mass = Mass(['kshort2'])
@@ -78,9 +73,7 @@ def test_phase_space_factor_gradient() -> None:
         resonance_mass,
         mandelstam_s,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters

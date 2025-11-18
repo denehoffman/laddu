@@ -12,7 +12,7 @@ We do this because our observed number of events :math:`N` will deviate from the
 
 Of course, we now have the problem of maximizing the resultant likelihood from this unnormalized distribution. We can write the likelihood using a Poisson probability distribution multiplied by the original product of probabilities over each observed event:
 
-.. math:: 
+.. math::
 
    \mathcal{L} &= e^{-\mathcal{N}}\frac{\mathcal{N}^N}{N!} \prod_{i=1}^{N} p(x_i; m, \Omega) \\
    &= \frac{e^{-\mathcal{N}}}{N!} \prod_{i=1}^{N} \mathcal{I}(x_i; m, \Omega)
@@ -108,7 +108,7 @@ So far, these angles just represent particles in a generic dataset by index and 
   :width: 800
   :alt: Data for unbinned fit
 
-Next, let's come up with a model. ``laddu`` models are formed by combining individual amplitudes after they are registered with a manager. The manager keeps track of all of the free parameters and caching done when a dataset is pre-computed. ``laddu`` has the amplitudes that we need already built in. We will use a relativistic Breit-Wigner to describe the mass-dependency and a :math:`Z_{L}^{M}` amplitude described by [Mathieu]_ to fit the angular distributions with beam polarization in mind. The angular part of this model requires two coherent sums for each reflectivity, and assuming just positive reflectivity, we can write the entire model as follows:
+Next, let's come up with a model. ``laddu`` models are formed by combining individual amplitudes using arithmetic operations as well as a few special functions for working with complex values. These terms internally keep track of all of the free parameters and caching done when a dataset is pre-computed. ``laddu`` has the amplitudes that we need already built in. We will use a relativistic Breit-Wigner to describe the mass-dependency and a :math:`Z_{L}^{M}` amplitude described by [Mathieu]_ to fit the angular distributions with beam polarization in mind. The angular part of this model requires two coherent sums for each reflectivity, and assuming just positive reflectivity, we can write the entire model as follows:
 
 .. math::
    I(m, \theta, \varphi, P_{\gamma}, \Phi) \propto &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Re\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
@@ -116,43 +116,42 @@ Next, let's come up with a model. ``laddu`` models are formed by combining indiv
    + &\left| [f_0(1500)] BW_0(m; m_{f_0}, \Gamma_{f_0}) \Im\left[Z_{0}^{0(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right.\\
    &\left. + [f_2'(1525)] BW_2(m; m_{f_2'}, \Gamma_{f_2'}) \Im\left[Z_{2}^{2(+)}(\theta, \varphi, P_\gamma, \Phi)\right]\right|^2
 
-where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a manager and a ``Polarization`` object which grabs polarization information from the dataset using the names of the beam, recoil proton, and auxiliary polarization columns:
+where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude for a spin-:math:`L` particle with mass :math:`m_\alpha` and width :math:`\Gamma_\alpha` and :math:`Z_{L}^{M}(\theta, \varphi, P_\gamma, \Phi)` describes the angular distribution of a spin-:math:`L` particle with decay angles :math:`\theta` and :math:`\varphi`, photoproduction polarization fraction :math:`P_\gamma` and angle :math:`\Phi`, and angular moment :math:`M`. The terms with particle names in square brackets represent the production coefficients. While these are technically both allowed to be complex values, in practice we set one to be real in each sum since the norm-squared of a complex value is invariant up to a total phase. The exact form of these amplitudes is not important for this tutorial. Instead, we will demonstrate how they can be created and combined with simple operations. First, we create a ``Polarization`` object which grabs polarization information from the dataset using the names of the beam, recoil proton, and auxiliary polarization columns:
 
 .. code:: python
 
-   manager = ld.Manager()
    polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
 
 Next, we can create ``Zlm`` amplitudes:
 
 .. code:: python
 
-   z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
-   z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
+   z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
+   z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)
 
-The ``z00p`` and ``z22p`` objects are just pointers to this amplitude's registration within the ``manager``, but they can be combined with other amplitudes using basic math operations. The first artgument to ``Zlm`` is the name by which we will refer to the amplitude when we project the fit results onto the Monte Carlo later. Since there are no free parameters in the ``Zlm`` amplitudes, if we just built a model with these amplitudes alone, we wouldn't have anything to minimize. Let's now construct some amplitudes which have free parameters, particularly our production coefficients. These are the simplest amplitudes, just scalar values which are either purely real or complex. We can use the ``parameter`` function to create a named parameter in our model:
+The ``z00p`` and ``z22p`` objects can be combined with other amplitudes using basic math operations. The first artgument to ``Zlm`` is the name by which we will refer to the amplitude when we project the fit results onto the Monte Carlo later. Since there are no free parameters in the ``Zlm`` amplitudes, if we just built a model with these amplitudes alone, we wouldn't have anything to minimize. Let's now construct some amplitudes which have free parameters, particularly our production coefficients. These are the simplest amplitudes, just scalar values which are either purely real or complex. We can use the ``parameter`` function to create a named parameter in our model:
 
 .. code:: python
 
-   f0_1500 = manager.register(ld.Scalar("[f_0(1500)]", ld.parameter("Re[f_0(1500)]")))
-   f2_1525 = manager.register(ld.ComplexScalar("[f_2'(1525)]", ld.parameter("Re[f_2'(1525)]"), ld.parameter("Im[f_2'(1525)]")))
+   f0_1500 = ld.Scalar("[f_0(1500)]", ld.parameter("Re[f_0(1500)]"))
+   f2_1525 = ld.ComplexScalar("[f_2'(1525)]", ld.parameter("Re[f_2'(1525)]"), ld.parameter("Im[f_2'(1525)]"))
 
 Finally, we can register the Breit-Wigners. These have two free parameters, the mass and width of the resonance. For the sake of demonstration, let's fix the mass by passing in a ``constant`` and let the width float with a ``parameter``. These two functions create the same object, so we could just as easily write this with both values fixed or free in the fit:
 
 .. code:: python
 
-   bw0 = manager.register(ld.BreitWigner("BW_0", ld.constant(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass))
-   bw2 = manager.register(ld.BreitWigner("BW_2", ld.constant(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass))
+   bw0 = ld.BreitWigner("BW_0", ld.constant(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
+   bw2 = ld.BreitWigner("BW_2", ld.constant(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
 
 As you can see, these amplitudes also take additional parameters like the masses of each decay product.
 
-Next, we combine these together according to our model. For these amplitude pointers (``AmplitudeID``), we can use the ``+`` and ``*`` operators as well as ``real()`` and ``imag()`` to take the real or imaginary part of the amplitude and ``norm_sqr()`` to take the square of the magnitude (for the coherent sums). These operations can also be applied to the operated versions of the amplitudes, so we can form the entire expression given above:
+Next, we combine these together according to our model. For these amplitudes, we can use the ``+`` and ``*`` operators as well as ``real()`` and ``imag()`` to take the real or imaginary part of the amplitude and ``norm_sqr()`` to take the square of the magnitude (for the coherent sums). These operations can also be applied to the operated versions of the amplitudes, so we can form the entire expression given above:
 
 .. code:: python
 
    positive_real_sum = (f0_1500 * bw0 * z00p.real() + f2_1525 * bw2 * z22p.real()).norm_sqr()
    positive_imag_sum = (f0_1500 * bw0 * z00p.imag() + f2_1525 * bw2 * z22p.imag()).norm_sqr()
-   model = manager.model(positive_real_sum + positive_imag_sum)
+   model = positive_real_sum + positive_imag_sum
 
 Now that we have the model, we want to fit the free parameters, which in this case are the complex photocouplings and the widths of each Breit-Wigner. We can do this by creating an ``NLL`` object which uses the data and accepted Monte-Carlo datasets to calculate the negative log-likelihood described earlier.
 
@@ -264,7 +263,7 @@ Notice that we have not yet used the generated Monte Carlo. We always assume tha
 
 Finally, to project the fit result onto the generated Monte Carlo, we need to create an evaluator specifically for the generated Monte Carlo data. The reason this is done separately is that generated Monte Carlo datasets usually contain many events, so it's sometimes more efficient to do the fit without loading this data at all, save the fit results, and plot the acceptance-corrected plots in a separate step, minimizing overall memory impact.
 
-To create an ``Evaluator`` object, we just need to load up the manager with the model and dataset we want to use. All of these operations create efficient copies of the manager, so we don't need to worry about duplicating resources or events.
+To create an ``Evaluator`` object, we just need to load up the model and dataset we want to use. All of these operations create efficient copies of the underlying expressions and data, so we don't need to worry about duplicating resources or events.
 
 .. code:: python
 

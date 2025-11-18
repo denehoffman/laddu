@@ -1,6 +1,6 @@
 from typing import Literal, overload
 
-from laddu.amplitudes import Amplitude
+from laddu.amplitudes import Expression
 from laddu.utils.variables import Angles, Polarization
 
 @overload
@@ -11,7 +11,7 @@ def Zlm(
     r: Literal['+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'],
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def Zlm(
     name: str,
@@ -20,7 +20,7 @@ def Zlm(
     r: Literal['+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'],
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def Zlm(
     name: str,
@@ -29,7 +29,7 @@ def Zlm(
     r: Literal['+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'],
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def Zlm(
     name: str,
@@ -38,7 +38,7 @@ def Zlm(
     r: Literal['+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'],
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def Zlm(
     name: str,
@@ -47,7 +47,7 @@ def Zlm(
     r: Literal['+', 'plus', 'pos', 'positive', '-', 'minus', 'neg', 'negative'],
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def Zlm(
     name: str,
@@ -56,8 +56,8 @@ def Zlm(
     r: str,
     angles: Angles,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...
 def PolPhase(
     name: str,
     polarization: Polarization,
-) -> Amplitude: ...
+) -> Expression: ...

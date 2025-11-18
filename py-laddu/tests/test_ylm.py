@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import Angles, Dataset, Event, Manager, Topology, Vec3, Ylm
+from laddu import Angles, Dataset, Event, Topology, Vec3, Ylm
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -31,25 +31,19 @@ def reaction_topology() -> Topology:
 
 
 def test_ylm_evaluation() -> None:
-    manager = Manager()
     angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
     assert pytest.approx(result[0].real) == 0.2713394403451028
     assert pytest.approx(result[0].imag) == 0.1426897184196572
 
 
 def test_ylm_gradient() -> None:
-    manager = Manager()
     angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters

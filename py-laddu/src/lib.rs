@@ -11,9 +11,8 @@ mod laddu {
     #[pymodule_export]
     use laddu_python::{
         amplitudes::{
-            py_amplitude_one, py_amplitude_product, py_amplitude_sum, py_amplitude_zero,
-            py_constant, py_parameter, py_test_amplitude, PyAmplitude, PyAmplitudeID, PyEvaluator,
-            PyExpression, PyManager, PyModel, PyParameterLike,
+            py_constant, py_expr_one, py_expr_product, py_expr_sum, py_expr_zero, py_parameter,
+            py_test_amplitude, PyEvaluator, PyExpression, PyParameterLike,
         },
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent},

@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID},
+    amplitudes::{Amplitude, AmplitudeID, Expression},
     data::{DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
@@ -7,7 +7,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::PyAmplitude,
+    amplitudes::PyExpression,
     utils::variables::{PyMandelstam, PyMass},
 };
 use nalgebra::DVector;
@@ -55,7 +55,7 @@ impl PhaseSpaceFactor {
         daughter_2_mass: &Mass,
         resonance_mass: &Mass,
         mandelstam_s: &Mandelstam,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             recoil_mass: recoil_mass.clone(),
@@ -65,7 +65,7 @@ impl PhaseSpaceFactor {
             mandelstam_s: mandelstam_s.clone(),
             sid: ScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -134,12 +134,8 @@ impl Amplitude for PhaseSpaceFactor {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Notes
 /// -----
@@ -154,15 +150,15 @@ pub fn py_phase_space_factor(
     daughter_2_mass: &PyMass,
     resonance_mass: &PyMass,
     mandelstam_s: &PyMandelstam,
-) -> PyResult<PyAmplitude> {
-    Ok(PyAmplitude(PhaseSpaceFactor::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PhaseSpaceFactor::new(
         name,
         &recoil_mass.0,
         &daughter_1_mass.0,
         &daughter_2_mass.0,
         &resonance_mass.0,
         &mandelstam_s.0,
-    )))
+    )?))
 }
 
 #[cfg(test)]
@@ -171,30 +167,27 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Channel, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Channel};
 
     #[test]
     fn test_phase_space_factor_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let mut manager = Manager::default();
         let recoil_mass = Mass::new(["proton"]);
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
         let mandelstam_s = Mandelstam::new(topology, Channel::S);
-        let amp = PhaseSpaceFactor::new(
+        let expr = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
             &mandelstam_s,
-        );
-        let aid = manager.register(amp).unwrap();
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
@@ -205,7 +198,6 @@ mod tests {
     #[test]
     fn test_phase_space_factor_gradient() {
         let dataset = Arc::new(test_dataset());
-        let mut manager = Manager::default();
         let recoil_mass = Mass::new(["proton"]);
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
@@ -214,18 +206,16 @@ mod tests {
             Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
             Channel::S,
         );
-        let amp = PhaseSpaceFactor::new(
+        let expr = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
             &mandelstam_s,
-        );
-        let aid = manager.register(amp).unwrap();
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

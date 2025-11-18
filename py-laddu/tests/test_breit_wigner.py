@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import BreitWigner, Dataset, Event, Manager, Mass, Vec3, parameter
+from laddu import BreitWigner, Dataset, Event, Mass, Vec3, parameter
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -27,7 +27,6 @@ def make_test_dataset() -> Dataset:
 
 
 def test_bw_evaluation() -> None:
-    manager = Manager()
     amp = BreitWigner(
         'bw',
         parameter('mass'),
@@ -37,17 +36,14 @@ def test_bw_evaluation() -> None:
         Mass(['kshort2']),
         Mass(['kshort1', 'kshort2']),
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.5, 0.3])
     assert pytest.approx(result[0].real) == 1.458569174900372
     assert pytest.approx(result[0].imag) == 1.4107341131495694
 
 
 def test_bw_gradient() -> None:
-    manager = Manager()
     amp = BreitWigner(
         'bw',
         parameter('mass'),
@@ -57,10 +53,8 @@ def test_bw_gradient() -> None:
         Mass(['kshort2']),
         Mass(['kshort1', 'kshort2']),
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([1.7, 0.3])
     assert pytest.approx(result[0][0].real) == -2.4105851202988857
     assert pytest.approx(result[0][0].imag) == -1.8880913749138584

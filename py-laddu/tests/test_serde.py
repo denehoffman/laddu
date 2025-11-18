@@ -2,7 +2,7 @@ import pickle
 
 import pytest
 
-from laddu import Dataset, Event, Manager, Mass, Scalar, Vec3, parameter
+from laddu import Dataset, Event, Mass, Scalar, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,
     KopfKMatrixF2,
@@ -33,7 +33,6 @@ def make_test_dataset() -> Dataset:
 
 
 def test_serde() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     f0 = KopfKMatrixF0(
         'f0',
@@ -59,13 +58,9 @@ def test_serde() -> None:
         res_mass,
     )
     s = Scalar('s', parameter('s'))
-    f0_aid = manager.register(f0)
-    f2_aid = manager.register(f2)
-    s_aid = manager.register(s)
-    expr = (f0_aid * s_aid + f2_aid).norm_sqr()
-    model = manager.model(expr)
+    expr = (f0 * s + f2).norm_sqr()
     dataset = make_test_dataset()
-    evaluator = model.load(dataset)
+    evaluator = expr.load(dataset)
     p = [
         0.1,
         0.2,
@@ -88,9 +83,9 @@ def test_serde() -> None:
         1.9,
     ]
     result = evaluator.evaluate(p)
-    pickled_model = pickle.dumps(model)
-    unpickled_model = pickle.loads(pickled_model)
-    unpickled_evaluator = unpickled_model.load(dataset)
+    pickled_expr = pickle.dumps(expr)
+    unpickled_expr = pickle.loads(pickled_expr)
+    unpickled_evaluator = unpickled_expr.load(dataset)
     unpickled_result = unpickled_evaluator.evaluate(p)
 
     assert pytest.approx(result[0].real) == pytest.approx(unpickled_result[0].real)

@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import Dataset, Event, Manager, Mass, Vec3, parameter
+from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA2,
@@ -35,7 +35,6 @@ def make_test_dataset() -> Dataset:
 
 
 def test_f0_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF0(
         'f0',
@@ -49,17 +48,14 @@ def test_f0_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     assert pytest.approx(result[0].real) == 0.2674945594859745
     assert pytest.approx(result[0].imag) == 0.7289451151846622
 
 
 def test_f0_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF0(
         'f0',
@@ -73,10 +69,8 @@ def test_f0_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
     assert pytest.approx(result[0][0].real) == -0.032491219879072594
     assert pytest.approx(result[0][0].imag) == -0.011073489047324615
@@ -101,7 +95,6 @@ def test_f0_gradient() -> None:
 
 
 def test_f2_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF2(
         'f2',
@@ -114,17 +107,14 @@ def test_f2_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     assert pytest.approx(result[0].real) == 0.025233045240226293
     assert pytest.approx(result[0].imag) == 0.39712393858386263
 
 
 def test_f2_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF2(
         'f2',
@@ -137,10 +127,8 @@ def test_f2_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     assert pytest.approx(result[0][0].real) == -0.3078948637910409
     assert pytest.approx(result[0][0].imag) == 0.38086899234534155
@@ -161,7 +149,6 @@ def test_f2_gradient() -> None:
 
 
 def test_a0_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA0(
         'a0',
@@ -172,17 +159,14 @@ def test_a0_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == -0.8002759157259999
     assert pytest.approx(result[0].imag) == -0.1359306632058216
 
 
 def test_a0_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA0(
         'a0',
@@ -193,10 +177,8 @@ def test_a0_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == 0.2906192438344459
     assert pytest.approx(result[0][0].imag) == -0.09989060459904309
@@ -209,7 +191,6 @@ def test_a0_gradient() -> None:
 
 
 def test_a2_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA2(
         'a2',
@@ -220,17 +201,14 @@ def test_a2_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == -0.2092661754354623
     assert pytest.approx(result[0].imag) == -0.09850621309829852
 
 
 def test_a2_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixA2(
         'a2',
@@ -241,10 +219,8 @@ def test_a2_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == -0.575689604769787
     assert pytest.approx(result[0][0].imag) == 0.9398863940931068
@@ -257,7 +233,6 @@ def test_a2_gradient() -> None:
 
 
 def test_rho_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixRho(
         'rho',
@@ -268,17 +243,14 @@ def test_rho_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0].real) == 0.09483558754117698
     assert pytest.approx(result[0].imag) == 0.2609183741271106
 
 
 def test_rho_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixRho(
         'rho',
@@ -289,10 +261,8 @@ def test_rho_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
     assert pytest.approx(result[0][0].real) == 0.026520319348816407
     assert pytest.approx(result[0][0].imag) == -0.026602652559793133
@@ -305,7 +275,6 @@ def test_rho_gradient() -> None:
 
 
 def test_pi1_evaluation() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixPi1(
         'pi1',
@@ -313,17 +282,14 @@ def test_pi1_evaluation() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2])
     assert pytest.approx(result[0].real) == -0.11017586807747382
     assert pytest.approx(result[0].imag) == 0.2638717244927622
 
 
 def test_pi1_gradient() -> None:
-    manager = Manager()
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixPi1(
         'pi1',
@@ -331,10 +297,8 @@ def test_pi1_gradient() -> None:
         1,
         res_mass,
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2])
     assert pytest.approx(result[0][0].real) == -14.798717468937502
     assert pytest.approx(result[0][0].imag) == -5.843009428873981

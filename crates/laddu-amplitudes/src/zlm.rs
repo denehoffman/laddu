@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID},
+    amplitudes::{Amplitude, AmplitudeID, Expression},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
@@ -10,7 +10,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::PyAmplitude,
+    amplitudes::PyExpression,
     utils::variables::{PyAngles, PyPolarization},
 };
 use nalgebra::DVector;
@@ -45,7 +45,7 @@ impl Zlm {
         r: Sign,
         angles: &Angles,
         polarization: &Polarization,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             l,
@@ -55,7 +55,7 @@ impl Zlm {
             polarization: polarization.clone(),
             csid: ComplexScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -137,17 +137,13 @@ impl Amplitude for Zlm {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
 /// ValueError
 ///     If `r` is not one of the valid options
-///
-/// See Also
-/// --------
-/// laddu.Manager
 ///
 /// Notes
 /// -----
@@ -164,15 +160,15 @@ pub fn py_zlm(
     r: &str,
     angles: &PyAngles,
     polarization: &PyPolarization,
-) -> PyResult<PyAmplitude> {
-    Ok(PyAmplitude(Zlm::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Zlm::new(
         name,
         l,
         m,
         r.parse()?,
         &angles.0,
         &polarization.0,
-    )))
+    )?))
 }
 
 /// An [`Amplitude`] representing the expression :math:`P_\gamma \text{Exp}(2\imath\Phi)` where
@@ -190,13 +186,13 @@ pub struct PolPhase {
 
 impl PolPhase {
     /// Construct a new [`PolPhase`] with the given name the given set of [`Polarization`] [`Variable`]s.
-    pub fn new(name: &str, polarization: &Polarization) -> Box<Self> {
+    pub fn new(name: &str, polarization: &Polarization) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             polarization: polarization.clone(),
             csid: ComplexScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -255,12 +251,8 @@ impl Amplitude for PolPhase {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Notes
 /// -----
@@ -268,8 +260,8 @@ impl Amplitude for PolPhase {
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "PolPhase")]
-pub fn py_polphase(name: &str, polarization: &PyPolarization) -> PyAmplitude {
-    PyAmplitude(PolPhase::new(name, &polarization.0))
+pub fn py_polphase(name: &str, polarization: &PyPolarization) -> PyResult<PyExpression> {
+    Ok(PyExpression(PolPhase::new(name, &polarization.0)?))
 }
 
 #[cfg(test)]
@@ -278,7 +270,7 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame};
 
     fn reaction_topology() -> Topology {
         Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
@@ -286,17 +278,12 @@ mod tests {
 
     #[test]
     fn test_zlm_evaluation() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let topology = reaction_topology();
         let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
         let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
-        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
-        let aid = manager.register(amp).unwrap();
-
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
@@ -306,17 +293,12 @@ mod tests {
 
     #[test]
     fn test_zlm_gradient() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let topology = reaction_topology();
         let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
         let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
-        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
-        let aid = manager.register(amp).unwrap();
-
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
@@ -324,15 +306,10 @@ mod tests {
 
     #[test]
     fn test_polphase_evaluation() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
-        let amp = PolPhase::new("polphase", &polarization);
-        let aid = manager.register(amp).unwrap();
-
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = PolPhase::new("polphase", &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
@@ -342,15 +319,10 @@ mod tests {
 
     #[test]
     fn test_polphase_gradient() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
-        let amp = PolPhase::new("polphase", &polarization);
-        let aid = manager.register(amp).unwrap();
-
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = PolPhase::new("polphase", &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

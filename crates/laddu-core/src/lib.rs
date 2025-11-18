@@ -466,9 +466,7 @@ pub use crate::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use crate::utils::vectors::{Vec3, Vec4};
-pub use amplitudes::{
-    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
-};
+pub use amplitudes::{constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike};
 
 /// The mathematical constant $`\pi`$.
 pub const PI: f64 = std::f64::consts::PI;
@@ -491,9 +489,8 @@ pub enum LadduError {
     /// An alias for [`shellexpand::LookupError`].
     #[error("Failed to expand path: {0}")]
     LookupError(#[from] shellexpand::LookupError<std::env::VarError>),
-    /// An error which occurs when the user tries to register two amplitudes by the same name to
-    /// the same [`Manager`].
-    #[error("An amplitude by the name \"{name}\" is already registered by this manager!")]
+    /// An error which occurs when the user tries to register two amplitudes by the same name.
+    #[error("An amplitude by the name \"{name}\" is already registered!")]
     RegistrationError {
         /// Name of amplitude which is already registered
         name: String,

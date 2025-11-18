@@ -1,6 +1,6 @@
 use super::{AdlerZero, FixedKMatrix};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
@@ -8,7 +8,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
@@ -139,7 +139,7 @@ impl KopfKMatrixF0 {
         channel: usize,
         mass: &Mass,
         seed: Option<usize>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
         let mut couplings_imag: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
         for i in 0..5 {
@@ -171,7 +171,7 @@ impl KopfKMatrixF0 {
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -304,14 +304,14 @@ pub fn py_kopf_kmatrix_f0(
     channel: usize,
     mass: PyMass,
     seed: Option<usize>,
-) -> PyAmplitude {
-    PyAmplitude(KopfKMatrixF0::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixF0::new(
         name,
         array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
         channel,
         &mass.0,
         seed,
-    ))
+    )?))
 }
 
 #[cfg(test)]
@@ -321,13 +321,13 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
 
     #[test]
     fn test_f0_evaluation() {
-        let mut manager = Manager::default();
+        let dataset = Arc::new(test_dataset());
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixF0::new(
+        let expr = KopfKMatrixF0::new(
             "f0",
             [
                 [parameter("p0"), parameter("p1")],
@@ -339,13 +339,9 @@ mod tests {
             1,
             &res_mass,
             None,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
 
@@ -355,9 +351,9 @@ mod tests {
 
     #[test]
     fn test_f0_gradient() {
-        let mut manager = Manager::default();
+        let dataset = Arc::new(test_dataset());
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixF0::new(
+        let expr = KopfKMatrixF0::new(
             "f0",
             [
                 [parameter("p0"), parameter("p1")],
@@ -369,13 +365,9 @@ mod tests {
             1,
             &res_mass,
             None,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result =
             evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
@@ -416,6 +408,7 @@ mod tests {
             1,
             &res_mass,
             Some(1),
-        );
+        )
+        .unwrap();
     }
 }

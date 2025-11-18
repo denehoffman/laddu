@@ -10,7 +10,7 @@ use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
 use laddu_core::{
-    amplitudes::{central_difference, AmplitudeValues, Evaluator, GradientValues, Model},
+    amplitudes::{central_difference, Evaluator, Expression},
     data::Dataset,
     resources::Parameters,
     LadduResult,
@@ -34,7 +34,7 @@ use crate::ganesh_ext::{
 use laddu_core::LadduError;
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyEvaluator, PyModel},
+    amplitudes::{PyEvaluator, PyExpression},
     data::PyDataset,
 };
 #[cfg(feature = "python")]
@@ -88,14 +88,18 @@ pub struct NLL {
 }
 
 impl NLL {
-    /// Construct an [`NLL`] from a [`Model`] and two [`Dataset`]s (data and Monte Carlo). This is the equivalent of the [`Model::load`] method,
-    /// but for two [`Dataset`]s and a different method of evaluation.
-    pub fn new(model: &Model, ds_data: &Arc<Dataset>, ds_accmc: &Arc<Dataset>) -> Box<Self> {
-        Self {
-            data_evaluator: model.load(ds_data),
-            accmc_evaluator: model.load(ds_accmc),
+    /// Construct an [`NLL`] from an [`Expression`] and two [`Dataset`]s (data and Monte Carlo). This mirrors loading a model but starts from
+    /// the expression directly.
+    pub fn new(
+        expression: &Expression,
+        ds_data: &Arc<Dataset>,
+        ds_accmc: &Arc<Dataset>,
+    ) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: expression.load(ds_data)?,
+            accmc_evaluator: expression.load(ds_accmc)?,
         }
-        .into()
+        .into())
     }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
     pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
@@ -737,21 +741,19 @@ impl NLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.data_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(data_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&data_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.data_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&data_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -789,21 +791,19 @@ impl NLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.accmc_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(mc_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&mc_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.accmc_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(mc_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&mc_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -840,21 +840,19 @@ impl NLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.data_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(data_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&data_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.data_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&data_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -890,21 +888,19 @@ impl NLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.accmc_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(mc_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&mc_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.accmc_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(mc_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&mc_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -1208,22 +1204,20 @@ impl StochasticNLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.nll
-                            .data_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(data_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&data_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.nll
+                        .data_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&data_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -1266,22 +1260,20 @@ impl StochasticNLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.nll
-                            .accmc_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(mc_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&mc_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.nll
+                        .accmc_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(mc_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&mc_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -1331,22 +1323,20 @@ impl StochasticNLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.nll
-                            .data_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(data_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&data_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.nll
+                        .data_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&data_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -1387,22 +1377,20 @@ impl StochasticNLL {
                     });
                 (
                     event.weight,
-                    AmplitudeValues(
-                        self.nll
-                            .accmc_evaluator
-                            .amplitudes
-                            .iter()
-                            .zip(mc_resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&mc_parameters, event, cache)
-                                } else {
-                                    Complex64::ZERO
-                                }
-                            })
-                            .collect(),
-                    ),
-                    GradientValues(parameters.len(), gradient_values),
+                    self.nll
+                        .accmc_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(mc_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&mc_parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                    gradient_values,
                 )
             })
             .map(|(weight, amp_vals, grad_vals)| {
@@ -1482,9 +1470,9 @@ pub struct PyNLL(pub Box<NLL>);
 #[pymethods]
 impl PyNLL {
     #[new]
-    #[pyo3(signature = (model, ds_data, ds_accmc))]
-    fn new(model: &PyModel, ds_data: &PyDataset, ds_accmc: &PyDataset) -> Self {
-        Self(NLL::new(&model.0, &ds_data.0, &ds_accmc.0))
+    #[pyo3(signature = (expression, ds_data, ds_accmc))]
+    fn new(expression: &PyExpression, ds_data: &PyDataset, ds_accmc: &PyDataset) -> PyResult<Self> {
+        Ok(Self(NLL::new(&expression.0, &ds_data.0, &ds_accmc.0)?))
     }
     /// The underlying signal dataset used in calculating the NLL
     ///
@@ -3607,10 +3595,11 @@ mod tests {
     };
     use approx::assert_relative_eq;
     use laddu_core::{
-        amplitudes::{parameter, Amplitude, AmplitudeID, Manager, ParameterLike},
+        amplitudes::{parameter, Amplitude, AmplitudeID, ParameterLike},
         data::{Dataset, DatasetMetadata, EventData},
         resources::{Cache, ParameterID, Parameters, Resources},
         utils::vectors::Vec4,
+        Expression, LadduResult,
     };
     use nalgebra::DVector;
     use num::complex::Complex64;
@@ -3625,19 +3614,19 @@ mod tests {
     }
 
     impl ConstantAmplitude {
-        fn new(name: &str, parameter: ParameterLike) -> Box<Self> {
+        fn new(name: &str, parameter: ParameterLike) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 parameter,
                 pid: ParameterID::default(),
             }
-            .into()
+            .into_expression()
         }
     }
 
     #[typetag::serde]
     impl Amplitude for ConstantAmplitude {
-        fn register(&mut self, resources: &mut Resources) -> laddu_core::LadduResult<AmplitudeID> {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
             self.pid = resources.register_parameter(&self.parameter);
             resources.register_amplitude(&self.name)
         }
@@ -3680,15 +3669,11 @@ mod tests {
     }
 
     fn make_constant_nll() -> (Box<NLL>, Vec<f64>) {
-        let mut manager = Manager::default();
-        let aid = manager
-            .register(ConstantAmplitude::new("amp", parameter("scale")))
-            .expect("register amplitude");
-        let expr = aid.norm_sqr();
-        let model = manager.model(&expr);
+        let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
+        let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0]);
         let mc = dataset_with_weights(&[0.5, 1.5]);
-        let nll = NLL::new(&model, &data, &mc);
+        let nll = NLL::new(&expr, &data, &mc).unwrap();
         (nll, vec![2.0])
     }
 

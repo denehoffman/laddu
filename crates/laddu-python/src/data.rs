@@ -96,7 +96,7 @@ impl PyEvent {
         aux_names: Option<Vec<String>>,
         aliases: Option<Bound<PyDict>>,
     ) -> PyResult<Self> {
-        let mut event = EventData {
+        let event = EventData {
             p4s: p4s.into_iter().map(|arr| arr.0).collect(),
             aux,
             weight,

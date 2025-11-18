@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -8,7 +8,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyVariable,
 };
 use nalgebra::DVector;
@@ -36,7 +36,7 @@ impl PiecewiseScalar {
         bins: usize,
         range: (f64, f64),
         values: Vec<ParameterLike>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             values.len(),
@@ -51,7 +51,7 @@ impl PiecewiseScalar {
             pids: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -122,8 +122,8 @@ impl Amplitude for PiecewiseScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -134,7 +134,6 @@ impl Amplitude for PiecewiseScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -150,15 +149,15 @@ pub fn py_piecewise_scalar(
     bins: usize,
     range: (f64, f64),
     values: Vec<PyParameterLike>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewiseScalar::new(
+    Ok(PyExpression(PiecewiseScalar::new(
         name,
         &variable,
         bins,
         range,
         values.into_iter().map(|value| value.0).collect(),
-    )))
+    )?))
 }
 
 /// A piecewise complex-valued [`Amplitude`] which just contains two parameters representing its real and
@@ -181,7 +180,7 @@ impl PiecewiseComplexScalar {
         bins: usize,
         range: (f64, f64),
         re_ims: Vec<(ParameterLike, ParameterLike)>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             re_ims.len(),
@@ -196,7 +195,7 @@ impl PiecewiseComplexScalar {
             pids_re_im: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -280,8 +279,8 @@ impl Amplitude for PiecewiseComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -292,7 +291,6 @@ impl Amplitude for PiecewiseComplexScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -308,9 +306,9 @@ pub fn py_piecewise_complex_scalar(
     bins: usize,
     range: (f64, f64),
     values: Vec<(PyParameterLike, PyParameterLike)>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewiseComplexScalar::new(
+    Ok(PyExpression(PiecewiseComplexScalar::new(
         name,
         &variable,
         bins,
@@ -319,7 +317,7 @@ pub fn py_piecewise_complex_scalar(
             .into_iter()
             .map(|(value_re, value_im)| (value_re.0, value_im.0))
             .collect(),
-    )))
+    )?))
 }
 
 /// A piecewise complex-valued [`Amplitude`] which just contains two parameters representing its magnitude and
@@ -342,7 +340,7 @@ impl PiecewisePolarComplexScalar {
         bins: usize,
         range: (f64, f64),
         r_thetas: Vec<(ParameterLike, ParameterLike)>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             r_thetas.len(),
@@ -357,7 +355,7 @@ impl PiecewisePolarComplexScalar {
             pids_r_theta: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -444,8 +442,8 @@ impl Amplitude for PiecewisePolarComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -456,7 +454,6 @@ impl Amplitude for PiecewisePolarComplexScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -472,9 +469,9 @@ pub fn py_piecewise_polar_complex_scalar(
     bins: usize,
     range: (f64, f64),
     values: Vec<(PyParameterLike, PyParameterLike)>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewisePolarComplexScalar::new(
+    Ok(PyExpression(PiecewisePolarComplexScalar::new(
         name,
         &variable,
         bins,
@@ -483,21 +480,20 @@ pub fn py_piecewise_polar_complex_scalar(
             .into_iter()
             .map(|(value_re, value_im)| (value_re.0, value_im.0))
             .collect(),
-    )))
+    )?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass, PI};
+    use laddu_core::{data::test_dataset, parameter, Mass, PI};
     use std::sync::Arc;
 
     #[test]
     fn test_piecewise_scalar_creation_and_evaluation() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewiseScalar::new(
+        let expr = PiecewiseScalar::new(
             "test_scalar",
             &v,
             3,
@@ -507,13 +503,11 @@ mod tests {
                 parameter("test_param1"),
                 parameter("test_param2"),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // Direct amplitude evaluation
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 2.2, 3.3];
         let result = evaluator.evaluate(&params);
@@ -524,9 +518,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_scalar_gradient() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewiseScalar::new(
+        let expr = PiecewiseScalar::new(
             "test_scalar",
             &v,
             3,
@@ -536,13 +529,12 @@ mod tests {
                 parameter("test_param1"),
                 parameter("test_param2"),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap()
+        .norm_sqr(); // |f(x)|^2
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.0, 2.0, 3.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -558,9 +550,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewiseComplexScalar::new(
+        let expr = PiecewiseComplexScalar::new(
             "test_complex",
             &v,
             3,
@@ -570,13 +561,11 @@ mod tests {
                 (parameter("re_param1"), parameter("im_param1")),
                 (parameter("re_param2"), parameter("im_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 1.2, 2.1, 2.2, 3.1, 3.2]; // Real and imaginary parts
         let result = evaluator.evaluate(&params);
@@ -587,9 +576,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_complex_scalar_gradient() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewiseComplexScalar::new(
+        let expr = PiecewiseComplexScalar::new(
             "test_complex",
             &v,
             3,
@@ -599,13 +587,12 @@ mod tests {
                 (parameter("re_param1"), parameter("im_param1")),
                 (parameter("re_param2"), parameter("im_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap()
+        .norm_sqr(); // |f(x + iy)|^2
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x + iy)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 1.2, 2.1, 2.2, 3.1, 3.2]; // Real and imaginary parts
         let gradient = evaluator.evaluate_gradient(&params);
@@ -627,9 +614,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_polar_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewisePolarComplexScalar::new(
+        let expr = PiecewisePolarComplexScalar::new(
             "test_polar",
             &v,
             3,
@@ -639,13 +625,11 @@ mod tests {
                 (parameter("r_param1"), parameter("theta_param1")),
                 (parameter("r_param2"), parameter("theta_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
@@ -666,9 +650,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_polar_complex_scalar_gradient() {
-        let mut manager = Manager::default();
         let v = Mass::new(["kshort1"]);
-        let amp = PiecewisePolarComplexScalar::new(
+        let expr = PiecewisePolarComplexScalar::new(
             "test_polar",
             &v,
             3,
@@ -678,13 +661,11 @@ mod tests {
                 (parameter("r_param1"), parameter("theta_param1")),
                 (parameter("r_param2"), parameter("theta_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // f(r,θ) = re^(iθ)
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;

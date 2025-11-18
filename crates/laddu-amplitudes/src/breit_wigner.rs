@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
@@ -12,7 +12,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
@@ -53,7 +53,7 @@ impl BreitWigner {
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
         resonance_mass: &Mass,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             mass,
@@ -65,7 +65,7 @@ impl BreitWigner {
             daughter_2_mass: daughter_2_mass.clone(),
             resonance_mass: resonance_mass.clone(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -141,12 +141,8 @@ impl Amplitude for BreitWigner {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "BreitWigner")]
@@ -158,8 +154,8 @@ pub fn py_breit_wigner(
     daughter_1_mass: &PyMass,
     daughter_2_mass: &PyMass,
     resonance_mass: &PyMass,
-) -> PyAmplitude {
-    PyAmplitude(BreitWigner::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(BreitWigner::new(
         name,
         mass.0,
         width.0,
@@ -167,7 +163,7 @@ pub fn py_breit_wigner(
         &daughter_1_mass.0,
         &daughter_2_mass.0,
         &resonance_mass.0,
-    ))
+    )?))
 }
 
 #[cfg(test)]
@@ -176,12 +172,11 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
 
     #[test]
     fn test_bw_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let mut manager = Manager::default();
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
@@ -193,11 +188,9 @@ mod tests {
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
-        );
-        let aid = manager.register(amp).unwrap();
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = amp.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
@@ -208,7 +201,6 @@ mod tests {
     #[test]
     fn test_bw_gradient() {
         let dataset = Arc::new(test_dataset());
-        let mut manager = Manager::default();
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
@@ -220,12 +212,9 @@ mod tests {
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = amp.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
         assert_relative_eq!(result[0][0].re, -2.4105851202988857);

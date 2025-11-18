@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID},
+    amplitudes::{Amplitude, AmplitudeID, Expression},
     data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
@@ -9,7 +9,7 @@ use laddu_core::{
     LadduResult,
 };
 #[cfg(feature = "python")]
-use laddu_python::{amplitudes::PyAmplitude, utils::variables::PyAngles};
+use laddu_python::{amplitudes::PyExpression, utils::variables::PyAngles};
 use nalgebra::DVector;
 use num::complex::Complex64;
 #[cfg(feature = "python")]
@@ -29,7 +29,7 @@ pub struct Ylm {
 impl Ylm {
     /// Construct a new [`Ylm`] with the given name, angular momentum (`l`) and moment (`m`) over
     /// the given set of [`Angles`].
-    pub fn new(name: &str, l: usize, m: isize, angles: &Angles) -> Box<Self> {
+    pub fn new(name: &str, l: usize, m: isize, angles: &Angles) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             l,
@@ -37,7 +37,7 @@ impl Ylm {
             angles: angles.clone(),
             csid: ComplexScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -98,17 +98,13 @@ impl Amplitude for Ylm {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "Ylm")]
-pub fn py_ylm(name: &str, l: usize, m: isize, angles: &PyAngles) -> PyAmplitude {
-    PyAmplitude(Ylm::new(name, l, m, &angles.0))
+pub fn py_ylm(name: &str, l: usize, m: isize, angles: &PyAngles) -> PyResult<PyExpression> {
+    Ok(PyExpression(Ylm::new(name, l, m, &angles.0)?))
 }
 
 #[cfg(test)]
@@ -117,7 +113,7 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame};
 
     fn reaction_topology() -> Topology {
         Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
@@ -125,14 +121,10 @@ mod tests {
 
     #[test]
     fn test_ylm_evaluation() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
-        let amp = Ylm::new("ylm", 1, 1, &angles);
-        let aid = manager.register(amp).unwrap();
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
@@ -142,14 +134,10 @@ mod tests {
 
     #[test]
     fn test_ylm_gradient() {
-        let mut manager = Manager::default();
         let dataset = Arc::new(test_dataset());
         let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
-        let amp = Ylm::new("ylm", 1, 1, &angles);
-        let aid = manager.register(amp).unwrap();
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

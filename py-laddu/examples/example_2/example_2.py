@@ -45,9 +45,8 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
         pol_term = np.cos(2 * big_phi) / p_gamma
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
-    manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
-    model = manager.model(ylm.conj())
+    ylm = ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'))
+    model = ylm.conj()
     evaluator = model.load(data)
     values = evaluator.evaluate([])
     weights = data.weights
@@ -65,9 +64,7 @@ def get_norm_int_term(
     lp: int,
     mp: int,
 ) -> complex:
-    const = (
-        8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
-    )
+    const = 8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
     big_phi = accmc[polarization.pol_angle]
@@ -81,10 +78,11 @@ def get_norm_int_term(
         pol_term *= np.cos(2 * big_phi) * p_gamma
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
-    manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
-    ylpmp = manager.register(ld.Ylm('ylpmp', lp, mp, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')))
-    model = manager.model(ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real()))
+    ylm = ld.Ylm('ylm', l, m, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'))
+    ylpmp = ld.Ylm(
+        'ylpmp', lp, mp, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1')
+    )
+    model = ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real())
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])
     weights = accmc.weights
@@ -141,9 +139,7 @@ def calculate_moments(
 def get_names(*, l_max: int, polarized: bool) -> list[tuple[str, int, int, int]]:
     return [
         (
-            (r'$\Im[' if i == 2 else '$')
-            + f'H_{i}({l}, {m})'
-            + (']$' if i == 2 else '$'),
+            (r'$\Im[' if i == 2 else '$') + f'H_{i}({l}, {m})' + (']$' if i == 2 else '$'),
             i,
             l,
             m,
@@ -233,12 +229,8 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.Dataset.open(
-            script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns
-        )
-        accmc = ld.Dataset.open(
-            script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns
-        )
+        data = ld.Dataset.open(script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns)
+        accmc = ld.Dataset.open(script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns)
         mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
@@ -294,9 +286,7 @@ if __name__ == '__main__':
                 fmt='.',
             )
             ax[l - (1 if j == 2 else 0), m - (1 if j == 2 else 0)].set_title(name)
-            ax[l - (1 if j == 2 else 0), m - (1 if j == 2 else 0)].set_xlabel(
-                'Mass of $K_S^0 K_S^0$ (GeV/$c^2$)'
-            )
+            ax[l - (1 if j == 2 else 0), m - (1 if j == 2 else 0)].set_xlabel('Mass of $K_S^0 K_S^0$ (GeV/$c^2$)')
         for l in range(l_max + (1 if j != 2 else 0)):
             for m in range(l_max + (1 if j != 2 else 0)):
                 if m > l:

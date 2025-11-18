@@ -1,12 +1,7 @@
 use crate::data::PyDataset;
 use laddu_core::{
-    amplitudes::{
-        constant, parameter, Amplitude, AmplitudeID, Evaluator, Expression, Manager, Model,
-        ParameterLike, TestAmplitude,
-    },
-    f64,
-    traits::ReadWrite,
-    LadduError,
+    amplitudes::{constant, parameter, Evaluator, Expression, ParameterLike, TestAmplitude},
+    f64, LadduError, ReadWrite,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -18,507 +13,99 @@ use pyo3::{
 #[cfg(feature = "rayon")]
 use rayon::ThreadPoolBuilder;
 
-/// An object which holds a registered ``Amplitude``
-///
-/// See Also
-/// --------
-/// laddu.Manager.register
-///
-#[pyclass(name = "AmplitudeID", module = "laddu")]
-#[derive(Clone)]
-pub struct PyAmplitudeID(AmplitudeID);
-
-/// A mathematical expression formed from AmplitudeIDs
+/// A mathematical expression formed from amplitudes.
 ///
 #[pyclass(name = "Expression", module = "laddu")]
 #[derive(Clone)]
-pub struct PyExpression(Expression);
+pub struct PyExpression(pub Expression);
 
-/// A convenience method to sum sequences of Amplitudes
+/// A convenience method to sum sequences of Expressions
 ///
-#[pyfunction(name = "amplitude_sum")]
-pub fn py_amplitude_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
+#[pyfunction(name = "expr_sum")]
+pub fn py_expr_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
     if terms.is_empty() {
-        return Ok(PyExpression(Expression::Zero));
+        return Ok(PyExpression(Expression::zero()));
     }
     if terms.len() == 1 {
         let term = &terms[0];
         if let Ok(expression) = term.extract::<PyExpression>() {
             return Ok(expression);
         }
-        if let Ok(py_amplitude_id) = term.extract::<PyAmplitudeID>() {
-            return Ok(PyExpression(Expression::Amp(py_amplitude_id.0)));
-        }
-        return Err(PyTypeError::new_err(
-            "Item is neither a PyExpression nor a PyAmplitudeID",
-        ));
+        return Err(PyTypeError::new_err("Item is not a PyExpression"));
     }
     let mut iter = terms.iter();
     let Some(first_term) = iter.next() else {
-        return Ok(PyExpression(Expression::Zero));
+        return Ok(PyExpression(Expression::zero()));
     };
-    if let Ok(first_expression) = first_term.extract::<PyExpression>() {
-        let mut summation = first_expression.clone();
-        for term in iter {
-            summation = summation.__add__(term)?;
-        }
-        return Ok(summation);
+    let PyExpression(mut summation) = first_term
+        .extract::<PyExpression>()
+        .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
+    for term in iter {
+        let PyExpression(expr) = term
+            .extract::<PyExpression>()
+            .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
+        summation = summation + expr;
     }
-    if let Ok(first_amplitude_id) = first_term.extract::<PyAmplitudeID>() {
-        let mut summation = PyExpression(Expression::Amp(first_amplitude_id.0));
-        for term in iter {
-            summation = summation.__add__(term)?;
-        }
-        return Ok(summation);
-    }
-    Err(PyTypeError::new_err(
-        "Elements must be PyExpression or PyAmplitudeID",
-    ))
+    Ok(PyExpression(summation))
 }
 
-/// A convenience method to multiply sequences of Amplitudes
+/// A convenience method to multiply sequences of Expressions
 ///
-#[pyfunction(name = "amplitude_product")]
-pub fn py_amplitude_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
+#[pyfunction(name = "expr_product")]
+pub fn py_expr_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyExpression> {
     if terms.is_empty() {
-        return Ok(PyExpression(Expression::One));
+        return Ok(PyExpression(Expression::one()));
     }
     if terms.len() == 1 {
         let term = &terms[0];
         if let Ok(expression) = term.extract::<PyExpression>() {
             return Ok(expression);
         }
-        if let Ok(py_amplitude_id) = term.extract::<PyAmplitudeID>() {
-            return Ok(PyExpression(Expression::Amp(py_amplitude_id.0)));
-        }
-        return Err(PyTypeError::new_err(
-            "Item is neither a PyExpression nor a PyAmplitudeID",
-        ));
+        return Err(PyTypeError::new_err("Item is not a PyExpression"));
     }
     let mut iter = terms.iter();
     let Some(first_term) = iter.next() else {
-        return Ok(PyExpression(Expression::One));
+        return Ok(PyExpression(Expression::one()));
     };
-    if let Ok(first_expression) = first_term.extract::<PyExpression>() {
-        let mut product = first_expression.clone();
-        for term in iter {
-            product = product.__mul__(term)?;
-        }
-        return Ok(product);
+    let PyExpression(mut product) = first_term
+        .extract::<PyExpression>()
+        .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
+    for term in iter {
+        let PyExpression(expr) = term
+            .extract::<PyExpression>()
+            .map_err(|_| PyTypeError::new_err("Elements must be PyExpression"))?;
+        product = product * expr;
     }
-    if let Ok(first_amplitude_id) = first_term.extract::<PyAmplitudeID>() {
-        let mut product = PyExpression(Expression::Amp(first_amplitude_id.0));
-        for term in iter {
-            product = product.__mul__(term)?;
-        }
-        return Ok(product);
-    }
-    Err(PyTypeError::new_err(
-        "Elements must be PyExpression or PyAmplitudeID",
-    ))
+    Ok(PyExpression(product))
 }
 
 /// A convenience class representing a zero-valued Expression
 ///
-#[pyfunction(name = "AmplitudeZero")]
-pub fn py_amplitude_zero() -> PyExpression {
-    PyExpression(Expression::Zero)
+#[pyfunction(name = "Zero")]
+pub fn py_expr_zero() -> PyExpression {
+    PyExpression(Expression::zero())
 }
 
 /// A convenience class representing a unit-valued Expression
 ///
-#[pyfunction(name = "AmplitudeOne")]
-pub fn py_amplitude_one() -> PyExpression {
-    PyExpression(Expression::One)
-}
-
-#[pymethods]
-impl PyAmplitudeID {
-    /// The real part of a complex Amplitude
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The real part of the given Amplitude
-    ///
-    fn real(&self) -> PyExpression {
-        PyExpression(self.0.real())
-    }
-    /// The imaginary part of a complex Amplitude
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The imaginary part of the given Amplitude
-    ///
-    fn imag(&self) -> PyExpression {
-        PyExpression(self.0.imag())
-    }
-    /// The complex conjugate of a complex Amplitude
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The complex conjugate of the given Amplitude
-    ///
-    fn conj(&self) -> PyExpression {
-        PyExpression(self.0.conj())
-    }
-    /// The norm-squared of a complex Amplitude
-    ///
-    /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The norm-squared of the given Amplitude
-    ///
-    fn norm_sqr(&self) -> PyExpression {
-        PyExpression(self.0.norm_sqr())
-    }
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() + other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() + other_expr.0.clone()))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(Expression::Amp(self.0.clone())))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() + self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() + self.0.clone()))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(Expression::Amp(self.0.clone())))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() - other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() - other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
-    }
-    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() - self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() - self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
-    }
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() * other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() * other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() * self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() * self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() / other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() / other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
-        }
-    }
-    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() / self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() / self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
-        }
-    }
-    fn __neg__(&self) -> PyExpression {
-        PyExpression(-self.0.clone())
-    }
-    fn __str__(&self) -> String {
-        format!("{}", self.0)
-    }
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
+#[pyfunction(name = "One")]
+pub fn py_expr_one() -> PyExpression {
+    PyExpression(Expression::one())
 }
 
 #[pymethods]
 impl PyExpression {
-    /// The real part of a complex Expression
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The real part of the given Expression
-    ///
-    fn real(&self) -> PyExpression {
-        PyExpression(self.0.real())
-    }
-    /// The imaginary part of a complex Expression
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The imaginary part of the given Expression
-    ///
-    fn imag(&self) -> PyExpression {
-        PyExpression(self.0.imag())
-    }
-    /// The complex conjugate of a complex Expression
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The complex conjugate of the given Expression
-    ///
-    fn conj(&self) -> PyExpression {
-        PyExpression(self.0.conj())
-    }
-    /// The norm-squared of a complex Expression
-    ///
-    /// This is computed as :math:`AA^*` where :math:`A^*` is the complex conjugate
-    ///
-    /// Returns
-    /// -------
-    /// Expression
-    ///     The norm-squared of the given Expression
-    ///
-    fn norm_sqr(&self) -> PyExpression {
-        PyExpression(self.0.norm_sqr())
-    }
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() + other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() + other_expr.0.clone()))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(self.0.clone()))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() + self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() + self.0.clone()))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(self.0.clone()))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() - other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() - other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
-    }
-    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() - self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() - self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for -"))
-        }
-    }
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() * other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() * other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() * self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() * self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(self.0.clone() / other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.clone() / other_expr.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
-        }
-    }
-    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyAmplitudeID>>() {
-            Ok(PyExpression(other_aid.0.clone() / self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyExpression>() {
-            Ok(PyExpression(other_expr.0.clone() / self.0.clone()))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for /"))
-        }
-    }
-    fn __neg__(&self) -> PyExpression {
-        PyExpression(-self.0.clone())
-    }
-    fn __str__(&self) -> String {
-        format!("{}", self.0)
-    }
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-}
-
-/// A class which can be used to register Amplitudes and store precalculated data
-///
-#[pyclass(name = "Manager", module = "laddu")]
-pub struct PyManager(Manager);
-
-#[pymethods]
-impl PyManager {
-    #[new]
-    fn new() -> Self {
-        Self(Manager::default())
-    }
-    /// The free parameters used by the Manager
+    /// The free parameters used by the Expression
     ///
     /// Returns
     /// -------
     /// parameters : list of str
     ///     The list of parameter names
-    ///
     #[getter]
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
     }
-    /// Register an Amplitude with the Manager
-    ///
-    /// Parameters
-    /// ----------
-    /// amplitude : Amplitude
-    ///     The Amplitude to register
-    ///
-    /// Returns
-    /// -------
-    /// AmplitudeID
-    ///     A reference to the registered `amplitude` that can be used to form complex
-    ///     Expressions
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the name of the ``amplitude`` has already been registered
-    ///
-    fn register(&mut self, amplitude: &PyAmplitude) -> PyResult<PyAmplitudeID> {
-        Ok(PyAmplitudeID(self.0.register(amplitude.0.clone())?))
-    }
-    /// Generate a Model from the given expression made of registered Amplitudes
-    ///
-    /// Parameters
-    /// ----------
-    /// expression : Expression or AmplitudeID
-    ///     The expression to use in precalculation
-    ///
-    /// Returns
-    /// -------
-    /// Model
-    ///     An object which represents the underlying mathematical model and can be loaded with
-    ///     a Dataset
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If the expression is not convertable to a Model
-    ///
-    /// Notes
-    /// -----
-    /// While the given `expression` will be the one evaluated in the end, all registered
-    /// Amplitudes will be loaded, and all of their parameters will be included in the final
-    /// expression. These parameters will have no effect on evaluation, but they must be
-    /// included in function calls.
-    ///
-    fn model(&self, expression: &Bound<'_, PyAny>) -> PyResult<PyModel> {
-        let expression = if let Ok(expression) = expression.extract::<PyExpression>() {
-            Ok(expression.0)
-        } else if let Ok(aid) = expression.extract::<PyAmplitudeID>() {
-            Ok(Expression::Amp(aid.0))
-        } else {
-            Err(PyTypeError::new_err(
-                "'expression' must either by an Expression or AmplitudeID",
-            ))
-        }?;
-        Ok(PyModel(self.0.model(&expression)))
-    }
-}
-
-/// A class which represents a model composed of registered Amplitudes
-///
-#[pyclass(name = "Model", module = "laddu")]
-pub struct PyModel(pub Model);
-
-#[pymethods]
-impl PyModel {
-    /// The free parameters used by the Manager
-    ///
-    /// Returns
-    /// -------
-    /// parameters : list of str
-    ///     The list of parameter names
-    ///
-    #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
-    }
-    /// Load a Model by precalculating each term over the given Dataset
+    /// Load an Expression by precalculating each term over the given Dataset
     ///
     /// Parameters
     /// ----------
@@ -530,20 +117,110 @@ impl PyModel {
     /// Evaluator
     ///     An object that can be used to evaluate the `expression` over each event in the
     ///     `dataset`
-    ///
-    /// Notes
-    /// -----
-    /// While the given `expression` will be the one evaluated in the end, all registered
-    /// Amplitudes will be loaded, and all of their parameters will be included in the final
-    /// expression. These parameters will have no effect on evaluation, but they must be
-    /// included in function calls.
-    ///
-    fn load(&self, dataset: &PyDataset) -> PyEvaluator {
-        PyEvaluator(self.0.load(&dataset.0))
+    fn load(&self, dataset: &PyDataset) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.load(&dataset.0)?))
     }
+    /// The real part of a complex Expression
+    fn real(&self) -> PyExpression {
+        PyExpression(self.0.real())
+    }
+    /// The imaginary part of a complex Expression
+    fn imag(&self) -> PyExpression {
+        PyExpression(self.0.imag())
+    }
+    /// The complex conjugate of a complex Expression
+    fn conj(&self) -> PyExpression {
+        PyExpression(self.0.conj())
+    }
+    /// The norm-squared of a complex Expression
+    fn norm_sqr(&self) -> PyExpression {
+        PyExpression(self.0.norm_sqr())
+    }
+    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() + other_expr.0))
+        } else if let Ok(other_int) = other.extract::<usize>() {
+            if other_int == 0 {
+                Ok(PyExpression(self.0.clone()))
+            } else {
+                Err(PyTypeError::new_err(
+                    "Addition with an integer for this type is only defined for 0",
+                ))
+            }
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for +"))
+        }
+    }
+    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0 + self.0.clone()))
+        } else if let Ok(other_int) = other.extract::<usize>() {
+            if other_int == 0 {
+                Ok(PyExpression(self.0.clone()))
+            } else {
+                Err(PyTypeError::new_err(
+                    "Addition with an integer for this type is only defined for 0",
+                ))
+            }
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for +"))
+        }
+    }
+    fn __sub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() - other_expr.0))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
+    fn __rsub__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0 - self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for -"))
+        }
+    }
+    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() * other_expr.0))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for *"))
+        }
+    }
+    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0 * self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for *"))
+        }
+    }
+    fn __truediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.clone() / other_expr.0))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __rtruediv__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(other_expr) = other.extract::<PyExpression>() {
+            Ok(PyExpression(other_expr.0 / self.0.clone()))
+        } else {
+            Err(PyTypeError::new_err("Unsupported operand type for /"))
+        }
+    }
+    fn __neg__(&self) -> PyExpression {
+        PyExpression(-self.0.clone())
+    }
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
     #[new]
     fn new() -> Self {
-        Self(Model::create_null())
+        Self(Expression::create_null())
     }
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(
@@ -554,7 +231,7 @@ impl PyModel {
         ))
     }
     fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-        *self = PyModel(
+        *self = Self(
             bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
                 .map_err(LadduError::DecodeError)?
                 .0,
@@ -563,20 +240,11 @@ impl PyModel {
     }
 }
 
-/// An Amplitude which can be registered by a Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
-///
-#[pyclass(name = "Amplitude", module = "laddu")]
-pub struct PyAmplitude(pub Box<dyn Amplitude>);
-
 /// A class which can be used to evaluate a stored Expression
 ///
 /// See Also
 /// --------
-/// laddu.Manager.load
+/// laddu.Expression.load
 ///
 #[pyclass(name = "Evaluator", module = "laddu")]
 #[derive(Clone)]
@@ -955,6 +623,10 @@ pub fn py_constant(value: f64) -> PyParameterLike {
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.
 #[pyfunction(name = "TestAmplitude")]
-pub fn py_test_amplitude(name: &str, re: PyParameterLike, im: PyParameterLike) -> PyAmplitude {
-    PyAmplitude(TestAmplitude::new(name, re.0, im.0))
+pub fn py_test_amplitude(
+    name: &str,
+    re: PyParameterLike,
+    im: PyParameterLike,
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(TestAmplitude::new(name, re.0, im.0)?))
 }

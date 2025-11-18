@@ -2,16 +2,7 @@ from __future__ import annotations
 
 import laddu.laddu as _laddu
 from laddu import amplitudes, data, experimental, extensions, mpi, utils
-from laddu.amplitudes import (
-    AmplitudeOne,
-    AmplitudeZero,
-    Manager,
-    Model,
-    amplitude_product,
-    amplitude_sum,
-    constant,
-    parameter,
-)
+from laddu.amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from laddu.amplitudes.breit_wigner import BreitWigner
 from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
@@ -46,6 +37,7 @@ from laddu.extensions import (
     likelihood_product,
     likelihood_sum,
 )
+from laddu.laddu import Evaluator, Expression, ParameterLike
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -68,8 +60,6 @@ available_parallelism = _laddu.available_parallelism
 
 __all__ = [
     'NLL',
-    'AmplitudeOne',
-    'AmplitudeZero',
     'Angles',
     'AutocorrelationTerminator',
     'BinnedDataset',
@@ -80,7 +70,9 @@ __all__ = [
     'Dataset',
     'DatasetBase',
     'EnsembleStatus',
+    'Evaluator',
     'Event',
+    'Expression',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodID',
@@ -92,14 +84,14 @@ __all__ = [
     'MCMCObserver',
     'MCMCSummary',
     'MCMCTerminator',
-    'Manager',
     'Mandelstam',
     'Mass',
     'MinimizationObserver',
     'MinimizationStatus',
     'MinimizationSummary',
     'MinimizationTerminator',
-    'Model',
+    'One',
+    'ParameterLike',
     'PhaseSpaceFactor',
     'Phi',
     'PolAngle',
@@ -116,14 +108,15 @@ __all__ = [
     'Vec4',
     'Walker',
     'Ylm',
+    'Zero',
     'Zlm',
     '__version__',
-    'amplitude_product',
-    'amplitude_sum',
     'amplitudes',
     'constant',
     'data',
     'experimental',
+    'expr_product',
+    'expr_sum',
     'extensions',
     'integrated_autocorrelation_times',
     'likelihood_product',

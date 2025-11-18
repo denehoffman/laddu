@@ -1,6 +1,9 @@
 use std::{
     fmt::{Debug, Display},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use auto_ops::*;
@@ -13,10 +16,16 @@ use parking_lot::RwLock;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+static AMPLITUDE_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_amplitude_id() -> u64 {
+    AMPLITUDE_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 use crate::{
     data::{Dataset, DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
-    LadduResult, ParameterID, ReadWrite,
+    LadduError, LadduResult, ParameterID, ReadWrite,
 };
 
 #[cfg(feature = "mpi")]
@@ -171,6 +180,17 @@ pub trait Amplitude: DynClone + Send + Sync {
             gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
         }
     }
+
+    /// Convenience helper to wrap an amplitude into an [`Expression`].
+    ///
+    /// This allows amplitude constructors to return `LadduResult<Expression>` without duplicating
+    /// boxing/registration boilerplate.
+    fn into_expression(self) -> LadduResult<Expression>
+    where
+        Self: Sized + 'static,
+    {
+        Expression::from_amplitude(Box::new(self))
+    }
 }
 
 /// Utility function to calculate a central finite difference gradient.
@@ -205,7 +225,7 @@ pub struct AmplitudeValues(pub Vec<Complex64>);
 pub struct GradientValues(pub usize, pub Vec<DVector<Complex64>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
-/// build [`Expression`]s and should be obtained from the [`Manager::register`] method.
+/// build [`Expression`]s and should be obtained from the [`Resources::register`] method.
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
@@ -215,187 +235,209 @@ impl Display for AmplitudeID {
     }
 }
 
-impl From<AmplitudeID> for Expression {
-    fn from(value: AmplitudeID) -> Self {
-        Self::Amp(value)
+/// A holder struct that owns both an expression tree and the registered amplitudes.
+#[allow(missing_docs)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Expression {
+    registry: ExpressionRegistry,
+    tree: ExpressionNode,
+}
+
+impl ReadWrite for Expression {
+    fn create_null() -> Self {
+        Self {
+            registry: ExpressionRegistry::default(),
+            tree: ExpressionNode::default(),
+        }
     }
 }
 
-/// An expression tree which contains [`AmplitudeID`]s and operators over them.
-#[derive(Clone, Serialize, Deserialize, Default)]
-pub enum Expression {
+#[derive(Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
+#[derive(Default)]
+pub struct ExpressionRegistry {
+    amplitudes: Vec<Box<dyn Amplitude>>,
+    amplitude_names: Vec<String>,
+    amplitude_ids: Vec<u64>,
+    resources: Resources,
+}
+
+impl ExpressionRegistry {
+    fn singleton(mut amplitude: Box<dyn Amplitude>) -> LadduResult<Self> {
+        let mut resources = Resources::default();
+        let aid = amplitude.register(&mut resources)?;
+        let amp_id = next_amplitude_id();
+        Ok(Self {
+            amplitudes: vec![amplitude],
+            amplitude_names: vec![aid.0],
+            amplitude_ids: vec![amp_id],
+            resources,
+        })
+    }
+
+    fn merge(&self, other: &Self) -> LadduResult<(Self, Vec<usize>, Vec<usize>)> {
+        let mut resources = Resources::default();
+        let mut amplitudes = Vec::new();
+        let mut amplitude_names = Vec::new();
+        let mut amplitude_ids = Vec::new();
+        let mut name_to_index = std::collections::HashMap::new();
+
+        let mut left_map = Vec::with_capacity(self.amplitudes.len());
+        for ((amp, name), amp_id) in self
+            .amplitudes
+            .iter()
+            .zip(&self.amplitude_names)
+            .zip(&self.amplitude_ids)
+        {
+            let mut cloned_amp = dyn_clone::clone_box(&**amp);
+            let aid = cloned_amp.register(&mut resources)?;
+            amplitudes.push(cloned_amp);
+            amplitude_names.push(name.clone());
+            amplitude_ids.push(*amp_id);
+            name_to_index.insert(name.clone(), aid.1);
+            left_map.push(aid.1);
+        }
+
+        let mut right_map = Vec::with_capacity(other.amplitudes.len());
+        for ((amp, name), amp_id) in other
+            .amplitudes
+            .iter()
+            .zip(&other.amplitude_names)
+            .zip(&other.amplitude_ids)
+        {
+            if let Some(existing) = name_to_index.get(name) {
+                let existing_amp_id = amplitude_ids[*existing];
+                if existing_amp_id != *amp_id {
+                    return Err(LadduError::Custom(format!(
+                        "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
+                    )));
+                }
+                right_map.push(*existing);
+                continue;
+            }
+            let mut cloned_amp = dyn_clone::clone_box(&**amp);
+            let aid = cloned_amp.register(&mut resources)?;
+            amplitudes.push(cloned_amp);
+            amplitude_names.push(name.clone());
+            amplitude_ids.push(*amp_id);
+            name_to_index.insert(name.clone(), aid.1);
+            right_map.push(aid.1);
+        }
+
+        Ok((
+            Self {
+                amplitudes,
+                amplitude_names,
+                amplitude_ids,
+                resources,
+            },
+            left_map,
+            right_map,
+        ))
+    }
+}
+
+/// Expression tree used by [`Expression`].
+#[allow(missing_docs)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+pub enum ExpressionNode {
     #[default]
     /// A expression equal to zero.
     Zero,
     /// A expression equal to one.
     One,
-    /// A registered [`Amplitude`] referenced by an [`AmplitudeID`].
-    Amp(AmplitudeID),
-    /// The sum of two [`Expression`]s.
-    Add(Box<Expression>, Box<Expression>),
-    /// The difference of two [`Expression`]s.
-    Sub(Box<Expression>, Box<Expression>),
-    /// The product of two [`Expression`]s.
-    Mul(Box<Expression>, Box<Expression>),
-    /// The division of two [`Expression`]s.
-    Div(Box<Expression>, Box<Expression>),
-    /// The additive inverse of an [`Expression`].
-    Neg(Box<Expression>),
-    /// The real part of an [`Expression`].
-    Real(Box<Expression>),
-    /// The imaginary part of an [`Expression`].
-    Imag(Box<Expression>),
-    /// The complex conjugate of an [`Expression`].
-    Conj(Box<Expression>),
-    /// The absolute square of an [`Expression`].
-    NormSqr(Box<Expression>),
+    /// A registered [`Amplitude`] referenced by index.
+    Amp(usize),
+    /// The sum of two [`ExpressionNode`]s.
+    Add(Box<ExpressionNode>, Box<ExpressionNode>),
+    /// The difference of two [`ExpressionNode`]s.
+    Sub(Box<ExpressionNode>, Box<ExpressionNode>),
+    /// The product of two [`ExpressionNode`]s.
+    Mul(Box<ExpressionNode>, Box<ExpressionNode>),
+    /// The division of two [`ExpressionNode`]s.
+    Div(Box<ExpressionNode>, Box<ExpressionNode>),
+    /// The additive inverse of an [`ExpressionNode`].
+    Neg(Box<ExpressionNode>),
+    /// The real part of an [`ExpressionNode`].
+    Real(Box<ExpressionNode>),
+    /// The imaginary part of an [`ExpressionNode`].
+    Imag(Box<ExpressionNode>),
+    /// The complex conjugate of an [`ExpressionNode`].
+    Conj(Box<ExpressionNode>),
+    /// The absolute square of an [`ExpressionNode`].
+    NormSqr(Box<ExpressionNode>),
 }
 
-impl Debug for Expression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.write_tree(f, "", "", "")
-    }
-}
-
-impl Display for Expression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-#[rustfmt::skip]
-impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression {
-    Expression::Add(Box::new(a.clone()), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex!(- |a: &Expression, b: &Expression| -> Expression {
-    Expression::Sub(Box::new(a.clone()), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex!(* |a: &Expression, b: &Expression| -> Expression {
-    Expression::Mul(Box::new(a.clone()), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex!(/ |a: &Expression, b: &Expression| -> Expression {
-    Expression::Div(Box::new(a.clone()), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex!(- |a: &Expression| -> Expression {
-    Expression::Neg(Box::new(a.clone()))
-});
-
-#[rustfmt::skip]
-impl_op_ex_commutative!(+ |a: &AmplitudeID, b: &Expression| -> Expression {
-    Expression::Add(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex_commutative!(- |a: &AmplitudeID, b: &Expression| -> Expression {
-    Expression::Sub(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex_commutative!(* |a: &AmplitudeID, b: &Expression| -> Expression {
-    Expression::Mul(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
-});
-#[rustfmt::skip]
-impl_op_ex_commutative!(/ |a: &AmplitudeID, b: &Expression| -> Expression {
-    Expression::Div(Box::new(Expression::Amp(a.clone())), Box::new(b.clone()))
-});
-
-#[rustfmt::skip]
-impl_op_ex!(+ |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
-    Expression::Add(
-        Box::new(Expression::Amp(a.clone())),
-        Box::new(Expression::Amp(b.clone()))
-    )
-});
-#[rustfmt::skip]
-impl_op_ex!(- |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
-    Expression::Sub(
-        Box::new(Expression::Amp(a.clone())),
-        Box::new(Expression::Amp(b.clone()))
-    )
-});
-#[rustfmt::skip]
-impl_op_ex!(* |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
-    Expression::Mul(
-        Box::new(Expression::Amp(a.clone())),
-        Box::new(Expression::Amp(b.clone())),
-    )
-});
-#[rustfmt::skip]
-impl_op_ex!(/ |a: &AmplitudeID, b: &AmplitudeID| -> Expression {
-    Expression::Div(
-        Box::new(Expression::Amp(a.clone())),
-        Box::new(Expression::Amp(b.clone())),
-    )
-});
-#[rustfmt::skip]
-impl_op_ex!(- |a: &AmplitudeID| -> Expression {
-    Expression::Neg(
-        Box::new(Expression::Amp(a.clone())),
-    )
-});
-
-impl AmplitudeID {
-    /// Takes the real part of the given [`Amplitude`].
-    pub fn real(&self) -> Expression {
-        Expression::Real(Box::new(Expression::Amp(self.clone())))
-    }
-    /// Takes the imaginary part of the given [`Amplitude`].
-    pub fn imag(&self) -> Expression {
-        Expression::Imag(Box::new(Expression::Amp(self.clone())))
-    }
-    /// Takes the complex conjugate of the given [`Amplitude`].
-    pub fn conj(&self) -> Expression {
-        Expression::Conj(Box::new(Expression::Amp(self.clone())))
-    }
-    /// Takes the absolute square of the given [`Amplitude`].
-    pub fn norm_sqr(&self) -> Expression {
-        Expression::NormSqr(Box::new(Expression::Amp(self.clone())))
-    }
-}
-
-impl Expression {
-    /// Evaluate an [`Expression`] over a single event using calculated [`AmplitudeValues`]
-    ///
-    /// This method parses the underlying [`Expression`] but doesn't actually calculate the values
-    /// from the [`Amplitude`]s themselves.
-    pub fn evaluate(&self, amplitude_values: &AmplitudeValues) -> Complex64 {
+impl ExpressionNode {
+    fn remap(&self, mapping: &[usize]) -> Self {
         match self {
-            Expression::Amp(aid) => amplitude_values.0[aid.1],
-            Expression::Add(a, b) => a.evaluate(amplitude_values) + b.evaluate(amplitude_values),
-            Expression::Sub(a, b) => a.evaluate(amplitude_values) - b.evaluate(amplitude_values),
-            Expression::Mul(a, b) => a.evaluate(amplitude_values) * b.evaluate(amplitude_values),
-            Expression::Div(a, b) => a.evaluate(amplitude_values) / b.evaluate(amplitude_values),
-            Expression::Neg(a) => -a.evaluate(amplitude_values),
-            Expression::Real(a) => Complex64::new(a.evaluate(amplitude_values).re, 0.0),
-            Expression::Imag(a) => Complex64::new(a.evaluate(amplitude_values).im, 0.0),
-            Expression::Conj(a) => a.evaluate(amplitude_values).conj(),
-            Expression::NormSqr(a) => Complex64::new(a.evaluate(amplitude_values).norm_sqr(), 0.0),
-            Expression::Zero => Complex64::ZERO,
-            Expression::One => Complex64::ONE,
+            Self::Amp(idx) => Self::Amp(mapping[*idx]),
+            Self::Add(a, b) => Self::Add(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Sub(a, b) => Self::Sub(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Mul(a, b) => Self::Mul(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Div(a, b) => Self::Div(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Neg(a) => Self::Neg(Box::new(a.remap(mapping))),
+            Self::Real(a) => Self::Real(Box::new(a.remap(mapping))),
+            Self::Imag(a) => Self::Imag(Box::new(a.remap(mapping))),
+            Self::Conj(a) => Self::Conj(Box::new(a.remap(mapping))),
+            Self::NormSqr(a) => Self::NormSqr(Box::new(a.remap(mapping))),
+            Self::Zero => Self::Zero,
+            Self::One => Self::One,
         }
     }
-    /// Evaluate the gradient of an [`Expression`] over a single event using calculated [`AmplitudeValues`]
+
+    /// Evaluate an [`ExpressionNode`] over a single event using calculated [`AmplitudeValues`]
     ///
-    /// This method parses the underlying [`Expression`] but doesn't actually calculate the
+    /// This method parses the underlying [`ExpressionNode`] but doesn't actually calculate the values
+    /// from the [`Amplitude`]s themselves.
+    pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        match self {
+            ExpressionNode::Amp(idx) => amplitude_values[*idx],
+            ExpressionNode::Add(a, b) => {
+                a.evaluate(amplitude_values) + b.evaluate(amplitude_values)
+            }
+            ExpressionNode::Sub(a, b) => {
+                a.evaluate(amplitude_values) - b.evaluate(amplitude_values)
+            }
+            ExpressionNode::Mul(a, b) => {
+                a.evaluate(amplitude_values) * b.evaluate(amplitude_values)
+            }
+            ExpressionNode::Div(a, b) => {
+                a.evaluate(amplitude_values) / b.evaluate(amplitude_values)
+            }
+            ExpressionNode::Neg(a) => -a.evaluate(amplitude_values),
+            ExpressionNode::Real(a) => Complex64::new(a.evaluate(amplitude_values).re, 0.0),
+            ExpressionNode::Imag(a) => Complex64::new(a.evaluate(amplitude_values).im, 0.0),
+            ExpressionNode::Conj(a) => a.evaluate(amplitude_values).conj(),
+            ExpressionNode::NormSqr(a) => {
+                let value = a.evaluate(amplitude_values);
+                Complex64::new(value.norm_sqr(), 0.0)
+            }
+            ExpressionNode::Zero => Complex64::ZERO,
+            ExpressionNode::One => Complex64::ONE,
+        }
+    }
+
+    /// Evaluate the gradient of an [`ExpressionNode`] over a single event using calculated [`AmplitudeValues`]
+    ///
+    /// This method parses the underlying [`ExpressionNode`] but doesn't actually calculate the
     /// gradient from the [`Amplitude`]s themselves.
     pub fn evaluate_gradient(
         &self,
-        amplitude_values: &AmplitudeValues,
-        gradient_values: &GradientValues,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
     ) -> DVector<Complex64> {
         match self {
-            Expression::Amp(aid) => gradient_values.1[aid.1].clone(),
-            Expression::Add(a, b) => {
+            ExpressionNode::Amp(idx) => gradient_values[*idx].clone(),
+            ExpressionNode::Add(a, b) => {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     + b.evaluate_gradient(amplitude_values, gradient_values)
             }
-            Expression::Sub(a, b) => {
+            ExpressionNode::Sub(a, b) => {
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     - b.evaluate_gradient(amplitude_values, gradient_values)
             }
-            Expression::Mul(a, b) => {
+            ExpressionNode::Mul(a, b) => {
                 let f_a = a.evaluate(amplitude_values);
                 let f_b = b.evaluate(amplitude_values);
                 b.evaluate_gradient(amplitude_values, gradient_values)
@@ -403,7 +445,7 @@ impl Expression {
                     + a.evaluate_gradient(amplitude_values, gradient_values)
                         .map(|g| g * f_b)
             }
-            Expression::Div(a, b) => {
+            ExpressionNode::Div(a, b) => {
                 let f_a = a.evaluate(amplitude_values);
                 let f_b = b.evaluate(amplitude_values);
                 (a.evaluate_gradient(amplitude_values, gradient_values)
@@ -412,222 +454,272 @@ impl Expression {
                         .map(|g| g * f_a))
                     / (f_b * f_b)
             }
-            Expression::Neg(a) => -a.evaluate_gradient(amplitude_values, gradient_values),
-            Expression::Real(a) => a
+            ExpressionNode::Neg(a) => -a.evaluate_gradient(amplitude_values, gradient_values),
+            ExpressionNode::Real(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| Complex64::new(g.re, 0.0)),
-            Expression::Imag(a) => a
+            ExpressionNode::Imag(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| Complex64::new(g.im, 0.0)),
-            Expression::Conj(a) => a
+            ExpressionNode::Conj(a) => a
                 .evaluate_gradient(amplitude_values, gradient_values)
                 .map(|g| g.conj()),
-            Expression::NormSqr(a) => {
+            ExpressionNode::NormSqr(a) => {
                 let conj_f_a = a.evaluate(amplitude_values).conjugate();
                 a.evaluate_gradient(amplitude_values, gradient_values)
                     .map(|g| Complex64::new(2.0 * (g * conj_f_a).re, 0.0))
             }
-            Expression::Zero | Expression::One => DVector::zeros(gradient_values.0),
+            ExpressionNode::Zero | ExpressionNode::One => {
+                let max_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+                DVector::zeros(max_dim)
+            }
         }
     }
+}
+
+impl Expression {
+    /// Build an [`Expression`] from a single [`Amplitude`].
+    pub fn from_amplitude(amplitude: Box<dyn Amplitude>) -> LadduResult<Self> {
+        let registry = ExpressionRegistry::singleton(amplitude)?;
+        Ok(Self {
+            tree: ExpressionNode::Amp(0),
+            registry,
+        })
+    }
+
+    /// Create an expression representing zero, the additive identity.
+    pub fn zero() -> Self {
+        Self {
+            registry: ExpressionRegistry::default(),
+            tree: ExpressionNode::Zero,
+        }
+    }
+
+    /// Create an expression representing one, the multiplicative identity.
+    pub fn one() -> Self {
+        Self {
+            registry: ExpressionRegistry::default(),
+            tree: ExpressionNode::One,
+        }
+    }
+
+    fn binary_op(
+        a: &Expression,
+        b: &Expression,
+        build: impl Fn(Box<ExpressionNode>, Box<ExpressionNode>) -> ExpressionNode,
+    ) -> Expression {
+        let (registry, left_map, right_map) = a
+            .registry
+            .merge(&b.registry)
+            .expect("merging expression registries should not fail");
+        let left_tree = a.tree.remap(&left_map);
+        let right_tree = b.tree.remap(&right_map);
+        Expression {
+            registry,
+            tree: build(Box::new(left_tree), Box::new(right_tree)),
+        }
+    }
+
+    fn unary_op(a: &Expression, build: impl Fn(Box<ExpressionNode>) -> ExpressionNode) -> Self {
+        Expression {
+            registry: a.registry.clone(),
+            tree: build(Box::new(a.tree.clone())),
+        }
+    }
+
+    /// Get the list of parameter names in the order they appear in the underlying resources.
+    pub fn parameters(&self) -> Vec<String> {
+        self.registry.resources.parameters.iter().cloned().collect()
+    }
+
+    /// Load an [`Expression`] against a dataset, binding amplitudes and reserving caches.
+    pub fn load(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
+        let mut resources = self.registry.resources.clone();
+        let metadata = dataset.metadata();
+        resources.reserve_cache(dataset.n_events());
+        let mut amplitudes: Vec<Box<dyn Amplitude>> = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| dyn_clone::clone_box(&**amp))
+            .collect();
+        {
+            for amplitude in amplitudes.iter_mut() {
+                amplitude.bind(metadata)?;
+                amplitude.precompute_all(dataset, &mut resources);
+            }
+        }
+        Ok(Evaluator {
+            amplitudes,
+            resources: Arc::new(RwLock::new(resources)),
+            dataset: dataset.clone(),
+            expression: self.tree.clone(),
+        })
+    }
+
     /// Takes the real part of the given [`Expression`].
     pub fn real(&self) -> Self {
-        Self::Real(Box::new(self.clone()))
+        Self::unary_op(self, ExpressionNode::Real)
     }
     /// Takes the imaginary part of the given [`Expression`].
     pub fn imag(&self) -> Self {
-        Self::Imag(Box::new(self.clone()))
+        Self::unary_op(self, ExpressionNode::Imag)
     }
     /// Takes the complex conjugate of the given [`Expression`].
     pub fn conj(&self) -> Self {
-        Self::Conj(Box::new(self.clone()))
+        Self::unary_op(self, ExpressionNode::Conj)
     }
     /// Takes the absolute square of the given [`Expression`].
     pub fn norm_sqr(&self) -> Self {
-        Self::NormSqr(Box::new(self.clone()))
+        Self::unary_op(self, ExpressionNode::NormSqr)
     }
 
-    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
     fn write_tree(
         &self,
+        t: &ExpressionNode,
         f: &mut std::fmt::Formatter<'_>,
         parent_prefix: &str,
         immediate_prefix: &str,
         parent_suffix: &str,
     ) -> std::fmt::Result {
-        let display_string = match self {
-            Self::Amp(aid) => aid.to_string(),
-            Self::Add(_, _) => "+".to_string(),
-            Self::Sub(_, _) => "-".to_string(),
-            Self::Mul(_, _) => "×".to_string(),
-            Self::Div(_, _) => "÷".to_string(),
-            Self::Neg(_) => "-".to_string(),
-            Self::Real(_) => "Re".to_string(),
-            Self::Imag(_) => "Im".to_string(),
-            Self::Conj(_) => "*".to_string(),
-            Self::NormSqr(_) => "NormSqr".to_string(),
-            Self::Zero => "0".to_string(),
-            Self::One => "1".to_string(),
+        let display_string = match t {
+            ExpressionNode::Amp(idx) => {
+                let name = self
+                    .registry
+                    .amplitude_names
+                    .get(*idx)
+                    .cloned()
+                    .unwrap_or_else(|| "<unregistered>".to_string());
+                format!("{name}(id={idx})")
+            }
+            ExpressionNode::Add(_, _) => "+".to_string(),
+            ExpressionNode::Sub(_, _) => "-".to_string(),
+            ExpressionNode::Mul(_, _) => "×".to_string(),
+            ExpressionNode::Div(_, _) => "÷".to_string(),
+            ExpressionNode::Neg(_) => "-".to_string(),
+            ExpressionNode::Real(_) => "Re".to_string(),
+            ExpressionNode::Imag(_) => "Im".to_string(),
+            ExpressionNode::Conj(_) => "*".to_string(),
+            ExpressionNode::NormSqr(_) => "NormSqr".to_string(),
+            ExpressionNode::Zero => "0".to_string(),
+            ExpressionNode::One => "1".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
-        match self {
-            Self::Amp(_) | Self::Zero | Self::One => {}
-            Self::Add(a, b) | Self::Sub(a, b) | Self::Mul(a, b) | Self::Div(a, b) => {
+        match t {
+            ExpressionNode::Amp(_) | ExpressionNode::Zero | ExpressionNode::One => {}
+            ExpressionNode::Add(a, b)
+            | ExpressionNode::Sub(a, b)
+            | ExpressionNode::Mul(a, b)
+            | ExpressionNode::Div(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 while let Some(child) = it.next() {
                     match it.peek() {
-                        Some(_) => child.write_tree(f, &child_prefix, "├─ ", "│  "),
-                        None => child.write_tree(f, &child_prefix, "└─ ", "   "),
+                        Some(_) => self.write_tree(child, f, &child_prefix, "├─ ", "│  "),
+                        None => self.write_tree(child, f, &child_prefix, "└─ ", "   "),
                     }?;
                 }
             }
-            Self::Neg(a) | Self::Real(a) | Self::Imag(a) | Self::Conj(a) | Self::NormSqr(a) => {
+            ExpressionNode::Neg(a)
+            | ExpressionNode::Real(a)
+            | ExpressionNode::Imag(a)
+            | ExpressionNode::Conj(a)
+            | ExpressionNode::NormSqr(a) => {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
-                a.write_tree(f, &child_prefix, "└─ ", "   ")?;
+                self.write_tree(a, f, &child_prefix, "└─ ", "   ")?;
             }
         }
         Ok(())
     }
 }
 
-/// A manager which can be used to register [`Amplitude`]s with [`Resources`]. This structure is
-/// essential to any analysis and should be constructed using the [`Manager::default()`] method.
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct Manager {
-    amplitudes: Vec<Box<dyn Amplitude>>,
-    resources: Resources,
-}
-
-impl Manager {
-    /// Get the list of parameter names in the order they appear in the [`Manager`]'s [`Resources`] field.
-    pub fn parameters(&self) -> Vec<String> {
-        self.resources.parameters.iter().cloned().collect()
-    }
-    /// Register the given [`Amplitude`] and return an [`AmplitudeID`] that can be used to build
-    /// [`Expression`]s.
-    ///
-    /// # Errors
-    ///
-    /// The [`Amplitude`]'s name must be unique and not already
-    /// registered, else this will return a [`RegistrationError`][crate::LadduError::RegistrationError].
-    pub fn register(&mut self, amplitude: Box<dyn Amplitude>) -> LadduResult<AmplitudeID> {
-        let mut amp = amplitude.clone();
-        let aid = amp.register(&mut self.resources)?;
-        self.amplitudes.push(amp);
-        Ok(aid)
-    }
-    /// Turns an [`Expression`] made from registered [`Amplitude`]s into a [`Model`].
-    pub fn model(&self, expression: &Expression) -> Model {
-        Model {
-            manager: self.clone(),
-            expression: expression.clone(),
-        }
+impl Debug for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_tree(&self.tree, f, "", "", "")
     }
 }
 
-/// A struct which contains a set of registerd [`Amplitude`]s (inside a [`Manager`])
-/// and an [`Expression`].
-///
-/// This struct implements [`serde::Serialize`] and [`serde::Deserialize`] and is intended
-/// to be used to store models to disk.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Model {
-    pub(crate) manager: Manager,
-    pub(crate) expression: Expression,
-}
-
-impl ReadWrite for Model {
-    fn create_null() -> Self {
-        Model {
-            manager: Manager::default(),
-            expression: Expression::default(),
-        }
-    }
-}
-impl Model {
-    /// Get the list of parameter names in the order they appear in the [`Model`]'s [`Manager`] field.
-    pub fn parameters(&self) -> Vec<String> {
-        self.manager.parameters()
-    }
-    /// Create an [`Evaluator`] which can compute the result of the internal [`Expression`] built on
-    /// registered [`Amplitude`]s over the given [`Dataset`]. This method precomputes any relevant
-    /// information over the [`EventData`]s in the [`Dataset`].
-    pub fn load(&self, dataset: &Arc<Dataset>) -> Evaluator {
-        let metadata = dataset.metadata();
-        let loaded_resources = Arc::new(RwLock::new(self.manager.resources.clone()));
-        let mut amplitudes = self.manager.amplitudes.clone();
-        {
-            let mut resources_guard = loaded_resources.write();
-            resources_guard.reserve_cache(dataset.n_events());
-            for amplitude in amplitudes.iter_mut() {
-                amplitude
-                    .bind(metadata)
-                    .expect("Failed to bind amplitude to dataset metadata");
-                amplitude.precompute_all(dataset, &mut resources_guard);
-            }
-        }
-        Evaluator {
-            amplitudes,
-            resources: loaded_resources.clone(),
-            dataset: dataset.clone(),
-            expression: self.expression.clone(),
-        }
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_tree(&self.tree, f, "", "", "")
     }
 }
 
-/// A structure which can be used to evaluate the stored [`Expression`] built on registered
-/// [`Amplitude`]s. This contains a [`Resources`] struct which already contains cached values for
-/// precomputed [`Amplitude`]s and any relevant free parameters and constants.
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression {
+    Expression::binary_op(a, b, ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression, b: &Expression| -> Expression {
+    Expression::binary_op(a, b, ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &Expression, b: &Expression| -> Expression {
+    Expression::binary_op(a, b, ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &Expression, b: &Expression| -> Expression {
+    Expression::binary_op(a, b, ExpressionNode::Div)
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression| -> Expression {
+    Expression::unary_op(a, ExpressionNode::Neg)
+});
+
+/// Evaluator for [`Expression`] that mirrors the existing evaluator behavior.
+#[allow(missing_docs)]
 #[derive(Clone)]
 pub struct Evaluator {
-    /// A list of [`Amplitude`]s which were registered with the [`Manager`] used to create the
-    /// internal [`Expression`]. This includes but is not limited to those which are actually used
-    /// in the [`Expression`].
     pub amplitudes: Vec<Box<dyn Amplitude>>,
-    /// The internal [`Resources`] where precalculated values are stored
     pub resources: Arc<RwLock<Resources>>,
-    /// The internal [`Dataset`]
     pub dataset: Arc<Dataset>,
-    /// The internal [`Expression`]
-    pub expression: Expression,
+    pub expression: ExpressionNode,
 }
 
+#[allow(missing_docs)]
 impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
         self.resources.read().parameters.iter().cloned().collect()
     }
+
     /// Activate an [`Amplitude`] by name.
     pub fn activate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().activate(name)
     }
+
     /// Activate several [`Amplitude`]s by name.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().activate_many(names)
     }
+
     /// Activate all registered [`Amplitude`]s.
     pub fn activate_all(&self) {
         self.resources.write().activate_all();
     }
+
     /// Dectivate an [`Amplitude`] by name.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().deactivate(name)
     }
+
     /// Deactivate several [`Amplitude`]s by name.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().deactivate_many(names)
     }
+
     /// Deactivate all registered [`Amplitude`]s.
     pub fn deactivate_all(&self) {
         self.resources.write().deactivate_all();
     }
+
     /// Isolate an [`Amplitude`] by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.resources.write().isolate(name)
     }
+
     /// Isolate several [`Amplitude`]s by name (deactivate the rest).
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.resources.write().isolate_many(names)
@@ -645,25 +737,23 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_vec: Vec<AmplitudeValues> = self
+            let amplitude_values_vec: Vec<Vec<Complex64>> = self
                 .dataset
                 .events
                 .par_iter()
                 .zip(resources.caches.par_iter())
                 .map(|(event, cache)| {
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex64::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    )
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::new(0.0, 0.0)
+                            }
+                        })
+                        .collect()
                 })
                 .collect();
             amplitude_values_vec
@@ -673,25 +763,23 @@ impl Evaluator {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_vec: Vec<AmplitudeValues> = self
+            let amplitude_values_vec: Vec<Vec<Complex64>> = self
                 .dataset
                 .events
                 .iter()
                 .zip(resources.caches.iter())
                 .map(|(event, cache)| {
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex64::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    )
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::new(0.0, 0.0)
+                            }
+                        })
+                        .collect()
                 })
                 .collect();
             amplitude_values_vec
@@ -740,7 +828,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_vec: Vec<AmplitudeValues> = self
+            let amplitude_values_vec: Vec<Vec<Complex64>> = self
                 .dataset
                 .events
                 .par_iter()
@@ -754,19 +842,17 @@ impl Evaluator {
                     }
                 })
                 .map(|(event, cache)| {
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex64::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    )
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::new(0.0, 0.0)
+                            }
+                        })
+                        .collect()
                 })
                 .collect();
             amplitude_values_vec
@@ -776,7 +862,7 @@ impl Evaluator {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_vec: Vec<AmplitudeValues> = self
+            let amplitude_values_vec: Vec<Vec<Complex64>> = self
                 .dataset
                 .events
                 .iter()
@@ -790,19 +876,17 @@ impl Evaluator {
                     }
                 })
                 .map(|(event, cache)| {
-                    AmplitudeValues(
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .map(|(amp, active)| {
-                                if *active {
-                                    amp.compute(&parameters, event, cache)
-                                } else {
-                                    Complex64::new(0.0, 0.0)
-                                }
-                            })
-                            .collect(),
-                    )
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::new(0.0, 0.0)
+                            }
+                        })
+                        .collect()
                 })
                 .collect();
             amplitude_values_vec
@@ -851,25 +935,24 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-                .dataset
-                .events
-                .par_iter()
-                .zip(resources.caches.par_iter())
-                .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    (
-                        AmplitudeValues(
+            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
+                self.dataset
+                    .events
+                    .par_iter()
+                    .zip(resources.caches.par_iter())
+                    .map(|(event, cache)| {
+                        let mut gradient_values =
+                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .zip(gradient_values.iter_mut())
+                            .for_each(|((amp, active), grad)| {
+                                if *active {
+                                    amp.compute_gradient(&parameters, event, cache, grad)
+                                }
+                            });
+                        (
                             self.amplitudes
                                 .iter()
                                 .zip(resources.active.iter())
@@ -881,11 +964,10 @@ impl Evaluator {
                                     }
                                 })
                                 .collect(),
-                        ),
-                        GradientValues(parameters.len(), gradient_values),
-                    )
-                })
-                .collect();
+                            gradient_values,
+                        )
+                    })
+                    .collect();
             amplitude_values_and_gradient_vec
                 .par_iter()
                 .map(|(amplitude_values, gradient_values)| {
@@ -896,25 +978,24 @@ impl Evaluator {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-                .dataset
-                .events
-                .iter()
-                .zip(resources.caches.iter())
-                .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    (
-                        AmplitudeValues(
+            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
+                self.dataset
+                    .events
+                    .iter()
+                    .zip(resources.caches.iter())
+                    .map(|(event, cache)| {
+                        let mut gradient_values =
+                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .zip(gradient_values.iter_mut())
+                            .for_each(|((amp, active), grad)| {
+                                if *active {
+                                    amp.compute_gradient(&parameters, event, cache, grad)
+                                }
+                            });
+                        (
                             self.amplitudes
                                 .iter()
                                 .zip(resources.active.iter())
@@ -926,11 +1007,10 @@ impl Evaluator {
                                     }
                                 })
                                 .collect(),
-                        ),
-                        GradientValues(parameters.len(), gradient_values),
-                    )
-                })
-                .collect();
+                            gradient_values,
+                        )
+                    })
+                    .collect();
 
             amplitude_values_and_gradient_vec
                 .iter()
@@ -955,23 +1035,24 @@ impl Evaluator {
         parameters: &[f64],
         world: &SimpleCommunicator,
     ) -> Vec<DVector<Complex64>> {
-        let flattened_local_evaluation = self
-            .evaluate_gradient_local(parameters)
-            .iter()
-            .flat_map(|g| g.data.as_vec().to_vec())
-            .collect::<Vec<Complex64>>();
+        let local_evaluation = self.evaluate_gradient_local(parameters);
         let n_events = self.dataset.n_events();
-        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
-        let mut flattened_result_buffer = vec![Complex64::ZERO; n_events * parameters.len()];
-        let mut partitioned_flattened_result_buffer =
-            PartitionMut::new(&mut flattened_result_buffer, counts, displs);
-        world.all_gather_varcount_into(
-            &flattened_local_evaluation,
-            &mut partitioned_flattened_result_buffer,
-        );
-        flattened_result_buffer
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(
+                &local_evaluation
+                    .iter()
+                    .flat_map(|v| v.data.as_vec())
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &mut partitioned_buffer,
+            );
+        }
+        buffer
             .chunks(parameters.len())
-            .map(DVector::from_row_slice)
+            .map(|chunk| DVector::from_row_slice(chunk))
             .collect()
     }
 
@@ -998,33 +1079,32 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-                .dataset
-                .events
-                .par_iter()
-                .zip(resources.caches.par_iter())
-                .enumerate()
-                .filter_map(|(i, (event, cache))| {
-                    if indices.contains(&i) {
-                        Some((event, cache))
-                    } else {
-                        None
-                    }
-                })
-                .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    (
-                        AmplitudeValues(
+            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
+                self.dataset
+                    .events
+                    .par_iter()
+                    .zip(resources.caches.par_iter())
+                    .enumerate()
+                    .filter_map(|(i, (event, cache))| {
+                        if indices.contains(&i) {
+                            Some((event, cache))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|(event, cache)| {
+                        let mut gradient_values =
+                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .zip(gradient_values.iter_mut())
+                            .for_each(|((amp, active), grad)| {
+                                if *active {
+                                    amp.compute_gradient(&parameters, event, cache, grad)
+                                }
+                            });
+                        (
                             self.amplitudes
                                 .iter()
                                 .zip(resources.active.iter())
@@ -1036,11 +1116,10 @@ impl Evaluator {
                                     }
                                 })
                                 .collect(),
-                        ),
-                        GradientValues(parameters.len(), gradient_values),
-                    )
-                })
-                .collect();
+                            gradient_values,
+                        )
+                    })
+                    .collect();
             amplitude_values_and_gradient_vec
                 .par_iter()
                 .map(|(amplitude_values, gradient_values)| {
@@ -1051,33 +1130,32 @@ impl Evaluator {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_and_gradient_vec: Vec<(AmplitudeValues, GradientValues)> = self
-                .dataset
-                .events
-                .iter()
-                .zip(resources.caches.iter())
-                .enumerate()
-                .filter_map(|(i, (event, cache))| {
-                    if indices.contains(&i) {
-                        Some((event, cache))
-                    } else {
-                        None
-                    }
-                })
-                .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    (
-                        AmplitudeValues(
+            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
+                self.dataset
+                    .events
+                    .iter()
+                    .zip(resources.caches.iter())
+                    .enumerate()
+                    .filter_map(|(i, (event, cache))| {
+                        if indices.contains(&i) {
+                            Some((event, cache))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|(event, cache)| {
+                        let mut gradient_values =
+                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                        self.amplitudes
+                            .iter()
+                            .zip(resources.active.iter())
+                            .zip(gradient_values.iter_mut())
+                            .for_each(|((amp, active), grad)| {
+                                if *active {
+                                    amp.compute_gradient(&parameters, event, cache, grad)
+                                }
+                            });
+                        (
                             self.amplitudes
                                 .iter()
                                 .zip(resources.active.iter())
@@ -1089,11 +1167,10 @@ impl Evaluator {
                                     }
                                 })
                                 .collect(),
-                        ),
-                        GradientValues(parameters.len(), gradient_values),
-                    )
-                })
-                .collect();
+                            gradient_values,
+                        )
+                    })
+                    .collect();
 
             amplitude_values_and_gradient_vec
                 .iter()
@@ -1163,7 +1240,8 @@ pub struct TestAmplitude {
 
 impl TestAmplitude {
     /// Create a new testing [`Amplitude`].
-    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             re,
@@ -1171,7 +1249,7 @@ impl TestAmplitude {
             im,
             pid_im: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -1225,7 +1303,7 @@ mod tests {
     }
 
     impl ComplexScalar {
-        pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> Box<Self> {
+        pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 re,
@@ -1233,7 +1311,7 @@ mod tests {
                 im,
                 pid_im: Default::default(),
             }
-            .into()
+            .into_expression()
         }
     }
 
@@ -1272,9 +1350,7 @@ mod tests {
 
     #[test]
     fn test_batch_evaluation() {
-        let mut manager = Manager::default();
-        let amp = TestAmplitude::new("test", parameter("real"), parameter("imag"));
-        let aid = manager.register(amp).unwrap();
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag")).unwrap();
         let mut event1 = test_event();
         event1.p4s[0].t = 10.0;
         let mut event2 = test_event();
@@ -1285,9 +1361,7 @@ mod tests {
             vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
             Arc::new(DatasetMetadata::default()),
         ));
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Complex64::new(1.1, 2.2) * 10.0);
@@ -1302,190 +1376,137 @@ mod tests {
 
     #[test]
     fn test_constant_amplitude() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("constant", constant(2.0), constant(3.0));
-        let aid = manager.register(amp).unwrap();
+        let expr = ComplexScalar::new("constant", constant(2.0), constant(3.0)).unwrap();
         let dataset = Arc::new(Dataset::new_with_metadata(
             vec![Arc::new(test_event())],
             Arc::new(DatasetMetadata::default()),
         ));
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
     #[test]
     fn test_parametric_amplitude() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new(
+        let expr = ComplexScalar::new(
             "parametric",
             parameter("test_param_re"),
             parameter("test_param_im"),
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
         let dataset = Arc::new(test_dataset());
-        let expr = Expression::Amp(aid);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
         let result = evaluator.evaluate(&[2.0, 3.0]);
         assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
     #[test]
     fn test_expression_operations() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("const1", constant(2.0), constant(0.0));
-        let amp2 = ComplexScalar::new("const2", constant(0.0), constant(1.0));
-        let amp3 = ComplexScalar::new("const3", constant(3.0), constant(4.0));
-
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-        let aid3 = manager.register(amp3).unwrap();
+        let expr1 = ComplexScalar::new("const1", constant(2.0), constant(0.0)).unwrap();
+        let expr2 = ComplexScalar::new("const2", constant(0.0), constant(1.0)).unwrap();
+        let expr3 = ComplexScalar::new("const3", constant(3.0), constant(4.0)).unwrap();
 
         let dataset = Arc::new(test_dataset());
 
         // Test (amp) addition
-        let expr_add = &aid1 + &aid2;
-        let model_add = manager.model(&expr_add);
-        let eval_add = model_add.load(&dataset);
-        let result_add = eval_add.evaluate(&[]);
+        let expr_add = &expr1 + &expr2;
+        let result_add = expr_add.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_add[0], Complex64::new(2.0, 1.0));
 
         // Test (amp) subtraction
-        let expr_sub = &aid1 - &aid2;
-        let model_sub = manager.model(&expr_sub);
-        let eval_sub = model_sub.load(&dataset);
-        let result_sub = eval_sub.evaluate(&[]);
+        let expr_sub = &expr1 - &expr2;
+        let result_sub = expr_sub.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_sub[0], Complex64::new(2.0, -1.0));
 
         // Test (amp) multiplication
-        let expr_mul = &aid1 * &aid2;
-        let model_mul = manager.model(&expr_mul);
-        let eval_mul = model_mul.load(&dataset);
-        let result_mul = eval_mul.evaluate(&[]);
+        let expr_mul = &expr1 * &expr2;
+        let result_mul = expr_mul.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul[0], Complex64::new(0.0, 2.0));
 
         // Test (amp) division
-        let expr_div = &aid1 / &aid3;
-        let model_div = manager.model(&expr_div);
-        let eval_div = model_div.load(&dataset);
-        let result_div = eval_div.evaluate(&[]);
+        let expr_div = &expr1 / &expr3;
+        let result_div = expr_div.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_div[0], Complex64::new(6.0 / 25.0, -8.0 / 25.0));
 
         // Test (amp) neg
-        let expr_neg = -&aid3;
-        let model_neg = manager.model(&expr_neg);
-        let eval_neg = model_neg.load(&dataset);
-        let result_neg = eval_neg.evaluate(&[]);
+        let expr_neg = -&expr3;
+        let result_neg = expr_neg.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_neg[0], Complex64::new(-3.0, -4.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
-        let model_add2 = manager.model(&expr_add2);
-        let eval_add2 = model_add2.load(&dataset);
-        let result_add2 = eval_add2.evaluate(&[]);
+        let result_add2 = expr_add2.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_add2[0], Complex64::new(2.0, 3.0));
 
         // Test (expr) subtraction
         let expr_sub2 = &expr_add - &expr_mul;
-        let model_sub2 = manager.model(&expr_sub2);
-        let eval_sub2 = model_sub2.load(&dataset);
-        let result_sub2 = eval_sub2.evaluate(&[]);
+        let result_sub2 = expr_sub2.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_sub2[0], Complex64::new(2.0, -1.0));
 
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
-        let model_mul2 = manager.model(&expr_mul2);
-        let eval_mul2 = model_mul2.load(&dataset);
-        let result_mul2 = eval_mul2.evaluate(&[]);
+        let result_mul2 = expr_mul2.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul2[0], Complex64::new(-2.0, 4.0));
 
         // Test (expr) division
         let expr_div2 = &expr_add / &expr_add2;
-        let model_div2 = manager.model(&expr_div2);
-        let eval_div2 = model_div2.load(&dataset);
-        let result_div2 = eval_div2.evaluate(&[]);
+        let result_div2 = expr_div2.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_div2[0], Complex64::new(7.0 / 13.0, -4.0 / 13.0));
 
         // Test (expr) neg
         let expr_neg2 = -&expr_mul2;
-        let model_neg2 = manager.model(&expr_neg2);
-        let eval_neg2 = model_neg2.load(&dataset);
-        let result_neg2 = eval_neg2.evaluate(&[]);
+        let result_neg2 = expr_neg2.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_neg2[0], Complex64::new(2.0, -4.0));
 
         // Test (amp) real
-        let expr_real = aid3.real();
-        let model_real = manager.model(&expr_real);
-        let eval_real = model_real.load(&dataset);
-        let result_real = eval_real.evaluate(&[]);
+        let expr_real = expr3.real();
+        let result_real = expr_real.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_real[0], Complex64::new(3.0, 0.0));
 
         // Test (expr) real
         let expr_mul2_real = expr_mul2.real();
-        let model_mul2_real = manager.model(&expr_mul2_real);
-        let eval_mul2_real = model_mul2_real.load(&dataset);
-        let result_mul2_real = eval_mul2_real.evaluate(&[]);
+        let result_mul2_real = expr_mul2_real.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul2_real[0], Complex64::new(-2.0, 0.0));
 
         // Test (amp) imag
-        let expr_imag = aid3.imag();
-        let model_imag = manager.model(&expr_imag);
-        let eval_imag = model_imag.load(&dataset);
-        let result_imag = eval_imag.evaluate(&[]);
+        let expr_imag = expr3.imag();
+        let result_imag = expr_imag.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
-        let model_mul2_imag = manager.model(&expr_mul2_imag);
-        let eval_mul2_imag = model_mul2_imag.load(&dataset);
-        let result_mul2_imag = eval_mul2_imag.evaluate(&[]);
+        let result_mul2_imag = expr_mul2_imag.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul2_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (amp) conj
-        let expr_conj = aid3.conj();
-        let model_conj = manager.model(&expr_conj);
-        let eval_conj = model_conj.load(&dataset);
-        let result_conj = eval_conj.evaluate(&[]);
+        let expr_conj = expr3.conj();
+        let result_conj = expr_conj.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_conj[0], Complex64::new(3.0, -4.0));
 
         // Test (expr) conj
         let expr_mul2_conj = expr_mul2.conj();
-        let model_mul2_conj = manager.model(&expr_mul2_conj);
-        let eval_mul2_conj = model_mul2_conj.load(&dataset);
-        let result_mul2_conj = eval_mul2_conj.evaluate(&[]);
+        let result_mul2_conj = expr_mul2_conj.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul2_conj[0], Complex64::new(-2.0, -4.0));
 
         // Test (amp) norm_sqr
-        let expr_norm = aid1.norm_sqr();
-        let model_norm = manager.model(&expr_norm);
-        let eval_norm = model_norm.load(&dataset);
-        let result_norm = eval_norm.evaluate(&[]);
+        let expr_norm = expr1.norm_sqr();
+        let result_norm = expr_norm.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_norm[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) norm_sqr
         let expr_mul2_norm = expr_mul2.norm_sqr();
-        let model_mul2_norm = manager.model(&expr_mul2_norm);
-        let eval_mul2_norm = model_mul2_norm.load(&dataset);
-        let result_mul2_norm = eval_mul2_norm.evaluate(&[]);
+        let result_mul2_norm = expr_mul2_norm.load(&dataset).unwrap().evaluate(&[]);
         assert_eq!(result_mul2_norm[0], Complex64::new(20.0, 0.0));
     }
 
     #[test]
     fn test_amplitude_activation() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("const1", constant(1.0), constant(0.0));
-        let amp2 = ComplexScalar::new("const2", constant(2.0), constant(0.0));
-
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
+        let expr1 = ComplexScalar::new("const1", constant(1.0), constant(0.0)).unwrap();
+        let expr2 = ComplexScalar::new("const2", constant(2.0), constant(0.0)).unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = &aid1 + &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = &expr1 + &expr2;
+        let evaluator = expr.load(&dataset).unwrap();
 
         // Test initial state (all active)
         let result = evaluator.evaluate(&[]);
@@ -1509,26 +1530,24 @@ mod tests {
 
     #[test]
     fn test_gradient() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new(
+        let expr1 = ComplexScalar::new(
             "parametric_1",
             parameter("test_param_re_1"),
             parameter("test_param_im_1"),
-        );
-        let amp2 = ComplexScalar::new(
+        )
+        .unwrap();
+        let expr2 = ComplexScalar::new(
             "parametric_2",
             parameter("test_param_re_2"),
             parameter("test_param_im_2"),
-        );
+        )
+        .unwrap();
 
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
         let dataset = Arc::new(test_dataset());
         let params = vec![2.0, 3.0, 4.0, 5.0];
 
-        let expr = &aid1 + &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = &expr1 + &expr2;
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1541,9 +1560,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, 0.0);
         assert_relative_eq!(gradient[0][3].im, 1.0);
 
-        let expr = &aid1 - &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = &expr1 - &expr2;
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1556,9 +1574,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, 0.0);
         assert_relative_eq!(gradient[0][3].im, -1.0);
 
-        let expr = &aid1 * &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = &expr1 * &expr2;
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1571,9 +1588,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, -3.0);
         assert_relative_eq!(gradient[0][3].im, 2.0);
 
-        let expr = &aid1 / &aid2;
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = &expr1 / &expr2;
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1586,9 +1602,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, -107.0 / 1681.0);
         assert_relative_eq!(gradient[0][3].im, -102.0 / 1681.0);
 
-        let expr = -(&aid1 * &aid2);
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = -(&expr1 * &expr2);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1601,9 +1616,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, 3.0);
         assert_relative_eq!(gradient[0][3].im, -2.0);
 
-        let expr = (&aid1 * &aid2).real();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = (&expr1 * &expr2).real();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1616,9 +1630,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, -3.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
 
-        let expr = (&aid1 * &aid2).imag();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = (&expr1 * &expr2).imag();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1631,9 +1644,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, 2.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
 
-        let expr = (&aid1 * &aid2).conj();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = (&expr1 * &expr2).conj();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1646,9 +1658,8 @@ mod tests {
         assert_relative_eq!(gradient[0][3].re, -3.0);
         assert_relative_eq!(gradient[0][3].im, -2.0);
 
-        let expr = (&aid1 * &aid2).norm_sqr();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = (&expr1 * &expr2).norm_sqr();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let gradient = evaluator.evaluate_gradient(&params);
 
@@ -1664,13 +1675,11 @@ mod tests {
 
     #[test]
     fn test_zeros_and_ones() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
-        let aid = manager.register(amp).unwrap();
+        let amp =
+            ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0)).unwrap();
         let dataset = Arc::new(test_dataset());
-        let expr = (aid * Expression::One + Expression::Zero).norm_sqr();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let expr = (amp * Expression::one() + Expression::zero()).norm_sqr();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.0];
         let value = evaluator.evaluate(&params);
@@ -1687,46 +1696,38 @@ mod tests {
 
     #[test]
     fn test_parameter_registration() {
-        let mut manager = Manager::default();
-        let amp = ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0));
-
-        let aid = manager.register(amp).unwrap();
-        let parameters = manager.parameters();
-        let model = manager.model(&aid.into());
-        let model_parameters = model.parameters();
+        let expr =
+            ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0)).unwrap();
+        let parameters = expr.parameters();
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0], "test_param_re");
-        assert_eq!(model_parameters.len(), 1);
-        assert_eq!(model_parameters[0], "test_param_re");
     }
 
     #[test]
+    #[should_panic(expected = "refers to different underlying amplitudes")]
     fn test_duplicate_amplitude_registration() {
-        let mut manager = Manager::default();
-        let amp1 = ComplexScalar::new("same_name", constant(1.0), constant(0.0));
-        let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0));
-        manager.register(amp1).unwrap();
-        assert!(manager.register(amp2).is_err());
+        let amp1 = ComplexScalar::new("same_name", constant(1.0), constant(0.0)).unwrap();
+        let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0)).unwrap();
+        let _expr = amp1 + amp2;
     }
 
     #[test]
     fn test_tree_printing() {
-        let mut manager = Manager::default();
         let amp1 = ComplexScalar::new(
             "parametric_1",
             parameter("test_param_re_1"),
             parameter("test_param_im_1"),
-        );
+        )
+        .unwrap();
         let amp2 = ComplexScalar::new(
             "parametric_2",
             parameter("test_param_re_2"),
             parameter("test_param_im_2"),
-        );
-        let aid1 = manager.register(amp1).unwrap();
-        let aid2 = manager.register(amp2).unwrap();
-        let expr = &aid1.real() + &aid2.conj().imag() + Expression::One * -Expression::Zero
-            - Expression::Zero / Expression::One
-            + (&aid1 * &aid2).norm_sqr();
+        )
+        .unwrap();
+        let expr = &amp1.real() + &amp2.conj().imag() + Expression::one() * -Expression::zero()
+            - Expression::zero() / Expression::one()
+            + (&amp1 * &amp2).norm_sqr();
         assert_eq!(
             expr.to_string(),
             "+

@@ -1,14 +1,17 @@
 """Relativistic Breit-Wigner amplitude constructors.
 
-Wraps the Rust implementation so it can be registered with an amplitude
-:class:`laddu.amplitudes.Manager`.
+These helpers return ``laddu.Expression`` objects that can be
+loaded directly and evaluated.
 
 Examples
 --------
->>> from laddu.amplitudes import Manager
 >>> from laddu.amplitudes.breit_wigner import BreitWigner
->>> manager = Manager()
->>> bw = manager.register(BreitWigner('rho', mass=0.775, width=0.149))  # doctest: +SKIP
+>>> from laddu import Mass, constant
+>>> expr = BreitWigner('rho', mass=constant(0.775), width=constant(0.149), l=2, daughter_1_mass=Mass(["p1"]), daughter_2_mass=Mass(["p2"]), resonance_mass=Mass(["p1","p2"]))
+>>> expr.norm_sqr()
+NormSqr
+└─ rho(id=0)
+<BLANKLINE>
 """
 
 from laddu.laddu import BreitWigner

@@ -56,7 +56,7 @@
 //!
 //! ```rust,no_run
 //! use laddu::{
-//!    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, LadduError, Mass,
+//!    AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduResult, LadduError, Mass,
 //!    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! };
 //! use laddu::traits::*;
@@ -85,7 +85,7 @@
 //!         daughter_1_mass: &Mass,
 //!         daughter_2_mass: &Mass,
 //!         resonance_mass: &Mass,
-//!     ) -> Box<Self> {
+//!     ) -> LadduResult<Expression> {
 //!         Self {
 //!             name: name.to_string(),
 //!             mass,
@@ -97,7 +97,7 @@
 //!             daughter_2_mass: daughter_2_mass.clone(),
 //!             resonance_mass: resonance_mass.clone(),
 //!         }
-//!         .into()
+//!         .into_expression()
 //!     }
 //! }
 //!
@@ -145,9 +145,9 @@
 //! ### Calculating a Likelihood
 //! We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 //! ```rust,no_run
-//! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, Manager, NLL, parameter};
+//! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 //! # use laddu::{
-//! #    AmplitudeID, Cache, DatasetMetadata, EventData, LadduResult, LadduError,
+//! #    AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduResult, LadduError,
 //! #    ParameterID, ParameterLike, Parameters, Resources, PI,
 //! # };
 //! # use laddu::traits::*;
@@ -176,7 +176,7 @@
 //! #         daughter_1_mass: &Mass,
 //! #         daughter_2_mass: &Mass,
 //! #         resonance_mass: &Mass,
-//! #     ) -> Box<Self> {
+//! #     ) -> LadduResult<Expression> {
 //! #         Self {
 //! #             name: name.to_string(),
 //! #             mass,
@@ -188,7 +188,7 @@
 //! #             daughter_2_mass: daughter_2_mass.clone(),
 //! #             resonance_mass: resonance_mass.clone(),
 //! #         }
-//! #         .into()
+//! #         .into_expression()
 //! #     }
 //! # }
 //! #
@@ -235,8 +235,7 @@
 //! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 //! let p1_mass = Mass::new(["kshort1"]);
 //! let p2_mass = Mass::new(["kshort2"]);
-//! let mut manager = Manager::default();
-//! let bw = manager.register(MyBreitWigner::new(
+//! let bw = MyBreitWigner::new(
 //!     "bw",
 //!     parameter("mass"),
 //!     parameter("width"),
@@ -244,12 +243,11 @@
 //!     &p1_mass,
 //!     &p2_mass,
 //!     &resonance_mass,
-//! )).unwrap();
-//! let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
+//! ).unwrap();
+//! let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
 //! let expr = (mag * bw).norm_sqr();
-//! let model = manager.model(&expr);
 //!
-//! let nll = NLL::new(&model, &ds_data, &ds_mc);
+//! let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
 //! println!("Parameters names and order: {:?}", nll.parameters());
 //! let result = nll.evaluate(&[1.27, 0.120, 100.0]);
 //! println!("The extended negative log-likelihood is {}", result);
@@ -339,8 +337,7 @@ pub mod traits {
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
     pub use laddu_core::amplitudes::{
-        constant, parameter, Amplitude, AmplitudeID, Evaluator, Expression, Manager, Model,
-        ParameterLike,
+        constant, parameter, Amplitude, AmplitudeID, Evaluator, Expression, ParameterLike,
     };
 }
 
@@ -356,7 +353,7 @@ pub mod experimental {
 
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
-    constant, parameter, AmplitudeID, Evaluator, Expression, Manager, Model, ParameterLike,
+    constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike,
 };
 pub use laddu_core::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,

@@ -4,11 +4,11 @@ use laddu_core::{
     data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    LadduResult,
+    Expression, LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SVector};
@@ -53,7 +53,7 @@ impl KopfKMatrixPi1 {
         couplings: [[ParameterLike; 2]; 1],
         channel: usize,
         mass: &Mass,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 1] = array::from_fn(|_| ParameterLike::default());
         let mut couplings_imag: [ParameterLike; 1] = array::from_fn(|_| ParameterLike::default());
         for i in 0..1 {
@@ -86,7 +86,7 @@ impl KopfKMatrixPi1 {
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
@@ -197,13 +197,13 @@ pub fn py_kopf_kmatrix_pi1(
     couplings: [[PyParameterLike; 2]; 1],
     channel: usize,
     mass: PyMass,
-) -> PyAmplitude {
-    PyAmplitude(KopfKMatrixPi1::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixPi1::new(
         name,
         array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
         channel,
         &mass.0,
-    ))
+    )?))
 }
 
 #[cfg(test)]
@@ -213,19 +213,15 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
 
     #[test]
     fn test_pi1_evaluation() {
-        let mut manager = Manager::default();
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr =
+            KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
@@ -235,15 +231,11 @@ mod tests {
 
     #[test]
     fn test_pi1_gradient() {
-        let mut manager = Manager::default();
-        let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let amp = KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr =
+            KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 

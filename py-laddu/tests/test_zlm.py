@@ -1,6 +1,6 @@
 import pytest
 
-from laddu import Angles, Dataset, Event, Manager, Polarization, Topology, Vec3, Zlm
+from laddu import Angles, Dataset, Event, Polarization, Topology, Vec3, Zlm
 from laddu.amplitudes.zlm import PolPhase
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
@@ -32,53 +32,41 @@ def reaction_topology() -> Topology:
 
 
 def test_zlm_evaluation() -> None:
-    manager = Manager()
     topo = reaction_topology()
     angles = Angles(topo, 'kshort1', 'Helicity')
     polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
     assert pytest.approx(result[0].real) == 0.042841277026400094
     assert pytest.approx(result[0].imag) == -0.23859639145706923
 
 
 def test_zlm_gradient() -> None:
-    manager = Manager()
     angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters
 
 
 def test_polphase_evaluation() -> None:
-    manager = Manager()
     polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = PolPhase('polphase', polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
     assert pytest.approx(result[0].real) == -0.28729144623530045
     assert pytest.approx(result[0].imag) == -0.2572403892603803
 
 
 def test_polphase_gradient() -> None:
-    manager = Manager()
     polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
     amp = PolPhase('polphase', polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters
