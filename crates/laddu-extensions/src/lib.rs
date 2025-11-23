@@ -20,10 +20,7 @@ pub mod ganesh_ext;
 pub mod likelihoods;
 
 // pub use ganesh_ext::{MCMCOptions, MinimizerOptions};
-pub use likelihoods::{
-    LikelihoodEvaluator, LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodScalar,
-    NLL,
-};
+pub use likelihoods::{LikelihoodEvaluator, LikelihoodExpression, LikelihoodScalar, NLL};
 
 use fastrand::Rng;
 use rapidhash::{HashSetExt, RapidHashSet};

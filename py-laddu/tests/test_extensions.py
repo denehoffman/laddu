@@ -4,16 +4,7 @@ import math
 
 import pytest
 
-from laddu import (
-    NLL,
-    Dataset,
-    Event,
-    LikelihoodManager,
-    Scalar,
-    Vec3,
-    likelihood_sum,
-    parameter,
-)
+from laddu import NLL, Dataset, Event, Scalar, Vec3, likelihood_sum, parameter
 from laddu.experimental import Regularizer
 
 
@@ -32,12 +23,9 @@ def _dataset_from_weights(weights: list[float]) -> Dataset:
 
 
 def test_regularizer_l1_matches_rust_implementation() -> None:
-    manager = LikelihoodManager()
-    likelihood_id = manager.register(
-        Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
-    )
-    evaluator = manager.load(likelihood_sum([likelihood_id]))
-    assert manager.parameters() == ['alpha', 'beta']
+    expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
+    evaluator = likelihood_sum([expr]).load()
+    assert evaluator.parameters == ['alpha', 'beta']
     params = [1.5, -2.0]
     assert evaluator.evaluate(params) == pytest.approx(7.0)
     grad = evaluator.evaluate_gradient(params).tolist()
@@ -45,11 +33,8 @@ def test_regularizer_l1_matches_rust_implementation() -> None:
 
 
 def test_regularizer_l2_gradient_matches_rust() -> None:
-    manager = LikelihoodManager()
-    likelihood_id = manager.register(
-        Regularizer(['x', 'y'], 3.0, p=2, weights=[1.0, 2.0])
-    )
-    evaluator = manager.load(likelihood_sum([likelihood_id]))
+    expr = Regularizer(['x', 'y'], 3.0, p=2, weights=[1.0, 2.0])
+    evaluator = likelihood_sum([expr]).load()
     params = [3.0, 4.0]
     assert evaluator.evaluate(params) == pytest.approx(15.0)
     grad = evaluator.evaluate_gradient(params).tolist()

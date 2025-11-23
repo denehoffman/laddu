@@ -117,7 +117,10 @@ run = "cargo clean"
 
 [tasks.clean-python]
 description = "Remove Python build artifacts"
-run = "rm -rf .venv .uv-cache dist py-laddu/build"
+run = '''
+rm -rf .venv .uv-cache dist py-laddu/build
+uv venv .venv
+'''
 
 [tasks.clean]
 description = "Clean all build artifacts"

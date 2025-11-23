@@ -52,8 +52,8 @@ mod laddu {
         },
         likelihoods::{
             py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,
-            py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyLikelihoodID,
-            PyLikelihoodManager, PyLikelihoodTerm, PyNLL, PyStochasticNLL,
+            py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyNLL,
+            PyStochasticNLL,
         },
     };
 

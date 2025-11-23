@@ -63,20 +63,20 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     fn parameters(&self) -> Vec<String>;
     /// A method called every step of any minimization/MCMC algorithm.
     fn update(&self) {}
+
+    /// Convenience helper to wrap a likelihood term into a [`LikelihoodExpression`].
+    ///
+    /// This allows term constructors to return expressions without exposing the manager
+    /// machinery that previously performed registration.
+    fn into_expression(self) -> LikelihoodExpression
+    where
+        Self: Sized + 'static,
+    {
+        LikelihoodExpression::from_term(Box::new(self))
+    }
 }
 
 dyn_clone::clone_trait_object!(LikelihoodTerm);
-
-/// A term in an expression with multiple likelihood components
-///
-/// See Also
-/// --------
-/// NLL.to_term
-///
-#[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodTerm", module = "laddu")]
-#[derive(Clone)]
-pub struct PyLikelihoodTerm(pub Box<dyn LikelihoodTerm>);
 
 /// An extended, unbinned negative log-likelihood evaluator.
 #[derive(Clone)]
@@ -1510,16 +1510,9 @@ impl PyNLL {
     fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyStochasticNLL {
         PyStochasticNLL(self.0.to_stochastic(batch_size, seed))
     }
-    /// Turn an ``NLL`` into a term that can be used by a ``LikelihoodManager``
-    ///
-    /// Returns
-    /// -------
-    /// term : LikelihoodTerm
-    ///     The isolated NLL which can be used to build more complex models
-    ///
-    ///
-    fn to_term(&self) -> PyLikelihoodTerm {
-        PyLikelihoodTerm(self.0.clone())
+    /// Turn an ``NLL`` into a likelihood expression that can be combined with other terms.
+    fn to_expression(&self) -> PyLikelihoodExpression {
+        PyLikelihoodExpression(self.0.clone().into_expression())
     }
     /// The names of the free parameters used to evaluate the NLL
     ///
@@ -2397,328 +2390,61 @@ impl PyStochasticNLL {
     }
 }
 
-/// An identifier that can be used like an [`AmplitudeID`](`laddu_core::amplitudes::AmplitudeID`) to combine registered
-/// [`LikelihoodTerm`]s.
-#[derive(Clone, Debug)]
-pub struct LikelihoodID(usize, Option<String>);
-
-impl Display for LikelihoodID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(name) = &self.1 {
-            write!(f, "{}({})", name, self.0)
-        } else {
-            write!(f, "({})", self.0)
-        }
-    }
-}
-
-/// An object which holds a registered ``LikelihoodTerm``
-///
-/// See Also
-/// --------
-/// laddu.LikelihoodManager.register
-///
-#[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodID", module = "laddu")]
-#[derive(Clone)]
-pub struct PyLikelihoodID(LikelihoodID);
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl PyLikelihoodID {
-    fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(self.0.clone() + other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
-            Ok(PyLikelihoodExpression(
-                self.0.clone() + other_expr.0.clone(),
-            ))
-        } else if let Ok(int) = other.extract::<usize>() {
-            if int == 0 {
-                Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
-                    self.0.clone(),
-                )))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(other_aid.0.clone() + self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
-            Ok(PyLikelihoodExpression(
-                other_expr.0.clone() + self.0.clone(),
-            ))
-        } else if let Ok(int) = other.extract::<usize>() {
-            if int == 0 {
-                Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
-                    self.0.clone(),
-                )))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for +"))
-        }
-    }
-    fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(self.0.clone() * other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
-            Ok(PyLikelihoodExpression(
-                self.0.clone() * other_expr.0.clone(),
-            ))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(other_aid.0.clone() * self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
-            Ok(PyLikelihoodExpression(
-                other_expr.0.clone() * self.0.clone(),
-            ))
-        } else {
-            Err(PyTypeError::new_err("Unsupported operand type for *"))
-        }
-    }
-    fn __str__(&self) -> String {
-        format!("{}", self.0)
-    }
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-}
-
-/// A [`Manager`](`laddu_core::Manager`) but for [`LikelihoodTerm`]s.
-#[derive(Default, Clone)]
-pub struct LikelihoodManager {
-    terms: Vec<Box<dyn LikelihoodTerm>>,
-    param_name_to_index: HashMap<String, usize>,
-    param_names: Vec<String>,
-    param_layouts: Vec<Vec<usize>>,
-    param_counts: Vec<usize>,
-}
-
-impl LikelihoodManager {
-    /// Register a [`LikelihoodTerm`] to get a [`LikelihoodID`] which can be combined with others
-    /// to form [`LikelihoodExpression`]s which can be minimized.
-    #[allow(clippy::new_ret_no_self)]
-    pub fn register(&mut self, term: Box<dyn LikelihoodTerm>) -> LikelihoodID {
-        let term_idx = self.terms.len();
-        for param_name in term.parameters() {
-            if !self.param_name_to_index.contains_key(&param_name) {
-                self.param_name_to_index
-                    .insert(param_name.clone(), self.param_name_to_index.len());
-                self.param_names.push(param_name.clone());
-            }
-        }
-        let param_layout: Vec<usize> = term
-            .parameters()
-            .iter()
-            .map(|name| self.param_name_to_index[name])
-            .collect();
-        let param_count = term.parameters().len();
-        self.param_layouts.push(param_layout);
-        self.param_counts.push(param_count);
-        self.terms.push(term.clone());
-
-        LikelihoodID(term_idx, None)
-    }
-
-    /// Register (and name) a [`LikelihoodTerm`] to get a [`LikelihoodID`] which can be combined with others
-    /// to form [`LikelihoodExpression`]s which can be minimized.
-    pub fn register_with_name<T: AsRef<str>>(
-        &mut self,
-        term: Box<dyn LikelihoodTerm>,
-        name: T,
-    ) -> LikelihoodID {
-        let term_idx = self.terms.len();
-        for param_name in term.parameters() {
-            if !self.param_name_to_index.contains_key(&param_name) {
-                self.param_name_to_index
-                    .insert(param_name.clone(), self.param_name_to_index.len());
-                self.param_names.push(param_name.clone());
-            }
-        }
-        let param_layout: Vec<usize> = term
-            .parameters()
-            .iter()
-            .map(|name| self.param_name_to_index[name])
-            .collect();
-        let param_count = term.parameters().len();
-        self.param_layouts.push(param_layout);
-        self.param_counts.push(param_count);
-        self.terms.push(term.clone());
-
-        LikelihoodID(term_idx, Some(name.as_ref().to_string().clone()))
-    }
-
-    /// Return all of the parameter names of registered [`LikelihoodTerm`]s in order. This only
-    /// returns the unique names in the order they should be input when evaluated with a
-    /// [`LikelihoodEvaluator`].
-    pub fn parameters(&self) -> Vec<String> {
-        self.param_names.clone()
-    }
-
-    /// Load a [`LikelihoodExpression`] to generate a [`LikelihoodEvaluator`] that can be
-    /// minimized.
-    pub fn load(&self, likelihood_expression: &LikelihoodExpression) -> LikelihoodEvaluator {
-        LikelihoodEvaluator {
-            likelihood_manager: self.clone(),
-            likelihood_expression: likelihood_expression.clone(),
-        }
-    }
-}
-
-/// A class which can be used to register LikelihoodTerms and store precalculated data
-///
-#[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodManager", module = "laddu")]
-#[derive(Clone)]
-pub struct PyLikelihoodManager(LikelihoodManager);
-
-#[cfg(feature = "python")]
-#[pymethods]
-impl PyLikelihoodManager {
-    #[new]
-    fn new() -> Self {
-        Self(LikelihoodManager::default())
-    }
-    /// Register a LikelihoodTerm with the LikelihoodManager
-    ///
-    /// Parameters
-    /// ----------
-    /// term : LikelihoodTerm
-    ///     The LikelihoodTerm to register
-    ///
-    /// Returns
-    /// -------
-    /// LikelihoodID
-    ///     A reference to the registered ``likelihood`` that can be used to form complex
-    ///     LikelihoodExpressions
-    ///
-    #[pyo3(signature = (likelihood_term, *, name = None))]
-    fn register(
-        &mut self,
-        likelihood_term: &PyLikelihoodTerm,
-        name: Option<String>,
-    ) -> PyLikelihoodID {
-        if let Some(name) = name {
-            PyLikelihoodID(self.0.register_with_name(likelihood_term.0.clone(), name))
-        } else {
-            PyLikelihoodID(self.0.register(likelihood_term.0.clone()))
-        }
-    }
-    /// The free parameters used by all terms in the LikelihoodManager
-    ///
-    /// Returns
-    /// -------
-    /// parameters : list of str
-    ///     The list of parameter names
-    ///
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
-    }
-    /// Load a LikelihoodExpression by precalculating each term over their internal Datasets
-    ///
-    /// Parameters
-    /// ----------
-    /// likelihood_expression : LikelihoodExpression
-    ///     The expression to use in precalculation
-    ///
-    /// Returns
-    /// -------
-    /// LikelihoodEvaluator
-    ///     An object that can be used to evaluate the `likelihood_expression` over all managed
-    ///     terms
-    ///
-    /// Notes
-    /// -----
-    /// While the given `likelihood_expression` will be the one evaluated in the end, all registered
-    /// Amplitudes will be loaded, and all of their parameters will be included in the final
-    /// expression. These parameters will have no effect on evaluation, but they must be
-    /// included in function calls.
-    ///
-    /// See Also
-    /// --------
-    /// LikelihoodManager.parameters
-    ///
-    fn load(&self, likelihood_expression: &PyLikelihoodExpression) -> PyLikelihoodEvaluator {
-        PyLikelihoodEvaluator(self.0.load(&likelihood_expression.0))
-    }
-}
-
 #[derive(Debug)]
 struct LikelihoodValues(Vec<f64>);
 
 #[derive(Debug)]
 struct LikelihoodGradients(Vec<DVector<f64>>);
 
-/// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
 #[derive(Clone, Default)]
-pub enum LikelihoodExpression {
-    /// A expression equal to zero.
+enum LikelihoodNode {
     #[default]
     Zero,
-    /// A expression equal to one.
     One,
-    /// A registered [`LikelihoodTerm`] referenced by an [`LikelihoodID`].
-    Term(LikelihoodID),
-    /// The sum of two [`LikelihoodExpression`]s.
-    Add(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
-    /// The product of two [`LikelihoodExpression`]s.
-    Mul(Box<LikelihoodExpression>, Box<LikelihoodExpression>),
+    Term(usize),
+    Add(Box<LikelihoodNode>, Box<LikelihoodNode>),
+    Mul(Box<LikelihoodNode>, Box<LikelihoodNode>),
 }
 
-impl Debug for LikelihoodExpression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.write_tree(f, "", "", "")
+impl LikelihoodNode {
+    fn remap(&self, mapping: &[usize]) -> Self {
+        match self {
+            Self::Term(idx) => Self::Term(mapping[*idx]),
+            Self::Add(a, b) => Self::Add(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Mul(a, b) => Self::Mul(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::Zero => Self::Zero,
+            Self::One => Self::One,
+        }
     }
-}
 
-impl Display for LikelihoodExpression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl LikelihoodExpression {
     fn evaluate(&self, likelihood_values: &LikelihoodValues) -> f64 {
         match self {
-            LikelihoodExpression::Zero => 0.0,
-            LikelihoodExpression::One => 1.0,
-            LikelihoodExpression::Term(lid) => likelihood_values.0[lid.0],
-            LikelihoodExpression::Add(a, b) => {
+            LikelihoodNode::Zero => 0.0,
+            LikelihoodNode::One => 1.0,
+            LikelihoodNode::Term(idx) => likelihood_values.0[*idx],
+            LikelihoodNode::Add(a, b) => {
                 a.evaluate(likelihood_values) + b.evaluate(likelihood_values)
             }
-            LikelihoodExpression::Mul(a, b) => {
+            LikelihoodNode::Mul(a, b) => {
                 a.evaluate(likelihood_values) * b.evaluate(likelihood_values)
             }
         }
     }
+
     fn evaluate_gradient(
         &self,
         likelihood_values: &LikelihoodValues,
         likelihood_gradients: &LikelihoodGradients,
     ) -> DVector<f64> {
         match self {
-            LikelihoodExpression::Zero => DVector::zeros(0),
-            LikelihoodExpression::One => DVector::zeros(0),
-            LikelihoodExpression::Term(lid) => likelihood_gradients.0[lid.0].clone(),
-            LikelihoodExpression::Add(a, b) => {
+            LikelihoodNode::Zero => DVector::zeros(0),
+            LikelihoodNode::One => DVector::zeros(0),
+            LikelihoodNode::Term(idx) => likelihood_gradients.0[*idx].clone(),
+            LikelihoodNode::Add(a, b) => {
                 a.evaluate_gradient(likelihood_values, likelihood_gradients)
                     + b.evaluate_gradient(likelihood_values, likelihood_gradients)
             }
-            LikelihoodExpression::Mul(a, b) => {
+            LikelihoodNode::Mul(a, b) => {
                 a.evaluate_gradient(likelihood_values, likelihood_gradients)
                     * b.evaluate(likelihood_values)
                     + b.evaluate_gradient(likelihood_values, likelihood_gradients)
@@ -2726,7 +2452,7 @@ impl LikelihoodExpression {
             }
         }
     }
-    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
+
     fn write_tree(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -2737,9 +2463,7 @@ impl LikelihoodExpression {
         let display_string = match self {
             Self::Zero => "0".to_string(),
             Self::One => "1".to_string(),
-            Self::Term(lid) => {
-                format!("{}", lid.0)
-            }
+            Self::Term(idx) => format!("term({idx})"),
             Self::Add(_, _) => "+".to_string(),
             Self::Mul(_, _) => "*".to_string(),
         };
@@ -2752,9 +2476,9 @@ impl LikelihoodExpression {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 while let Some(child) = it.next() {
                     match it.peek() {
-                        Some(_) => child.write_tree(f, &child_prefix, "├─ ", "│  "),
-                        None => child.write_tree(f, &child_prefix, "└─ ", "   "),
-                    }?;
+                        Some(_) => child.write_tree(f, &child_prefix, "├─ ", "│  ")?,
+                        None => child.write_tree(f, &child_prefix, "└─ ", "   ")?,
+                    }
                 }
             }
         }
@@ -2762,43 +2486,165 @@ impl LikelihoodExpression {
     }
 }
 
-impl_op_ex!(+ |a: &LikelihoodExpression, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(a.clone()), Box::new(b.clone()))});
+/// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
+#[derive(Clone, Default)]
+pub struct LikelihoodExpression {
+    registry: LikelihoodRegistry,
+    tree: LikelihoodNode,
+}
+
+impl LikelihoodExpression {
+    /// Build a [`LikelihoodExpression`] from a single [`LikelihoodTerm`].
+    pub fn from_term(term: Box<dyn LikelihoodTerm>) -> Self {
+        Self {
+            registry: LikelihoodRegistry::singleton(term),
+            tree: LikelihoodNode::Term(0),
+        }
+    }
+
+    /// Create an expression representing zero, the additive identity.
+    pub fn zero() -> Self {
+        Self {
+            registry: LikelihoodRegistry::default(),
+            tree: LikelihoodNode::Zero,
+        }
+    }
+
+    /// Create an expression representing one, the multiplicative identity.
+    pub fn one() -> Self {
+        Self {
+            registry: LikelihoodRegistry::default(),
+            tree: LikelihoodNode::One,
+        }
+    }
+
+    fn binary_op(
+        a: &LikelihoodExpression,
+        b: &LikelihoodExpression,
+        build: impl Fn(Box<LikelihoodNode>, Box<LikelihoodNode>) -> LikelihoodNode,
+    ) -> LikelihoodExpression {
+        let (registry, left_map, right_map) = a.registry.merge(&b.registry);
+        let left_tree = a.tree.remap(&left_map);
+        let right_tree = b.tree.remap(&right_map);
+        LikelihoodExpression {
+            registry,
+            tree: build(Box::new(left_tree), Box::new(right_tree)),
+        }
+    }
+
+    fn write_tree(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        parent_prefix: &str,
+        immediate_prefix: &str,
+        parent_suffix: &str,
+    ) -> std::fmt::Result {
+        self.tree
+            .write_tree(f, parent_prefix, immediate_prefix, parent_suffix)
+    }
+
+    /// The free parameters used across all terms in this expression.
+    pub fn parameters(&self) -> Vec<String> {
+        self.registry.parameters()
+    }
+
+    /// Load a `LikelihoodExpression` so it can be evaluated repeatedly.
+    pub fn load(&self) -> LikelihoodEvaluator {
+        LikelihoodEvaluator {
+            likelihood_registry: self.registry.clone(),
+            likelihood_expression: self.tree.clone(),
+        }
+    }
+}
+
+impl Debug for LikelihoodExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_tree(f, "", "", "")
+    }
+}
+
+impl Display for LikelihoodExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_tree(f, "", "", "")
+    }
+}
+
+impl_op_ex!(+ |a: &LikelihoodExpression, b: &LikelihoodExpression| -> LikelihoodExpression {
+    LikelihoodExpression::binary_op(a, b, LikelihoodNode::Add)
+});
 impl_op_ex!(
     *|a: &LikelihoodExpression, b: &LikelihoodExpression| -> LikelihoodExpression {
-        LikelihoodExpression::Mul(Box::new(a.clone()), Box::new(b.clone()))
-    }
-);
-impl_op_ex_commutative!(+ |a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(b.clone()))});
-impl_op_ex_commutative!(
-    *|a: &LikelihoodID, b: &LikelihoodExpression| -> LikelihoodExpression {
-        LikelihoodExpression::Mul(
-            Box::new(LikelihoodExpression::Term(a.clone())),
-            Box::new(b.clone()),
-        )
-    }
-);
-impl_op_ex!(+ |a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression { LikelihoodExpression::Add(Box::new(LikelihoodExpression::Term(a.clone())), Box::new(LikelihoodExpression::Term(b.clone())))});
-impl_op_ex!(
-    *|a: &LikelihoodID, b: &LikelihoodID| -> LikelihoodExpression {
-        LikelihoodExpression::Mul(
-            Box::new(LikelihoodExpression::Term(a.clone())),
-            Box::new(LikelihoodExpression::Term(b.clone())),
-        )
+        LikelihoodExpression::binary_op(a, b, LikelihoodNode::Mul)
     }
 );
 
-/// A mathematical expression formed from LikelihoodIDs
+#[derive(Clone, Default)]
+struct LikelihoodRegistry {
+    terms: Vec<Box<dyn LikelihoodTerm>>,
+    param_name_to_index: HashMap<String, usize>,
+    param_names: Vec<String>,
+    param_layouts: Vec<Vec<usize>>,
+    param_counts: Vec<usize>,
+}
+
+impl LikelihoodRegistry {
+    fn singleton(term: Box<dyn LikelihoodTerm>) -> Self {
+        let mut registry = Self::default();
+        registry.push_term(term);
+        registry
+    }
+
+    fn parameters(&self) -> Vec<String> {
+        self.param_names.clone()
+    }
+
+    fn push_term(&mut self, term: Box<dyn LikelihoodTerm>) -> usize {
+        let term_idx = self.terms.len();
+        let parameters = term.parameters();
+        for param_name in &parameters {
+            if !self.param_name_to_index.contains_key(param_name) {
+                let index = self.param_name_to_index.len();
+                self.param_name_to_index.insert(param_name.clone(), index);
+                self.param_names.push(param_name.clone());
+            }
+        }
+        let param_layout: Vec<usize> = parameters
+            .iter()
+            .map(|name| self.param_name_to_index[name])
+            .collect();
+        self.param_layouts.push(param_layout);
+        self.param_counts.push(parameters.len());
+        self.terms.push(term);
+        term_idx
+    }
+
+    fn merge(&self, other: &Self) -> (Self, Vec<usize>, Vec<usize>) {
+        let mut registry = Self::default();
+        let mut left_map = Vec::with_capacity(self.terms.len());
+        for term in &self.terms {
+            let idx = registry.push_term(dyn_clone::clone_box(&**term));
+            left_map.push(idx);
+        }
+        let mut right_map = Vec::with_capacity(other.terms.len());
+        for term in &other.terms {
+            let idx = registry.push_term(dyn_clone::clone_box(&**term));
+            right_map.push(idx);
+        }
+        (registry, left_map, right_map)
+    }
+}
+
 ///
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodExpression", module = "laddu")]
 #[derive(Clone)]
-pub struct PyLikelihoodExpression(LikelihoodExpression);
+pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 
 /// A convenience method to sum sequences of [`LikelihoodExpression`]s or identifiers.
 ///
 /// Parameters
 /// ----------
-/// terms : sequence of LikelihoodExpression or LikelihoodID
+/// terms : sequence of LikelihoodExpression
 ///     A non-empty sequence whose elements are summed. Single-element sequences are returned
 ///     unchanged while empty sequences evaluate to [`LikelihoodZero`].
 ///
@@ -2814,63 +2660,46 @@ pub struct PyLikelihoodExpression(LikelihoodExpression);
 ///
 /// Examples
 /// --------
-/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
-/// >>> manager = LikelihoodManager()
-/// >>> alpha = manager.register(LikelihoodScalar('alpha'))
-/// >>> expression = likelihood_sum([alpha])
-/// >>> manager.load(expression).evaluate([0.5])
+/// >>> from laddu import LikelihoodScalar, likelihood_sum
+/// >>> expression = likelihood_sum([LikelihoodScalar('alpha')])
+/// >>> expression.load().evaluate([0.5])
 /// 0.5
-/// >>> manager.load(likelihood_sum([])).evaluate([])
+/// >>> likelihood_sum([]).load().evaluate([])
 /// 0.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
     if terms.is_empty() {
-        return Ok(PyLikelihoodExpression(LikelihoodExpression::Zero));
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::zero()));
     }
     if terms.len() == 1 {
         let term = &terms[0];
         if let Ok(expression) = term.extract::<PyLikelihoodExpression>() {
             return Ok(expression);
         }
-        if let Ok(py_amplitude_id) = term.extract::<PyLikelihoodID>() {
-            return Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
-                py_amplitude_id.0,
-            )));
-        }
-        return Err(PyTypeError::new_err(
-            "Item is neither a PyLikelihoodExpression nor a PyLikelihoodID",
-        ));
+        return Err(PyTypeError::new_err("Item is not a PyLikelihoodExpression"));
     }
     let mut iter = terms.iter();
     let Some(first_term) = iter.next() else {
-        return Ok(PyLikelihoodExpression(LikelihoodExpression::Zero));
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::zero()));
     };
-    if let Ok(first_expression) = first_term.extract::<PyLikelihoodExpression>() {
-        let mut summation = first_expression.clone();
-        for term in iter {
-            summation = summation.__add__(term)?;
-        }
-        return Ok(summation);
+    let PyLikelihoodExpression(mut summation) = first_term
+        .extract::<PyLikelihoodExpression>()
+        .map_err(|_| PyTypeError::new_err("Elements must be PyLikelihoodExpression"))?;
+    for term in iter {
+        let PyLikelihoodExpression(expr) = term
+            .extract::<PyLikelihoodExpression>()
+            .map_err(|_| PyTypeError::new_err("Elements must be PyLikelihoodExpression"))?;
+        summation = summation + expr;
     }
-    if let Ok(first_likelihood_id) = first_term.extract::<PyLikelihoodID>() {
-        let mut summation =
-            PyLikelihoodExpression(LikelihoodExpression::Term(first_likelihood_id.0));
-        for term in iter {
-            summation = summation.__add__(term)?;
-        }
-        return Ok(summation);
-    }
-    Err(PyTypeError::new_err(
-        "Elements must be PyLikelihoodExpression or PyLikelihoodID",
-    ))
+    Ok(PyLikelihoodExpression(summation))
 }
 
-/// A convenience method to multiply sequences of [`LikelihoodExpression`]s or identifiers.
+/// A convenience method to multiply sequences of [`LikelihoodExpression`]s.
 ///
 /// Parameters
 /// ----------
-/// terms : sequence of LikelihoodExpression or LikelihoodID
+/// terms : sequence of LikelihoodExpression
 ///     A non-empty sequence whose elements are multiplied. Single-element sequences are returned
 ///     unchanged while empty sequences evaluate to [`LikelihoodOne`].
 ///
@@ -2886,59 +2715,39 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 ///
 /// Examples
 /// --------
-/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_product
-/// >>> manager = LikelihoodManager()
-/// >>> alpha = manager.register(LikelihoodScalar('alpha'))
-/// >>> beta = manager.register(LikelihoodScalar('beta'))
-/// >>> expression = likelihood_product([alpha, beta])
-/// >>> evaluator = manager.load(expression)
+/// >>> from laddu import LikelihoodScalar, likelihood_product
+/// >>> evaluator = likelihood_product([LikelihoodScalar('alpha'), LikelihoodScalar('beta')]).load()
 /// >>> evaluator.parameters
 /// ['alpha', 'beta']
 /// >>> evaluator.evaluate([2.0, 3.0])
 /// 6.0
-/// >>> manager.load(likelihood_product([])).evaluate([])
-/// 1.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
     if terms.is_empty() {
-        return Ok(PyLikelihoodExpression(LikelihoodExpression::One));
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::one()));
     }
     if terms.len() == 1 {
         let term = &terms[0];
         if let Ok(expression) = term.extract::<PyLikelihoodExpression>() {
             return Ok(expression);
         }
-        if let Ok(py_amplitude_id) = term.extract::<PyLikelihoodID>() {
-            return Ok(PyLikelihoodExpression(LikelihoodExpression::Term(
-                py_amplitude_id.0,
-            )));
-        }
-        return Err(PyTypeError::new_err(
-            "Item is neither a PyLikelihoodExpression nor a PyLikelihoodID",
-        ));
+        return Err(PyTypeError::new_err("Item is not a PyLikelihoodExpression"));
     }
     let mut iter = terms.iter();
     let Some(first_term) = iter.next() else {
-        return Ok(PyLikelihoodExpression(LikelihoodExpression::One));
+        return Ok(PyLikelihoodExpression(LikelihoodExpression::one()));
     };
-    if let Ok(first_expression) = first_term.extract::<PyLikelihoodExpression>() {
-        let mut product = first_expression.clone();
-        for term in iter {
-            product = product.__mul__(term)?;
-        }
-        return Ok(product);
+    let PyLikelihoodExpression(mut product) = first_term
+        .extract::<PyLikelihoodExpression>()
+        .map_err(|_| PyTypeError::new_err("Elements must be PyLikelihoodExpression"))?;
+    for term in iter {
+        let PyLikelihoodExpression(expr) = term
+            .extract::<PyLikelihoodExpression>()
+            .map_err(|_| PyTypeError::new_err("Elements must be PyLikelihoodExpression"))?;
+        product = product * expr;
     }
-    if let Ok(first_likelihood_id) = first_term.extract::<PyLikelihoodID>() {
-        let mut product = PyLikelihoodExpression(LikelihoodExpression::Term(first_likelihood_id.0));
-        for term in iter {
-            product = product.__mul__(term)?;
-        }
-        return Ok(product);
-    }
-    Err(PyTypeError::new_err(
-        "Elements must be PyLikelihoodExpression or PyLikelihoodID",
-    ))
+    Ok(PyLikelihoodExpression(product))
 }
 
 /// A convenience constructor for a zero-valued [`LikelihoodExpression`].
@@ -2955,8 +2764,8 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
 ///
 /// Examples
 /// --------
-/// >>> from laddu import LikelihoodManager, LikelihoodZero
-/// >>> evaluator = LikelihoodManager().load(LikelihoodZero())
+/// >>> from laddu import LikelihoodZero
+/// >>> evaluator = LikelihoodZero().load()
 /// >>> evaluator.parameters
 /// []
 /// >>> evaluator.evaluate([])
@@ -2964,7 +2773,7 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodZero")]
 pub fn py_likelihood_zero() -> PyLikelihoodExpression {
-    PyLikelihoodExpression(LikelihoodExpression::Zero)
+    PyLikelihoodExpression(LikelihoodExpression::zero())
 }
 
 /// A convenience constructor for a unit-valued [`LikelihoodExpression`].
@@ -2981,23 +2790,30 @@ pub fn py_likelihood_zero() -> PyLikelihoodExpression {
 ///
 /// Examples
 /// --------
-/// >>> from laddu import LikelihoodManager, LikelihoodOne
-/// >>> evaluator = LikelihoodManager().load(LikelihoodOne())
-/// >>> evaluator.evaluate([])
+/// >>> from laddu import LikelihoodOne
+/// >>> LikelihoodOne().load().evaluate([])
 /// 1.0
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodOne")]
 pub fn py_likelihood_one() -> PyLikelihoodExpression {
-    PyLikelihoodExpression(LikelihoodExpression::One)
+    PyLikelihoodExpression(LikelihoodExpression::one())
 }
 
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodExpression {
+    /// The free parameters used by the expression.
+    #[getter]
+    fn parameters(&self) -> Vec<String> {
+        self.0.parameters()
+    }
+
+    /// Load the expression into a reusable evaluator.
+    fn load(&self) -> PyLikelihoodEvaluator {
+        PyLikelihoodEvaluator(self.0.load())
+    }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(self.0.clone() + other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
+        if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
             Ok(PyLikelihoodExpression(
                 self.0.clone() + other_expr.0.clone(),
             ))
@@ -3014,9 +2830,7 @@ impl PyLikelihoodExpression {
         }
     }
     fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(other_aid.0.clone() + self.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
+        if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
             Ok(PyLikelihoodExpression(
                 other_expr.0.clone() + self.0.clone(),
             ))
@@ -3033,9 +2847,7 @@ impl PyLikelihoodExpression {
         }
     }
     fn __mul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(self.0.clone() * other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
+        if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
             Ok(PyLikelihoodExpression(
                 self.0.clone() * other_expr.0.clone(),
             ))
@@ -3044,11 +2856,9 @@ impl PyLikelihoodExpression {
         }
     }
     fn __rmul__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
-        if let Ok(other_aid) = other.extract::<PyRef<PyLikelihoodID>>() {
-            Ok(PyLikelihoodExpression(self.0.clone() * other_aid.0.clone()))
-        } else if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
+        if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
             Ok(PyLikelihoodExpression(
-                self.0.clone() * other_expr.0.clone(),
+                other_expr.0.clone() * self.0.clone(),
             ))
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for *"))
@@ -3065,32 +2875,32 @@ impl PyLikelihoodExpression {
 /// A structure to evaluate and minimize combinations of [`LikelihoodTerm`]s.
 #[derive(Clone)]
 pub struct LikelihoodEvaluator {
-    likelihood_manager: LikelihoodManager,
-    likelihood_expression: LikelihoodExpression,
+    likelihood_registry: LikelihoodRegistry,
+    likelihood_expression: LikelihoodNode,
 }
 
 impl LikelihoodTerm for LikelihoodEvaluator {
     fn update(&self) {
-        self.likelihood_manager
+        self.likelihood_registry
             .terms
             .iter()
             .for_each(|term| term.update())
     }
     /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
     fn parameters(&self) -> Vec<String> {
-        self.likelihood_manager.parameters()
+        self.likelihood_registry.parameters()
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
     fn evaluate(&self, parameters: &[f64]) -> f64 {
         let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_manager
+            .likelihood_registry
             .param_counts
             .iter()
             .map(|&count| vec![0.0; count])
             .collect();
         for (layout, buffer) in self
-            .likelihood_manager
+            .likelihood_registry
             .param_layouts
             .iter()
             .zip(param_buffers.iter_mut())
@@ -3100,7 +2910,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
             }
         }
         let likelihood_values = LikelihoodValues(
-            self.likelihood_manager
+            self.likelihood_registry
                 .terms
                 .iter()
                 .zip(param_buffers.iter())
@@ -3114,13 +2924,13 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
     fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_manager
+            .likelihood_registry
             .param_counts
             .iter()
             .map(|&count| vec![0.0; count])
             .collect();
         for (layout, buffer) in self
-            .likelihood_manager
+            .likelihood_registry
             .param_layouts
             .iter()
             .zip(param_buffers.iter_mut())
@@ -3130,23 +2940,23 @@ impl LikelihoodTerm for LikelihoodEvaluator {
             }
         }
         let likelihood_values = LikelihoodValues(
-            self.likelihood_manager
+            self.likelihood_registry
                 .terms
                 .iter()
                 .zip(param_buffers.iter())
                 .map(|(term, buffer)| term.evaluate(buffer))
                 .collect(),
         );
-        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_manager.terms.len())
-            .map(|_| DVector::zeros(self.likelihood_manager.param_names.len()))
+        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
+            .map(|_| DVector::zeros(self.likelihood_registry.param_names.len()))
             .collect();
         for (((term, param_buffer), gradient_buffer), layout) in self
-            .likelihood_manager
+            .likelihood_registry
             .terms
             .iter()
             .zip(param_buffers.iter())
             .zip(gradient_buffers.iter_mut())
-            .zip(self.likelihood_manager.param_layouts.iter())
+            .zip(self.likelihood_registry.param_layouts.iter())
         {
             let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
             for (term_idx, &buffer_idx) in layout.iter().enumerate() {
@@ -3159,8 +2969,8 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     }
 }
 
-/// A class which can be used to evaluate a collection of LikelihoodTerms managed by a
-/// LikelihoodManager
+/// A class which can be used to evaluate a collection of likelihood terms described by a
+/// [`LikelihoodExpression`]
 ///
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodEvaluator", module = "laddu")]
@@ -3447,17 +3257,14 @@ impl PyLikelihoodEvaluator {
     ///
     /// Examples
     /// --------
-    /// >>> manager = LikelihoodManager()  # doctest: +SKIP
-    /// >>> scale = manager.register(LikelihoodScalar('scale'))  # doctest: +SKIP
-    /// >>> evaluator = manager.load(likelihood_sum([scale]))  # doctest: +SKIP
+    /// >>> expr = likelihood_sum([LikelihoodScalar('scale')])  # doctest: +SKIP
+    /// >>> evaluator = expr.load()  # doctest: +SKIP
     /// >>> evaluator.minimize([1.0], method='pso', max_steps=150)  # doctest: +SKIP
     ///
     /// Examples
     /// --------
-    /// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
-    /// >>> manager = LikelihoodManager()
-    /// >>> alpha = manager.register(LikelihoodScalar('alpha'))
-    /// >>> evaluator = manager.load(likelihood_sum([alpha]))
+    /// >>> from laddu import LikelihoodScalar, likelihood_sum
+    /// >>> evaluator = likelihood_sum([LikelihoodScalar('alpha')]).load()
     /// >>> summary = evaluator.mcmc([[0.0], [0.4]], max_steps=4, method='aies')
     /// >>> summary.dimension[2]
     /// 1
@@ -3537,8 +3344,14 @@ impl PyLikelihoodEvaluator {
 pub struct LikelihoodScalar(String);
 
 impl LikelihoodScalar {
-    /// Create a new [`LikelihoodScalar`] with a parameter with the given name.
-    pub fn new<T: AsRef<str>>(name: T) -> Box<Self> {
+    /// Create a new [`LikelihoodScalar`] with a parameter with the given name and wrap it as a
+    /// [`LikelihoodExpression`].
+    pub fn new<T: AsRef<str>>(name: T) -> LikelihoodExpression {
+        Self::new_term(name).into_expression()
+    }
+
+    /// Construct the underlying [`LikelihoodTerm`] for advanced use cases.
+    pub fn new_term<T: AsRef<str>>(name: T) -> Box<Self> {
         Self(name.as_ref().into()).into()
     }
 }
@@ -3557,7 +3370,7 @@ impl LikelihoodTerm for LikelihoodScalar {
     }
 }
 
-/// A parameterized scalar term which can be added to a [`LikelihoodManager`].
+/// A parameterized scalar term which can be converted into a [`LikelihoodExpression`].
 ///
 /// Parameters
 /// ----------
@@ -3566,34 +3379,29 @@ impl LikelihoodTerm for LikelihoodScalar {
 ///
 /// Returns
 /// -------
-/// LikelihoodTerm
-///     A [`LikelihoodTerm`] representing a single free scaling parameter.
+/// LikelihoodExpression
+///     A [`LikelihoodExpression`] representing a single free scaling parameter.
 ///
 /// See Also
 /// --------
 /// likelihood_sum
-/// LikelihoodManager.register
+/// likelihood_product
 ///
 /// Examples
 /// --------
-/// >>> from laddu import LikelihoodManager, LikelihoodScalar, likelihood_sum
-/// >>> manager = LikelihoodManager()
-/// >>> scale = manager.register(LikelihoodScalar('alpha'))
-/// >>> evaluator = manager.load(likelihood_sum([scale]))
-/// >>> evaluator.evaluate([1.25])
+/// >>> from laddu import LikelihoodScalar, likelihood_sum
+/// >>> expr = likelihood_sum([LikelihoodScalar('alpha')])
+/// >>> expr.load().evaluate([1.25])
 /// 1.25
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodScalar")]
-pub fn py_likelihood_scalar(name: String) -> PyLikelihoodTerm {
-    PyLikelihoodTerm(LikelihoodScalar::new(name))
+pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
+    PyLikelihoodExpression(LikelihoodScalar::new(name))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LikelihoodExpression, LikelihoodID, LikelihoodManager, LikelihoodScalar, LikelihoodTerm,
-        NLL,
-    };
+    use super::{LikelihoodScalar, LikelihoodTerm, NLL};
     use approx::assert_relative_eq;
     use laddu_core::{
         amplitudes::{parameter, Amplitude, AmplitudeID, ParameterLike},
@@ -3679,21 +3487,13 @@ mod tests {
         (nll, vec![2.0])
     }
 
-    fn term(id: &LikelihoodID) -> LikelihoodExpression {
-        LikelihoodExpression::Term(id.clone())
-    }
-
     #[test]
-    fn likelihood_manager_evaluates_scalar_sum() {
-        let mut manager = LikelihoodManager::default();
-        let alpha = manager.register(LikelihoodScalar::new("alpha"));
-        let beta = manager.register(LikelihoodScalar::new("beta"));
-        let expr = LikelihoodExpression::Add(Box::new(term(&alpha)), Box::new(term(&beta)));
-        let evaluator = manager.load(&expr);
-        assert_eq!(
-            manager.parameters(),
-            vec!["alpha".to_string(), "beta".to_string()]
-        );
+    fn likelihood_expression_evaluates_scalar_sum() {
+        let alpha = LikelihoodScalar::new("alpha");
+        let beta = LikelihoodScalar::new("beta");
+        let expr = &alpha + &beta;
+        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
+        let evaluator = expr.load();
         let params = vec![2.0, 3.0];
         assert_relative_eq!(evaluator.evaluate(&params), 5.0);
         let grad = evaluator.evaluate_gradient(&params);
@@ -3702,12 +3502,11 @@ mod tests {
     }
 
     #[test]
-    fn likelihood_manager_evaluates_scalar_product() {
-        let mut manager = LikelihoodManager::default();
-        let alpha = manager.register(LikelihoodScalar::new("alpha"));
-        let beta = manager.register(LikelihoodScalar::new("beta"));
-        let expr = LikelihoodExpression::Mul(Box::new(term(&alpha)), Box::new(term(&beta)));
-        let evaluator = manager.load(&expr);
+    fn likelihood_expression_evaluates_scalar_product() {
+        let alpha = LikelihoodScalar::new("alpha");
+        let beta = LikelihoodScalar::new("beta");
+        let expr = &alpha * &beta;
+        let evaluator = expr.load();
         let params = vec![2.0, 3.0];
         assert_relative_eq!(evaluator.evaluate(&params), 6.0);
         let grad = evaluator.evaluate_gradient(&params);
