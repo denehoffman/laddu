@@ -1,33 +1,25 @@
-FROM ubuntu:latest
-
-ARG MSRV=1.88.0
-ARG PYTHON_VERSION=3.9
-ENV RUSTUP_HOME=/usr/local/rustup
-ENV CARGO_HOME=/usr/local/cargo
-ENV PATH=$CARGO_HOME/bin:/root/.local/bin:$PATH
-ENV UV_LINK_MODE=copy
+FROM ubuntu:rolling
 
 RUN apt update && apt install -y --no-install-recommends \
     ca-certificates \
     curl \
+    git \
     build-essential \
     pkg-config \
     python3-dev \
     openmpi-bin \
     libopenmpi-dev \
     libclang-dev \
+    libssl-dev \
     rsync
 
-RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain ${MSRV} -y --no-modify-path
+# Install mise
+RUN curl https://mise.run | sh
+ENV PATH="/root/.local/bin:/root/.mise/bin:${PATH}"
 
-RUN rustup component add clippy rustfmt
-RUN cargo install --locked cargo-nextest
-RUN cargo install --locked just
-
-ADD https://astral.sh/uv/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-WORKDIR /work
-RUN uv python install ${PYTHON_VERSION}
-RUN uv tool install "maturin[patchelf]"
-RUN uv tool install ruff
-RUN uv tool install ty
+# Preinstall toolchain dependencies
+RUN mise use --yes rust@latest \
+    && mise use --yes cargo@latest \
+    && mise use --yes cargo:cargo-nextest@latest \
+    && mise use --yes cargo:cargo-hack@latest \
+    && mise use --yes uv@latest

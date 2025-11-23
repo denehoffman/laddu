@@ -1,3 +1,4 @@
+git_tag_enable = true
 [workspace]
 
 [[package]]

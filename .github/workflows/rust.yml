@@ -27,8 +27,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: jdx/mise-action@v2
       - name: Clippy
-        run: cargo clippy -F mpi
+        run: mise run lint-rust-mpi
 
   build-check-test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -46,12 +47,13 @@ jobs:
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
+      - uses: jdx/mise-action@v2
 
-      - name: Run checks
-        run: cargo hack check --rust-version --each-feature --no-dev-deps
+      - name: Run cargo-hack checks
+        run: mise run cargo-hack-check
 
       - name: Build
-        run: cargo build --verbose
+        run: mise run build-rust
 
-      - name: Run tests
-        run: cargo hack test --verbose --each-feature
+      - name: Run cargo-hack tests
+        run: mise run cargo-hack-test
