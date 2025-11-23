@@ -18,15 +18,6 @@ Examples
 Use :mod:`laddu.amplitudes.breit_wigner` or the other submodules for concrete physics models.
 """
 
-from laddu.amplitudes import (
-    breit_wigner,
-    common,
-    kmatrix,
-    phase_space,
-    piecewise,
-    ylm,
-    zlm,
-)
 from laddu.laddu import (
     Evaluator,
     Expression,
@@ -38,6 +29,16 @@ from laddu.laddu import (
     expr_product,
     expr_sum,
     parameter,
+)
+
+from . import (
+    breit_wigner,
+    common,
+    kmatrix,
+    phase_space,
+    piecewise,
+    ylm,
+    zlm,
 )
 
 __all__ = [

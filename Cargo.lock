@@ -2159,7 +2159,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "py-laddu"
+name = "py-laddu-cpu"
 version = "0.11.0"
 dependencies = [
  "laddu-amplitudes",

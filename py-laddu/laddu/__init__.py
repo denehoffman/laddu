@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-import laddu.laddu as _laddu
-from laddu import amplitudes, data, experimental, extensions, mpi, utils
-from laddu.amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
-from laddu.amplitudes.breit_wigner import BreitWigner
-from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
-from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.ylm import Ylm
-from laddu.amplitudes.zlm import PolPhase, Zlm
-from laddu.data import BinnedDataset, Dataset, Event
-from laddu.extensions import (
+from typing import Protocol, cast
+
+from . import amplitudes, data, experimental, extensions, mpi, utils
+from ._backend import backend as _backend_module
+from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
+from .amplitudes.breit_wigner import BreitWigner
+from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from .amplitudes.phase_space import PhaseSpaceFactor
+from .amplitudes.ylm import Ylm
+from .amplitudes.zlm import PolPhase, Zlm
+from .data import BinnedDataset, Dataset, Event
+from .extensions import (
     NLL,
     AutocorrelationTerminator,
     ControlFlow,
@@ -37,8 +39,8 @@ from laddu.extensions import (
     likelihood_product,
     likelihood_sum,
 )
-from laddu.laddu import Evaluator, Expression, ParameterLike
-from laddu.utils.variables import (
+from .laddu import Evaluator, Expression, ParameterLike
+from .utils.variables import (
     Angles,
     CosTheta,
     Mandelstam,
@@ -49,7 +51,18 @@ from laddu.utils.variables import (
     PolMagnitude,
     Topology,
 )
-from laddu.utils.vectors import Vec3, Vec4
+from .utils.vectors import Vec3, Vec4
+
+
+class _BackendProtocol(Protocol):
+    __doc__: str | None
+
+    def version(self) -> str: ...
+
+    def available_parallelism(self) -> int: ...
+
+
+_laddu = cast('_BackendProtocol', _backend_module)
 
 DatasetBase = Dataset
 

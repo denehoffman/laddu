@@ -1,18 +1,18 @@
 [package]
-name = "py-laddu-mpi"
+name = "py-laddu-cpu"
 version = "0.11.0"
 edition.workspace = true
 readme = "README.md"
 license.workspace = true
 rust-version.workspace = true
-description = "Python bindings for laddu (with MPI support)"
+description = "Python bindings for laddu"
 documentation = "https://laddu.readthedocs.io/en/stable/"
 homepage.workspace = true
 repository.workspace = true
 exclude = ["examples/*", "tests/*", "laddu/*", "docs/*", "pyproject.toml"]
 
 [lib]
-name = "laddu_mpi"
+name = "laddu_cpu"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -27,8 +27,5 @@ pyo3 = { workspace = true, features = [
 ] }
 
 [features]
-default = ["mpi"]
+default = []
 mpi = ["laddu-extensions/mpi", "laddu-python/mpi"]
-
-[package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "./docs-header.html"]

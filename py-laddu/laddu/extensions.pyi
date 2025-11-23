@@ -22,30 +22,45 @@ def likelihood_product(
 def LikelihoodOne() -> LikelihoodExpression: ...
 def LikelihoodZero() -> LikelihoodExpression: ...
 
-
 class LikelihoodID:
-    def __add__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __radd__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __mul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-    def __rmul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-
+    def __add__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __radd__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __mul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
+    def __rmul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
 
 class LikelihoodExpression:
-    def __add__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __radd__(self, other: LikelihoodID | LikelihoodExpression | int) -> LikelihoodExpression: ...
-    def __mul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-    def __rmul__(self, other: LikelihoodID | LikelihoodExpression) -> LikelihoodExpression: ...
-
+    def __add__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __radd__(
+        self, other: LikelihoodID | LikelihoodExpression | int
+    ) -> LikelihoodExpression: ...
+    def __mul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
+    def __rmul__(
+        self, other: LikelihoodID | LikelihoodExpression
+    ) -> LikelihoodExpression: ...
 
 class LikelihoodTerm: ...
 
-
 class LikelihoodManager:
     def __init__(self) -> None: ...
-    def register(self, likelihood_term: LikelihoodTerm, *, name: str | None = None) -> LikelihoodID: ...
+    def register(
+        self, likelihood_term: LikelihoodTerm, *, name: str | None = None
+    ) -> LikelihoodID: ...
     def parameters(self) -> list[str]: ...
-    def load(self, likelihood_expression: LikelihoodExpression) -> LikelihoodEvaluator: ...
-
+    def load(
+        self, likelihood_expression: LikelihoodExpression
+    ) -> LikelihoodEvaluator: ...
 
 class MinimizationStatus:
     x: npt.NDArray[np.float64]
@@ -58,7 +73,6 @@ class MinimizationStatus:
     hess: npt.NDArray[np.float64] | None
     converged: bool
     swarm: Swarm | None
-
 
 class MinimizationSummary:
     bounds: list[tuple[float, float]] | None
@@ -76,7 +90,6 @@ class MinimizationSummary:
     def __getstate__(self) -> object: ...
     def __setstate__(self, state: object) -> None: ...
 
-
 class MCMCSummary:
     bounds: list[tuple[float, float]] | None
     parameter_names: list[str] | None
@@ -86,11 +99,14 @@ class MCMCSummary:
     converged: bool
     dimension: tuple[int, int, int]
 
-    def get_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
-    def get_flat_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
+    def get_chain(
+        self, *, burn: int | None = None, thin: int | None = None
+    ) -> npt.NDArray[np.float64]: ...
+    def get_flat_chain(
+        self, *, burn: int | None = None, thin: int | None = None
+    ) -> npt.NDArray[np.float64]: ...
     def __getstate__(self) -> object: ...
     def __setstate__(self, state: object) -> None: ...
-
 
 class EnsembleStatus:
     message: str
@@ -99,13 +115,15 @@ class EnsembleStatus:
     walkers: list[Walker]
     dimension: tuple[int, int, int]
 
-    def get_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
-    def get_flat_chain(self, *, burn: int | None = None, thin: int | None = None) -> npt.NDArray[np.float64]: ...
-
+    def get_chain(
+        self, *, burn: int | None = None, thin: int | None = None
+    ) -> npt.NDArray[np.float64]: ...
+    def get_flat_chain(
+        self, *, burn: int | None = None, thin: int | None = None
+    ) -> npt.NDArray[np.float64]: ...
 
 class Swarm:
     particles: list[SwarmParticle]
-
 
 class SwarmParticle:
     x: npt.NDArray[np.float64]
@@ -114,37 +132,32 @@ class SwarmParticle:
     fx_best: float
     velocity: npt.NDArray[np.float64]
 
-
 class Walker:
     dimension: tuple[int, int]
 
     def get_latest(self) -> tuple[npt.NDArray[np.float64], float]: ...
 
-
 class ControlFlow(Enum):
     Continue = 0
     Break = 1
-
 
 class MinimizationObserver(metaclass=ABCMeta):
     @abstractmethod
     def observe(self, step: int, status: MinimizationStatus) -> None: ...
 
-
 class MinimizationTerminator(metaclass=ABCMeta):
     @abstractmethod
-    def check_for_termination(self, step: int, status: MinimizationStatus) -> ControlFlow: ...
-
+    def check_for_termination(
+        self, step: int, status: MinimizationStatus
+    ) -> ControlFlow: ...
 
 class MCMCObserver(metaclass=ABCMeta):
     @abstractmethod
     def observe(self, step: int, status: EnsembleStatus) -> None: ...
 
-
 class MCMCTerminator(metaclass=ABCMeta):
     @abstractmethod
     def check_for_termination(self, step: int, status: EnsembleStatus) -> ControlFlow: ...
-
 
 class LikelihoodEvaluator:
     parameters: list[str]
@@ -167,7 +180,9 @@ class LikelihoodEvaluator:
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
         settings: dict | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
-        terminators: MinimizationTerminator | Sequence[MinimizationTerminator] | None = None,
+        terminators: MinimizationTerminator
+        | Sequence[MinimizationTerminator]
+        | None = None,
         max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
@@ -188,7 +203,6 @@ class LikelihoodEvaluator:
         debug: bool = False,
         threads: int = 0,
     ) -> MCMCSummary: ...
-
 
 class StochasticNLL:
     nll: NLL
@@ -201,7 +215,9 @@ class StochasticNLL:
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
         settings: dict | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
-        terminators: MinimizationTerminator | Sequence[MinimizationTerminator] | None = None,
+        terminators: MinimizationTerminator
+        | Sequence[MinimizationTerminator]
+        | None = None,
         max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
@@ -222,7 +238,6 @@ class StochasticNLL:
         debug: bool = False,
         threads: int = 0,
     ) -> MCMCSummary: ...
-
 
 class NLL:
     parameters: list[str]
@@ -236,7 +251,9 @@ class NLL:
         ds_accmc: Dataset,
     ) -> None: ...
     def to_term(self) -> LikelihoodTerm: ...
-    def to_stochastic(self, batch_size: int, *, seed: int | None = None) -> StochasticNLL: ...
+    def to_stochastic(
+        self, batch_size: int, *, seed: int | None = None
+    ) -> StochasticNLL: ...
     def activate(self, name: str | list[str]) -> None: ...
     def activate_all(self) -> None: ...
     def deactivate(self, name: str | list[str]) -> None: ...
@@ -275,7 +292,9 @@ class NLL:
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
         settings: dict | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
-        terminators: MinimizationTerminator | Sequence[MinimizationTerminator] | None = None,
+        terminators: MinimizationTerminator
+        | Sequence[MinimizationTerminator]
+        | None = None,
         max_steps: int | None = None,
         debug: bool = False,
         threads: int = 0,
@@ -297,9 +316,7 @@ class NLL:
         threads: int = 0,
     ) -> MCMCSummary: ...
 
-
 def LikelihoodScalar(name: str) -> LikelihoodTerm: ...
-
 
 class AutocorrelationTerminator:
     taus: npt.NDArray[np.float64]
@@ -316,9 +333,9 @@ class AutocorrelationTerminator:
         verbose: bool = False,
     ) -> None: ...
 
-
-def integrated_autocorrelation_times(samples: npt.ArrayLike, *, c: float | None = None) -> npt.NDArray[np.float64]: ...
-
+def integrated_autocorrelation_times(
+    samples: npt.ArrayLike, *, c: float | None = None
+) -> npt.NDArray[np.float64]: ...
 
 __all__ = [
     'NLL',

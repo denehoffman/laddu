@@ -8,7 +8,9 @@ def Ylm(name: str, l: Literal[0], m: Literal[0], angles: Angles) -> Expression: 
 @overload
 def Ylm(name: str, l: Literal[1], m: Literal[-1, 0, 1], angles: Angles) -> Expression: ...
 @overload
-def Ylm(name: str, l: Literal[2], m: Literal[-2, -1, 0, 1, 2], angles: Angles) -> Expression: ...
+def Ylm(
+    name: str, l: Literal[2], m: Literal[-2, -1, 0, 1, 2], angles: Angles
+) -> Expression: ...
 @overload
 def Ylm(
     name: str,

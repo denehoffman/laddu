@@ -1,12 +1,12 @@
-from laddu import amplitudes, data, experimental, extensions, mpi, utils
-from laddu.amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
-from laddu.amplitudes.breit_wigner import BreitWigner
-from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
-from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.ylm import Ylm
-from laddu.amplitudes.zlm import PolPhase, Zlm
-from laddu.data import BinnedDataset, Dataset, Event
-from laddu.extensions import (
+from . import amplitudes, data, experimental, extensions, mpi, utils
+from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
+from .amplitudes.breit_wigner import BreitWigner
+from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from .amplitudes.phase_space import PhaseSpaceFactor
+from .amplitudes.ylm import Ylm
+from .amplitudes.zlm import PolPhase, Zlm
+from .data import BinnedDataset, Dataset, Event
+from .extensions import (
     NLL,
     AutocorrelationTerminator,
     ControlFlow,
@@ -34,8 +34,8 @@ from laddu.extensions import (
     likelihood_product,
     likelihood_sum,
 )
-from laddu.laddu import Evaluator, Expression, ParameterLike
-from laddu.utils.variables import (
+from .laddu import Evaluator, Expression, ParameterLike
+from .utils.variables import (
     Angles,
     CosTheta,
     Mandelstam,
@@ -46,13 +46,11 @@ from laddu.utils.variables import (
     PolMagnitude,
     Topology,
 )
-from laddu.utils.vectors import Vec3, Vec4
+from .utils.vectors import Vec3, Vec4
 
 __version__: str
 
-
 def available_parallelism() -> int: ...
-
 
 __all__ = [
     'NLL',

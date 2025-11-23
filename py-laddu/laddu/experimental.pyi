@@ -1,4 +1,3 @@
-
 import numpy.typing as npt
 
 from laddu.extensions import NLL, LikelihoodTerm

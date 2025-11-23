@@ -1,13 +1,9 @@
 [build-system]
-requires = ["uv_build>=0.9.10,<0.10.0"]
-build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-name = "laddu"
-module-root = ""
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
 
 [project]
-name = "laddu"
+name = "laddu-cpu"
 requires-python = ">=3.7"
 classifiers = [
   "Programming Language :: Rust",
@@ -23,12 +19,8 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-version = "0.11.0"
-description = "High-level Python bindings for laddu"
-license = "MIT"
-readme = "README.md"
+dynamic = ["version", "license", "description", "readme"]
 dependencies = [
-  "laddu-cpu == 0.11.0",
   "numpy",
 ]
 
@@ -41,7 +33,6 @@ pandas = ["pandas"]
 polars = ["polars"]
 tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
 uproot = ["uproot"]
-mpi = ["laddu-mpi == 0.11.0"]
 
 [tool.maturin]
 bindings = "pyo3"

@@ -36,8 +36,9 @@ class Event:
     def get_p4_sum(self, names: list[str]) -> Vec4: ...
     def boost_to_rest_frame_of(self, names: list[str]) -> Event: ...
     def p4(self, name: str) -> Vec4 | None: ...
-    def evaluate(self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam) -> float: ...
-
+    def evaluate(
+        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> float: ...
 
 class Dataset(Sequence[Event]):
     events: list[Event]
@@ -103,7 +104,6 @@ class Dataset(Sequence[Event]):
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
 
-
 class BinnedDataset:
     n_bins: int
     range: tuple[float, float]
@@ -111,7 +111,6 @@ class BinnedDataset:
 
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Dataset: ...
-
 
 def open(
     path: str | Path,

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "py-laddu", "py-laddu-mpi"]
+members = ["crates/*", "py-laddu-cpu", "py-laddu-mpi"]
 default-members = ["crates/*"]
 
 [workspace.package]

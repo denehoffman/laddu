@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from laddu.laddu import (
+from .laddu import (
     finalize_mpi,
     get_rank,
     get_size,
