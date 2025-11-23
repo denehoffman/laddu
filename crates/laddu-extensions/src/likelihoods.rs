@@ -2511,6 +2511,7 @@ pub struct LikelihoodManager {
 impl LikelihoodManager {
     /// Register a [`LikelihoodTerm`] to get a [`LikelihoodID`] which can be combined with others
     /// to form [`LikelihoodExpression`]s which can be minimized.
+    #[allow(clippy::new_ret_no_self)]
     pub fn register(&mut self, term: Box<dyn LikelihoodTerm>) -> LikelihoodID {
         let term_idx = self.terms.len();
         for param_name in term.parameters() {
@@ -3614,6 +3615,7 @@ mod tests {
     }
 
     impl ConstantAmplitude {
+        #[allow(clippy::new_ret_no_self)]
         fn new(name: &str, parameter: ParameterLike) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),

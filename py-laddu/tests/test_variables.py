@@ -100,7 +100,9 @@ def test_pol_magnitude() -> None:
 
 def test_polarization() -> None:
     event = make_test_event()
-    polarization = Polarization(reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle')
+    polarization = Polarization(
+        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     assert pytest.approx(polarization.pol_angle.value(event)) == 1.93592989
     assert pytest.approx(polarization.pol_magnitude.value(event)) == 0.38562805
 
@@ -126,7 +128,12 @@ def test_mandelstam() -> None:
     m2_res = event.get_p4_sum(['kshort1', 'kshort2']).m2
     assert (
         pytest.approx(
-            s.value(event) + t.value(event) + u.value(event) - m2_beam - m2_recoil - m2_res,
+            s.value(event)
+            + t.value(event)
+            + u.value(event)
+            - m2_beam
+            - m2_recoil
+            - m2_res,
             abs=1e-2,
         )
         == 1.0

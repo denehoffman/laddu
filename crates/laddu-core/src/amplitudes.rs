@@ -1303,6 +1303,7 @@ mod tests {
     }
 
     impl ComplexScalar {
+        #[allow(clippy::new_ret_no_self)]
         pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),

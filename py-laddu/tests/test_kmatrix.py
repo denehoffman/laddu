@@ -71,7 +71,9 @@ def test_f0_gradient() -> None:
     )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
-    result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    result = evaluator.evaluate_gradient(
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    )
     assert pytest.approx(result[0][0].real) == -0.032491219879072594
     assert pytest.approx(result[0][0].imag) == -0.011073489047324615
     assert pytest.approx(result[0][1].real) == pytest.approx(-result[0][0].imag)

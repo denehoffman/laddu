@@ -1,4 +1,3 @@
-
 from laddu import (
     ComplexScalar,
     Dataset,
@@ -219,8 +218,12 @@ def test_amplitude_activation() -> None:
 
 
 def test_gradient() -> None:
-    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
-    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
+    amp1 = ComplexScalar(
+        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+    )
+    amp2 = ComplexScalar(
+        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+    )
     dataset = make_test_dataset()
     params = [2.0, 3.0, 4.0, 5.0]
 
@@ -386,9 +389,19 @@ def test_parameter_registration() -> None:
 
 
 def test_tree_printing() -> None:
-    amp1 = ComplexScalar('parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1'))
-    amp2 = ComplexScalar('parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2'))
-    expr = amp1.real() + amp2.conj().imag() + One() * -Zero() - Zero() / One() + (amp1 * amp2).norm_sqr()
+    amp1 = ComplexScalar(
+        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+    )
+    amp2 = ComplexScalar(
+        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+    )
+    expr = (
+        amp1.real()
+        + amp2.conj().imag()
+        + One() * -Zero()
+        - Zero() / One()
+        + (amp1 * amp2).norm_sqr()
+    )
     assert (
         str(expr)
         == """+

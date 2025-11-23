@@ -138,7 +138,9 @@ def test_piecewise_polar_complex_scalar_evaluation() -> None:
     evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
-    result = evaluator.evaluate([1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta])
+    result = evaluator.evaluate(
+        [1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta]
+    )
     assert pytest.approx(result[0].real) == 2.1 * r * np.cos(2.2 * theta)
     assert pytest.approx(result[0].imag) == 2.1 * r * np.sin(2.2 * theta)
 
@@ -160,7 +162,9 @@ def test_piecewise_polar_complex_scalar_gradient() -> None:
     evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
-    result = evaluator.evaluate_gradient([1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta])
+    result = evaluator.evaluate_gradient(
+        [1.1 * r, 1.2 * theta, 2.1 * r, 2.2 * theta, 3.1 * r, 3.2 * theta]
+    )
     assert pytest.approx(result[0][0].real) == 0.0
     assert pytest.approx(result[0][0].imag) == 0.0
     assert pytest.approx(result[0][1].real) == 0.0
