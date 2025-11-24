@@ -3,13 +3,22 @@ _.python.venv = { path = ".venv" }
 
 [tools]
 cargo = "latest"
-rust = "latest"
+rust = { version = "latest", profile = "default"}
 uv = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-hack" = "latest"
 
+[tasks.ensure-venv]
+description = "Bootstrap the uv-managed virtual environment when missing"
+run = '''
+if [ ! -d .venv ]; then
+  uv venv .venv
+fi
+'''
+
 [tasks.develop]
 description = "Build the CPU extension and install the Python wrapper in editable mode"
+depends = ["ensure-venv"]
 run = '''
 uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 uv pip install --find-links py-laddu-cpu/dist laddu-cpu
@@ -23,6 +32,7 @@ run = "uv pip install --find-links py-laddu-cpu/dist -e 'py-laddu[tests]'"
 
 [tasks.develop-mpi]
 description = "Build both CPU and MPI extensions and install the wrapper"
+depends = ["ensure-venv"]
 run = '''
 uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist --features mpi
@@ -67,8 +77,21 @@ depends = ["test-rust", "test-python"]
 description = "Run all tests with MPI features"
 depends = ["test-rust-mpi", "test-python-mpi"]
 
+[tasks.ensure-clippy]
+description = "Install the clippy component for the active Rust toolchain"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+toolchain="${RUSTUP_TOOLCHAIN:-}"
+if [ -z "$toolchain" ]; then
+  toolchain=$(rustup show active-toolchain | head -n 1 | awk '{print $1}')
+fi
+rustup component add clippy --toolchain "$toolchain"
+'''
+
 [tasks.lint-python]
 description = "Run Ruff checks"
+depends = ["ensure-venv"]
 run = '''
 uv run ruff check py-laddu
 uv run ruff format --check py-laddu
@@ -77,10 +100,12 @@ uv run ty check
 
 [tasks.lint-rust]
 description = "Run cargo clippy"
+depends = ["ensure-venv", "ensure-clippy"]
 run = "cargo clippy --all-targets"
 
 [tasks.lint-rust-mpi]
 description = "Run cargo clippy with MPI features"
+depends = ["ensure-venv", "ensure-clippy"]
 run = "cargo clippy --all-targets --features mpi"
 
 [tasks.lint]

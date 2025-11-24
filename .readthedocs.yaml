@@ -22,6 +22,8 @@ formats:
 python:
   install:
     - method: pip
+      path: py-laddu-cpu
+    - method: pip
       path: py-laddu
       extra_requirements:
         - docs
