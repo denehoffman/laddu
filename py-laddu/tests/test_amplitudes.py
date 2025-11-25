@@ -1,3 +1,5 @@
+import pytest
+
 from laddu import (
     ComplexScalar,
     Dataset,
@@ -213,6 +215,13 @@ def test_amplitude_activation() -> None:
     assert result[0] == 1.0 + 0.0j
 
     evaluator.activate_all()
+    result = evaluator.evaluate([])
+    assert result[0] == 3.0 + 0.0j
+
+    missing = 'does_not_exist'
+    with pytest.raises(ValueError):
+        evaluator.deactivate(missing)
+    evaluator.deactivate(missing, strict=False)
     result = evaluator.evaluate([])
     assert result[0] == 3.0 + 0.0j
 

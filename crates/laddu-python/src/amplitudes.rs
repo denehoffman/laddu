@@ -276,13 +276,24 @@ impl PyEvaluator {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn activate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.activate(&string_arg)?;
+            if strict {
+                self.0.activate_strict(&string_arg)?;
+            } else {
+                self.0.activate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.activate_many(&vec)?;
+            if strict {
+                self.0.activate_many_strict(&vec)?;
+            } else {
+                self.0.activate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",
@@ -310,13 +321,24 @@ impl PyEvaluator {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn deactivate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.deactivate(&string_arg)?;
+            if strict {
+                self.0.deactivate_strict(&string_arg)?;
+            } else {
+                self.0.deactivate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.deactivate_many(&vec)?;
+            if strict {
+                self.0.deactivate_many_strict(&vec)?;
+            } else {
+                self.0.deactivate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",
@@ -344,13 +366,24 @@ impl PyEvaluator {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn isolate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.isolate(&string_arg)?;
+            if strict {
+                self.0.isolate_strict(&string_arg)?;
+            } else {
+                self.0.isolate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.isolate_many(&vec)?;
+            if strict {
+                self.0.isolate_many_strict(&vec)?;
+            } else {
+                self.0.isolate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",

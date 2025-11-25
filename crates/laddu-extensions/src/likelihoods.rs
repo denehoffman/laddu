@@ -105,45 +105,75 @@ impl NLL {
     pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
-    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.data_evaluator.activate(&name)?;
-        self.accmc_evaluator.activate(&name)
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.activate(&name);
+        self.accmc_evaluator.activate(name);
     }
-    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.data_evaluator.activate_many(names)?;
-        self.accmc_evaluator.activate_many(names)
+    /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
+    pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.data_evaluator.activate_strict(&name)?;
+        self.accmc_evaluator.activate_strict(name)
+    }
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.activate_many(names);
+        self.accmc_evaluator.activate_many(names);
+    }
+    /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
+    pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.data_evaluator.activate_many_strict(names)?;
+        self.accmc_evaluator.activate_many_strict(names)
     }
     /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
-    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.data_evaluator.deactivate(&name)?;
-        self.accmc_evaluator.deactivate(&name)
+    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.deactivate(&name);
+        self.accmc_evaluator.deactivate(name);
     }
-    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.data_evaluator.deactivate_many(names)?;
-        self.accmc_evaluator.deactivate_many(names)
+    /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
+    pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.data_evaluator.deactivate_strict(&name)?;
+        self.accmc_evaluator.deactivate_strict(name)
+    }
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.deactivate_many(names);
+        self.accmc_evaluator.deactivate_many(names);
+    }
+    /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
+    pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.data_evaluator.deactivate_many_strict(names)?;
+        self.accmc_evaluator.deactivate_many_strict(names)
     }
     /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
-    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.data_evaluator.isolate(&name)?;
-        self.accmc_evaluator.isolate(&name)
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest), skipping missing entries.
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.data_evaluator.isolate(&name);
+        self.accmc_evaluator.isolate(name);
     }
-    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.data_evaluator.isolate_many(names)?;
-        self.accmc_evaluator.isolate_many(names)
+    /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest) and return an error if it is missing.
+    pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.data_evaluator.isolate_strict(&name)?;
+        self.accmc_evaluator.isolate_strict(name)
+    }
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest), skipping missing entries.
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.data_evaluator.isolate_many(names);
+        self.accmc_evaluator.isolate_many(names);
+    }
+    /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest) and return an error if any are missing.
+    pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.data_evaluator.isolate_many_strict(names)?;
+        self.accmc_evaluator.isolate_many_strict(names)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -386,7 +416,7 @@ impl NLL {
     ) -> LadduResult<Vec<f64>> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names)?;
+            mc_evaluator.isolate_many_strict(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -407,7 +437,7 @@ impl NLL {
         } else {
             let current_active_data = self.data_evaluator.resources.read().active.clone();
             let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names)?;
+            self.isolate_many_strict(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -510,7 +540,7 @@ impl NLL {
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many(names)?;
+            mc_evaluator.isolate_many_strict(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
             let result_gradient = mc_evaluator.evaluate_gradient(parameters);
@@ -550,7 +580,7 @@ impl NLL {
         } else {
             let current_active_data = self.data_evaluator.resources.read().active.clone();
             let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many(names)?;
+            self.isolate_many_strict(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
             let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
@@ -1537,13 +1567,24 @@ impl PyNLL {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn activate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn activate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.activate(&string_arg)?;
+            if strict {
+                self.0.activate_strict(&string_arg)?;
+            } else {
+                self.0.activate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.activate_many(&vec)?;
+            if strict {
+                self.0.activate_many_strict(&vec)?;
+            } else {
+                self.0.activate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",
@@ -1571,13 +1612,24 @@ impl PyNLL {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn deactivate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn deactivate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.deactivate(&string_arg)?;
+            if strict {
+                self.0.deactivate_strict(&string_arg)?;
+            } else {
+                self.0.deactivate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.deactivate_many(&vec)?;
+            if strict {
+                self.0.deactivate_many_strict(&vec)?;
+            } else {
+                self.0.deactivate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",
@@ -1605,13 +1657,24 @@ impl PyNLL {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    ///
-    fn isolate(&self, arg: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
+    ///     silently skip missing amplitudes.
+    #[pyo3(signature = (arg, *, strict=true))]
+    fn isolate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
-            self.0.isolate(&string_arg)?;
+            if strict {
+                self.0.isolate_strict(&string_arg)?;
+            } else {
+                self.0.isolate(&string_arg);
+            }
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
             let vec: Vec<String> = list_arg.extract()?;
-            self.0.isolate_many(&vec)?;
+            if strict {
+                self.0.isolate_many_strict(&vec)?;
+            } else {
+                self.0.isolate_many(&vec);
+            }
         } else {
             return Err(PyTypeError::new_err(
                 "Argument must be either a string or a list of strings",

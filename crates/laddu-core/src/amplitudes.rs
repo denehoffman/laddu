@@ -685,14 +685,22 @@ impl Evaluator {
         self.resources.read().parameters.iter().cloned().collect()
     }
 
-    /// Activate an [`Amplitude`] by name.
-    pub fn activate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().activate(name)
+    /// Activate an [`Amplitude`] by name, skipping missing entries.
+    pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().activate(name);
+    }
+    /// Activate an [`Amplitude`] by name and return an error if it is missing.
+    pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.resources.write().activate_strict(name)
     }
 
-    /// Activate several [`Amplitude`]s by name.
-    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().activate_many(names)
+    /// Activate several [`Amplitude`]s by name, skipping missing entries.
+    pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().activate_many(names);
+    }
+    /// Activate several [`Amplitude`]s by name and return an error if any are missing.
+    pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.resources.write().activate_many_strict(names)
     }
 
     /// Activate all registered [`Amplitude`]s.
@@ -700,14 +708,23 @@ impl Evaluator {
         self.resources.write().activate_all();
     }
 
-    /// Dectivate an [`Amplitude`] by name.
-    pub fn deactivate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().deactivate(name)
+    /// Dectivate an [`Amplitude`] by name, skipping missing entries.
+    pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().deactivate(name);
     }
 
-    /// Deactivate several [`Amplitude`]s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().deactivate_many(names)
+    /// Dectivate an [`Amplitude`] by name and return an error if it is missing.
+    pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.resources.write().deactivate_strict(name)
+    }
+
+    /// Deactivate several [`Amplitude`]s by name, skipping missing entries.
+    pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().deactivate_many(names);
+    }
+    /// Dectivate several [`Amplitude`]s by name and return an error if any are missing.
+    pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.resources.write().deactivate_many_strict(names)
     }
 
     /// Deactivate all registered [`Amplitude`]s.
@@ -715,14 +732,24 @@ impl Evaluator {
         self.resources.write().deactivate_all();
     }
 
-    /// Isolate an [`Amplitude`] by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().isolate(name)
+    /// Isolate an [`Amplitude`] by name (deactivate the rest), skipping missing entries.
+    pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.resources.write().isolate(name);
     }
 
-    /// Isolate several [`Amplitude`]s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().isolate_many(names)
+    /// Isolate an [`Amplitude`] by name (deactivate the rest) and return an error if it is missing.
+    pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.resources.write().isolate_strict(name)
+    }
+
+    /// Isolate several [`Amplitude`]s by name (deactivate the rest), skipping missing entries.
+    pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.resources.write().isolate_many(names);
+    }
+
+    /// Isolate several [`Amplitude`]s by name (deactivate the rest) and return an error if any are missing.
+    pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.resources.write().isolate_many_strict(names)
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -1514,12 +1541,12 @@ mod tests {
         assert_eq!(result[0], Complex64::new(3.0, 0.0));
 
         // Test deactivation
-        evaluator.deactivate("const1").unwrap();
+        evaluator.deactivate_strict("const1").unwrap();
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex64::new(2.0, 0.0));
 
         // Test isolation
-        evaluator.isolate("const1").unwrap();
+        evaluator.isolate_strict("const1").unwrap();
         let result = evaluator.evaluate(&[]);
         assert_eq!(result[0], Complex64::new(1.0, 0.0));
 

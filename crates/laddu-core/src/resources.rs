@@ -241,21 +241,41 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
 }
 
 impl Resources {
+    #[inline]
+    fn set_activation_state(&mut self, name: &str, active: bool) -> bool {
+        if let Some(amplitude) = self.amplitudes.get(name) {
+            self.active[amplitude.1] = active;
+            true
+        } else {
+            false
+        }
+    }
     /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn activate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
-        self.active[self
-            .amplitudes
-            .get(name.as_ref())
-            .ok_or(LadduError::AmplitudeNotFoundError {
-                name: name.as_ref().to_string(),
-            })?
-            .1] = true;
-        Ok(())
+    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
+        let name_ref = name.as_ref();
+        self.set_activation_state(name_ref, true);
     }
     /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         for name in names {
-            self.activate(name)?
+            self.activate(name);
+        }
+    }
+    /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    pub fn activate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        let name_ref = name.as_ref();
+        if self.set_activation_state(name_ref, true) {
+            Ok(())
+        } else {
+            Err(LadduError::AmplitudeNotFoundError {
+                name: name_ref.to_string(),
+            })
+        }
+    }
+    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    pub fn activate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        for name in names {
+            self.activate_strict(name)?
         }
         Ok(())
     }
@@ -264,20 +284,31 @@ impl Resources {
         self.active = vec![true; self.active.len()];
     }
     /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
-    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
-        self.active[self
-            .amplitudes
-            .get(name.as_ref())
-            .ok_or(LadduError::AmplitudeNotFoundError {
-                name: name.as_ref().to_string(),
-            })?
-            .1] = false;
-        Ok(())
+    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
+        let name_ref = name.as_ref();
+        self.set_activation_state(name_ref, false);
     }
     /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
-    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         for name in names {
-            self.deactivate(name)?;
+            self.deactivate(name);
+        }
+    }
+    /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    pub fn deactivate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        let name_ref = name.as_ref();
+        if self.set_activation_state(name_ref, false) {
+            Ok(())
+        } else {
+            Err(LadduError::AmplitudeNotFoundError {
+                name: name_ref.to_string(),
+            })
+        }
+    }
+    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    pub fn deactivate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        for name in names {
+            self.deactivate_strict(name)?;
         }
         Ok(())
     }
@@ -286,14 +317,24 @@ impl Resources {
         self.active = vec![false; self.active.len()];
     }
     /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
-    pub fn isolate<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
         self.deactivate_all();
-        self.activate(name)
+        self.activate(name);
+    }
+    /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest), returning an error if it is missing.
+    pub fn isolate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        self.deactivate_all();
+        self.activate_strict(name)
     }
     /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest).
-    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
         self.deactivate_all();
-        self.activate_many(names)
+        self.activate_many(names);
+    }
+    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest), returning an error if any are missing.
+    pub fn isolate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        self.deactivate_all();
+        self.activate_many_strict(names)
     }
     /// Register an [`Amplitude`](crate::amplitudes::Amplitude) with the [`Resources`] manager.
     /// This method should be called at the end of the
@@ -520,11 +561,11 @@ mod tests {
         assert!(resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.deactivate("amp1").unwrap();
+        resources.deactivate_strict("amp1").unwrap();
         assert!(!resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.activate("amp1").unwrap();
+        resources.activate_strict("amp1").unwrap();
         assert!(resources.active[amp1.1]);
 
         resources.deactivate_all();
@@ -535,7 +576,7 @@ mod tests {
         assert!(resources.active[amp1.1]);
         assert!(resources.active[amp2.1]);
 
-        resources.isolate("amp1").unwrap();
+        resources.isolate_strict("amp1").unwrap();
         assert!(resources.active[amp1.1]);
         assert!(!resources.active[amp2.1]);
     }
