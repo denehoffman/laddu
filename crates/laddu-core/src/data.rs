@@ -1,18 +1,18 @@
 use accurate::{sum::Klein, traits::*};
 use arrow::{
     array::{Float32Array, Float64Array},
-    datatypes::{DataType, Field, Schema},
+    datatypes::DataType,
     record_batch::RecordBatch,
 };
 use auto_ops::impl_op_ex;
-use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
 use std::{fmt::Display, fs::File};
 use std::{path::PathBuf, sync::Arc};
 
-use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
+use oxyroot::{Branch, Named, ReaderTree, RootFile};
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -22,11 +22,6 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
-
-#[cfg(feature = "mpi")]
-type WorldHandle = SimpleCommunicator;
-#[cfg(not(feature = "mpi"))]
-type WorldHandle = ();
 
 use crate::utils::get_bin_edges;
 use crate::{
@@ -673,49 +668,12 @@ fn fetch_event_mpi(
     world: &SimpleCommunicator,
     total: usize,
 ) -> Event {
-    fetch_event_mpi_generic(
-        global_index,
-        total,
-        world,
-        &dataset.metadata,
-        |local_index| dataset.index_local(local_index),
-    )
-}
-
-#[cfg(feature = "mpi")]
-fn fetch_event_mpi_from_events(
-    events: &[Event],
-    metadata: &Arc<DatasetMetadata>,
-    global_index: usize,
-    world: &SimpleCommunicator,
-    total: usize,
-) -> Event {
-    fetch_event_mpi_generic(
-        global_index,
-        total,
-        world,
-        metadata,
-        |local_index| &events[local_index],
-    )
-}
-
-#[cfg(feature = "mpi")]
-fn fetch_event_mpi_generic<F>(
-    global_index: usize,
-    total: usize,
-    world: &SimpleCommunicator,
-    metadata: &Arc<DatasetMetadata>,
-    local_event: F,
-) -> Event
-where
-    F: Fn(usize) -> &Event,
-{
     let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
     let mut serialized_event_buffer_len: usize = 0;
     let mut serialized_event_buffer: Vec<u8> = Vec::default();
     let config = bincode::config::standard();
     if world.rank() == owning_rank {
-        let event = local_event(local_index);
+        let event = dataset.index_local(local_index);
         serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
         serialized_event_buffer_len = serialized_event_buffer.len();
     }
@@ -730,7 +688,43 @@ where
         .broadcast_into(&mut serialized_event_buffer);
 
     if world.rank() == owning_rank {
-        local_event(local_index).clone()
+        dataset.index_local(local_index).clone()
+    } else {
+        let (event, _): (EventData, usize) =
+            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
+        Event::new(Arc::new(event), dataset.metadata.clone())
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn fetch_event_mpi_from_events(
+    events: &[Event],
+    metadata: &Arc<DatasetMetadata>,
+    global_index: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Event {
+    let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
+    let mut serialized_event_buffer_len: usize = 0;
+    let mut serialized_event_buffer: Vec<u8> = Vec::default();
+    let config = bincode::config::standard();
+    if world.rank() == owning_rank {
+        let event = &events[local_index];
+        serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
+        serialized_event_buffer_len = serialized_event_buffer.len();
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer_len);
+    if world.rank() != owning_rank {
+        serialized_event_buffer = vec![0; serialized_event_buffer_len];
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer);
+
+    if world.rank() == owning_rank {
+        events[local_index].clone()
     } else {
         let (event, _): (EventData, usize) =
             bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
@@ -1167,24 +1161,8 @@ impl Dataset {
         let path = Self::canonicalize_dataset_path(file_path)?;
         Self::open_root_impl(path, options)
     }
-
-    /// Write the dataset to a Parquet file.
-    pub fn to_parquet(&self, file_path: &str, options: &DatasetWriteOptions) -> LadduResult<()> {
-        let path = Self::expand_output_path(file_path)?;
-        self.write_parquet_impl(path, options)
-    }
-
-    /// Write the dataset to a ROOT TTree using the oxyroot backend.
-    pub fn to_root(&self, file_path: &str, options: &DatasetWriteOptions) -> LadduResult<()> {
-        let path = Self::expand_output_path(file_path)?;
-        self.write_root_impl(path, options)
-    }
     fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
         Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)
-    }
-
-    fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
-        Ok(PathBuf::from(&*shellexpand::full(file_path)?))
     }
 
     fn open_parquet_impl(
@@ -1334,120 +1312,6 @@ impl Dataset {
 
         Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
     }
-
-    fn write_parquet_impl(
-        &self,
-        file_path: PathBuf,
-        options: &DatasetWriteOptions,
-    ) -> LadduResult<()> {
-        let batch_size = options.batch_size.max(1);
-        let precision = options.precision;
-        let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
-
-        #[cfg(feature = "mpi")]
-        let is_root = crate::mpi::get_world()
-            .as_ref()
-            .map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        let mut writer: Option<ArrowWriter<File>> = None;
-        if is_root {
-            let file = File::create(&file_path)?;
-            writer = Some(
-                ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
-                    LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
-                })?,
-            );
-        }
-
-        let mut iter = self.iter();
-        loop {
-            let mut buffers =
-                ColumnBuffers::new(self.metadata.p4_names.len(), self.metadata.aux_names.len());
-            let mut rows = 0usize;
-
-            while rows < batch_size {
-                match iter.next() {
-                    Some(event) => {
-                        if is_root {
-                            buffers.push_event(&event);
-                        }
-                        rows += 1;
-                    }
-                    None => break,
-                }
-            }
-
-            if rows == 0 {
-                break;
-            }
-
-            if let Some(writer) = writer.as_mut() {
-                let batch = buffers
-                    .into_record_batch(schema.clone(), precision)
-                    .map_err(|err| {
-                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
-                    })?;
-                writer.write(&batch).map_err(|err| {
-                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
-                })?;
-            }
-        }
-
-        if let Some(writer) = writer {
-            writer.close().map_err(|err| {
-                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
-            })?;
-        }
-
-        Ok(())
-    }
-
-    fn write_root_impl(
-        &self,
-        file_path: PathBuf,
-        options: &DatasetWriteOptions,
-    ) -> LadduResult<()> {
-        let tree_name = options.tree.clone().unwrap_or_else(|| "events".to_string());
-        let branch_count = self.metadata.p4_names.len() * 4 + self.metadata.aux_names.len() + 1; // +weight
-
-        #[cfg(feature = "mpi")]
-        let mut world_opt = crate::mpi::get_world();
-        #[cfg(feature = "mpi")]
-        let is_root = world_opt.as_ref().map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        #[cfg(feature = "mpi")]
-        let world: Option<WorldHandle> = world_opt.take();
-        #[cfg(not(feature = "mpi"))]
-        let world: Option<WorldHandle> = None;
-
-        let total_events = self.n_events();
-        let dataset_arc = Arc::new(self.clone());
-
-        match options.precision {
-            FloatPrecision::F64 => self.write_root_with_type::<f64>(
-                dataset_arc,
-                world,
-                is_root,
-                &file_path,
-                &tree_name,
-                branch_count,
-                total_events,
-            ),
-            FloatPrecision::F32 => self.write_root_with_type::<f32>(
-                dataset_arc,
-                world,
-                is_root,
-                &file_path,
-                &tree_name,
-                branch_count,
-                total_events,
-            ),
-        }
-    }
 }
 
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
@@ -1479,62 +1343,6 @@ pub struct DatasetReadOptions {
     pub tree: Option<String>,
     /// Optional aliases mapping logical names to selections of four-momenta.
     pub aliases: IndexMap<String, P4Selection>,
-}
-
-/// Precision for writing floating-point columns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FloatPrecision {
-    /// 32-bit floats.
-    F32,
-    /// 64-bit floats.
-    F64,
-}
-
-impl Default for FloatPrecision {
-    fn default() -> Self {
-        Self::F64
-    }
-}
-
-/// Options for writing a [`Dataset`] to disk.
-#[derive(Clone, Debug)]
-pub struct DatasetWriteOptions {
-    /// Number of events to include in each batch when writing.
-    pub batch_size: usize,
-    /// Floating-point precision to use for persisted columns.
-    pub precision: FloatPrecision,
-    /// Tree name to use when writing ROOT files.
-    pub tree: Option<String>,
-}
-
-impl Default for DatasetWriteOptions {
-    fn default() -> Self {
-        Self {
-            batch_size: DEFAULT_WRITE_BATCH_SIZE,
-            precision: FloatPrecision::default(),
-            tree: None,
-        }
-    }
-}
-
-impl DatasetWriteOptions {
-    /// Override the batch size used for writing; defaults to 10_000.
-    pub fn batch_size(mut self, batch_size: usize) -> Self {
-        self.batch_size = batch_size;
-        self
-    }
-
-    /// Select the floating-point precision for persisted columns.
-    pub fn precision(mut self, precision: FloatPrecision) -> Self {
-        self.precision = precision;
-        self
-    }
-
-    /// Set the ROOT tree name (defaults to \"events\").
-    pub fn tree<S: Into<String>>(mut self, name: S) -> Self {
-        self.tree = Some(name.into());
-        self
-    }
 }
 impl DatasetReadOptions {
     /// Create a new [`Default`] set of [`DatasetReadOptions`].
@@ -1614,7 +1422,6 @@ impl DatasetReadOptions {
 }
 
 const P4_COMPONENT_SUFFIXES: [&str; 4] = ["_px", "_py", "_pz", "_e"];
-const DEFAULT_WRITE_BATCH_SIZE: usize = 10_000;
 
 fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)> {
     let file = File::open(file_path)?;
@@ -1918,391 +1725,6 @@ fn record_batch_to_events(
     Ok(events)
 }
 
-struct ColumnBuffers {
-    p4: Vec<P4Buffer>,
-    aux: Vec<Vec<f64>>,
-    weight: Vec<f64>,
-}
-
-impl ColumnBuffers {
-    fn new(n_p4: usize, n_aux: usize) -> Self {
-        let p4 = (0..n_p4).map(|_| P4Buffer::default()).collect();
-        let aux = vec![Vec::new(); n_aux];
-        Self {
-            p4,
-            aux,
-            weight: Vec::new(),
-        }
-    }
-
-    fn push_event(&mut self, event: &Event) {
-        for (buffer, p4) in self.p4.iter_mut().zip(event.p4s.iter()) {
-            buffer.px.push(p4.x);
-            buffer.py.push(p4.y);
-            buffer.pz.push(p4.z);
-            buffer.e.push(p4.t);
-        }
-
-        for (buffer, value) in self.aux.iter_mut().zip(event.aux.iter()) {
-            buffer.push(*value);
-        }
-
-        self.weight.push(event.weight);
-    }
-
-    fn into_record_batch(
-        self,
-        schema: Arc<Schema>,
-        precision: FloatPrecision,
-    ) -> arrow::error::Result<RecordBatch> {
-        let mut columns: Vec<arrow::array::ArrayRef> = Vec::new();
-
-        match precision {
-            FloatPrecision::F64 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float64Array::from(buffer.px.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.py.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.pz.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.e.clone())));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float64Array::from(buffer.clone())));
-                }
-
-                columns.push(Arc::new(Float64Array::from(self.weight)));
-            }
-            FloatPrecision::F32 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.px.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.py.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.pz.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.e.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                columns.push(Arc::new(Float32Array::from(
-                    self.weight.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                )));
-            }
-        }
-
-        RecordBatch::try_new(schema, columns)
-    }
-}
-
-#[derive(Default)]
-struct P4Buffer {
-    px: Vec<f64>,
-    py: Vec<f64>,
-    pz: Vec<f64>,
-    e: Vec<f64>,
-}
-
-fn build_parquet_schema(metadata: &DatasetMetadata, precision: FloatPrecision) -> Schema {
-    let dtype = match precision {
-        FloatPrecision::F64 => DataType::Float64,
-        FloatPrecision::F32 => DataType::Float32,
-    };
-
-    let mut fields = Vec::new();
-    for name in &metadata.p4_names {
-        for suffix in P4_COMPONENT_SUFFIXES {
-            fields.push(Field::new(format!("{name}{suffix}"), dtype.clone(), false));
-        }
-    }
-
-    for name in &metadata.aux_names {
-        fields.push(Field::new(name.clone(), dtype.clone(), false));
-    }
-
-    fields.push(Field::new("weight", dtype, false));
-    Schema::new(fields)
-}
-
-trait FromF64 {
-    fn from_f64(value: f64) -> Self;
-}
-
-impl FromF64 for f64 {
-    fn from_f64(value: f64) -> Self {
-        value
-    }
-}
-
-impl FromF64 for f32 {
-    fn from_f64(value: f64) -> Self {
-        value as f32
-    }
-}
-
-struct SharedEventFetcher {
-    dataset: Arc<Dataset>,
-    world: Option<WorldHandle>,
-    total: usize,
-    branch_count: usize,
-    current_index: Option<usize>,
-    current_event: Option<Event>,
-    remaining: usize,
-}
-
-impl SharedEventFetcher {
-    fn new(
-        dataset: Arc<Dataset>,
-        world: Option<WorldHandle>,
-        total: usize,
-        branch_count: usize,
-    ) -> Self {
-        Self {
-            dataset,
-            world,
-            total,
-            branch_count,
-            current_index: None,
-            current_event: None,
-            remaining: 0,
-        }
-    }
-
-    fn event_for_index(&mut self, index: usize) -> Option<Event> {
-        if index >= self.total {
-            return None;
-        }
-
-        let refresh_needed = match self.current_index {
-            None => true,
-            Some(current) => current != index || self.remaining == 0,
-        };
-
-        if refresh_needed {
-            let event =
-                fetch_event_for_index(&self.dataset, index, self.total, self.world.as_ref());
-            self.current_index = Some(index);
-            self.remaining = self.branch_count;
-            self.current_event = Some(event);
-        }
-
-        let event = self.current_event.as_ref().cloned();
-        if self.remaining > 0 {
-            self.remaining -= 1;
-        }
-        if self.remaining == 0 {
-            // Drop the cached event so the next request fetches the next index.
-            self.current_event = None;
-        }
-        event
-    }
-}
-
-enum ColumnKind {
-    Px(usize),
-    Py(usize),
-    Pz(usize),
-    E(usize),
-    Aux(usize),
-    Weight,
-}
-
-struct ColumnIterator<T> {
-    fetcher: Arc<std::sync::Mutex<SharedEventFetcher>>,
-    index: usize,
-    kind: ColumnKind,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<T> ColumnIterator<T> {
-    fn new(fetcher: Arc<std::sync::Mutex<SharedEventFetcher>>, kind: ColumnKind) -> Self {
-        Self {
-            fetcher,
-            index: 0,
-            kind,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T> Iterator for ColumnIterator<T>
-where
-    T: FromF64,
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut fetcher = self.fetcher.lock().expect("event fetcher lock poisoned");
-        let event = fetcher.event_for_index(self.index)?;
-        self.index += 1;
-
-        match self.kind {
-            ColumnKind::Px(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.x)),
-            ColumnKind::Py(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.y)),
-            ColumnKind::Pz(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.z)),
-            ColumnKind::E(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.t)),
-            ColumnKind::Aux(idx) => event.aux.get(idx).map(|value| T::from_f64(*value)),
-            ColumnKind::Weight => Some(T::from_f64(event.weight)),
-        }
-    }
-}
-
-fn build_root_column_iterators<T>(
-    dataset: Arc<Dataset>,
-    world: Option<WorldHandle>,
-    branch_count: usize,
-    total: usize,
-) -> Vec<(String, ColumnIterator<T>)>
-where
-    T: FromF64,
-{
-    let fetcher = Arc::new(std::sync::Mutex::new(SharedEventFetcher::new(
-        dataset,
-        world,
-        total,
-        branch_count,
-    )));
-
-    let p4_names: Vec<String> = fetcher
-        .lock()
-        .expect("event fetcher lock poisoned")
-        .dataset
-        .metadata
-        .p4_names
-        .clone();
-    let aux_names: Vec<String> = fetcher
-        .lock()
-        .expect("event fetcher lock poisoned")
-        .dataset
-        .metadata
-        .aux_names
-        .clone();
-
-    let mut iterators = Vec::new();
-
-    for (idx, name) in p4_names.iter().enumerate() {
-        iterators.push((
-            format!("{name}_px"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Px(idx)),
-        ));
-        iterators.push((
-            format!("{name}_py"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Py(idx)),
-        ));
-        iterators.push((
-            format!("{name}_pz"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Pz(idx)),
-        ));
-        iterators.push((
-            format!("{name}_e"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::E(idx)),
-        ));
-    }
-
-    for (idx, name) in aux_names.iter().enumerate() {
-        iterators.push((
-            name.clone(),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Aux(idx)),
-        ));
-    }
-
-    iterators.push((
-        "weight".to_string(),
-        ColumnIterator::new(fetcher, ColumnKind::Weight),
-    ));
-
-    iterators
-}
-
-fn drain_column_iterators<T>(iterators: &mut [(String, ColumnIterator<T>)], n_events: usize)
-where
-    T: FromF64,
-{
-    for _ in 0..n_events {
-        for (_name, iterator) in iterators.iter_mut() {
-            let _ = iterator.next();
-        }
-    }
-}
-
-fn fetch_event_for_index(
-    dataset: &Dataset,
-    index: usize,
-    total: usize,
-    world: Option<&WorldHandle>,
-) -> Event {
-    let _ = total;
-    let _ = world;
-    #[cfg(feature = "mpi")]
-    {
-        if let Some(world) = world {
-            return fetch_event_mpi(dataset, index, world, total);
-        }
-    }
-
-    dataset.index_local(index).clone()
-}
-
-impl Dataset {
-    fn write_root_with_type<T>(
-        &self,
-        dataset: Arc<Dataset>,
-        world: Option<WorldHandle>,
-        is_root: bool,
-        file_path: &Path,
-        tree_name: &str,
-        branch_count: usize,
-        total_events: usize,
-    ) -> LadduResult<()>
-    where
-        T: FromF64 + oxyroot::Marshaler + 'static,
-    {
-        let mut iterators =
-            build_root_column_iterators::<T>(dataset, world, branch_count, total_events);
-
-        if is_root {
-            let mut file = RootFile::create(file_path).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to create ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            let mut tree = WriterTree::new(tree_name);
-            for (name, iterator) in iterators {
-                tree.new_branch(name, iterator);
-            }
-
-            tree.write(&mut file).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to write ROOT tree '{tree_name}' to '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            file.close().map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to close ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-        } else {
-            drain_column_iterators(&mut iterators, total_events);
-        }
-
-        Ok(())
-    }
-}
-
 /// A list of [`Dataset`]s formed by binning [`EventData`] by some [`Variable`].
 pub struct BinnedDataset {
     datasets: Vec<Arc<Dataset>>,
@@ -2361,13 +1783,8 @@ mod tests {
     use super::*;
     use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
-    use fastrand;
     use serde::{Deserialize, Serialize};
-    use std::{
-        env,
-        fs,
-        path::{Path, PathBuf},
-    };
+    use std::path::{Path, PathBuf};
 
     fn test_data_path(file: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -2389,12 +1806,6 @@ mod tests {
             other => panic!("Unsupported extension in test data: {other}"),
         }
         .expect("dataset should open")
-    }
-
-    fn make_temp_dir() -> PathBuf {
-        let dir = env::temp_dir().join(format!("laddu_test_{}", fastrand::u64(..)));
-        fs::create_dir(&dir).expect("temp dir should be created");
-        dir
     }
 
     fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
@@ -2820,39 +2231,5 @@ mod tests {
         assert_relative_eq!(dataset.aux_by_name(0, "pol_angle").unwrap(), 0.42);
         assert!(dataset.p4_by_name(0, "missing").is_none());
         assert!(dataset.aux_by_name(0, "missing").is_none());
-    }
-
-    #[test]
-    fn test_parquet_roundtrip_to_tempfile() {
-        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
-        let dir = make_temp_dir();
-        let path = dir.join("roundtrip.parquet");
-        let path_str = path.to_str().expect("path should be valid UTF-8");
-
-        dataset
-            .to_parquet(path_str, &DatasetWriteOptions::default())
-            .expect("writing parquet should succeed");
-        let reopened = Dataset::from_parquet(path_str, &DatasetReadOptions::new())
-            .expect("parquet roundtrip should reopen");
-
-        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
-        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
-    }
-
-    #[test]
-    fn test_root_roundtrip_to_tempfile() {
-        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
-        let dir = make_temp_dir();
-        let path = dir.join("roundtrip.root");
-        let path_str = path.to_str().expect("path should be valid UTF-8");
-
-        dataset
-            .to_root(path_str, &DatasetWriteOptions::default())
-            .expect("writing root should succeed");
-        let reopened = Dataset::from_root(path_str, &DatasetReadOptions::new())
-            .expect("root roundtrip should reopen");
-
-        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
-        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
     }
 }
