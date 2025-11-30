@@ -23,6 +23,7 @@ run = '''
 uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL"
+uv pip install numpy
 uv pip install --offline -e py-laddu
 '''
 
@@ -40,6 +41,7 @@ uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu
 CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 MPI_WHEEL=$(ls py-laddu-mpi/dist/laddu_mpi-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL" "$MPI_WHEEL"
+uv pip install numpy
 uv pip install --offline -e 'py-laddu[mpi]'
 '''
 
