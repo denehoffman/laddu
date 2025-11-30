@@ -12,6 +12,7 @@ use pyo3::{
 };
 #[cfg(feature = "rayon")]
 use rayon::ThreadPoolBuilder;
+use std::collections::HashMap;
 
 /// A mathematical expression formed from amplitudes.
 ///
@@ -105,6 +106,31 @@ impl PyExpression {
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
     }
+    /// The free parameters used by the Expression
+    #[getter]
+    fn free_parameters(&self) -> Vec<String> {
+        self.0.free_parameters()
+    }
+    /// The fixed parameters used by the Expression
+    #[getter]
+    fn fixed_parameters(&self) -> Vec<String> {
+        self.0.fixed_parameters()
+    }
+    /// Number of free parameters
+    #[getter]
+    fn n_free(&self) -> usize {
+        self.0.n_free()
+    }
+    /// Number of fixed parameters
+    #[getter]
+    fn n_fixed(&self) -> usize {
+        self.0.n_fixed()
+    }
+    /// Total number of parameters
+    #[getter]
+    fn n_params(&self) -> usize {
+        self.0.n_params()
+    }
     /// Load an Expression by precalculating each term over the given Dataset
     ///
     /// Parameters
@@ -135,6 +161,22 @@ impl PyExpression {
     /// The norm-squared of a complex Expression
     fn norm_sqr(&self) -> PyExpression {
         PyExpression(self.0.norm_sqr())
+    }
+    /// Return a new Expression with the given parameter fixed
+    fn fix(&self, name: &str, value: f64) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.fix(name, value)?))
+    }
+    /// Return a new Expression with the given parameter freed
+    fn free(&self, name: &str) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.free(name)?))
+    }
+    /// Return a new Expression with a single parameter renamed
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.rename_parameter(old, new)?))
+    }
+    /// Return a new Expression with several parameters renamed
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.rename_parameters(&mapping)?))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
@@ -262,6 +304,47 @@ impl PyEvaluator {
     #[getter]
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
+    }
+    /// The free parameters used by the Evaluator
+    #[getter]
+    fn free_parameters(&self) -> Vec<String> {
+        self.0.free_parameters()
+    }
+    /// The fixed parameters used by the Evaluator
+    #[getter]
+    fn fixed_parameters(&self) -> Vec<String> {
+        self.0.fixed_parameters()
+    }
+    /// Number of free parameters
+    #[getter]
+    fn n_free(&self) -> usize {
+        self.0.n_free()
+    }
+    /// Number of fixed parameters
+    #[getter]
+    fn n_fixed(&self) -> usize {
+        self.0.n_fixed()
+    }
+    /// Total number of parameters
+    #[getter]
+    fn n_params(&self) -> usize {
+        self.0.n_params()
+    }
+    /// Return a new Evaluator with the given parameter fixed
+    fn fix(&self, name: &str, value: f64) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.fix(name, value)?))
+    }
+    /// Return a new Evaluator with the given parameter freed
+    fn free(&self, name: &str) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.free(name)?))
+    }
+    /// Return a new Evaluator with a single parameter renamed
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.rename_parameter(old, new)?))
+    }
+    /// Return a new Evaluator with several parameters renamed
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyEvaluator> {
+        Ok(PyEvaluator(self.0.rename_parameters(&mapping)?))
     }
     /// Activates Amplitudes in the Expression by name
     ///
@@ -633,14 +716,20 @@ pub struct PyParameterLike(pub ParameterLike);
 /// Two free parameters with the same name are shared in a fit
 ///
 #[pyfunction(name = "parameter")]
-pub fn py_parameter(name: &str) -> PyParameterLike {
-    PyParameterLike(parameter(name))
+pub fn py_parameter(name: &str, value: Option<f64>) -> PyParameterLike {
+    if let Some(v) = value {
+        PyParameterLike(constant(name, v))
+    } else {
+        PyParameterLike(parameter(name))
+    }
 }
 
 /// A term which stays constant during an optimization
 ///
 /// Parameters
 /// ----------
+/// name : str
+///     The name of the parameter
 /// value : float
 ///     The numerical value of the constant
 ///
@@ -650,8 +739,8 @@ pub fn py_parameter(name: &str) -> PyParameterLike {
 ///     An object that can be used as the input for many Amplitude constructors
 ///
 #[pyfunction(name = "constant")]
-pub fn py_constant(value: f64) -> PyParameterLike {
-    PyParameterLike(constant(value))
+pub fn py_constant(name: &str, value: f64) -> PyParameterLike {
+    PyParameterLike(constant(name, value))
 }
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.
