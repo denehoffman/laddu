@@ -195,8 +195,8 @@ let options = DatasetReadOptions::default()
     .p4_names(p4_names)
     .aux_names(aux_names)
     .alias("resonance", ["kshort1", "kshort2"]);
-let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
-let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
+let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
+let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
 
 let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 let p1_mass = Mass::new(["kshort1"]);
@@ -236,8 +236,8 @@ from laddu import constant, parameter
 def main():
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
     aux_columns = ['pol_magnitude', 'pol_angle']
-    ds_data = ld.Dataset.open('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
-    ds_mc = ld.Dataset.open('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_data = ld.Dataset.from_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_mc = ld.Dataset.from_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     angles = ld.Angles(topology, 'kshort1', 'Helicity')
     polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
@@ -363,10 +363,9 @@ AmpTools-format ROOT files can be directly read as `Dataset` objects (this is cu
 ```python
 from laddu import Dataset
 
-dataset = Dataset.open(
+dataset = Dataset.from_amptools(
     'example_amp.root',
-    backend='amptools',
-    amptools_kwargs={'pol_in_beam': True},
+    pol_in_beam=True,
 )
 ```
 

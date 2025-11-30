@@ -1144,33 +1144,27 @@ impl Dataset {
     /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
     /// `Float32` or `Float64` and are promoted to `f64` on load.
     ///
-    /// This method currently supports Parquet files and ROOT TTrees. When reading
-    /// ROOT files containing multiple trees, set [`DatasetReadOptions::tree`] to select one.
-    pub fn open(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-        let path = Path::new(&*shellexpand::full(file_path)?).canonicalize()?;
-        if let Some(ext) = path.extension() {
-            if let Some(ext_str) = ext.to_str() {
-                match ext_str.to_lowercase().as_str() {
-                    "parquet" => Self::open_parquet_impl(path, options),
-                    "root" => Self::open_root_impl(path, options),
-                    _ => Err(LadduError::Custom(format!(
-                        "Filetype not supported: {}",
-                        ext_str
-                    ))),
-                }
-            } else {
-                Err(LadduError::Custom(format!(
-                    "Invalid file extension: {}",
-                    path.display()
-                )))
-            }
-        } else {
-            Err(LadduError::Custom(format!(
-                "Filetype could not be detected from extension: {}",
-                path.display()
-            )))
-        }
+    /// Load a dataset from a Parquet file.
+    pub fn from_parquet(
+        file_path: &str,
+        options: &DatasetReadOptions,
+    ) -> LadduResult<Arc<Dataset>> {
+        let path = Self::canonicalize_dataset_path(file_path)?;
+        Self::open_parquet_impl(path, options)
     }
+
+    /// Load a dataset from a ROOT TTree using the oxyroot backend.
+    ///
+    /// When reading ROOT files containing multiple trees, set [`DatasetReadOptions::tree`]
+    /// to select one.
+    pub fn from_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
+        let path = Self::canonicalize_dataset_path(file_path)?;
+        Self::open_root_impl(path, options)
+    }
+    fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
+        Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)
+    }
+
     fn open_parquet_impl(
         file_path: PathBuf,
         options: &DatasetReadOptions,
@@ -1337,7 +1331,7 @@ impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
 /// Options for reading a [`Dataset`] from a file.
 ///
 /// # See Also
-/// [`Dataset::open`]
+/// [`Dataset::from_parquet`], [`Dataset::from_root`]
 #[derive(Default, Clone)]
 pub struct DatasetReadOptions {
     /// Particle names to read from the data file.
@@ -1801,7 +1795,17 @@ mod tests {
     fn open_test_dataset(file: &str, options: DatasetReadOptions) -> Arc<Dataset> {
         let path = test_data_path(file);
         let path_str = path.to_str().expect("test data path should be valid UTF-8");
-        Dataset::open(path_str, &options).expect("dataset should open")
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "parquet" => Dataset::from_parquet(path_str, &options),
+            "root" => Dataset::from_root(path_str, &options),
+            other => panic!("Unsupported extension in test data: {other}"),
+        }
+        .expect("dataset should open")
     }
 
     fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
@@ -1848,7 +1852,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_parquet_auto_matches_explicit_names() {
+    fn test_from_parquet_auto_matches_explicit_names() {
         let auto = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let explicit_options = DatasetReadOptions::new()
             .p4_names(TEST_P4_NAMES)
@@ -1869,7 +1873,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_parquet_with_aliases() {
+    fn test_from_parquet_with_aliases() {
         let dataset = open_test_dataset(
             "data_f32.parquet",
             DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
@@ -1884,14 +1888,14 @@ mod tests {
     }
 
     #[test]
-    fn test_open_parquet_f64_matches_f32() {
+    fn test_from_parquet_f64_matches_f32() {
         let f32_ds = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let f64_ds = open_test_dataset("data_f64.parquet", DatasetReadOptions::new());
         assert_datasets_close(&f64_ds, &f32_ds, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
 
     #[test]
-    fn test_open_root_detects_columns_and_matches_parquet() {
+    fn test_from_root_detects_columns_and_matches_parquet() {
         let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let root_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
         let mut detected_p4: Vec<&str> = root_auto.p4_names().iter().map(String::as_str).collect();
@@ -1914,7 +1918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_root_f64_matches_parquet() {
+    fn test_from_root_f64_matches_parquet() {
         let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let root_f64 = open_test_dataset("data_f64.root", DatasetReadOptions::new());
         assert_datasets_close(&root_f64, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);

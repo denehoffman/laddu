@@ -229,8 +229,8 @@
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 //! let aux_names = ["pol_magnitude", "pol_angle"];
 //! let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
-//! let ds_data = Dataset::open("test_data/data.parquet", &options).unwrap();
-//! let ds_mc = Dataset::open("test_data/mc.parquet", &options).unwrap();
+//! let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
+//! let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
 //!
 //! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 //! let p1_mass = Mass::new(["kshort1"]);
@@ -279,7 +279,7 @@
 //! | `weight`      | `Float32` or `Float64` | Event weight                         |
 //!
 //! AmpTools-format ROOT tuples can also be loaded through the Python bindings of `laddu` by calling
-//! `Dataset.open(..., backend="amptools")`, which performs the conversion automatically. The Rust
+//! `Dataset::from_amptools(...)`, which performs the conversion automatically. The Rust
 //! API currently supports Parquet and standard ROOT TTrees.
 //!
 //! # MPI Support
