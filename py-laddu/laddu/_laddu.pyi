@@ -46,16 +46,33 @@ class Dataset:
         aliases: dict[str, str | list[str]] | None = ...,
     ) -> None: ...
     @staticmethod
-    def open(
+    def from_parquet(
         path: str | Path,
         *,
         p4s: list[str] | None = ...,
         aux: list[str] | None = ...,
         aliases: dict[str, str | list[str]] | None = ...,
-        backend: str | None = ...,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_root(
+        path: str | Path,
+        *,
         tree: str | None = ...,
-        uproot_kwargs: dict[str, Any] | None = ...,
-        amptools_kwargs: dict[str, Any] | None = ...,
+        p4s: list[str] | None = ...,
+        aux: list[str] | None = ...,
+        aliases: dict[str, str | list[str]] | None = ...,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_amptools(
+        path: str | Path,
+        *,
+        tree: str | None = ...,
+        pol_in_beam: bool = ...,
+        pol_angle: float | None = ...,
+        pol_magnitude: float | None = ...,
+        pol_magnitude_name: str = ...,
+        pol_angle_name: str = ...,
+        num_entries: int | None = ...,
     ) -> Dataset: ...
 
 class Event:

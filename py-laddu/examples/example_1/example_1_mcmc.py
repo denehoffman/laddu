@@ -109,9 +109,9 @@ def main() -> None:
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
     aux_columns = ['pol_magnitude', 'pol_angle']
     logger.info('Opening Data file...')
-    data_ds = ld.Dataset.open(data_file, p4s=p4_columns, aux=aux_columns)
+    data_ds = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening AccMC file...')
-    accmc_ds = ld.Dataset.open(accmc_file, p4s=p4_columns, aux=aux_columns)
+    accmc_ds = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
 
     res_mass = ld.Mass(['kshort1', 'kshort2'])
     m_data = res_mass.value_on(data_ds)

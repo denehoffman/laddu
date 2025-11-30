@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-_NATIVE_DATASET_OPEN = _DatasetCore.open
+_NATIVE_DATASET_FROM_PARQUET = _DatasetCore.from_parquet
+_NATIVE_DATASET_FROM_ROOT = _DatasetCore.from_root
 
 
 def _import_optional_dependency(
@@ -165,101 +166,98 @@ class _DatasetExtensions:
         return cls.from_dict(converted)
 
     @classmethod
-    def open(
+    @classmethod
+    def from_parquet(
         cls,
         path: str | Path,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
-        backend: str | None = None,
-        tree: str | None = None,
-        uproot_kwargs: dict[str, Any] | None = None,
-        amptools_kwargs: dict[str, Any] | None = None,
     ) -> _DatasetCore:
-        """Open a dataset from a file.
-
-        Parameters
-        ----------
-        path:
-            Parquet or ROOT file on disk.
-        p4s:
-            Ordered list of particle base names (e.g. ``['beam', 'kshort1']``).
-        aux:
-            Auxiliary scalar columns to retain (such as ``pol_magnitude``).
-        aliases:
-            Mapping of alternate particle identifiers to canonical ones. Values can be
-            either a string (for simple renames like ``{'photon': 'beam'}``) or a
-            sequence of strings when grouping multiple four-momenta together
-            (e.g. ``{'ks_pair': ['kshort1', 'kshort2']}``). Aliases are only
-            supported by the native (Rust) backend.
-        backend:
-            Backend to use for ROOT files. Supported values are ``'oxyroot'``
-            (Rust loader, default for ``.root``), ``'uproot'`` (Python loader),
-            ``'amptools'`` (AmpTools converter using ``uproot``), ``'native'`` /
-            ``'parquet'`` (Rust loader for other formats), or ``'auto'`` to
-            select based on file extension.
-        tree:
-            Name of the TTree to read when applicable.
-        uproot_kwargs:
-            Keyword arguments forwarded to :meth:`uproot.TTree.arrays`.
-        amptools_kwargs:
-            Keyword arguments forwarded to the AmpTools-format backend.
-            Supports ``pol_in_beam``, ``pol_angle``, ``pol_magnitude``,
-            ``pol_magnitude_name``, ``pol_angle_name``, and ``num_entries``.
-        """
-        path_obj = Path(path)
-        backend_name = (
-            backend.lower() if backend else cls._default_backend_for_path(path_obj)
+        """Read a Dataset from a Parquet file."""
+        native_aliases = dict(aliases) if aliases is not None else None
+        return _NATIVE_DATASET_FROM_PARQUET(
+            path,
+            p4s=p4s,
+            aux=aux,
+            aliases=native_aliases,
         )
-        if backend_name == 'auto':
-            backend_name = cls._default_backend_for_path(path_obj)
 
+    @classmethod
+    def from_root(
+        cls,
+        path: str | Path,
+        *,
+        tree: str | None = None,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+        backend: str = 'oxyroot',
+        uproot_kwargs: dict[str, Any] | None = None,
+    ) -> _DatasetCore:
+        """Read a Dataset from a ROOT TTree.
+
+        The native oxyroot backend is used by default. Pass ``backend='uproot'`` to read
+        ROOT files via the Python ``uproot`` library.
+        """
+        backend_name = backend.lower() if backend else 'oxyroot'
         native_aliases = dict(aliases) if aliases is not None else None
 
         if backend_name in {'native', 'parquet', 'rust', 'oxyroot'}:
-            return _NATIVE_DATASET_OPEN(
-                path_obj,
+            return _NATIVE_DATASET_FROM_ROOT(
+                path,
+                tree=tree,
                 p4s=p4s,
                 aux=aux,
-                tree=tree,
                 aliases=native_aliases,
             )
 
         if native_aliases:
-            msg = "'aliases' are only supported when backend='native'/'parquet'"
+            msg = "'aliases' are only supported when backend='oxyroot'"
             raise ValueError(msg)
 
         if backend_name == 'uproot':
             kwargs = dict(uproot_kwargs or {})
             backend_tree = tree or kwargs.pop('tree', None)
             return cls._open_with_uproot(
-                path_obj,
+                Path(path),
                 tree=backend_tree,
                 p4s=p4s,
                 aux=aux,
                 uproot_kwargs=kwargs,
             )
 
-        if backend_name == 'amptools':
-            kwargs = dict(amptools_kwargs or {})
-            backend_tree = tree or kwargs.pop('tree', None)
-            dataset = cls._open_amptools_format(
-                path_obj,
-                tree=backend_tree,
-                amptools_kwargs=kwargs,
-            )
-            return dataset
-
         msg = (
             f"Unsupported backend '{backend_name}'. "
-            "Valid options are 'oxyroot', 'uproot', 'amptools', 'native', or 'auto'."
+            "Valid options are 'oxyroot' or 'uproot'."
         )
         raise ValueError(msg)
 
-    @staticmethod
-    def _default_backend_for_path(path: Path) -> str:
-        return 'oxyroot' if path.suffix.lower() == '.root' else 'native'
+    @classmethod
+    def from_amptools(
+        cls,
+        path: str | Path,
+        *,
+        tree: str | None = None,
+        pol_in_beam: bool = False,
+        pol_angle: float | None = None,
+        pol_magnitude: float | None = None,
+        pol_magnitude_name: str = 'pol_magnitude',
+        pol_angle_name: str = 'pol_angle',
+        num_entries: int | None = None,
+    ) -> _DatasetCore:
+        """Read a Dataset from an AmpTools ROOT tuple."""
+        return cls._open_amptools_format(
+            Path(path),
+            tree=tree,
+            pol_in_beam=pol_in_beam,
+            pol_angle=pol_angle,
+            pol_magnitude=pol_magnitude,
+            pol_magnitude_name=pol_magnitude_name,
+            pol_angle_name=pol_angle_name,
+            num_entries=num_entries,
+        )
 
     @classmethod
     def _open_with_uproot(
@@ -274,7 +272,7 @@ class _DatasetExtensions:
         uproot_module = _import_optional_dependency(
             'uproot',
             extra='uproot',
-            feature="Dataset.open(... backend='uproot')",
+            feature="Dataset.from_root(... backend='uproot')",
         )
         with uproot_module.open(path) as root_file:
             tree_obj = cls._select_uproot_tree(root_file, tree)
@@ -290,20 +288,13 @@ class _DatasetExtensions:
         path: Path,
         *,
         tree: str | None,
-        amptools_kwargs: dict[str, Any],
+        pol_in_beam: bool,
+        pol_angle: float | None,
+        pol_magnitude: float | None,
+        pol_magnitude_name: str,
+        pol_angle_name: str,
+        num_entries: int | None,
     ) -> _DatasetCore:
-        kwargs = dict(amptools_kwargs)
-        pol_in_beam = kwargs.pop('pol_in_beam', False)
-        pol_angle = kwargs.pop('pol_angle', None)
-        pol_magnitude = kwargs.pop('pol_magnitude', None)
-        pol_magnitude_name = kwargs.pop('pol_magnitude_name', 'pol_magnitude')
-        pol_angle_name = kwargs.pop('pol_angle_name', 'pol_angle')
-        num_entries = kwargs.pop('num_entries', None)
-        if kwargs:
-            unknown = ', '.join(sorted(kwargs))
-            msg = f'Unsupported AmpTools options: {unknown}'
-            raise TypeError(msg)
-
         pol_angle_rad = pol_angle * np.pi / 180 if pol_angle is not None else None
         polarisation_requested = pol_in_beam or (
             pol_angle is not None and pol_magnitude is not None
@@ -439,22 +430,6 @@ DatasetBase = Dataset
 del _name, _attr
 
 
-def open(
-    path: str | Path,
-    *,
-    p4s: list[str],
-    aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
-) -> Dataset:
-    alias_dict = dict(aliases) if aliases is not None else None
-    return Dataset.open(
-        path,
-        p4s=p4s,
-        aux=aux,
-        aliases=alias_dict,
-    )
-
-
 @dataclass
 class _AmpToolsData:
     beam_px: np.ndarray
@@ -489,7 +464,7 @@ def _load_amptools_arrays(
     uproot_module = _import_optional_dependency(
         'uproot',
         extra='uproot',
-        feature="Dataset.open(... backend='amptools')",
+        feature='Dataset.from_amptools',
     )
     with uproot_module.open(path) as file:
         try:
@@ -657,4 +632,4 @@ def _read_amptools_events(
     return p4s_list, aux_rows, weight_list
 
 
-__all__ = ['BinnedDataset', 'Dataset', 'Event', 'open']
+__all__ = ['BinnedDataset', 'Dataset', 'Event']

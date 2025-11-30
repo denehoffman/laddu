@@ -42,6 +42,16 @@ fn parse_aliases(aliases: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, Ve
     Ok(parsed)
 }
 
+fn parse_dataset_path(path: Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = path.extract::<String>() {
+        Ok(s)
+    } else if let Ok(pathbuf) = path.extract::<PathBuf>() {
+        Ok(pathbuf.to_string_lossy().into_owned())
+    } else {
+        Err(PyTypeError::new_err("Expected str or Path"))
+    }
+}
+
 /// A single event
 ///
 /// Events are composed of a set of 4-momenta of particles in the overall
@@ -272,7 +282,9 @@ impl PyEvent {
 
 /// A set of Events
 ///
-/// Datasets can be created from lists of Events or by using :meth:`laddu.Dataset.open`
+/// Datasets can be created from lists of Events or by using the constructor helpers
+/// such as :meth:`laddu.Dataset.from_parquet`, :meth:`laddu.Dataset.from_root`, and
+/// :meth:`laddu.Dataset.from_amptools`
 ///
 /// Datasets can also be indexed directly to access individual Events
 ///
@@ -290,10 +302,6 @@ impl PyEvent {
 /// -----
 /// Explicit metadata provided here takes precedence over metadata embedded in the
 /// input Events.
-///
-/// See Also
-/// --------
-/// laddu.Dataset.open
 ///
 #[pyclass(name = "Dataset", module = "laddu", subclass)]
 #[derive(Clone)]
@@ -388,23 +396,16 @@ impl PyDataset {
         Ok(Self(Arc::new(dataset)))
     }
 
-    /// Open a Dataset from disk.
+    /// Read a Dataset from a Parquet file.
     ///
     /// Parameters
     /// ----------
     /// path : str or Path
-    ///     The path to the data file (Parquet or ROOT).
+    ///     The path to the Parquet file.
     /// p4s : list[str], optional
     ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
     /// aux : list[str], optional
     ///     Auxiliary scalar column names copied verbatim in order.
-    /// tree : str, optional
-    ///     Name of the TTree to read when opening ROOT files.
-    ///
-    /// Examples
-    /// --------
-    /// >>> from laddu import Dataset  # doctest: +SKIP
-    /// >>> Dataset.open('demo.parquet', p4s=['beam', 'kshort1'])  # doctest: +SKIP
     ///
     /// Notes
     /// -----
@@ -413,21 +414,59 @@ impl PyDataset {
     /// four-momentum, otherwise they will be read as auxiliary scalars.
     ///
     #[staticmethod]
-    #[pyo3(signature = (path, *, p4s=None, aux=None, tree=None, aliases=None))]
-    fn open(
+    #[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None))]
+    fn from_parquet(
         path: Bound<PyAny>,
         p4s: Option<Vec<String>>,
         aux: Option<Vec<String>>,
-        tree: Option<String>,
         aliases: Option<Bound<PyDict>>,
     ) -> PyResult<Self> {
-        let path_str = if let Ok(s) = path.extract::<String>() {
-            Ok(s)
-        } else if let Ok(pathbuf) = path.extract::<PathBuf>() {
-            Ok(pathbuf.to_string_lossy().into_owned())
-        } else {
-            Err(PyTypeError::new_err("Expected str or Path"))
-        }?;
+        let path_str = parse_dataset_path(path)?;
+
+        let mut read_options = DatasetReadOptions::default();
+        if let Some(p4s) = p4s {
+            read_options = read_options.p4_names(p4s);
+        }
+        if let Some(aux) = aux {
+            read_options = read_options.aux_names(aux);
+        }
+        for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+            read_options = read_options.alias(alias_name, selection);
+        }
+        let dataset = Dataset::from_parquet(&path_str, &read_options)?;
+
+        Ok(Self(dataset))
+    }
+
+    /// Read a Dataset from a ROOT TTree using the oxyroot backend.
+    ///
+    /// Parameters
+    /// ----------
+    /// path : str or Path
+    ///     The path to the ROOT file.
+    /// tree : str, optional
+    ///     Name of the TTree to read when opening ROOT files.
+    /// p4s : list[str], optional
+    ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
+    /// aux : list[str], optional
+    ///     Auxiliary scalar column names copied verbatim in order.
+    ///
+    /// Notes
+    /// -----
+    /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
+    /// the valid suffixes are provided for a particle, the corresponding columns will be read as a
+    /// four-momentum, otherwise they will be read as auxiliary scalars.
+    ///
+    #[staticmethod]
+    #[pyo3(signature = (path, *, tree=None, p4s=None, aux=None, aliases=None))]
+    fn from_root(
+        path: Bound<PyAny>,
+        tree: Option<String>,
+        p4s: Option<Vec<String>>,
+        aux: Option<Vec<String>>,
+        aliases: Option<Bound<PyDict>>,
+    ) -> PyResult<Self> {
+        let path_str = parse_dataset_path(path)?;
 
         let mut read_options = DatasetReadOptions::default();
         if let Some(p4s) = p4s {
@@ -442,7 +481,7 @@ impl PyDataset {
         for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
             read_options = read_options.alias(alias_name, selection);
         }
-        let dataset = Dataset::open(&path_str, &read_options)?;
+        let dataset = Dataset::from_root(&path_str, &read_options)?;
 
         Ok(Self(dataset))
     }

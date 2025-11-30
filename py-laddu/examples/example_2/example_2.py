@@ -187,12 +187,12 @@ if __name__ == '__main__':
     aux_columns = ['pol_magnitude', 'pol_angle']
 
     if not (script_dir / 'unpolarized_moments.pkl').exists():
-        data = ld.Dataset.open(
+        data = ld.Dataset.from_parquet(
             script_dir / 'data_2.parquet',
             p4s=p4_columns,
             aux=aux_columns,
         )
-        accmc = ld.Dataset.open(
+        accmc = ld.Dataset.from_parquet(
             script_dir / 'mc_2.parquet',
             p4s=p4_columns,
             aux=aux_columns,
@@ -252,10 +252,10 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.Dataset.open(
+        data = ld.Dataset.from_parquet(
             script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns
         )
-        accmc = ld.Dataset.open(
+        accmc = ld.Dataset.from_parquet(
             script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns
         )
         mass = ld.Mass(['kshort1', 'kshort2'])

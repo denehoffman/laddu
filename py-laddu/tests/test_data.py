@@ -457,12 +457,12 @@ def test_event_display() -> None:
     assert 'weight:' in display_string
 
 
-def test_dataset_open_parquet_auto_vs_named() -> None:
-    auto = Dataset.open(DATA_F32_PARQUET)
+def test_dataset_from_parquet_auto_vs_named() -> None:
+    auto = Dataset.from_parquet(DATA_F32_PARQUET)
     assert auto.p4_names == P4_NAMES
     assert auto.aux_names == AUX_NAMES
 
-    explicit = Dataset.open(
+    explicit = Dataset.from_parquet(
         DATA_F32_PARQUET,
         p4s=P4_NAMES,
         aux=AUX_NAMES,
@@ -470,14 +470,14 @@ def test_dataset_open_parquet_auto_vs_named() -> None:
     _assert_datasets_close(auto, explicit)
 
 
-def test_dataset_open_root_matches_parquet() -> None:
-    parquet = Dataset.open(DATA_F32_PARQUET)
-    root_auto = Dataset.open(DATA_F32_ROOT)
+def test_dataset_from_root_matches_parquet() -> None:
+    parquet = Dataset.from_parquet(DATA_F32_PARQUET)
+    root_auto = Dataset.from_root(DATA_F32_ROOT)
     assert root_auto.p4_names == P4_NAMES
     assert root_auto.aux_names == AUX_NAMES
     _assert_datasets_close(root_auto, parquet)
 
-    root_named = Dataset.open(
+    root_named = Dataset.from_root(
         DATA_F32_ROOT,
         p4s=P4_NAMES,
         aux=AUX_NAMES,
@@ -485,8 +485,8 @@ def test_dataset_open_root_matches_parquet() -> None:
     _assert_datasets_close(root_auto, root_named)
 
 
-def test_dataset_open_with_aliases() -> None:
-    dataset = Dataset.open(
+def test_dataset_from_parquet_with_aliases() -> None:
+    dataset = Dataset.from_parquet(
         DATA_F32_PARQUET,
         aliases={'resonance': ['kshort1', 'kshort2']},
     )
@@ -496,7 +496,7 @@ def test_dataset_open_with_aliases() -> None:
 
 
 def test_mass_uses_alias_string() -> None:
-    dataset = Dataset.open(
+    dataset = Dataset.from_parquet(
         DATA_F32_PARQUET,
         aliases={'resonance': ['kshort1', 'kshort2']},
     )
@@ -507,9 +507,9 @@ def test_mass_uses_alias_string() -> None:
     np.testing.assert_allclose(alias_values, direct_values)
 
 
-def test_dataset_open_amptools_matches_native_vectors() -> None:
-    native = Dataset.open(DATA_F32_PARQUET)
-    amptools = Dataset.open(DATA_AMPTOOLS_ROOT, backend='amptools')
+def test_dataset_from_amptools_matches_native_vectors() -> None:
+    native = Dataset.from_parquet(DATA_F32_PARQUET)
+    amptools = Dataset.from_amptools(DATA_AMPTOOLS_ROOT)
     assert amptools.p4_names == [
         'beam',
         'final_state_0',
@@ -528,13 +528,9 @@ def test_dataset_open_amptools_matches_native_vectors() -> None:
         assert pytest.approx(amp_event.weight) == native_event.weight
 
 
-def test_dataset_open_amptools_pol_in_beam_columns() -> None:
-    native = Dataset.open(DATA_F32_PARQUET)
-    amptools = Dataset.open(
-        DATA_AMPTOOLS_POL_ROOT,
-        backend='amptools',
-        amptools_kwargs={'pol_in_beam': True},
-    )
+def test_dataset_from_amptools_pol_in_beam_columns() -> None:
+    native = Dataset.from_parquet(DATA_F32_PARQUET)
+    amptools = Dataset.from_amptools(DATA_AMPTOOLS_POL_ROOT, pol_in_beam=True)
     assert amptools.aux_names == AUX_NAMES
     for idx in range(native.n_events):
         amp_event = amptools[idx]
@@ -549,16 +545,13 @@ def test_dataset_open_amptools_pol_in_beam_columns() -> None:
         assert pytest.approx(amp_event.p4s['beam'].py) == 0.0
 
 
-def test_dataset_open_amptools_custom_polarization_names() -> None:
-    dataset = Dataset.open(
+def test_dataset_from_amptools_custom_polarization_names() -> None:
+    dataset = Dataset.from_amptools(
         DATA_AMPTOOLS_ROOT,
-        backend='amptools',
-        amptools_kwargs={
-            'pol_angle': 30.0,
-            'pol_magnitude': 0.75,
-            'pol_angle_name': 'phi_pol',
-            'pol_magnitude_name': 'mag_pol',
-        },
+        pol_angle=30.0,
+        pol_magnitude=0.75,
+        pol_angle_name='phi_pol',
+        pol_magnitude_name='mag_pol',
     )
     assert dataset.aux_names == ['mag_pol', 'phi_pol']
     mag = dataset[0].aux['mag_pol']
@@ -569,26 +562,22 @@ def test_dataset_open_amptools_custom_polarization_names() -> None:
     assert pytest.approx(phi) == np.deg2rad(30.0)
 
 
-def test_dataset_open_amptools_rejects_unknown_option() -> None:
+def test_dataset_from_amptools_rejects_unknown_option() -> None:
     with pytest.raises(TypeError):
-        Dataset.open(
-            DATA_AMPTOOLS_ROOT,
-            backend='amptools',
-            amptools_kwargs={'unknown_option': True},
-        )
+        Dataset.from_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # type: ignore[arg-type]
 
 
-def test_dataset_open_parquet_f64_matches_f32() -> None:
-    f32 = Dataset.open(DATA_F32_PARQUET)
-    f64 = Dataset.open(DATA_F64_PARQUET)
+def test_dataset_from_parquet_f64_matches_f32() -> None:
+    f32 = Dataset.from_parquet(DATA_F32_PARQUET)
+    f64 = Dataset.from_parquet(DATA_F64_PARQUET)
     assert f64.p4_names == P4_NAMES
     assert f64.aux_names == AUX_NAMES
     _assert_datasets_close(f32, f64)
 
 
-def test_dataset_open_root_f64_matches_parquet() -> None:
-    parquet = Dataset.open(DATA_F32_PARQUET)
-    root_f64 = Dataset.open(DATA_F64_ROOT)
+def test_dataset_from_root_f64_matches_parquet() -> None:
+    parquet = Dataset.from_parquet(DATA_F32_PARQUET)
+    root_f64 = Dataset.from_root(DATA_F64_ROOT)
     assert root_f64.p4_names == P4_NAMES
     assert root_f64.aux_names == AUX_NAMES
     _assert_datasets_close(root_f64, parquet)

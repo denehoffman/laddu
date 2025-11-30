@@ -89,16 +89,35 @@ class Dataset(Sequence[Event]):
     @staticmethod
     def from_polars(data: pl.DataFrame) -> Dataset: ...
     @staticmethod
-    def open(
+    def from_parquet(
         path: str | Path,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
-        backend: str | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_root(
+        path: str | Path,
+        *,
         tree: str | None = None,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: dict[str, str | list[str]] | None = None,
+        backend: str = 'oxyroot',
         uproot_kwargs: dict[str, Any] | None = None,
-        amptools_kwargs: dict[str, Any] | None = None,
+    ) -> Dataset: ...
+    @staticmethod
+    def from_amptools(
+        path: str | Path,
+        *,
+        tree: str | None = None,
+        pol_in_beam: bool = False,
+        pol_angle: float | None = None,
+        pol_magnitude: float | None = None,
+        pol_magnitude_name: str = 'pol_magnitude',
+        pol_angle_name: str = 'pol_angle',
+        num_entries: int | None = None,
     ) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
@@ -111,11 +130,3 @@ class BinnedDataset:
 
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Dataset: ...
-
-def open(
-    path: str | Path,
-    *,
-    p4s: list[str],
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
-) -> Dataset: ...

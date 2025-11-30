@@ -48,11 +48,11 @@ def main(bins: int, niters: int, nboot: int) -> None:
     aux_columns = ['pol_magnitude', 'pol_angle']
     start = perf_counter()
     logger.info('Opening Data file...')
-    data_ds = ld.Dataset.open(data_file, p4s=p4_columns, aux=aux_columns)
+    data_ds = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening AccMC file...')
-    accmc_ds = ld.Dataset.open(accmc_file, p4s=p4_columns, aux=aux_columns)
+    accmc_ds = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening GenMC file...')
-    genmc_ds = ld.Dataset.open(genmc_file, p4s=p4_columns, aux=aux_columns)
+    genmc_ds = ld.Dataset.from_parquet(genmc_file, p4s=p4_columns, aux=aux_columns)
     tot_weights, s0p_weights, d2p_weights, fit, boot_fites, parameters = fit_unbinned(
         niters, nboot, data_ds, accmc_ds, genmc_ds
     )
