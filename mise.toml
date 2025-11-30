@@ -20,7 +20,7 @@ fi
 description = "Build the CPU extension and install the Python wrapper in editable mode"
 depends = ["ensure-venv"]
 run = '''
-uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL"
 uv pip install --offline -e py-laddu
@@ -35,8 +35,8 @@ run = "uv pip install --offline -e 'py-laddu[tests]'"
 description = "Build both CPU and MPI extensions and install the wrapper"
 depends = ["ensure-venv"]
 run = '''
-uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist --features mpi
+uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist --features mpi
 CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 MPI_WHEEL=$(ls py-laddu-mpi/dist/laddu_mpi-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL" "$MPI_WHEEL"
@@ -130,8 +130,8 @@ run = "cargo build --all-targets --features mpi"
 [tasks.build-python]
 description = "Build Python distributions"
 run = '''
-uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-cpu/Cargo.toml
-uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-mpi/Cargo.toml --features mpi
+uv run --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-cpu/Cargo.toml
+uv run --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-mpi/Cargo.toml --features mpi
 uv build --offline -o dist py-laddu
 '''
 
