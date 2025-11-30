@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use fastrand_contrib::RngExt;
 use laddu::{
