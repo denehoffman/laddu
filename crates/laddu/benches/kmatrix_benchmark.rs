@@ -151,7 +151,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().measurement_time(Duration::from_secs(30)).sample_size(5000);
+    config = Criterion::default().sample_size(500);
     targets = kmatrix_nll_benchmark
 }
 criterion_main!(benches);
