@@ -74,6 +74,21 @@ class Dataset:
         pol_angle_name: str = ...,
         num_entries: int | None = ...,
     ) -> Dataset: ...
+    def to_parquet(
+        self,
+        path: str | Path,
+        *,
+        chunk_size: int | None = ...,
+        precision: str = ...,
+    ) -> None: ...
+    def to_root(
+        self,
+        path: str | Path,
+        *,
+        tree: str | None = ...,
+        chunk_size: int | None = ...,
+        precision: str = ...,
+    ) -> None: ...
 
 class Event:
     def __init__(

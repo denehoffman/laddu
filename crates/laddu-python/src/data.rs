@@ -1,6 +1,8 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
-    data::{BinnedDataset, Dataset, DatasetMetadata, Event, EventData},
+    data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
+    },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
 };
@@ -49,6 +51,21 @@ fn parse_dataset_path(path: Bound<'_, PyAny>) -> PyResult<String> {
         Ok(pathbuf.to_string_lossy().into_owned())
     } else {
         Err(PyTypeError::new_err("Expected str or Path"))
+    }
+}
+
+fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
+    match value.map(|v| v.to_ascii_lowercase()) {
+        None => Ok(FloatPrecision::F64),
+        Some(name) if name == "f64" || name == "float64" || name == "double" => {
+            Ok(FloatPrecision::F64)
+        }
+        Some(name) if name == "f32" || name == "float32" || name == "float" => {
+            Ok(FloatPrecision::F32)
+        }
+        Some(other) => Err(PyValueError::new_err(format!(
+            "Unsupported precision '{other}' (expected 'f64' or 'f32')"
+        ))),
     }
 }
 
@@ -545,6 +562,50 @@ impl PyDataset {
     #[getter]
     fn aux_names(&self) -> Vec<String> {
         self.0.aux_names().to_vec()
+    }
+
+    /// Write the dataset to a Parquet file.
+    #[pyo3(signature = (path, *, chunk_size=None, precision="f64"))]
+    fn to_parquet(
+        &self,
+        path: Bound<'_, PyAny>,
+        chunk_size: Option<usize>,
+        precision: &str,
+    ) -> PyResult<()> {
+        let path_str = parse_dataset_path(path)?;
+        let mut write_options = DatasetWriteOptions::default();
+        if let Some(size) = chunk_size {
+            write_options.batch_size = size.max(1);
+        }
+        write_options.precision = parse_precision_arg(Some(precision))?;
+
+        self.0
+            .to_parquet(&path_str, &write_options)
+            .map_err(PyErr::from)
+    }
+
+    /// Write the dataset to a ROOT file using the oxyroot backend.
+    #[pyo3(signature = (path, *, tree=None, chunk_size=None, precision="f64"))]
+    fn to_root(
+        &self,
+        path: Bound<'_, PyAny>,
+        tree: Option<String>,
+        chunk_size: Option<usize>,
+        precision: &str,
+    ) -> PyResult<()> {
+        let path_str = parse_dataset_path(path)?;
+        let mut write_options = DatasetWriteOptions::default();
+        if let Some(name) = tree {
+            write_options.tree = Some(name);
+        }
+        if let Some(size) = chunk_size {
+            write_options.batch_size = size.max(1);
+        }
+        write_options.precision = parse_precision_arg(Some(precision))?;
+
+        self.0
+            .to_root(&path_str, &write_options)
+            .map_err(PyErr::from)
     }
     /// Get the weighted number of Events in the Dataset
     ///

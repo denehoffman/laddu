@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping, Sequence, cast
 
 import numpy as np
 
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 _NATIVE_DATASET_FROM_PARQUET = _DatasetCore.from_parquet
 _NATIVE_DATASET_FROM_ROOT = _DatasetCore.from_root
+_NATIVE_DATASET_TO_PARQUET = _DatasetCore.to_parquet
+_NATIVE_DATASET_TO_ROOT = _DatasetCore.to_root
 
 
 def _import_optional_dependency(
@@ -86,7 +88,14 @@ class _DatasetExtensions:
         return aux_names
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> _DatasetCore:
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> _DatasetCore:
         """Create a dataset from iterables keyed by column name.
 
         Parameters
@@ -94,13 +103,39 @@ class _DatasetExtensions:
         data:
             Mapping whose keys are column names (e.g. ``beam_px``) and values are
             indexable sequences.
+        p4s:
+            Explicit four-momentum names; when omitted they are inferred from
+            ``*_px`` columns.
+        aux:
+            Explicit auxiliary column names; inferred when omitted.
+        aliases:
+            Optional mapping of alias name to one or more particle identifiers.
         """
         columns = {name: np.asarray(values) for name, values in data.items()}
-        p4_names = cls._infer_p4_names(columns)
+
+        if p4s is None:
+            p4_names = cls._infer_p4_names(columns)
+        else:
+            p4_names = list(p4s)
+            for name in p4_names:
+                required = [f'{name}_{suffix}' for suffix in ('px', 'py', 'pz', 'e')]
+                missing = [col for col in required if col not in columns]
+                if missing:
+                    msg = f"Missing components {missing} for four-momentum '{name}'"
+                    raise KeyError(msg)
+
         component_names = {
             f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
         }
-        aux_names = cls._infer_aux_names(columns, component_names)
+
+        if aux is None:
+            aux_names = cls._infer_aux_names(columns, component_names)
+        else:
+            aux_names = list(aux)
+            missing_aux = [name for name in aux_names if name not in columns]
+            if missing_aux:
+                msg = f"Missing auxiliary columns {missing_aux}"
+                raise KeyError(msg)
 
         n_events = len(columns[f'{p4_names[0]}_px'])
         weights = np.asarray(
@@ -131,20 +166,40 @@ class _DatasetExtensions:
                 )
             )
 
-        return cls(events, p4_names=p4_names, aux_names=aux_names)
+        native_aliases = dict(aliases) if aliases is not None else None
+        return cls(
+            events,
+            p4_names=p4_names,
+            aux_names=aux_names,
+            aliases=native_aliases,
+        )
 
     @classmethod
-    def from_numpy(cls, data: dict[str, NDArray[np.floating]]) -> _DatasetCore:
+    def from_numpy(
+        cls,
+        data: dict[str, NDArray[np.floating]],
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> _DatasetCore:
         """Create a dataset from arrays without copying.
 
         Accepts any mapping of column names to ``ndarray`` objects and mirrors
         :meth:`from_dict`.
         """
         converted = {key: np.asarray(value) for key, value in data.items()}
-        return cls.from_dict(converted)
+        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
     @classmethod
-    def from_pandas(cls, data: pd.DataFrame) -> _DatasetCore:
+    def from_pandas(
+        cls,
+        data: pd.DataFrame,
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> _DatasetCore:
         """Materialise a dataset from a :class:`pandas.DataFrame`."""
         _import_optional_dependency(
             'pandas',
@@ -152,10 +207,17 @@ class _DatasetExtensions:
             feature='Dataset.from_pandas',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted)
+        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
     @classmethod
-    def from_polars(cls, data: pl.DataFrame) -> _DatasetCore:
+    def from_polars(
+        cls,
+        data: pl.DataFrame,
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
+    ) -> _DatasetCore:
         """Materialise a dataset from a :class:`polars.DataFrame`."""
         _import_optional_dependency(
             'polars',
@@ -163,7 +225,7 @@ class _DatasetExtensions:
             feature='Dataset.from_polars',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted)
+        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
     @classmethod
     @classmethod
@@ -193,7 +255,7 @@ class _DatasetExtensions:
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
-        backend: str = 'oxyroot',
+        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> _DatasetCore:
         """Read a Dataset from a ROOT TTree.
@@ -204,7 +266,14 @@ class _DatasetExtensions:
         backend_name = backend.lower() if backend else 'oxyroot'
         native_aliases = dict(aliases) if aliases is not None else None
 
-        if backend_name in {'native', 'parquet', 'rust', 'oxyroot'}:
+        if backend_name not in {'oxyroot', 'uproot'}:
+            msg = (
+                f"Unsupported backend '{backend_name}'. "
+                "Valid options are 'oxyroot' or 'uproot'."
+            )
+            raise ValueError(msg)
+
+        if backend_name == 'oxyroot':
             return _NATIVE_DATASET_FROM_ROOT(
                 path,
                 tree=tree,
@@ -213,26 +282,16 @@ class _DatasetExtensions:
                 aliases=native_aliases,
             )
 
-        if native_aliases:
-            msg = "'aliases' are only supported when backend='oxyroot'"
-            raise ValueError(msg)
-
-        if backend_name == 'uproot':
-            kwargs = dict(uproot_kwargs or {})
-            backend_tree = tree or kwargs.pop('tree', None)
-            return cls._open_with_uproot(
-                Path(path),
-                tree=backend_tree,
-                p4s=p4s,
-                aux=aux,
-                uproot_kwargs=kwargs,
-            )
-
-        msg = (
-            f"Unsupported backend '{backend_name}'. "
-            "Valid options are 'oxyroot' or 'uproot'."
+        kwargs = dict(uproot_kwargs or {})
+        backend_tree = tree or kwargs.pop('tree', None)
+        return cls._open_with_uproot(
+            Path(path),
+            tree=backend_tree,
+            p4s=p4s,
+            aux=aux,
+            aliases=native_aliases,
+            uproot_kwargs=kwargs,
         )
-        raise ValueError(msg)
 
     @classmethod
     def from_amptools(
@@ -246,7 +305,7 @@ class _DatasetExtensions:
         pol_magnitude_name: str = 'pol_magnitude',
         pol_angle_name: str = 'pol_angle',
         num_entries: int | None = None,
-    ) -> _DatasetCore:
+        ) -> _DatasetCore:
         """Read a Dataset from an AmpTools ROOT tuple."""
         return cls._open_amptools_format(
             Path(path),
@@ -259,6 +318,77 @@ class _DatasetExtensions:
             num_entries=num_entries,
         )
 
+    def to_numpy(self, *, precision: str = 'f64') -> dict[str, np.ndarray]:
+        """Convert the dataset to NumPy column arrays."""
+        return _coalesce_numpy_batches(
+            _iter_numpy_batches(self, chunk_size=len(self), precision=precision)
+        )
+
+    def to_parquet(
+        self,
+        path: str | Path,
+        *,
+        chunk_size: int = 10_000,
+        precision: str = 'f64',
+    ) -> None:
+        """Write the dataset to Parquet."""
+        _NATIVE_DATASET_TO_PARQUET(
+            self,
+            path,
+            chunk_size=chunk_size,
+            precision=precision,
+        )
+
+    def to_root(
+        self,
+        path: str | Path,
+        *,
+        tree: str | None = None,
+        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+        chunk_size: int = 10_000,
+        precision: str = 'f64',
+        uproot_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Write the dataset to a ROOT TTree."""
+        backend_name = backend.lower() if backend else 'oxyroot'
+        if backend_name not in {'oxyroot', 'uproot'}:
+            msg = (
+                f"Unsupported backend '{backend_name}'. "
+                "Valid options are 'oxyroot' or 'uproot'."
+            )
+            raise ValueError(msg)
+
+        if backend_name == 'oxyroot':
+            _NATIVE_DATASET_TO_ROOT(
+                self,
+                path,
+                tree=tree,
+                chunk_size=chunk_size,
+                precision=precision,
+            )
+            return
+
+        kwargs = dict(uproot_kwargs or {})
+        tree_name = tree or kwargs.pop('tree', 'events')
+        uproot_module = _import_optional_dependency(
+            'uproot',
+            extra='uproot',
+            feature="Dataset.to_root(... backend='uproot')",
+        )
+
+        with uproot_module.recreate(path) as root_file:
+            batches = _iter_numpy_batches(
+                self, chunk_size=chunk_size, precision=precision
+            )
+            tree_obj = None
+            for batch in batches:
+                if tree_obj is None:
+                    tree_obj = root_file.mktree(tree_name, batch)
+                tree_obj.extend(batch, **kwargs)
+
+            if tree_obj is None:
+                root_file.mktree(tree_name, {})
+
     @classmethod
     def _open_with_uproot(
         cls,
@@ -267,6 +397,7 @@ class _DatasetExtensions:
         tree: str | None,
         p4s: list[str] | None,
         aux: list[str] | None,
+        aliases: Mapping[str, str | Sequence[str]] | None,
         uproot_kwargs: dict[str, Any],
     ) -> _DatasetCore:
         uproot_module = _import_optional_dependency(
@@ -280,7 +411,7 @@ class _DatasetExtensions:
 
         columns = {name: np.asarray(values) for name, values in arrays.items()}
         selected = cls._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
-        return cls.from_numpy(selected)
+        return cls.from_numpy(selected, p4s=p4s, aux=aux, aliases=aliases)
 
     @classmethod
     def _open_amptools_format(
@@ -443,6 +574,74 @@ class _AmpToolsData:
     weights: np.ndarray
     pol_magnitude: np.ndarray | None
     pol_angle: np.ndarray | None
+
+
+def _empty_numpy_buffers(
+    p4_names: Sequence[str], aux_names: Sequence[str]
+) -> dict[str, list[float]]:
+    buffers: dict[str, list[float]] = {
+        f'{name}_px': [] for name in p4_names
+    } | {f'{name}_py': [] for name in p4_names} | {f'{name}_pz': [] for name in p4_names} | {
+        f'{name}_e': [] for name in p4_names
+    }
+    for name in aux_names:
+        buffers[name] = []
+    buffers['weight'] = []
+    return buffers
+
+
+def _iter_numpy_batches(
+    dataset: _DatasetCore,
+    *,
+    chunk_size: int,
+    precision: str,
+) -> Iterable[dict[str, np.ndarray]]:
+    normalized = precision.lower()
+    if normalized in {'f64', 'float64', 'double'}:
+        dtype = np.float64
+    elif normalized in {'f32', 'float32', 'float'}:
+        dtype = np.float32
+    else:
+        msg = "precision must be 'f64' or 'f32'"
+        raise ValueError(msg)
+    p4_names = list(dataset.p4_names)
+    aux_names = list(dataset.aux_names)
+
+    buffers = _empty_numpy_buffers(p4_names, aux_names)
+    count = 0
+
+    for event in dataset:
+        p4_map = event.p4s
+        for name in p4_names:
+            vec = p4_map[name]
+            buffers[f'{name}_px'].append(float(vec.px))
+            buffers[f'{name}_py'].append(float(vec.py))
+            buffers[f'{name}_pz'].append(float(vec.pz))
+            buffers[f'{name}_e'].append(float(vec.e))
+
+        aux_map = event.aux
+        for name in aux_names:
+            buffers[name].append(float(aux_map[name]))
+
+        buffers['weight'].append(float(event.weight))
+        count += 1
+
+        if count >= chunk_size:
+            yield {key: np.asarray(values, dtype=dtype) for key, values in buffers.items()}
+            buffers = _empty_numpy_buffers(p4_names, aux_names)
+            count = 0
+
+    if count:
+        yield {key: np.asarray(values, dtype=dtype) for key, values in buffers.items()}
+
+
+def _coalesce_numpy_batches(batches: Iterable[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    merged: dict[str, list[np.ndarray]] = {}
+    for batch in batches:
+        for key, array in batch.items():
+            merged.setdefault(key, []).append(array)
+
+    return {key: np.concatenate(arrays) if len(arrays) > 1 else arrays[0] for key, arrays in merged.items()}
 
 
 def _read_amptools_scalar(branch: Any, *, entry_stop: int | None = None) -> np.ndarray:

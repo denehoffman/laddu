@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, Literal, overload
 
 import numpy as np
 import pandas as pd
@@ -81,13 +81,37 @@ class Dataset(Sequence[Event]):
     def aux_by_name(self, index: int, name: str) -> float: ...
     def boost_to_rest_frame_of(self, names: list[str]) -> Dataset: ...
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> Dataset: ...
+    def from_dict(
+        data: dict[str, Any],
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: dict[str, str | list[str]] | None = None,
+    ) -> Dataset: ...
     @staticmethod
-    def from_numpy(data: dict[str, NDArray[np.floating]]) -> Dataset: ...
+    def from_numpy(
+        data: dict[str, NDArray[np.floating]],
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: dict[str, str | list[str]] | None = None,
+    ) -> Dataset: ...
     @staticmethod
-    def from_pandas(data: pd.DataFrame) -> Dataset: ...
+    def from_pandas(
+        data: pd.DataFrame,
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: dict[str, str | list[str]] | None = None,
+    ) -> Dataset: ...
     @staticmethod
-    def from_polars(data: pl.DataFrame) -> Dataset: ...
+    def from_polars(
+        data: pl.DataFrame,
+        *,
+        p4s: list[str] | None = None,
+        aux: list[str] | None = None,
+        aliases: dict[str, str | list[str]] | None = None,
+    ) -> Dataset: ...
     @staticmethod
     def from_parquet(
         path: str | Path,
@@ -104,7 +128,7 @@ class Dataset(Sequence[Event]):
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
-        backend: str = 'oxyroot',
+        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> Dataset: ...
     @staticmethod
@@ -119,6 +143,24 @@ class Dataset(Sequence[Event]):
         pol_angle_name: str = 'pol_angle',
         num_entries: int | None = None,
     ) -> Dataset: ...
+    def to_numpy(self, *, precision: Literal['f64', 'f32'] = 'f64') -> dict[str, NDArray[np.floating]]: ...
+    def to_parquet(
+        self,
+        path: str | Path,
+        *,
+        chunk_size: int = 10000,
+        precision: Literal['f64', 'f32'] = 'f64',
+    ) -> None: ...
+    def to_root(
+        self,
+        path: str | Path,
+        *,
+        tree: str | None = None,
+        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+        chunk_size: int = 10000,
+        precision: Literal['f64', 'f32'] = 'f64',
+        uproot_kwargs: dict[str, Any] | None = None,
+    ) -> None: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
