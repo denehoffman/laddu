@@ -716,12 +716,8 @@ pub struct PyParameterLike(pub ParameterLike);
 /// Two free parameters with the same name are shared in a fit
 ///
 #[pyfunction(name = "parameter")]
-pub fn py_parameter(name: &str, value: Option<f64>) -> PyParameterLike {
-    if let Some(v) = value {
-        PyParameterLike(constant(name, v))
-    } else {
-        PyParameterLike(parameter(name))
-    }
+pub fn py_parameter(name: &str) -> PyParameterLike {
+    PyParameterLike(parameter(name))
 }
 
 /// A term which stays constant during an optimization

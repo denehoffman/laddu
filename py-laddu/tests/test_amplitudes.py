@@ -57,7 +57,7 @@ def make_test_dataset() -> Dataset:
 
 
 def test_constant_amplitude() -> None:
-    amp = Scalar('constant', constant(2.0))
+    amp = Scalar('constant', constant('const_amp', 2.0))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
@@ -100,9 +100,15 @@ def test_batch_evaluation() -> None:
 
 
 def test_expression_operations() -> None:
-    amp1 = ComplexScalar('const1', constant(2.0), constant(0.0))
-    amp2 = ComplexScalar('const2', constant(0.0), constant(1.0))
-    amp3 = ComplexScalar('const3', constant(3.0), constant(4.0))
+    amp1 = ComplexScalar(
+        'const1', constant('const1_re', 2.0), constant('const1_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'const2', constant('const2_re', 0.0), constant('const2_im', 1.0)
+    )
+    amp3 = ComplexScalar(
+        'const3', constant('const3_re', 3.0), constant('const3_im', 4.0)
+    )
     dataset = make_test_dataset()
 
     expr_add = amp1 + amp2
@@ -197,8 +203,12 @@ def test_expression_operations() -> None:
 
 
 def test_amplitude_activation() -> None:
-    amp1 = ComplexScalar('const1', constant(1.0), constant(0.0))
-    amp2 = ComplexScalar('const2', constant(2.0), constant(0.0))
+    amp1 = ComplexScalar(
+        'const1', constant('const1_re', 1.0), constant('const1_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'const2', constant('const2_re', 2.0), constant('const2_im', 0.0)
+    )
     dataset = make_test_dataset()
 
     expr = amp1 + amp2
@@ -364,7 +374,9 @@ def test_gradient() -> None:
 
 
 def test_zeros_and_ones() -> None:
-    amp = ComplexScalar('parametric', parameter('test_param_re'), constant(2.0))
+    amp = ComplexScalar(
+        'parametric', parameter('test_param_re'), constant('zeros_const_im', 2.0)
+    )
     dataset = make_test_dataset()
     expr = (amp * One() + Zero()).norm_sqr()
     evaluator = expr.load(dataset)
@@ -438,7 +450,7 @@ def test_tree_printing() -> None:
 
 
 def test_amplitude_summation() -> None:
-    terms = [Scalar(f'{i}', constant(i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', constant(f'const_sum_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 
@@ -474,7 +486,7 @@ def test_amplitude_summation() -> None:
 
 
 def test_amplitude_product() -> None:
-    terms = [Scalar(f'{i}', constant(i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', constant(f'const_prod_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 
