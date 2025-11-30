@@ -20,30 +20,33 @@ fi
 description = "Build the CPU extension and install the Python wrapper in editable mode"
 depends = ["ensure-venv"]
 run = '''
-uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-uv pip install --find-links py-laddu-cpu/dist laddu-cpu
-uv pip install --find-links py-laddu-cpu/dist -e py-laddu
+uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
+uv pip install --offline "$CPU_WHEEL"
+uv pip install --offline -e py-laddu
 '''
 
 [tasks.develop-tests]
 description = "Install the CPU stack with the testing extra"
 depends = ["develop"]
-run = "uv pip install --find-links py-laddu-cpu/dist -e 'py-laddu[tests]'"
+run = "uv pip install --offline -e 'py-laddu[tests]'"
 
 [tasks.develop-mpi]
 description = "Build both CPU and MPI extensions and install the wrapper"
 depends = ["ensure-venv"]
 run = '''
-uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist --features mpi
-uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist laddu-cpu laddu-mpi
-uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e 'py-laddu[mpi]'
+uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist --features mpi
+CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
+MPI_WHEEL=$(ls py-laddu-mpi/dist/laddu_mpi-*.whl | head -n 1)
+uv pip install --offline "$CPU_WHEEL" "$MPI_WHEEL"
+uv pip install --offline -e 'py-laddu[mpi]'
 '''
 
 [tasks.develop-mpi-tests]
 description = "Build both extensions and install all Python extras"
 depends = ["develop-mpi"]
-run = "uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e 'py-laddu[tests,mpi]'"
+run = "uv pip install --offline -e 'py-laddu[tests,mpi]'"
 
 [tasks.test-python]
 description = "Run the Python test suite"
@@ -127,9 +130,9 @@ run = "cargo build --all-targets --features mpi"
 [tasks.build-python]
 description = "Build Python distributions"
 run = '''
-uv run --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-cpu/Cargo.toml
-uv run --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-mpi/Cargo.toml --features mpi
-uv build -o dist py-laddu
+uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-cpu/Cargo.toml
+uv run --offline --with "maturin[patchelf]>=1.7,<2" maturin build --release --manifest-path py-laddu-mpi/Cargo.toml --features mpi
+uv build --offline -o dist py-laddu
 '''
 
 [tasks.build]
@@ -143,7 +146,7 @@ run = "cargo clean"
 [tasks.clean-python]
 description = "Remove Python build artifacts"
 run = '''
-rm -rf .venv .uv-cache dist py-laddu/build
+rm -rf .venv .uv-cache dist py-laddu/build py-laddu-cpu/dist py-laddu-mpi/dist
 uv venv .venv
 '''
 
