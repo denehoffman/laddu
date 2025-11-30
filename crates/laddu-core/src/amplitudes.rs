@@ -1944,7 +1944,7 @@ mod tests {
             constant("fixed_two", 2.0),
         )
         .unwrap();
-        let parameters = expr.parameters();
+        let parameters = expr.free_parameters();
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0], "test_param_re");
     }
