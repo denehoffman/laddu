@@ -764,54 +764,48 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_vec: Vec<Vec<Complex64>> = self
-                .dataset
+            self.dataset
                 .events
                 .par_iter()
                 .zip(resources.caches.par_iter())
                 .map(|(event, cache)| {
-                    self.amplitudes
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
                         .iter()
                         .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
                             } else {
-                                Complex64::new(0.0, 0.0)
+                                Complex64::ZERO
                             }
                         })
-                        .collect()
+                        .collect();
+                    self.expression.evaluate(&amplitude_values)
                 })
-                .collect();
-            amplitude_values_vec
-                .par_iter()
-                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_vec: Vec<Vec<Complex64>> = self
-                .dataset
+            self.dataset
                 .events
                 .iter()
                 .zip(resources.caches.iter())
                 .map(|(event, cache)| {
-                    self.amplitudes
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
                         .iter()
                         .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
                             } else {
-                                Complex64::new(0.0, 0.0)
+                                Complex64::ZERO
                             }
                         })
-                        .collect()
+                        .collect();
+                    self.expression.evaluate(&amplitude_values)
                 })
-                .collect();
-            amplitude_values_vec
-                .iter()
-                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
                 .collect()
         }
     }
@@ -855,70 +849,48 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_vec: Vec<Vec<Complex64>> = self
-                .dataset
-                .events
+            indices
                 .par_iter()
-                .zip(resources.caches.par_iter())
-                .enumerate()
-                .filter_map(|(i, (event, cache))| {
-                    if indices.contains(&i) {
-                        Some((event, cache))
-                    } else {
-                        None
-                    }
-                })
-                .map(|(event, cache)| {
-                    self.amplitudes
+                .map(|&idx| {
+                    let event = &self.dataset.events[idx];
+                    let cache = &resources.caches[idx];
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
                         .iter()
                         .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
                             } else {
-                                Complex64::new(0.0, 0.0)
+                                Complex64::ZERO
                             }
                         })
-                        .collect()
+                        .collect();
+                    self.expression.evaluate(&amplitude_values)
                 })
-                .collect();
-            amplitude_values_vec
-                .par_iter()
-                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_vec: Vec<Vec<Complex64>> = self
-                .dataset
-                .events
+            indices
                 .iter()
-                .zip(resources.caches.iter())
-                .enumerate()
-                .filter_map(|(i, (event, cache))| {
-                    if indices.contains(&i) {
-                        Some((event, cache))
-                    } else {
-                        None
-                    }
-                })
-                .map(|(event, cache)| {
-                    self.amplitudes
+                .map(|&idx| {
+                    let event = &self.dataset.events[idx];
+                    let cache = &resources.caches[idx];
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
                         .iter()
                         .zip(resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
                                 amp.compute(&parameters, event, cache)
                             } else {
-                                Complex64::new(0.0, 0.0)
+                                Complex64::ZERO
                             }
                         })
-                        .collect()
+                        .collect();
+                    self.expression.evaluate(&amplitude_values)
                 })
-                .collect();
-            amplitude_values_vec
-                .iter()
-                .map(|amplitude_values| self.expression.evaluate(amplitude_values))
                 .collect()
         }
     }
@@ -962,88 +934,72 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
-                self.dataset
-                    .events
-                    .par_iter()
-                    .zip(resources.caches.par_iter())
-                    .map(|(event, cache)| {
-                        let mut gradient_values =
-                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .zip(gradient_values.iter_mut())
-                            .for_each(|((amp, active), grad)| {
-                                if *active {
-                                    amp.compute_gradient(&parameters, event, cache, grad)
-                                }
-                            });
-                        (
-                            self.amplitudes
-                                .iter()
-                                .zip(resources.active.iter())
-                                .map(|(amp, active)| {
-                                    if *active {
-                                        amp.compute(&parameters, event, cache)
-                                    } else {
-                                        Complex64::new(0.0, 0.0)
-                                    }
-                                })
-                                .collect(),
-                            gradient_values,
-                        )
-                    })
-                    .collect();
-            amplitude_values_and_gradient_vec
+            self.dataset
+                .events
                 .par_iter()
-                .map(|(amplitude_values, gradient_values)| {
+                .zip(resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect();
                     self.expression
-                        .evaluate_gradient(amplitude_values, gradient_values)
+                        .evaluate_gradient(&amplitude_values, &gradient_values)
                 })
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
-                self.dataset
-                    .events
-                    .iter()
-                    .zip(resources.caches.iter())
-                    .map(|(event, cache)| {
-                        let mut gradient_values =
-                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .zip(gradient_values.iter_mut())
-                            .for_each(|((amp, active), grad)| {
-                                if *active {
-                                    amp.compute_gradient(&parameters, event, cache, grad)
-                                }
-                            });
-                        (
-                            self.amplitudes
-                                .iter()
-                                .zip(resources.active.iter())
-                                .map(|(amp, active)| {
-                                    if *active {
-                                        amp.compute(&parameters, event, cache)
-                                    } else {
-                                        Complex64::new(0.0, 0.0)
-                                    }
-                                })
-                                .collect(),
-                            gradient_values,
-                        )
-                    })
-                    .collect();
-
-            amplitude_values_and_gradient_vec
+            self.dataset
+                .events
                 .iter()
-                .map(|(amplitude_values, gradient_values)| {
+                .zip(resources.caches.iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect();
+
                     self.expression
-                        .evaluate_gradient(amplitude_values, gradient_values)
+                        .evaluate_gradient(&amplitude_values, &gradient_values)
                 })
                 .collect()
         }
@@ -1106,104 +1062,72 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         #[cfg(feature = "rayon")]
         {
-            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
-                self.dataset
-                    .events
-                    .par_iter()
-                    .zip(resources.caches.par_iter())
-                    .enumerate()
-                    .filter_map(|(i, (event, cache))| {
-                        if indices.contains(&i) {
-                            Some((event, cache))
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|(event, cache)| {
-                        let mut gradient_values =
-                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .zip(gradient_values.iter_mut())
-                            .for_each(|((amp, active), grad)| {
-                                if *active {
-                                    amp.compute_gradient(&parameters, event, cache, grad)
-                                }
-                            });
-                        (
-                            self.amplitudes
-                                .iter()
-                                .zip(resources.active.iter())
-                                .map(|(amp, active)| {
-                                    if *active {
-                                        amp.compute(&parameters, event, cache)
-                                    } else {
-                                        Complex64::new(0.0, 0.0)
-                                    }
-                                })
-                                .collect(),
-                            gradient_values,
-                        )
-                    })
-                    .collect();
-            amplitude_values_and_gradient_vec
+            indices
                 .par_iter()
-                .map(|(amplitude_values, gradient_values)| {
+                .map(|&idx| {
+                    let event = &self.dataset.events[idx];
+                    let cache = &resources.caches[idx];
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect();
                     self.expression
-                        .evaluate_gradient(amplitude_values, gradient_values)
+                        .evaluate_gradient(&amplitude_values, &gradient_values)
                 })
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let amplitude_values_and_gradient_vec: Vec<(Vec<Complex64>, Vec<DVector<Complex64>>)> =
-                self.dataset
-                    .events
-                    .iter()
-                    .zip(resources.caches.iter())
-                    .enumerate()
-                    .filter_map(|(i, (event, cache))| {
-                        if indices.contains(&i) {
-                            Some((event, cache))
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|(event, cache)| {
-                        let mut gradient_values =
-                            vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                        self.amplitudes
-                            .iter()
-                            .zip(resources.active.iter())
-                            .zip(gradient_values.iter_mut())
-                            .for_each(|((amp, active), grad)| {
-                                if *active {
-                                    amp.compute_gradient(&parameters, event, cache, grad)
-                                }
-                            });
-                        (
-                            self.amplitudes
-                                .iter()
-                                .zip(resources.active.iter())
-                                .map(|(amp, active)| {
-                                    if *active {
-                                        amp.compute(&parameters, event, cache)
-                                    } else {
-                                        Complex64::new(0.0, 0.0)
-                                    }
-                                })
-                                .collect(),
-                            gradient_values,
-                        )
-                    })
-                    .collect();
-
-            amplitude_values_and_gradient_vec
+            indices
                 .iter()
-                .map(|(amplitude_values, gradient_values)| {
+                .map(|&idx| {
+                    let event = &self.dataset.events[idx];
+                    let cache = &resources.caches[idx];
+                    let mut gradient_values =
+                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
+                    self.amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&parameters, event, cache, grad)
+                            }
+                        });
+                    let amplitude_values: Vec<Complex64> = self
+                        .amplitudes
+                        .iter()
+                        .zip(resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&parameters, event, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect();
+
                     self.expression
-                        .evaluate_gradient(amplitude_values, gradient_values)
+                        .evaluate_gradient(&amplitude_values, &gradient_values)
                 })
                 .collect()
         }

@@ -1034,51 +1034,45 @@ impl LikelihoodTerm for StochasticNLL {
         self.nll.parameters()
     }
     fn evaluate(&self, parameters: &[f64]) -> f64 {
+        let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &self.batch_indices.lock(), &world);
+                return self.evaluate_mpi(parameters, &indices, &world);
             }
         }
         #[cfg(feature = "rayon")]
-        let n_data_batch_local = self
-            .batch_indices
-            .lock()
+        let n_data_batch_local = indices
             .par_iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
-        let n_data_batch_local = self
-            .batch_indices
-            .lock()
+        let n_data_batch_local = indices
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
+        self.evaluate_local(parameters, &indices, n_data_batch_local)
     }
 
     fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+        let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &self.batch_indices.lock(), &world);
+                return self.evaluate_gradient_mpi(parameters, &indices, &world);
             }
         }
         #[cfg(feature = "rayon")]
-        let n_data_batch_local = self
-            .batch_indices
-            .lock()
+        let n_data_batch_local = indices
             .par_iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
-        let n_data_batch_local = self
-            .batch_indices
-            .lock()
+        let n_data_batch_local = indices
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_gradient_local(parameters, &self.batch_indices.lock(), n_data_batch_local)
+        self.evaluate_gradient_local(parameters, &indices, n_data_batch_local)
     }
     fn update(&self) {
         self.resample();
@@ -1121,9 +1115,9 @@ impl StochasticNLL {
         {
             let data_term: f64 = indices
                 .par_iter()
-                .map(|&i| {
+                .zip(data_result.par_iter())
+                .map(|(&i, &l)| {
                     let e = &self.nll.data_evaluator.dataset.events[i];
-                    let l = data_result[i];
                     e.weight * l.re.ln()
                 })
                 .parallel_sum_with_accumulator::<Klein<f64>>();
@@ -1138,9 +1132,9 @@ impl StochasticNLL {
         {
             let data_term: f64 = indices
                 .iter()
-                .map(|&i| {
+                .zip(data_result.iter())
+                .map(|(&i, &l)| {
                     let e = &self.nll.data_evaluator.dataset.events[i];
-                    let l = data_result[i];
                     e.weight * l.re.ln()
                 })
                 .sum_with_accumulator::<Klein<f64>>();
@@ -1201,22 +1195,11 @@ impl StochasticNLL {
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = self
-            .nll
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = indices
             .par_iter()
-            .zip(data_resources.caches.par_iter())
-            .enumerate()
-            .filter_map(|(i, (event, cache))| {
-                if indices.contains(&i) {
-                    Some((event, cache))
-                } else {
-                    None
-                }
-            })
-            .map(|(event, cache)| {
+            .map(|&idx| {
+                let event = &self.nll.data_evaluator.dataset.events[idx];
+                let cache = &data_resources.caches[idx];
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.data_evaluator.amplitudes.len()
@@ -1232,32 +1215,27 @@ impl StochasticNLL {
                             amp.compute_gradient(&data_parameters, event, cache, grad)
                         }
                     });
+                let amp_vals: Vec<_> = self
+                    .nll
+                    .data_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(data_resources.active.iter())
+                    .map(|(amp, active)| {
+                        if *active {
+                            amp.compute(&data_parameters, event, cache)
+                        } else {
+                            Complex64::ZERO
+                        }
+                    })
+                    .collect();
                 (
                     event.weight,
-                    self.nll
-                        .data_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(data_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&data_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
                     self.nll.data_evaluator.expression.evaluate(&amp_vals),
                     self.nll
                         .data_evaluator
                         .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_gradient(&amp_vals, &gradient_values),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
@@ -1320,22 +1298,11 @@ impl StochasticNLL {
             .iter()
             .sum();
         #[cfg(not(feature = "rayon"))]
-        let data_term: DVector<f64> = self
-            .nll
-            .data_evaluator
-            .dataset
-            .events
+        let data_term: DVector<f64> = indices
             .iter()
-            .zip(data_resources.caches.iter())
-            .enumerate()
-            .filter_map(|(i, (event, cache))| {
-                if indices.contains(&i) {
-                    Some((event, cache))
-                } else {
-                    None
-                }
-            })
-            .map(|(event, cache)| {
+            .map(|&idx| {
+                let event = &self.nll.data_evaluator.dataset.events[idx];
+                let cache = &data_resources.caches[idx];
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
                     self.nll.data_evaluator.amplitudes.len()
@@ -1351,32 +1318,27 @@ impl StochasticNLL {
                             amp.compute_gradient(&data_parameters, event, cache, grad)
                         }
                     });
+                let amp_vals: Vec<_> = self
+                    .nll
+                    .data_evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(data_resources.active.iter())
+                    .map(|(amp, active)| {
+                        if *active {
+                            amp.compute(&data_parameters, event, cache)
+                        } else {
+                            Complex64::ZERO
+                        }
+                    })
+                    .collect();
                 (
                     event.weight,
-                    self.nll
-                        .data_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(data_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&data_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
                     self.nll.data_evaluator.expression.evaluate(&amp_vals),
                     self.nll
                         .data_evaluator
                         .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_gradient(&amp_vals, &gradient_values),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
