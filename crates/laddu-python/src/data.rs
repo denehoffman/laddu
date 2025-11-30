@@ -8,7 +8,7 @@ use numpy::PyArray1;
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyIterator, PyList},
+    types::PyDict,
     IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -299,6 +299,32 @@ impl PyEvent {
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
 
+#[pyclass(name = "DatasetIter", module = "laddu")]
+struct PyDatasetIter {
+    dataset: Arc<Dataset>,
+    index: usize,
+    total: usize,
+}
+
+#[pymethods]
+impl PyDatasetIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyDatasetIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> Option<PyEvent> {
+        if self.index >= self.total {
+            return None;
+        }
+        let event = self.dataset[self.index].clone();
+        self.index += 1;
+        Some(PyEvent {
+            event,
+            has_metadata: true,
+        })
+    }
+}
+
 #[pymethods]
 impl PyDataset {
     #[new]
@@ -423,14 +449,12 @@ impl PyDataset {
     fn __len__(&self) -> usize {
         self.0.n_events()
     }
-    fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
-        let py = slf.py();
-        let list_bound = PyList::empty(py);
-        for event in slf.events() {
-            list_bound.append(Py::new(py, event)?)?;
+    fn __iter__(&self) -> PyDatasetIter {
+        PyDatasetIter {
+            dataset: self.0.clone(),
+            index: 0,
+            total: self.0.n_events(),
         }
-        let iterator = PyIterator::from_object(list_bound.as_any())?;
-        Ok(iterator.into())
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
         if let Ok(other_ds) = other.extract::<PyRef<PyDataset>>() {
@@ -506,6 +530,12 @@ impl PyDataset {
         PyArray1::from_slice(py, &self.0.weights())
     }
     /// The internal list of Events stored in the Dataset
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns only the events local to the current rank.
+    /// Use Python iteration (`for event in dataset`, `list(dataset)`, etc.) to
+    /// traverse all events across ranks.
     ///
     /// Returns
     /// -------

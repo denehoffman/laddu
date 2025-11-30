@@ -410,6 +410,41 @@ impl AsRef<EventData> for Event {
 }
 
 impl Dataset {
+    /// Iterate over all events in the dataset. When MPI is enabled, this will visit
+    /// every event across all ranks, fetching remote events on demand.
+    pub fn iter(&self) -> DatasetIter<'_> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return DatasetIter::Mpi(DatasetMpiIter {
+                    dataset: self,
+                    world,
+                    index: 0,
+                    total: self.n_events(),
+                });
+            }
+        }
+        DatasetIter::Local(self.events.iter())
+    }
+
+    /// Consume the dataset and iterate over all events. When MPI is enabled, this will
+    /// visit every event across all ranks, fetching remote events on demand.
+    pub fn into_iter(self) -> DatasetIntoIter {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return DatasetIntoIter::Mpi(DatasetMpiIntoIter {
+                    events: self.events,
+                    metadata: self.metadata,
+                    world,
+                    index: 0,
+                    total: self.n_events(),
+                });
+            }
+        }
+        DatasetIntoIter::Local(self.events.into_iter())
+    }
+
     /// Borrow the dataset metadata used for name lookups.
     pub fn metadata(&self) -> &DatasetMetadata {
         &self.metadata
@@ -514,46 +549,8 @@ impl Dataset {
     #[cfg(feature = "mpi")]
     pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
         let total = self.n_events();
-        let (owning_rank, local_index) = world.owner_of_global_index(index, total);
-        let mut serialized_event_buffer_len: usize = 0;
-        let mut serialized_event_buffer: Vec<u8> = Vec::default();
-        let config = bincode::config::standard();
-        if world.rank() == owning_rank {
-            let event = self.index_local(local_index);
-            serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
-            serialized_event_buffer_len = serialized_event_buffer.len();
-        }
-        world
-            .process_at_rank(owning_rank)
-            .broadcast_into(&mut serialized_event_buffer_len);
-        if world.rank() != owning_rank {
-            serialized_event_buffer = vec![0; serialized_event_buffer_len];
-        }
-        world
-            .process_at_rank(owning_rank)
-            .broadcast_into(&mut serialized_event_buffer);
-        let (event, _): (EventData, usize) =
-            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
-        let leaked = Event::new(Arc::new(event), self.metadata.clone());
-        Box::leak(Box::new(leaked))
-    }
-}
-
-impl<'a> IntoIterator for &'a Dataset {
-    type Item = &'a Event;
-    type IntoIter = std::slice::Iter<'a, Event>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.events.iter()
-    }
-}
-
-impl IntoIterator for Dataset {
-    type Item = Event;
-    type IntoIter = std::vec::IntoIter<Event>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.events.into_iter()
+        let event = fetch_event_mpi(self, index, world, total);
+        Box::leak(Box::new(event))
     }
 }
 
@@ -568,6 +565,170 @@ impl Index<usize> for Dataset {
             }
         }
         self.index_local(index)
+    }
+}
+
+/// Iterator over a [`Dataset`].
+pub enum DatasetIter<'a> {
+    /// Iterator over locally available events.
+    Local(std::slice::Iter<'a, Event>),
+    #[cfg(feature = "mpi")]
+    /// Iterator that fetches events across MPI ranks.
+    Mpi(DatasetMpiIter<'a>),
+}
+
+impl<'a> Iterator for DatasetIter<'a> {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DatasetIter::Local(iter) => iter.next().cloned(),
+            #[cfg(feature = "mpi")]
+            DatasetIter::Mpi(iter) => iter.next(),
+        }
+    }
+}
+
+/// Owning iterator over a [`Dataset`].
+pub enum DatasetIntoIter {
+    /// Iterator over locally available events, consuming the dataset.
+    Local(std::vec::IntoIter<Event>),
+    #[cfg(feature = "mpi")]
+    /// Iterator that fetches events across MPI ranks, consuming the dataset.
+    Mpi(DatasetMpiIntoIter),
+}
+
+impl Iterator for DatasetIntoIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DatasetIntoIter::Local(iter) => iter.next(),
+            #[cfg(feature = "mpi")]
+            DatasetIntoIter::Mpi(iter) => iter.next(),
+        }
+    }
+}
+
+#[cfg(feature = "mpi")]
+struct DatasetMpiIter<'a> {
+    dataset: &'a Dataset,
+    world: SimpleCommunicator,
+    index: usize,
+    total: usize,
+}
+
+#[cfg(feature = "mpi")]
+impl<'a> Iterator for DatasetMpiIter<'a> {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.total {
+            return None;
+        }
+        let event = fetch_event_mpi(self.dataset, self.index, &self.world, self.total);
+        self.index += 1;
+        Some(event)
+    }
+}
+
+#[cfg(feature = "mpi")]
+struct DatasetMpiIntoIter {
+    events: Vec<Event>,
+    metadata: Arc<DatasetMetadata>,
+    world: SimpleCommunicator,
+    index: usize,
+    total: usize,
+}
+
+#[cfg(feature = "mpi")]
+impl Iterator for DatasetMpiIntoIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.total {
+            return None;
+        }
+        let event = fetch_event_mpi_from_events(
+            &self.events,
+            &self.metadata,
+            self.index,
+            &self.world,
+            self.total,
+        );
+        self.index += 1;
+        Some(event)
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn fetch_event_mpi(
+    dataset: &Dataset,
+    global_index: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Event {
+    let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
+    let mut serialized_event_buffer_len: usize = 0;
+    let mut serialized_event_buffer: Vec<u8> = Vec::default();
+    let config = bincode::config::standard();
+    if world.rank() == owning_rank {
+        let event = dataset.index_local(local_index);
+        serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
+        serialized_event_buffer_len = serialized_event_buffer.len();
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer_len);
+    if world.rank() != owning_rank {
+        serialized_event_buffer = vec![0; serialized_event_buffer_len];
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer);
+
+    if world.rank() == owning_rank {
+        dataset.index_local(local_index).clone()
+    } else {
+        let (event, _): (EventData, usize) =
+            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
+        Event::new(Arc::new(event), dataset.metadata.clone())
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn fetch_event_mpi_from_events(
+    events: &[Event],
+    metadata: &Arc<DatasetMetadata>,
+    global_index: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Event {
+    let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
+    let mut serialized_event_buffer_len: usize = 0;
+    let mut serialized_event_buffer: Vec<u8> = Vec::default();
+    let config = bincode::config::standard();
+    if world.rank() == owning_rank {
+        let event = &events[local_index];
+        serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
+        serialized_event_buffer_len = serialized_event_buffer.len();
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer_len);
+    if world.rank() != owning_rank {
+        serialized_event_buffer = vec![0; serialized_event_buffer_len];
+    }
+    world
+        .process_at_rank(owning_rank)
+        .broadcast_into(&mut serialized_event_buffer);
+
+    if world.rank() == owning_rank {
+        events[local_index].clone()
+    } else {
+        let (event, _): (EventData, usize) =
+            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
+        Event::new(Arc::new(event), metadata.clone())
     }
 }
 
@@ -2022,11 +2183,19 @@ mod tests {
     fn test_dataset_iteration_returns_events() {
         let dataset = test_dataset();
         let mut weights = Vec::new();
-        for event in &dataset {
+        for event in dataset.iter() {
             weights.push(event.weight());
         }
         assert_eq!(weights.len(), dataset.n_events());
         assert_relative_eq!(weights[0], dataset[0].weight);
+    }
+
+    #[test]
+    fn test_dataset_into_iter_returns_events() {
+        let dataset = test_dataset();
+        let weights: Vec<f64> = dataset.into_iter().map(|event| event.weight()).collect();
+        assert_eq!(weights.len(), 1);
+        assert_relative_eq!(weights[0], test_event().weight);
     }
     #[test]
     fn test_event_display() {
