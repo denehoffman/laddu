@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -300,6 +301,47 @@ def test_dataset_from_dict_requires_p4_columns() -> None:
         Dataset.from_dict({'weight': [1.0]})
 
 
+def test_from_dict_accepts_names_and_aliases() -> None:
+    data = {
+        'beam_px': [0.0, 1.0],
+        'beam_py': [0.0, 0.0],
+        'beam_pz': [1.0, 2.0],
+        'beam_e': [1.5, 2.5],
+        'aux': [3.0, 4.0],
+    }
+
+    dataset = Dataset.from_dict(
+        data, p4s=['beam'], aux=['aux'], aliases={'primary': 'beam'}
+    )
+
+    assert dataset.p4_names == ['beam']
+    assert dataset.aux_names == ['aux']
+    beam = dataset[0].p4('beam')
+    alias = dataset[0].p4('primary')
+    _assert_vec4_close(alias, beam)
+
+
+def test_from_numpy_propagates_aliases_and_names() -> None:
+    data = {
+        'beam_px': np.array([0.0]),
+        'beam_py': np.array([0.0]),
+        'beam_pz': np.array([1.0]),
+        'beam_e': np.array([1.5]),
+        'aux': np.array([2.0]),
+    }
+
+    dataset = Dataset.from_numpy(
+        data,
+        p4s=['beam'],
+        aux=['aux'],
+        aliases={'alias_beam': ['beam']},
+    )
+
+    assert dataset.p4_names == ['beam']
+    assert dataset.aux_names == ['aux']
+    _assert_vec4_close(dataset[0].p4('alias_beam'), dataset[0].p4('beam'))
+
+
 def test_dataset_sum() -> None:
     dataset = make_test_dataset()
     dataset2 = Dataset(
@@ -581,3 +623,32 @@ def test_dataset_from_root_f64_matches_parquet() -> None:
     assert root_f64.p4_names == P4_NAMES
     assert root_f64.aux_names == AUX_NAMES
     _assert_datasets_close(root_f64, parquet)
+
+
+def test_dataset_to_numpy_precision() -> None:
+    dataset = make_test_dataset()
+    arrays64 = dataset.to_numpy()
+    assert arrays64['beam_px'].dtype == np.float64
+    assert arrays64['weight'].dtype == np.float64
+
+    arrays32 = dataset.to_numpy(precision='f32')
+    assert arrays32['beam_px'].dtype == np.float32
+    assert arrays32['weight'].dtype == np.float32
+
+
+def test_dataset_parquet_roundtrip_tempfile() -> None:
+    dataset = Dataset.from_parquet(DATA_F32_PARQUET)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / 'roundtrip.parquet'
+        dataset.to_parquet(path)
+        reopened = Dataset.from_parquet(path)
+    _assert_datasets_close(dataset, reopened)
+
+
+def test_dataset_root_roundtrip_tempfile() -> None:
+    dataset = Dataset.from_parquet(DATA_F32_PARQUET)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / 'roundtrip.root'
+        dataset.to_root(path)
+        reopened = Dataset.from_root(path)
+    _assert_datasets_close(dataset, reopened)
