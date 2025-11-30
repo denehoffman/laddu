@@ -438,12 +438,14 @@ impl Dataset {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
+                // Cache total before moving fields out of self for MPI iteration.
+                let total = self.n_events();
                 return DatasetIntoIter::Mpi(DatasetMpiIntoIter {
                     events: self.events,
                     metadata: self.metadata,
                     world,
                     index: 0,
-                    total: self.n_events(),
+                    total,
                 });
             }
         }
@@ -578,7 +580,7 @@ pub enum DatasetIter<'a> {
     /// Iterator over locally available events.
     Local(std::slice::Iter<'a, Event>),
     #[cfg(feature = "mpi")]
-    /// Iterator that fetches events across MPI ranks.
+/// Iterator that fetches events across MPI ranks.
     Mpi(DatasetMpiIter<'a>),
 }
 
@@ -616,7 +618,8 @@ impl Iterator for DatasetIntoIter {
 }
 
 #[cfg(feature = "mpi")]
-struct DatasetMpiIter<'a> {
+/// Iterator over a [`Dataset`] that fetches events across MPI ranks.
+pub struct DatasetMpiIter<'a> {
     dataset: &'a Dataset,
     world: SimpleCommunicator,
     index: usize,
@@ -638,7 +641,8 @@ impl<'a> Iterator for DatasetMpiIter<'a> {
 }
 
 #[cfg(feature = "mpi")]
-struct DatasetMpiIntoIter {
+/// Owning iterator over a [`Dataset`] that fetches events across MPI ranks.
+pub struct DatasetMpiIntoIter {
     events: Vec<Event>,
     metadata: Arc<DatasetMetadata>,
     world: SimpleCommunicator,
@@ -700,7 +704,7 @@ fn fetch_event_mpi_from_events(
 }
 
 #[cfg(feature = "mpi")]
-fn fetch_event_mpi_generic<F>(
+fn fetch_event_mpi_generic<'a, F>(
     global_index: usize,
     total: usize,
     world: &SimpleCommunicator,
@@ -708,7 +712,7 @@ fn fetch_event_mpi_generic<F>(
     local_event: F,
 ) -> Event
 where
-    F: Fn(usize) -> &Event,
+    F: Fn(usize) -> &'a Event,
 {
     let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
     let mut serialized_event_buffer_len: usize = 0;
