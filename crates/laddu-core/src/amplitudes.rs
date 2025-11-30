@@ -24,7 +24,7 @@ fn next_amplitude_id() -> u64 {
 
 use crate::{
     data::{Dataset, DatasetMetadata, EventData},
-    resources::{Cache, Parameters, Resources},
+    resources::{Cache, ParameterTransform, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
 };
 
@@ -36,25 +36,77 @@ use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// An enum containing either a named free parameter or a constant value.
 #[derive(Clone, Default, Serialize, Deserialize)]
-pub enum ParameterLike {
-    /// A named free parameter.
-    Parameter(String),
-    /// A constant value.
-    Constant(f64),
-    /// An uninitialized parameter-like structure (typically used as the value given in an
-    /// [`Amplitude`] constructor before the [`Amplitude::register`] method is called).
-    #[default]
-    Uninit,
+pub struct Parameter {
+    /// The name of the parameter.
+    pub name: String,
+    /// If `Some`, this parameter is fixed to the given value. If `None`, it is free.
+    pub fixed: Option<f64>,
 }
+
+impl Parameter {
+    /// Create a free (floating) parameter with the given name.
+    pub fn free(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            fixed: None,
+        }
+    }
+
+    /// Create a fixed parameter with the given name and value.
+    pub fn fixed(name: impl Into<String>, value: f64) -> Self {
+        Self {
+            name: name.into(),
+            fixed: Some(value),
+        }
+    }
+
+    /// An uninitialized parameter placeholder.
+    pub fn uninit() -> Self {
+        Self {
+            name: String::new(),
+            fixed: None,
+        }
+    }
+
+    /// Is this parameter free?
+    pub fn is_free(&self) -> bool {
+        self.fixed.is_none()
+    }
+
+    /// Is this parameter fixed?
+    pub fn is_fixed(&self) -> bool {
+        self.fixed.is_some()
+    }
+
+    /// Get the parameter name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Maintains naming used across the crate.
+pub type ParameterLike = Parameter;
 
 /// Shorthand for generating a named free parameter.
-pub fn parameter(name: &str) -> ParameterLike {
-    ParameterLike::Parameter(name.to_string())
+pub fn parameter(name: &str) -> Parameter {
+    Parameter::free(name)
 }
 
-/// Shorthand for generating a constant value (which acts like a fixed parameter).
-pub fn constant(value: f64) -> ParameterLike {
-    ParameterLike::Constant(value)
+/// Shorthand for generating a fixed parameter with the given name and value.
+pub fn constant(name: &str, value: f64) -> Parameter {
+    Parameter::fixed(name, value)
+}
+
+/// Convenience macro for creating parameters. Usage:
+/// `parameter!(\"name\")` for a free parameter, or `parameter!(\"name\", 1.0)` for a fixed one.
+#[macro_export]
+macro_rules! parameter {
+    ($name:expr) => {
+        $crate::amplitudes::Parameter::free($name)
+    };
+    ($name:expr, $value:expr) => {
+        $crate::amplitudes::Parameter::fixed($name, $value)
+    };
 }
 
 /// This is the only required trait for writing new amplitude-like structures for this
@@ -335,6 +387,37 @@ impl ExpressionRegistry {
             right_map,
         ))
     }
+
+    fn rebuild_with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
+        let mut resources = Resources::with_transform(transform);
+        let mut amplitudes = Vec::new();
+        let mut amplitude_names = Vec::new();
+        let mut amplitude_ids = Vec::new();
+        for ((amp, name), amp_id) in self
+            .amplitudes
+            .iter()
+            .zip(&self.amplitude_names)
+            .zip(&self.amplitude_ids)
+        {
+            let mut cloned_amp = dyn_clone::clone_box(&**amp);
+            let aid = cloned_amp.register(&mut resources)?;
+            if aid.0 != *name {
+                return Err(LadduError::ParameterConflict {
+                    name: aid.0,
+                    reason: "amplitude renamed during rebuild".to_string(),
+                });
+            }
+            amplitudes.push(cloned_amp);
+            amplitude_names.push(name.clone());
+            amplitude_ids.push(*amp_id);
+        }
+        Ok(Self {
+            amplitudes,
+            amplitude_names,
+            amplitude_ids,
+            resources,
+        })
+    }
 }
 
 /// Expression tree used by [`Expression`].
@@ -529,7 +612,119 @@ impl Expression {
 
     /// Get the list of parameter names in the order they appear in the underlying resources.
     pub fn parameters(&self) -> Vec<String> {
-        self.registry.resources.parameters.iter().cloned().collect()
+        self.registry.resources.parameter_names()
+    }
+
+    /// Get the list of free parameter names.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.registry.resources.free_parameter_names()
+    }
+
+    /// Get the list of fixed parameter names.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.registry.resources.fixed_parameter_names()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.registry.resources.n_free_parameters()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.registry.resources.n_fixed_parameters()
+    }
+
+    /// Total number of parameters.
+    pub fn n_params(&self) -> usize {
+        self.registry.resources.n_parameters()
+    }
+
+    fn with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
+        let merged = self
+            .registry
+            .resources
+            .parameter_overrides
+            .merged(&transform);
+        let registry = self.registry.rebuild_with_transform(merged)?;
+        Ok(Self {
+            registry,
+            tree: self.tree.clone(),
+        })
+    }
+
+    fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
+        if self.parameters().iter().any(|p| p == name) {
+            Ok(())
+        } else {
+            Err(LadduError::UnregisteredParameter {
+                name: name.to_string(),
+                reason: "parameter not found".to_string(),
+            })
+        }
+    }
+
+    /// Return a new [`Expression`] with the given parameter fixed to a value.
+    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
+        self.assert_parameter_exists(name)?;
+        let mut transform = ParameterTransform::default();
+        transform.fixed.insert(name.to_string(), value);
+        self.with_transform(transform)
+    }
+
+    /// Return a new [`Expression`] with the given parameter freed.
+    pub fn free(&self, name: &str) -> LadduResult<Self> {
+        self.assert_parameter_exists(name)?;
+        let mut transform = ParameterTransform::default();
+        transform.freed.insert(name.to_string());
+        self.with_transform(transform)
+    }
+
+    /// Return a new [`Expression`] with a single parameter renamed.
+    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
+        self.assert_parameter_exists(old)?;
+        if old == new {
+            return Ok(self.clone());
+        }
+        if self.parameters().iter().any(|p| p == new) {
+            return Err(LadduError::ParameterConflict {
+                name: new.to_string(),
+                reason: "rename target already exists".to_string(),
+            });
+        }
+        let mut transform = ParameterTransform::default();
+        transform.renames.insert(old.to_string(), new.to_string());
+        self.with_transform(transform)
+    }
+
+    /// Return a new [`Expression`] with several parameters renamed.
+    pub fn rename_parameters(
+        &self,
+        mapping: &std::collections::HashMap<String, String>,
+    ) -> LadduResult<Self> {
+        for old in mapping.keys() {
+            self.assert_parameter_exists(old)?;
+        }
+        let mut final_names: std::collections::HashSet<String> =
+            self.parameters().into_iter().collect();
+        for (old, new) in mapping {
+            if old == new {
+                continue;
+            }
+            final_names.remove(old);
+            if final_names.contains(new) {
+                return Err(LadduError::ParameterConflict {
+                    name: new.clone(),
+                    reason: "rename target already exists".to_string(),
+                });
+            }
+            final_names.insert(new.clone());
+        }
+        let mut transform = ParameterTransform::default();
+        for (old, new) in mapping {
+            transform.renames.insert(old.clone(), new.clone());
+        }
+        self.with_transform(transform)
     }
 
     /// Load an [`Expression`] against a dataset, binding amplitudes and reserving caches.
@@ -554,6 +749,7 @@ impl Expression {
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
+            registry: self.registry.clone(),
         })
     }
 
@@ -675,6 +871,7 @@ pub struct Evaluator {
     pub resources: Arc<RwLock<Resources>>,
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
+    registry: ExpressionRegistry,
 }
 
 #[allow(missing_docs)]
@@ -682,7 +879,66 @@ impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.resources.read().parameters.iter().cloned().collect()
+        self.resources.read().parameter_names()
+    }
+
+    /// Get the list of free parameter names.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.resources.read().free_parameter_names()
+    }
+
+    /// Get the list of fixed parameter names.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.resources.read().fixed_parameter_names()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.resources.read().n_free_parameters()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.resources.read().n_fixed_parameters()
+    }
+
+    /// Total number of parameters.
+    pub fn n_params(&self) -> usize {
+        self.resources.read().n_parameters()
+    }
+
+    fn as_expression(&self) -> Expression {
+        Expression {
+            registry: self.registry.clone(),
+            tree: self.expression.clone(),
+        }
+    }
+
+    /// Return a new [`Evaluator`] with the given parameter fixed to a value.
+    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
+        self.as_expression().fix(name, value)?.load(&self.dataset)
+    }
+
+    /// Return a new [`Evaluator`] with the given parameter freed.
+    pub fn free(&self, name: &str) -> LadduResult<Self> {
+        self.as_expression().free(name)?.load(&self.dataset)
+    }
+
+    /// Return a new [`Evaluator`] with a single parameter renamed.
+    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
+        self.as_expression()
+            .rename_parameter(old, new)?
+            .load(&self.dataset)
+    }
+
+    /// Return a new [`Evaluator`] with several parameters renamed.
+    pub fn rename_parameters(
+        &self,
+        mapping: &std::collections::HashMap<String, String>,
+    ) -> LadduResult<Self> {
+        self.as_expression()
+            .rename_parameters(mapping)?
+            .load(&self.dataset)
     }
 
     /// Activate an [`Amplitude`] by name, skipping missing entries.
@@ -1207,8 +1463,8 @@ impl TestAmplitude {
 #[typetag::serde]
 impl Amplitude for TestAmplitude {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid_re = resources.register_parameter(&self.re);
-        self.pid_im = resources.register_parameter(&self.im);
+        self.pid_re = resources.register_parameter(&self.re)?;
+        self.pid_im = resources.register_parameter(&self.im)?;
         resources.register_amplitude(&self.name)
     }
 
@@ -1270,8 +1526,8 @@ mod tests {
     #[typetag::serde]
     impl Amplitude for ComplexScalar {
         fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-            self.pid_re = resources.register_parameter(&self.re);
-            self.pid_im = resources.register_parameter(&self.im);
+            self.pid_re = resources.register_parameter(&self.re)?;
+            self.pid_im = resources.register_parameter(&self.im)?;
             resources.register_amplitude(&self.name)
         }
 
@@ -1328,7 +1584,12 @@ mod tests {
 
     #[test]
     fn test_constant_amplitude() {
-        let expr = ComplexScalar::new("constant", constant(2.0), constant(3.0)).unwrap();
+        let expr = ComplexScalar::new(
+            "constant",
+            constant("const_re", 2.0),
+            constant("const_im", 3.0),
+        )
+        .unwrap();
         let dataset = Arc::new(Dataset::new_with_metadata(
             vec![Arc::new(test_event())],
             Arc::new(DatasetMetadata::default()),
@@ -1354,9 +1615,24 @@ mod tests {
 
     #[test]
     fn test_expression_operations() {
-        let expr1 = ComplexScalar::new("const1", constant(2.0), constant(0.0)).unwrap();
-        let expr2 = ComplexScalar::new("const2", constant(0.0), constant(1.0)).unwrap();
-        let expr3 = ComplexScalar::new("const3", constant(3.0), constant(4.0)).unwrap();
+        let expr1 = ComplexScalar::new(
+            "const1",
+            constant("const1_re", 2.0),
+            constant("const1_im", 0.0),
+        )
+        .unwrap();
+        let expr2 = ComplexScalar::new(
+            "const2",
+            constant("const2_re", 0.0),
+            constant("const2_im", 1.0),
+        )
+        .unwrap();
+        let expr3 = ComplexScalar::new(
+            "const3",
+            constant("const3_re", 3.0),
+            constant("const3_im", 4.0),
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
 
@@ -1453,8 +1729,18 @@ mod tests {
 
     #[test]
     fn test_amplitude_activation() {
-        let expr1 = ComplexScalar::new("const1", constant(1.0), constant(0.0)).unwrap();
-        let expr2 = ComplexScalar::new("const2", constant(2.0), constant(0.0)).unwrap();
+        let expr1 = ComplexScalar::new(
+            "const1",
+            constant("const1_re_act", 1.0),
+            constant("const1_im_act", 0.0),
+        )
+        .unwrap();
+        let expr2 = ComplexScalar::new(
+            "const2",
+            constant("const2_re_act", 2.0),
+            constant("const2_im_act", 0.0),
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
         let expr = &expr1 + &expr2;
@@ -1627,8 +1913,12 @@ mod tests {
 
     #[test]
     fn test_zeros_and_ones() {
-        let amp =
-            ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0)).unwrap();
+        let amp = ComplexScalar::new(
+            "parametric",
+            parameter("test_param_re"),
+            constant("fixed_two", 2.0),
+        )
+        .unwrap();
         let dataset = Arc::new(test_dataset());
         let expr = (amp * Expression::one() + Expression::zero()).norm_sqr();
         let evaluator = expr.load(&dataset).unwrap();
@@ -1648,8 +1938,12 @@ mod tests {
 
     #[test]
     fn test_parameter_registration() {
-        let expr =
-            ComplexScalar::new("parametric", parameter("test_param_re"), constant(2.0)).unwrap();
+        let expr = ComplexScalar::new(
+            "parametric",
+            parameter("test_param_re"),
+            constant("fixed_two", 2.0),
+        )
+        .unwrap();
         let parameters = expr.parameters();
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0], "test_param_re");
@@ -1658,8 +1952,18 @@ mod tests {
     #[test]
     #[should_panic(expected = "refers to different underlying amplitudes")]
     fn test_duplicate_amplitude_registration() {
-        let amp1 = ComplexScalar::new("same_name", constant(1.0), constant(0.0)).unwrap();
-        let amp2 = ComplexScalar::new("same_name", constant(2.0), constant(0.0)).unwrap();
+        let amp1 = ComplexScalar::new(
+            "same_name",
+            constant("dup_re1", 1.0),
+            constant("dup_im1", 0.0),
+        )
+        .unwrap();
+        let amp2 = ComplexScalar::new(
+            "same_name",
+            constant("dup_re2", 2.0),
+            constant("dup_im2", 0.0),
+        )
+        .unwrap();
         let _expr = amp1 + amp2;
     }
 

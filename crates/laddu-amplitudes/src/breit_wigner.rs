@@ -72,8 +72,8 @@ impl BreitWigner {
 #[typetag::serde]
 impl Amplitude for BreitWigner {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid_mass = resources.register_parameter(&self.mass);
-        self.pid_width = resources.register_parameter(&self.width);
+        self.pid_mass = resources.register_parameter(&self.mass)?;
+        self.pid_width = resources.register_parameter(&self.width)?;
         resources.register_amplitude(&self.name)
     }
 

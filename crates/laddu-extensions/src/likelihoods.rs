@@ -101,6 +101,72 @@ impl NLL {
         }
         .into())
     }
+
+    /// The parameter names for this NLL.
+    pub fn parameters(&self) -> Vec<String> {
+        self.data_evaluator.parameters()
+    }
+
+    /// The free parameter names for this NLL.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.data_evaluator.free_parameters()
+    }
+
+    /// The fixed parameter names for this NLL.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.data_evaluator.fixed_parameters()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.data_evaluator.n_free()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.data_evaluator.n_fixed()
+    }
+
+    /// Total number of parameters.
+    pub fn n_params(&self) -> usize {
+        self.data_evaluator.n_params()
+    }
+
+    /// Return a new [`NLL`] with the given parameter fixed to a value.
+    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: self.data_evaluator.fix(name, value)?,
+            accmc_evaluator: self.accmc_evaluator.fix(name, value)?,
+        }
+        .into())
+    }
+
+    /// Return a new [`NLL`] with the given parameter freed.
+    pub fn free(&self, name: &str) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: self.data_evaluator.free(name)?,
+            accmc_evaluator: self.accmc_evaluator.free(name)?,
+        }
+        .into())
+    }
+
+    /// Return a new [`NLL`] with a single parameter renamed.
+    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: self.data_evaluator.rename_parameter(old, new)?,
+            accmc_evaluator: self.accmc_evaluator.rename_parameter(old, new)?,
+        }
+        .into())
+    }
+
+    /// Return a new [`NLL`] with several parameters renamed.
+    pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<Box<Self>> {
+        Ok(Self {
+            data_evaluator: self.data_evaluator.rename_parameters(mapping)?,
+            accmc_evaluator: self.accmc_evaluator.rename_parameters(mapping)?,
+        }
+        .into())
+    }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
     pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
         StochasticNLL::new(self.clone(), batch_size, seed)
@@ -970,13 +1036,7 @@ impl LikelihoodTerm for NLL {
     /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
     /// method.
     fn parameters(&self) -> Vec<String> {
-        self.data_evaluator
-            .resources
-            .read()
-            .parameters
-            .iter()
-            .cloned()
-            .collect()
+        self.data_evaluator.parameters()
     }
 
     /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -1515,6 +1575,47 @@ impl PyNLL {
     #[getter]
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
+    }
+    /// The free parameters used by the NLL
+    #[getter]
+    fn free_parameters(&self) -> Vec<String> {
+        self.0.free_parameters()
+    }
+    /// The fixed parameters used by the NLL
+    #[getter]
+    fn fixed_parameters(&self) -> Vec<String> {
+        self.0.fixed_parameters()
+    }
+    /// Number of free parameters
+    #[getter]
+    fn n_free(&self) -> usize {
+        self.0.n_free()
+    }
+    /// Number of fixed parameters
+    #[getter]
+    fn n_fixed(&self) -> usize {
+        self.0.n_fixed()
+    }
+    /// Total number of parameters
+    #[getter]
+    fn n_params(&self) -> usize {
+        self.0.n_params()
+    }
+    /// Return a new NLL with the given parameter fixed
+    fn fix(&self, name: &str, value: f64) -> PyResult<PyNLL> {
+        Ok(PyNLL(self.0.fix(name, value)?))
+    }
+    /// Return a new NLL with the given parameter freed
+    fn free(&self, name: &str) -> PyResult<PyNLL> {
+        Ok(PyNLL(self.0.free(name)?))
+    }
+    /// Return a new NLL with a single parameter renamed
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyNLL> {
+        Ok(PyNLL(self.0.rename_parameter(old, new)?))
+    }
+    /// Return a new NLL with several parameters renamed
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyNLL> {
+        Ok(PyNLL(self.0.rename_parameters(&mapping)?))
     }
     /// Activates Amplitudes in the NLL by name
     ///
@@ -3462,7 +3563,7 @@ mod tests {
     #[typetag::serde]
     impl Amplitude for ConstantAmplitude {
         fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-            self.pid = resources.register_parameter(&self.parameter);
+            self.pid = resources.register_parameter(&self.parameter)?;
             resources.register_amplitude(&self.name)
         }
 

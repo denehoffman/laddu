@@ -62,7 +62,7 @@ impl Amplitude for PiecewiseScalar {
             .values
             .iter()
             .map(|value| resources.register_parameter(value))
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
@@ -205,13 +205,13 @@ impl Amplitude for PiecewiseComplexScalar {
         self.pids_re_im = self
             .re_ims
             .iter()
-            .map(|(re, im)| {
-                (
-                    resources.register_parameter(re),
-                    resources.register_parameter(im),
-                )
+            .map(|(re, im)| -> LadduResult<(ParameterID, ParameterID)> {
+                Ok((
+                    resources.register_parameter(re)?,
+                    resources.register_parameter(im)?,
+                ))
             })
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
@@ -365,13 +365,13 @@ impl Amplitude for PiecewisePolarComplexScalar {
         self.pids_r_theta = self
             .r_thetas
             .iter()
-            .map(|(r, theta)| {
-                (
-                    resources.register_parameter(r),
-                    resources.register_parameter(theta),
-                )
+            .map(|(r, theta)| -> LadduResult<(ParameterID, ParameterID)> {
+                Ok((
+                    resources.register_parameter(r)?,
+                    resources.register_parameter(theta)?,
+                ))
             })
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }

@@ -519,6 +519,22 @@ pub enum LadduError {
     /// An error returned by the Python pickle (de)serializer
     #[error("Pickle conversion error: {0}")]
     PickleError(#[from] serde_pickle::Error),
+    /// An error which occurs when parameter definitions conflict or clash.
+    #[error("Parameter \"{name}\" conflict: {reason}")]
+    ParameterConflict {
+        /// Name of parameter
+        name: String,
+        /// Description of conflict
+        reason: String,
+    },
+    /// An error which occurs when attempting to use an unregistered or unnamed parameter.
+    #[error("Parameter \"{name}\" could not be registered: {reason}")]
+    UnregisteredParameter {
+        /// Name of parameter
+        name: String,
+        /// Reason for failure
+        reason: String,
+    },
     /// An error type for [`rayon`] thread pools
     #[cfg(feature = "rayon")]
     #[error("Error building thread pool: {0}")]
@@ -591,9 +607,10 @@ impl From<LadduError> for PyErr {
             LadduError::MissingColumn { .. } | LadduError::UnknownName { .. } => {
                 PyKeyError::new_err(err_string)
             }
-            LadduError::InvalidColumnType { .. } | LadduError::DuplicateName { .. } => {
-                PyValueError::new_err(err_string)
-            }
+            LadduError::InvalidColumnType { .. }
+            | LadduError::DuplicateName { .. }
+            | LadduError::ParameterConflict { .. }
+            | LadduError::UnregisteredParameter { .. } => PyValueError::new_err(err_string),
             LadduError::Custom(_) => PyException::new_err(err_string),
             #[cfg(feature = "rayon")]
             LadduError::ThreadPoolError(_) => PyException::new_err(err_string),

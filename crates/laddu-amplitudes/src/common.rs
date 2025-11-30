@@ -35,7 +35,7 @@ impl Scalar {
 #[typetag::serde]
 impl Amplitude for Scalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid = resources.register_parameter(&self.value);
+        self.pid = resources.register_parameter(&self.value)?;
         resources.register_amplitude(&self.name)
     }
 
@@ -104,8 +104,8 @@ impl ComplexScalar {
 #[typetag::serde]
 impl Amplitude for ComplexScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid_re = resources.register_parameter(&self.re);
-        self.pid_im = resources.register_parameter(&self.im);
+        self.pid_re = resources.register_parameter(&self.re)?;
+        self.pid_im = resources.register_parameter(&self.im)?;
         resources.register_amplitude(&self.name)
     }
 
@@ -183,8 +183,8 @@ impl PolarComplexScalar {
 #[typetag::serde]
 impl Amplitude for PolarComplexScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
-        self.pid_r = resources.register_parameter(&self.r);
-        self.pid_theta = resources.register_parameter(&self.theta);
+        self.pid_r = resources.register_parameter(&self.r)?;
+        self.pid_theta = resources.register_parameter(&self.theta)?;
         resources.register_amplitude(&self.name)
     }
 

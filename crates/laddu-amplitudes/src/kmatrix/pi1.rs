@@ -94,8 +94,10 @@ impl KopfKMatrixPi1 {
 impl Amplitude for KopfKMatrixPi1 {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         for i in 0..self.couplings_indices_real.len() {
-            self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
-            self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
+            self.couplings_indices_real[i] =
+                resources.register_parameter(&self.couplings_real[i])?;
+            self.couplings_indices_imag[i] =
+                resources.register_parameter(&self.couplings_imag[i])?;
         }
         self.ikc_cache_index = resources
             .register_complex_vector(Some(&format!("KopfKMatrixPi1<{}> ikc_vec", self.name)));

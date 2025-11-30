@@ -50,9 +50,11 @@ pub struct Resources {
     amplitudes: HashMap<String, AmplitudeID>,
     /// A list indicating which amplitudes are active (using [`AmplitudeID`]s as indices)
     pub active: Vec<bool>,
-    /// The set of all registered parameter names across registered [`Amplitude`](`crate::amplitudes::Amplitude`)s
-    pub parameters: IndexSet<String>,
-    /// Values of all constants across registered [`Amplitude`](`crate::amplitudes::Amplitude`)s
+    /// The set of all registered free parameter names across registered [`Amplitude`]s
+    pub free_parameters: IndexSet<String>,
+    /// The set of all registered fixed parameter names across registered [`Amplitude`]s
+    pub fixed_parameters: IndexSet<String>,
+    /// Values of all constants/fixed parameters across registered [`Amplitude`]s
     pub constants: Vec<f64>,
     /// The [`Cache`] for each [`EventData`](`crate::data::EventData`)
     pub caches: Vec<Cache>,
@@ -63,6 +65,8 @@ pub struct Resources {
     matrix_cache_names: HashMap<String, usize>,
     complex_matrix_cache_names: HashMap<String, usize>,
     cache_size: usize,
+    parameter_entries: HashMap<String, ParameterEntry>,
+    pub(crate) parameter_overrides: ParameterTransform,
 }
 
 /// A single cache entry corresponding to precomputed data for a particular
@@ -240,7 +244,76 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ParameterEntry {
+    id: ParameterID,
+    fixed: Option<f64>,
+}
+
+/// Parameter transformation instructions applied during re-registration.
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct ParameterTransform {
+    /// Mapping from old parameter names to new names.
+    pub renames: HashMap<String, String>,
+    /// Parameters to force fixed with the provided value.
+    pub fixed: HashMap<String, f64>,
+    /// Parameters to force free (ignore any fixed value).
+    pub freed: IndexSet<String>,
+}
+
+impl ParameterTransform {
+    /// Merge two transforms, with `other` overriding `self` where keys overlap.
+    pub fn merged(&self, other: &Self) -> Self {
+        let mut merged = self.clone();
+        merged.renames.extend(other.renames.clone());
+        merged.fixed.extend(other.fixed.clone());
+        merged.freed.extend(other.freed.clone());
+        merged
+    }
+}
+
 impl Resources {
+    /// Create a new [`Resources`] instance with a parameter transform applied.
+    pub fn with_transform(transform: ParameterTransform) -> Self {
+        Self {
+            parameter_overrides: transform,
+            ..Default::default()
+        }
+    }
+
+    /// The list of free parameter names.
+    pub fn free_parameter_names(&self) -> Vec<String> {
+        self.free_parameters.iter().cloned().collect()
+    }
+
+    /// The list of fixed parameter names.
+    pub fn fixed_parameter_names(&self) -> Vec<String> {
+        self.fixed_parameters.iter().cloned().collect()
+    }
+
+    /// All parameter names (free first, then fixed).
+    pub fn parameter_names(&self) -> Vec<String> {
+        self.free_parameter_names()
+            .into_iter()
+            .chain(self.fixed_parameter_names())
+            .collect()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free_parameters(&self) -> usize {
+        self.free_parameters.len()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed_parameters(&self) -> usize {
+        self.fixed_parameters.len()
+    }
+
+    /// Total number of parameters.
+    pub fn n_parameters(&self) -> usize {
+        self.n_free_parameters() + self.n_fixed_parameters()
+    }
+
     #[inline]
     fn set_activation_state(&mut self, name: &str, active: bool) -> bool {
         if let Some(amplitude) = self.amplitudes.get(name) {
@@ -362,22 +435,82 @@ impl Resources {
     pub fn amplitude_id(&self, name: &str) -> Option<AmplitudeID> {
         self.amplitudes.get(name).cloned()
     }
-    /// Register a free parameter (or constant) [`ParameterLike`]. This method should be called
-    /// within the [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
-    /// resulting [`ParameterID`] should be stored to use later to retrieve the value from the
-    /// [`Parameters`] wrapper object.
-    pub fn register_parameter(&mut self, pl: &ParameterLike) -> ParameterID {
-        match pl {
-            ParameterLike::Parameter(name) => {
-                let (index, _) = self.parameters.insert_full(name.to_string());
-                ParameterID::Parameter(index)
-            }
-            ParameterLike::Constant(value) => {
-                self.constants.push(*value);
-                ParameterID::Constant(self.constants.len() - 1)
-            }
-            ParameterLike::Uninit => panic!("Parameter was not initialized!"),
+
+    fn apply_transform(&self, name: &str, fixed: Option<f64>) -> (String, Option<f64>) {
+        let final_name = self
+            .parameter_overrides
+            .renames
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let fixed_value = if let Some(value) = self.parameter_overrides.fixed.get(name) {
+            Some(*value)
+        } else if self.parameter_overrides.freed.contains(name) {
+            None
+        } else {
+            fixed
+        };
+        (final_name, fixed_value)
+    }
+
+    /// Register a parameter. This method should be called within
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register). The resulting
+    /// [`ParameterID`] should be stored to retrieve the value from the [`Parameters`] wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parameter is unnamed, if the name is reused with incompatible
+    /// fixed/free status or fixed value, or if renaming causes a conflict.
+    pub fn register_parameter(&mut self, p: &ParameterLike) -> LadduResult<ParameterID> {
+        let base_name = p.name();
+        if base_name.is_empty() {
+            return Err(LadduError::UnregisteredParameter {
+                name: "<unnamed>".to_string(),
+                reason: "Parameter was not initialized with a name".to_string(),
+            });
         }
+        let (final_name, fixed_value) = self.apply_transform(base_name, p.fixed);
+
+        if let Some(existing) = self.parameter_entries.get(&final_name) {
+            match (existing.fixed, fixed_value) {
+                (Some(a), Some(b)) if (a - b).abs() > f64::EPSILON => {
+                    return Err(LadduError::ParameterConflict {
+                        name: final_name,
+                        reason: "conflicting fixed values for the same parameter name".to_string(),
+                    })
+                }
+                (Some(_), None) => {
+                    return Err(LadduError::ParameterConflict {
+                        name: final_name,
+                        reason: "attempted to use a fixed parameter name as free".to_string(),
+                    })
+                }
+                (None, Some(_)) => {
+                    return Err(LadduError::ParameterConflict {
+                        name: final_name,
+                        reason: "attempted to use a free parameter name as fixed".to_string(),
+                    })
+                }
+                _ => return Ok(existing.id),
+            }
+        }
+
+        let entry = if let Some(value) = fixed_value {
+            self.fixed_parameters.insert(final_name.clone());
+            self.constants.push(value);
+            ParameterEntry {
+                id: ParameterID::Constant(self.constants.len() - 1),
+                fixed: Some(value),
+            }
+        } else {
+            let (index, _) = self.free_parameters.insert_full(final_name.clone());
+            ParameterEntry {
+                id: ParameterID::Parameter(index),
+                fixed: None,
+            }
+        };
+        self.parameter_entries.insert(final_name, entry.clone());
+        Ok(entry.id)
     }
     pub(crate) fn reserve_cache(&mut self, num_events: usize) {
         self.caches = vec![Cache::new(self.cache_size); num_events]
@@ -585,8 +718,12 @@ mod tests {
     fn test_resources_parameter_registration() {
         let mut resources = Resources::default();
 
-        let param1 = resources.register_parameter(&ParameterLike::Parameter("param1".to_string()));
-        let const1 = resources.register_parameter(&ParameterLike::Constant(1.0));
+        let param1 = resources
+            .register_parameter(&ParameterLike::free("param1"))
+            .unwrap();
+        let const1 = resources
+            .register_parameter(&ParameterLike::fixed("const1", 1.0))
+            .unwrap();
 
         match param1 {
             ParameterID::Parameter(idx) => assert_eq!(idx, 0),
@@ -738,10 +875,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Parameter was not initialized!")]
     fn test_uninit_parameter_registration() {
         let mut resources = Resources::default();
-        resources.register_parameter(&ParameterLike::Uninit);
+        let result = resources.register_parameter(&ParameterLike::uninit());
+        assert!(result.is_err());
     }
 
     #[test]

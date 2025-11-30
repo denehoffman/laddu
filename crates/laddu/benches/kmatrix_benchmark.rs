@@ -37,8 +37,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let f0p = KopfKMatrixF0::new(
         "f0+",
         [
-            [constant(0.0), constant(0.0)],
-            [parameter("f0(980)+ re"), constant(0.0)],
+            [constant("f0+ c00 re", 0.0), constant("f0+ c00 im", 0.0)],
+            [parameter("f0(980)+ re"), constant("f0(980)+ im_fix", 0.0)],
             [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
             [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
             [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
@@ -62,8 +62,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let f0n = KopfKMatrixF0::new(
         "f0-",
         [
-            [constant(0.0), constant(0.0)],
-            [parameter("f0(980)- re"), constant(0.0)],
+            [constant("f0- c00 re", 0.0), constant("f0- c00 im", 0.0)],
+            [parameter("f0(980)- re"), constant("f0(980)- im_fix", 0.0)],
             [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
             [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
             [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
@@ -134,7 +134,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
                 let mut rng = fastrand::Rng::new();
                 b.iter_batched(
                     || {
-                        (0..nll.parameters().len())
+                        (0..nll.n_free())
                             .map(|_| rng.f64_range(-100.0..100.0))
                             .collect::<Vec<f64>>()
                     },
