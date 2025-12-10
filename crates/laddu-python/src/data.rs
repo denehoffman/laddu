@@ -1,7 +1,8 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{
-        BinnedDataset, Dataset, DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
+        BinnedDataset, Dataset, DatasetMetadata, DatasetWriteOptions, Event, EventData,
+        FloatPrecision,
     },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,

@@ -144,7 +144,7 @@ class _DatasetExtensions:
 
         events: list[Event] = []
         for i in range(n_events):
-            p4s = [
+            p4_vectors = [
                 Vec4.from_array(
                     [
                         float(columns[f'{name}_px'][i]),
@@ -158,7 +158,7 @@ class _DatasetExtensions:
             aux_values = [float(columns[name][i]) for name in aux_names]
             events.append(
                 Event(
-                    p4s,
+                    p4_vectors,
                     aux_values,
                     float(weights[i]),
                     p4_names=p4_names,
@@ -318,14 +318,14 @@ class _DatasetExtensions:
             num_entries=num_entries,
         )
 
-    def to_numpy(self, *, precision: str = 'f64') -> dict[str, np.ndarray]:
+    def to_numpy(self: _DatasetCore, *, precision: str = 'f64') -> dict[str, np.ndarray]:
         """Convert the dataset to NumPy column arrays."""
         return _coalesce_numpy_batches(
             _iter_numpy_batches(self, chunk_size=len(self), precision=precision)
         )
 
     def to_parquet(
-        self,
+        self: _DatasetCore,
         path: str | Path,
         *,
         chunk_size: int = 10_000,
@@ -340,7 +340,7 @@ class _DatasetExtensions:
         )
 
     def to_root(
-        self,
+        self: _DatasetCore,
         path: str | Path,
         *,
         tree: str | None = None,

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 def version() -> str: ...
 def available_parallelism() -> int: ...
@@ -36,7 +36,10 @@ def PiecewisePolarComplexScalar(*args: Any, **kwargs: Any) -> Expression: ...
 class VariableExpression: ...
 class BinnedDataset: ...
 
-class Dataset:
+class Dataset(Sequence[Event]):
+    p4_names: list[str]
+    aux_names: list[str]
+
     def __init__(
         self,
         events: list[Event],
@@ -45,6 +48,8 @@ class Dataset:
         aux_names: list[str] | None = ...,
         aliases: dict[str, str | list[str]] | None = ...,
     ) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[Event]: ...
     @staticmethod
     def from_parquet(
         path: str | Path,
@@ -91,6 +96,10 @@ class Dataset:
     ) -> None: ...
 
 class Event:
+    p4s: Any
+    aux: Any
+    weight: float
+
     def __init__(
         self,
         p4s: list[Any],

@@ -580,7 +580,7 @@ pub enum DatasetIter<'a> {
     /// Iterator over locally available events.
     Local(std::slice::Iter<'a, Event>),
     #[cfg(feature = "mpi")]
-/// Iterator that fetches events across MPI ranks.
+    /// Iterator that fetches events across MPI ranks.
     Mpi(DatasetMpiIter<'a>),
 }
 
@@ -694,13 +694,9 @@ fn fetch_event_mpi_from_events(
     world: &SimpleCommunicator,
     total: usize,
 ) -> Event {
-    fetch_event_mpi_generic(
-        global_index,
-        total,
-        world,
-        metadata,
-        |local_index| &events[local_index],
-    )
+    fetch_event_mpi_generic(global_index, total, world, metadata, |local_index| {
+        &events[local_index]
+    })
 }
 
 #[cfg(feature = "mpi")]
@@ -2368,8 +2364,7 @@ mod tests {
     use fastrand;
     use serde::{Deserialize, Serialize};
     use std::{
-        env,
-        fs,
+        env, fs,
         path::{Path, PathBuf},
     };
 
