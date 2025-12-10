@@ -64,7 +64,8 @@ def run_analysis() -> Summary:
 
 def load_dataset() -> ld.Dataset:
     script_dir = Path(__file__).resolve().parent
-    data_file = script_dir / 'data.parquet'
+    data_dir = script_dir.parent / 'data'
+    data_file = data_dir / 'data.parquet'
     return ld.Dataset.from_parquet(
         data_file,
         p4s=['beam', 'proton', 'kshort1', 'kshort2'],

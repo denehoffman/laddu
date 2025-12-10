@@ -143,7 +143,9 @@ class Dataset(Sequence[Event]):
         pol_angle_name: str = 'pol_angle',
         num_entries: int | None = None,
     ) -> Dataset: ...
-    def to_numpy(self, *, precision: Literal['f64', 'f32'] = 'f64') -> dict[str, NDArray[np.floating]]: ...
+    def to_numpy(
+        self, *, precision: Literal['f64', 'f32'] = 'f64'
+    ) -> dict[str, NDArray[np.floating]]: ...
     def to_parquet(
         self,
         path: str | Path,

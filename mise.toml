@@ -96,7 +96,7 @@ rustup component add clippy --toolchain "$toolchain"
 
 [tasks.lint-python]
 description = "Run Ruff checks"
-depends = ["ensure-venv"]
+depends = ["develop"]
 run = '''
 uv run ruff check py-laddu
 uv run ruff format --check py-laddu

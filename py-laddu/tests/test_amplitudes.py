@@ -100,15 +100,9 @@ def test_batch_evaluation() -> None:
 
 
 def test_expression_operations() -> None:
-    amp1 = ComplexScalar(
-        'const1', constant('const1_re', 2.0), constant('const1_im', 0.0)
-    )
-    amp2 = ComplexScalar(
-        'const2', constant('const2_re', 0.0), constant('const2_im', 1.0)
-    )
-    amp3 = ComplexScalar(
-        'const3', constant('const3_re', 3.0), constant('const3_im', 4.0)
-    )
+    amp1 = ComplexScalar('const1', constant('const1_re', 2.0), constant('const1_im', 0.0))
+    amp2 = ComplexScalar('const2', constant('const2_re', 0.0), constant('const2_im', 1.0))
+    amp3 = ComplexScalar('const3', constant('const3_re', 3.0), constant('const3_im', 4.0))
     dataset = make_test_dataset()
 
     expr_add = amp1 + amp2
@@ -203,12 +197,8 @@ def test_expression_operations() -> None:
 
 
 def test_amplitude_activation() -> None:
-    amp1 = ComplexScalar(
-        'const1', constant('const1_re', 1.0), constant('const1_im', 0.0)
-    )
-    amp2 = ComplexScalar(
-        'const2', constant('const2_re', 2.0), constant('const2_im', 0.0)
-    )
+    amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
+    amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
     dataset = make_test_dataset()
 
     expr = amp1 + amp2

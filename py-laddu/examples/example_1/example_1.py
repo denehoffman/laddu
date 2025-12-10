@@ -41,9 +41,10 @@ import laddu as ld
 
 def main(bins: int, niters: int, nboot: int) -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
-    data_file = str(script_dir / 'data_1.parquet')
-    accmc_file = str(script_dir / 'accmc_1.parquet')
-    genmc_file = str(script_dir / 'mc_1.parquet')
+    data_dir = script_dir.parent / 'data'
+    data_file = str(data_dir / 'data.parquet')
+    accmc_file = str(data_dir / 'accmc.parquet')
+    genmc_file = str(data_dir / 'genmc.parquet')
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
     aux_columns = ['pol_magnitude', 'pol_angle']
     start = perf_counter()

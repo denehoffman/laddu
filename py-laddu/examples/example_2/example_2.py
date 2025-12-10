@@ -177,6 +177,9 @@ def get_names(*, l_max: int, polarized: bool) -> list[tuple[str, int, int, int]]
 if __name__ == '__main__':
     args = docopt(__doc__ or '')
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
+    data_dir = script_dir.parent / 'data'
+    data_file = data_dir / 'data.parquet'
+    accmc_file = data_dir / 'accmc.parquet'
     bins = int(args['-n'])
     nboot = int(args['-b'])
     l_max = int(args['-l'])
@@ -188,12 +191,12 @@ if __name__ == '__main__':
 
     if not (script_dir / 'unpolarized_moments.pkl').exists():
         data = ld.Dataset.from_parquet(
-            script_dir / 'data_2.parquet',
+            data_file,
             p4s=p4_columns,
             aux=aux_columns,
         )
         accmc = ld.Dataset.from_parquet(
-            script_dir / 'mc_2.parquet',
+            accmc_file,
             p4s=p4_columns,
             aux=aux_columns,
         )
@@ -252,12 +255,8 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.Dataset.from_parquet(
-            script_dir / 'data_2.parquet', p4s=p4_columns, aux=aux_columns
-        )
-        accmc = ld.Dataset.from_parquet(
-            script_dir / 'mc_2.parquet', p4s=p4_columns, aux=aux_columns
-        )
+        data = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
+        accmc = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
         mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
