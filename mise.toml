@@ -24,13 +24,13 @@ uv run --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu
 CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL"
 uv pip install numpy
-uv pip install --offline -e py-laddu
+uv pip install --find-links py-laddu-cpu/dist -e py-laddu
 '''
 
 [tasks.develop-tests]
 description = "Install the CPU stack with the testing extra"
 depends = ["develop"]
-run = "uv pip install --offline -e 'py-laddu[tests]'"
+run = "uv pip install --find-links py-laddu-cpu/dist -e 'py-laddu[tests]'"
 
 [tasks.develop-mpi]
 description = "Build both CPU and MPI extensions and install the wrapper"
@@ -42,13 +42,13 @@ CPU_WHEEL=$(ls py-laddu-cpu/dist/laddu_cpu-*.whl | head -n 1)
 MPI_WHEEL=$(ls py-laddu-mpi/dist/laddu_mpi-*.whl | head -n 1)
 uv pip install --offline "$CPU_WHEEL" "$MPI_WHEEL"
 uv pip install numpy
-uv pip install --offline -e 'py-laddu[mpi]'
+uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e 'py-laddu[mpi]'
 '''
 
 [tasks.develop-mpi-tests]
 description = "Build both extensions and install all Python extras"
 depends = ["develop-mpi"]
-run = "uv pip install --offline -e 'py-laddu[tests,mpi]'"
+run = "uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e 'py-laddu[tests,mpi]'"
 
 [tasks.test-python]
 description = "Run the Python test suite"

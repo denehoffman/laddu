@@ -124,9 +124,7 @@ class _DatasetExtensions:
                     msg = f"Missing components {missing} for four-momentum '{name}'"
                     raise KeyError(msg)
 
-        component_names = {
-            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-        }
+        component_names = {f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')}
 
         if aux is None:
             aux_names = cls._infer_aux_names(columns, component_names)
@@ -134,13 +132,11 @@ class _DatasetExtensions:
             aux_names = list(aux)
             missing_aux = [name for name in aux_names if name not in columns]
             if missing_aux:
-                msg = f"Missing auxiliary columns {missing_aux}"
+                msg = f'Missing auxiliary columns {missing_aux}'
                 raise KeyError(msg)
 
         n_events = len(columns[f'{p4_names[0]}_px'])
-        weights = np.asarray(
-            columns.get('weight', np.ones(n_events, dtype=float)), dtype=float
-        )
+        weights = np.asarray(columns.get('weight', np.ones(n_events, dtype=float)), dtype=float)
 
         events: list[Event] = []
         for i in range(n_events):
@@ -228,7 +224,6 @@ class _DatasetExtensions:
         return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
     @classmethod
-    @classmethod
     def from_parquet(
         cls,
         path: str | Path,
@@ -267,10 +262,7 @@ class _DatasetExtensions:
         native_aliases = dict(aliases) if aliases is not None else None
 
         if backend_name not in {'oxyroot', 'uproot'}:
-            msg = (
-                f"Unsupported backend '{backend_name}'. "
-                "Valid options are 'oxyroot' or 'uproot'."
-            )
+            msg = f"Unsupported backend '{backend_name}'. Valid options are 'oxyroot' or 'uproot'."
             raise ValueError(msg)
 
         if backend_name == 'oxyroot':
@@ -305,7 +297,7 @@ class _DatasetExtensions:
         pol_magnitude_name: str = 'pol_magnitude',
         pol_angle_name: str = 'pol_angle',
         num_entries: int | None = None,
-        ) -> _DatasetCore:
+    ) -> _DatasetCore:
         """Read a Dataset from an AmpTools ROOT tuple."""
         return cls._open_amptools_format(
             Path(path),
@@ -320,9 +312,7 @@ class _DatasetExtensions:
 
     def to_numpy(self: _DatasetCore, *, precision: str = 'f64') -> dict[str, np.ndarray]:
         """Convert the dataset to NumPy column arrays."""
-        return _coalesce_numpy_batches(
-            _iter_numpy_batches(self, chunk_size=len(self), precision=precision)
-        )
+        return _coalesce_numpy_batches(_iter_numpy_batches(self, chunk_size=len(self), precision=precision))
 
     def to_parquet(
         self: _DatasetCore,
@@ -352,10 +342,7 @@ class _DatasetExtensions:
         """Write the dataset to a ROOT TTree."""
         backend_name = backend.lower() if backend else 'oxyroot'
         if backend_name not in {'oxyroot', 'uproot'}:
-            msg = (
-                f"Unsupported backend '{backend_name}'. "
-                "Valid options are 'oxyroot' or 'uproot'."
-            )
+            msg = f"Unsupported backend '{backend_name}'. Valid options are 'oxyroot' or 'uproot'."
             raise ValueError(msg)
 
         if backend_name == 'oxyroot':
@@ -377,9 +364,7 @@ class _DatasetExtensions:
         )
 
         with uproot_module.recreate(path) as root_file:
-            batches = _iter_numpy_batches(
-                self, chunk_size=chunk_size, precision=precision
-            )
+            batches = _iter_numpy_batches(self, chunk_size=chunk_size, precision=precision)
             tree_obj = None
             for batch in batches:
                 if tree_obj is None:
@@ -427,9 +412,7 @@ class _DatasetExtensions:
         num_entries: int | None,
     ) -> _DatasetCore:
         pol_angle_rad = pol_angle * np.pi / 180 if pol_angle is not None else None
-        polarisation_requested = pol_in_beam or (
-            pol_angle is not None and pol_magnitude is not None
-        )
+        polarisation_requested = pol_in_beam or (pol_angle is not None and pol_magnitude is not None)
         p4s_list, aux_rows, weight_list = _read_amptools_events(
             path,
             tree or 'kin',
@@ -478,9 +461,7 @@ class _DatasetExtensions:
         return cls(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
-    def _select_uproot_tree(
-        file: uproot.ReadOnlyDirectory, tree_name: str | None
-    ) -> uproot.TTree:
+    def _select_uproot_tree(file: uproot.ReadOnlyDirectory, tree_name: str | None) -> uproot.TTree:
         if tree_name:
             try:
                 return file[tree_name]
@@ -488,11 +469,7 @@ class _DatasetExtensions:
                 msg = f"Tree '{tree_name}' not found in ROOT file"
                 raise KeyError(msg) from exc
 
-        tree_candidates = [
-            key.split(';')[0]
-            for key, classname in file.classnames().items()
-            if classname == 'TTree'
-        ]
+        tree_candidates = [key.split(';')[0] for key, classname in file.classnames().items() if classname == 'TTree']
         if not tree_candidates:
             msg = 'ROOT file does not contain any TTrees'
             raise ValueError(msg)
@@ -516,9 +493,7 @@ class _DatasetExtensions:
         data = {name: np.asarray(values) for name, values in columns.items()}
         p4_names = cls._infer_p4_names(data) if p4s is None else p4s
 
-        component_columns = [
-            f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-        ]
+        component_columns = [f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')]
         missing_components = [col for col in component_columns if col not in data]
         if missing_components:
             msg = f'Missing components {missing_components} in ROOT data'
@@ -576,14 +551,13 @@ class _AmpToolsData:
     pol_angle: np.ndarray | None
 
 
-def _empty_numpy_buffers(
-    p4_names: Sequence[str], aux_names: Sequence[str]
-) -> dict[str, list[float]]:
-    buffers: dict[str, list[float]] = {
-        f'{name}_px': [] for name in p4_names
-    } | {f'{name}_py': [] for name in p4_names} | {f'{name}_pz': [] for name in p4_names} | {
-        f'{name}_e': [] for name in p4_names
-    }
+def _empty_numpy_buffers(p4_names: Sequence[str], aux_names: Sequence[str]) -> dict[str, list[float]]:
+    buffers: dict[str, list[float]] = (
+        {f'{name}_px': [] for name in p4_names}
+        | {f'{name}_py': [] for name in p4_names}
+        | {f'{name}_pz': [] for name in p4_names}
+        | {f'{name}_e': [] for name in p4_names}
+    )
     for name in aux_names:
         buffers[name] = []
     buffers['weight'] = []
@@ -716,9 +690,7 @@ def _derive_amptools_polarization(
     if pol_in_beam:
         transverse_sq = px_beam.astype(np.float64) ** 2 + py_beam.astype(np.float64) ** 2
         pol_magnitude_arr = np.sqrt(transverse_sq).astype(np.float32)
-        pol_angle_arr = np.arctan2(
-            py_beam.astype(np.float64), px_beam.astype(np.float64)
-        ).astype(np.float32)
+        pol_angle_arr = np.arctan2(py_beam.astype(np.float64), px_beam.astype(np.float64)).astype(np.float32)
         beam_px.fill(0.0)
         beam_py.fill(0.0)
     elif pol_angle_rad is not None and pol_magnitude is not None:
