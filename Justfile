@@ -9,7 +9,7 @@ default:
     just --choose
 
 create-venv:
-    if [ ! -d "{{venv}}" ]; then uv venv {{venv}}; fi
+    if [ ! -d "{{venv}}" ]; then uv venv {{venv}} --python=3.14; fi
 
 build-cpu: create-venv
     uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
