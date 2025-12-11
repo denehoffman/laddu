@@ -54,7 +54,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cpu-linux-${{ matrix.platform.target }}
           path: dist
@@ -93,7 +93,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cpu-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -129,7 +129,7 @@ jobs:
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cpu-windows-${{ matrix.platform.target }}
           path: dist
@@ -162,7 +162,7 @@ jobs:
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cpu-macos-${{ matrix.platform.target }}
           path: dist
@@ -178,7 +178,7 @@ jobs:
           command: sdist
           args: --out dist --manifest-path py-laddu-cpu/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cpu-sdist
           path: dist
@@ -217,7 +217,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mpi-linux-${{ matrix.platform.target }}
           path: dist
@@ -254,7 +254,7 @@ jobs:
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mpi-windows-${{ matrix.platform.target }}
           path: dist
@@ -288,7 +288,7 @@ jobs:
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mpi-macos-${{ matrix.platform.target }}
           path: dist
@@ -304,7 +304,7 @@ jobs:
           command: sdist
           args: --out dist --manifest-path py-laddu-mpi/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mpi-sdist
           path: dist
