@@ -44,7 +44,7 @@ def get_backend() -> ModuleType:
     for candidate in _candidate_modules():
         try:
             module = importlib.import_module(candidate)
-        except ImportError as exc:  # pragma: no cover - best-effort error aggregation
+        except ImportError as exc:  # pragma: no cover
             errors.append(f'{candidate}: {exc}')
             continue
         _backend = module

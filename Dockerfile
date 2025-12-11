@@ -11,15 +11,16 @@ RUN apt update && apt install -y --no-install-recommends \
     libopenmpi-dev \
     libclang-dev \
     libssl-dev \
-    rsync
+    rsync \
+    just
 
-# Install mise
-RUN curl https://mise.run | sh
-ENV PATH="/root/.local/bin:/root/.mise/bin:${PATH}"
 
-# Preinstall toolchain dependencies
-RUN mise use --yes rust@latest \
-    && mise use --yes cargo@latest \
-    && mise use --yes cargo:cargo-nextest@latest \
-    && mise use --yes cargo:cargo-hack@latest \
-    && mise use --yes uv@latest
+RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain nightly -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup component add clippy rustfmt
+
+RUN cargo install --locked cargo-nextest
+RUN cargo install --locked cargo-hack
+
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh

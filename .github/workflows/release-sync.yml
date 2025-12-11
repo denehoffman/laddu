@@ -21,13 +21,14 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
       - uses: astral-sh/setup-uv@v4
-      - uses: jdx/mise-action@v2
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Sync Python wrapper versions
         env:
           UV_CACHE_DIR: .uv-cache
         run: |
           set -euo pipefail
-          mise run sync-versions
+          just sync-versions
           if git diff --quiet; then
             echo "Versions already in sync"
             exit 0

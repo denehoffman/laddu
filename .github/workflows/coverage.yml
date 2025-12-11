@@ -29,11 +29,12 @@ jobs:
         run: sudo apt install -y clang mpich libmpich-dev
       - name: Install Rust
         run: rustup update nightly
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: jdx/mise-action@v2
       - name: Generate Rust code coverage
-        run: mise run coverage-rust
+        run: just coverage-rust
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -47,9 +48,10 @@ jobs:
         uses: astral-sh/setup-uv@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - uses: jdx/mise-action@v2
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Generate Python code coverage
-        run: mise run coverage-python
+        run: just coverage-python
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:

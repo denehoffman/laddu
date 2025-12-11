@@ -27,9 +27,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: jdx/mise-action@v2
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Clippy
-        run: mise run lint-rust-mpi
+        run: just lint-rust-mpi
 
   build-check-test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -47,13 +48,8 @@ jobs:
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      - uses: jdx/mise-action@v2
+      - name: Install Just
+        uses: taiki-e/install-action@just
 
-      - name: Run cargo-hack checks
-        run: mise run cargo-hack-check
-
-      - name: Build
-        run: mise run build-rust
-
-      - name: Run cargo-hack tests
-        run: mise run cargo-hack-test
+      - name: Run cargo-hack checks/tests
+        run: just hack
