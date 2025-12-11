@@ -17,15 +17,13 @@ jobs:
     if: contains(github.head_ref, 'release-plz')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.head_ref }}
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
       - name: Install Just
         uses: taiki-e/install-action@just
       - name: Sync Python wrapper versions
-        env:
-          UV_CACHE_DIR: .uv-cache
         run: |
           set -euo pipefail
           just sync-versions
