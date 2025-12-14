@@ -3472,6 +3472,7 @@ pub struct LikelihoodScalar(String);
 impl LikelihoodScalar {
     /// Create a new [`LikelihoodScalar`] with a parameter with the given name and wrap it as a
     /// [`LikelihoodExpression`].
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<T: AsRef<str>>(name: T) -> LikelihoodExpression {
         Self::new_term(name).into_expression()
     }

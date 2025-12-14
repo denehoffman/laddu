@@ -414,6 +414,30 @@ impl AsRef<EventData> for Event {
     }
 }
 
+impl IntoIterator for Dataset {
+    type Item = Event;
+
+    type IntoIter = DatasetIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                // Cache total before moving fields out of self for MPI iteration.
+                let total = self.n_events();
+                return DatasetIntoIter::Mpi(DatasetMpiIntoIter {
+                    events: self.events,
+                    metadata: self.metadata,
+                    world,
+                    index: 0,
+                    total,
+                });
+            }
+        }
+        DatasetIntoIter::Local(self.events.into_iter())
+    }
+}
+
 impl Dataset {
     /// Iterate over all events in the dataset. When MPI is enabled, this will visit
     /// every event across all ranks, fetching remote events on demand.
@@ -430,26 +454,6 @@ impl Dataset {
             }
         }
         DatasetIter::Local(self.events.iter())
-    }
-
-    /// Consume the dataset and iterate over all events. When MPI is enabled, this will
-    /// visit every event across all ranks, fetching remote events on demand.
-    pub fn into_iter(self) -> DatasetIntoIter {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                // Cache total before moving fields out of self for MPI iteration.
-                let total = self.n_events();
-                return DatasetIntoIter::Mpi(DatasetMpiIntoIter {
-                    events: self.events,
-                    metadata: self.metadata,
-                    world,
-                    index: 0,
-                    total,
-                });
-            }
-        }
-        DatasetIntoIter::Local(self.events.into_iter())
     }
 
     /// Borrow the dataset metadata used for name lookups.
@@ -1482,18 +1486,13 @@ pub struct DatasetReadOptions {
 }
 
 /// Precision for writing floating-point columns.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FloatPrecision {
     /// 32-bit floats.
     F32,
     /// 64-bit floats.
+    #[default]
     F64,
-}
-
-impl Default for FloatPrecision {
-    fn default() -> Self {
-        Self::F64
-    }
 }
 
 /// Options for writing a [`Dataset`] to disk.
@@ -2253,6 +2252,7 @@ fn fetch_event_for_index(
 }
 
 impl Dataset {
+    #[allow(clippy::too_many_arguments)]
     fn write_root_with_type<T>(
         &self,
         dataset: Arc<Dataset>,

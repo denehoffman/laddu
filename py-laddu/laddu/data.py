@@ -14,14 +14,13 @@ from laddu.utils.vectors import Vec4
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
-    import uproot
     from numpy.typing import NDArray
 
 
-_NATIVE_DATASET_FROM_PARQUET = _DatasetCore.from_parquet
-_NATIVE_DATASET_FROM_ROOT = _DatasetCore.from_root
-_NATIVE_DATASET_TO_PARQUET = _DatasetCore.to_parquet
-_NATIVE_DATASET_TO_ROOT = _DatasetCore.to_root
+_NATIVE_DATASET_FROM_PARQUET = getattr(_DatasetCore, 'from_parquet', None)
+_NATIVE_DATASET_FROM_ROOT = getattr(_DatasetCore, 'from_root', None)
+_NATIVE_DATASET_TO_PARQUET = getattr(_DatasetCore, 'to_parquet', None)
+_NATIVE_DATASET_TO_ROOT = getattr(_DatasetCore, 'to_root', None)
 
 
 def _import_optional_dependency(
@@ -41,24 +40,46 @@ def _import_optional_dependency(
         raise ModuleNotFoundError(msg) from exc
 
 
-class _DatasetExtensions:
-    """In-memory event container backed by :class:`laddu.laddu.Event` objects.
+def _require_native_method(name: str, func: Any) -> Any:
+    if func is None:
+        msg = (
+            f"`laddu.laddu.Dataset` does not expose the native '{name}' method. "
+            'Ensure the selected backend is built with file I/O support.'
+        )
+        raise AttributeError(msg)
+    return func
 
-    The helper constructors accept ``dict`` objects, pandas/Polars frames, or
-    numpy arrays and ensure that the expected four-momentum columns (``*_px``,
-    ``*_py``, ``*_pz``, ``*_e``) are present.
 
-    Examples
-    --------
-    >>> columns = {
-    ...     'beam_px': [0.0], 'beam_py': [0.0], 'beam_pz': [9.0], 'beam_e': [9.5],
-    ...     'k_pi_px': [0.2], 'k_pi_py': [0.1], 'k_pi_pz': [0.3], 'k_pi_e': [0.6],
-    ...     'weight': [1.0], 'pol_magnitude': [0.5], 'pol_angle': [0.0],
-    ... }
-    >>> dataset = Dataset.from_dict(columns)
-    >>> len(dataset)
-    1
-    """
+_DATASET_DOC = """In-memory event container backed by :class:`laddu.laddu.Event` objects.
+
+The helper constructors accept ``dict`` objects, pandas/Polars frames, or
+numpy arrays and ensure that the expected four-momentum columns (``*_px``,
+``*_py``, ``*_pz``, ``*_e``) are present.
+
+Examples
+--------
+>>> columns = {
+...     'beam_px': [0.0], 'beam_py': [0.0], 'beam_pz': [9.0], 'beam_e': [9.5],
+...     'k_pi_px': [0.2], 'k_pi_py': [0.1], 'k_pi_pz': [0.3], 'k_pi_e': [0.6],
+...     'weight': [1.0], 'pol_magnitude': [0.5], 'pol_angle': [0.0],
+... }
+>>> dataset = Dataset.from_dict(columns)
+>>> len(dataset)
+1
+"""
+
+
+class _DatasetIO:
+    __slots__ = ('_dataset',)
+
+    def __init__(self, dataset: _DatasetCore | None) -> None:
+        self._dataset = dataset
+
+    def _require_dataset(self) -> _DatasetCore:
+        if self._dataset is None:
+            msg = 'Dataset instance required; call this method on a Dataset value'
+            raise TypeError(msg)
+        return self._dataset
 
     @staticmethod
     def _infer_p4_names(columns: dict[str, Any]) -> list[str]:
@@ -87,34 +108,18 @@ class _DatasetExtensions:
             aux_names.append(key)
         return aux_names
 
-    @classmethod
     def from_dict(
-        cls,
+        self,
         data: dict[str, Any],
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> _DatasetCore:
-        """Create a dataset from iterables keyed by column name.
-
-        Parameters
-        ----------
-        data:
-            Mapping whose keys are column names (e.g. ``beam_px``) and values are
-            indexable sequences.
-        p4s:
-            Explicit four-momentum names; when omitted they are inferred from
-            ``*_px`` columns.
-        aux:
-            Explicit auxiliary column names; inferred when omitted.
-        aliases:
-            Optional mapping of alias name to one or more particle identifiers.
-        """
         columns = {name: np.asarray(values) for name, values in data.items()}
 
         if p4s is None:
-            p4_names = cls._infer_p4_names(columns)
+            p4_names = self._infer_p4_names(columns)
         else:
             p4_names = list(p4s)
             for name in p4_names:
@@ -129,7 +134,7 @@ class _DatasetExtensions:
         }
 
         if aux is None:
-            aux_names = cls._infer_aux_names(columns, component_names)
+            aux_names = self._infer_aux_names(columns, component_names)
         else:
             aux_names = list(aux)
             missing_aux = [name for name in aux_names if name not in columns]
@@ -167,87 +172,75 @@ class _DatasetExtensions:
             )
 
         native_aliases = dict(aliases) if aliases is not None else None
-        return cls(
+        return _DatasetCore(
             events,
             p4_names=p4_names,
             aux_names=aux_names,
             aliases=native_aliases,
         )
 
-    @classmethod
     def from_numpy(
-        cls,
+        self,
         data: dict[str, NDArray[np.floating]],
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> _DatasetCore:
-        """Create a dataset from arrays without copying.
-
-        Accepts any mapping of column names to ``ndarray`` objects and mirrors
-        :meth:`from_dict`.
-        """
         converted = {key: np.asarray(value) for key, value in data.items()}
-        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+        return self.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
-    @classmethod
     def from_pandas(
-        cls,
+        self,
         data: pd.DataFrame,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> _DatasetCore:
-        """Materialise a dataset from a :class:`pandas.DataFrame`."""
         _import_optional_dependency(
             'pandas',
             extra='pandas',
             feature='Dataset.from_pandas',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+        return self.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
-    @classmethod
     def from_polars(
-        cls,
+        self,
         data: pl.DataFrame,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> _DatasetCore:
-        """Materialise a dataset from a :class:`polars.DataFrame`."""
         _import_optional_dependency(
             'polars',
             extra='polars',
             feature='Dataset.from_polars',
         )
         converted = {col: data[col].to_list() for col in data.columns}
-        return cls.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+        return self.from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
-    @classmethod
     def from_parquet(
-        cls,
+        self,
         path: str | Path,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> _DatasetCore:
-        """Read a Dataset from a Parquet file."""
         native_aliases = dict(aliases) if aliases is not None else None
-        return _NATIVE_DATASET_FROM_PARQUET(
+        native = _require_native_method('from_parquet', _NATIVE_DATASET_FROM_PARQUET)
+        return native(
             path,
             p4s=p4s,
             aux=aux,
             aliases=native_aliases,
         )
 
-    @classmethod
     def from_root(
-        cls,
+        self,
         path: str | Path,
         *,
         tree: str | None = None,
@@ -257,11 +250,6 @@ class _DatasetExtensions:
         backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> _DatasetCore:
-        """Read a Dataset from a ROOT TTree.
-
-        The native oxyroot backend is used by default. Pass ``backend='uproot'`` to read
-        ROOT files via the Python ``uproot`` library.
-        """
         backend_name = backend.lower() if backend else 'oxyroot'
         native_aliases = dict(aliases) if aliases is not None else None
 
@@ -270,7 +258,8 @@ class _DatasetExtensions:
             raise ValueError(msg)
 
         if backend_name == 'oxyroot':
-            return _NATIVE_DATASET_FROM_ROOT(
+            native = _require_native_method('from_root', _NATIVE_DATASET_FROM_ROOT)
+            return native(
                 path,
                 tree=tree,
                 p4s=p4s,
@@ -280,7 +269,7 @@ class _DatasetExtensions:
 
         kwargs = dict(uproot_kwargs or {})
         backend_tree = tree or kwargs.pop('tree', None)
-        return cls._open_with_uproot(
+        return self._open_with_uproot(
             Path(path),
             tree=backend_tree,
             p4s=p4s,
@@ -289,9 +278,8 @@ class _DatasetExtensions:
             uproot_kwargs=kwargs,
         )
 
-    @classmethod
     def from_amptools(
-        cls,
+        self,
         path: str | Path,
         *,
         tree: str | None = None,
@@ -302,8 +290,7 @@ class _DatasetExtensions:
         pol_angle_name: str = 'pol_angle',
         num_entries: int | None = None,
     ) -> _DatasetCore:
-        """Read a Dataset from an AmpTools ROOT tuple."""
-        return cls._open_amptools_format(
+        return self._open_amptools_format(
             Path(path),
             tree=tree,
             pol_in_beam=pol_in_beam,
@@ -314,29 +301,30 @@ class _DatasetExtensions:
             num_entries=num_entries,
         )
 
-    def to_numpy(self: _DatasetCore, *, precision: str = 'f64') -> dict[str, np.ndarray]:
-        """Convert the dataset to NumPy column arrays."""
+    def to_numpy(self, *, precision: str = 'f64') -> dict[str, np.ndarray]:
+        dataset = self._require_dataset()
         return _coalesce_numpy_batches(
-            _iter_numpy_batches(self, chunk_size=len(self), precision=precision)
+            _iter_numpy_batches(dataset, chunk_size=len(dataset), precision=precision)
         )
 
     def to_parquet(
-        self: _DatasetCore,
+        self,
         path: str | Path,
         *,
         chunk_size: int = 10_000,
         precision: str = 'f64',
     ) -> None:
-        """Write the dataset to Parquet."""
-        _NATIVE_DATASET_TO_PARQUET(
-            self,
+        dataset = self._require_dataset()
+        native = _require_native_method('to_parquet', _NATIVE_DATASET_TO_PARQUET)
+        native(
+            dataset,
             path,
             chunk_size=chunk_size,
             precision=precision,
         )
 
     def to_root(
-        self: _DatasetCore,
+        self,
         path: str | Path,
         *,
         tree: str | None = None,
@@ -345,15 +333,16 @@ class _DatasetExtensions:
         precision: str = 'f64',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Write the dataset to a ROOT TTree."""
+        dataset = self._require_dataset()
         backend_name = backend.lower() if backend else 'oxyroot'
         if backend_name not in {'oxyroot', 'uproot'}:
             msg = f"Unsupported backend '{backend_name}'. Valid options are 'oxyroot' or 'uproot'."
             raise ValueError(msg)
 
         if backend_name == 'oxyroot':
-            _NATIVE_DATASET_TO_ROOT(
-                self,
+            native = _require_native_method('to_root', _NATIVE_DATASET_TO_ROOT)
+            native(
+                dataset,
                 path,
                 tree=tree,
                 chunk_size=chunk_size,
@@ -371,7 +360,7 @@ class _DatasetExtensions:
 
         with uproot_module.recreate(path) as root_file:
             batches = _iter_numpy_batches(
-                self, chunk_size=chunk_size, precision=precision
+                dataset, chunk_size=chunk_size, precision=precision
             )
             tree_obj = None
             for batch in batches:
@@ -382,9 +371,8 @@ class _DatasetExtensions:
             if tree_obj is None:
                 root_file.mktree(tree_name, {})
 
-    @classmethod
     def _open_with_uproot(
-        cls,
+        self,
         path: Path,
         *,
         tree: str | None,
@@ -399,16 +387,15 @@ class _DatasetExtensions:
             feature="Dataset.from_root(... backend='uproot')",
         )
         with uproot_module.open(path) as root_file:
-            tree_obj = cls._select_uproot_tree(root_file, tree)
+            tree_obj = self._select_uproot_tree(root_file, tree)
             arrays = tree_obj.arrays(library='np', **uproot_kwargs)
 
         columns = {name: np.asarray(values) for name, values in arrays.items()}
-        selected = cls._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
-        return cls.from_numpy(selected, p4s=p4s, aux=aux, aliases=aliases)
+        selected = self._prepare_uproot_columns(columns, p4s=p4s, aux=aux)
+        return self.from_numpy(selected, p4s=p4s, aux=aux, aliases=aliases)
 
-    @classmethod
     def _open_amptools_format(
-        cls,
+        self,
         path: Path,
         *,
         tree: str | None,
@@ -468,12 +455,10 @@ class _DatasetExtensions:
                     aux_names=aux_names,
                 )
             )
-        return cls(events, p4_names=p4_names, aux_names=aux_names)
+        return _DatasetCore(events, p4_names=p4_names, aux_names=aux_names)
 
     @staticmethod
-    def _select_uproot_tree(
-        file: uproot.ReadOnlyDirectory, tree_name: str | None
-    ) -> uproot.TTree:
+    def _select_uproot_tree(file: Any, tree_name: str | None) -> Any:
         if tree_name:
             try:
                 return file[tree_name]
@@ -494,9 +479,8 @@ class _DatasetExtensions:
             raise ValueError(msg)
         return file[tree_candidates[0]]
 
-    @classmethod
     def _prepare_uproot_columns(
-        cls,
+        self,
         columns: dict[str, np.ndarray],
         *,
         p4s: list[str] | None,
@@ -507,7 +491,7 @@ class _DatasetExtensions:
             raise ValueError(msg)
 
         data = {name: np.asarray(values) for name, values in columns.items()}
-        p4_names = cls._infer_p4_names(data) if p4s is None else p4s
+        p4_names = self._infer_p4_names(data) if p4s is None else p4s
 
         component_columns = [
             f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
@@ -520,7 +504,7 @@ class _DatasetExtensions:
         used_components = set(component_columns)
 
         if aux is None:
-            aux_names = cls._infer_aux_names(data, used_components)
+            aux_names = self._infer_aux_names(data, used_components)
         else:
             aux_names = aux
             missing_aux = [col for col in aux_names if col not in data]
@@ -539,19 +523,52 @@ class _DatasetExtensions:
         return selected
 
 
-for _name, _attr in _DatasetExtensions.__dict__.items():
-    if _name.startswith('__'):
-        continue
-    setattr(_DatasetCore, _name, _attr)
-
 if TYPE_CHECKING:
-    from .laddu import Dataset as Dataset
+    from .laddu import Dataset as _RuntimeDataset
+
+    class Dataset(_RuntimeDataset): ...
 else:
-    Dataset = cast('type[_DatasetExtensions]', _DatasetCore)
-    Dataset.__doc__ = _DatasetExtensions.__doc__
+    Dataset = cast('type[_DatasetCore]', _DatasetCore)
+    Dataset.__doc__ = _DATASET_DOC
+
+_GLOBAL_DATASET_IO = _DatasetIO(None)
+
+if not TYPE_CHECKING:
+
+    def _bind_dataset_io_classmethod(name: str) -> None:
+        io_attr = getattr(_DatasetIO, name)
+
+        def _proxy(cls: type[_DatasetCore], *args: Any, **kwargs: Any) -> _DatasetCore:
+            return getattr(_GLOBAL_DATASET_IO, name)(*args, **kwargs)
+
+        _proxy.__doc__ = io_attr.__doc__
+        setattr(Dataset, name, classmethod(_proxy))
+
+    for _method in (
+        'from_dict',
+        'from_numpy',
+        'from_pandas',
+        'from_polars',
+        'from_parquet',
+        'from_root',
+        'from_amptools',
+    ):
+        _bind_dataset_io_classmethod(_method)
+
+    def _bind_dataset_io_instancemethod(name: str) -> None:
+        io_attr = getattr(_DatasetIO, name)
+
+        def _proxy(self: _DatasetCore, *args: Any, **kwargs: Any) -> Any:
+            io_helper = _DatasetIO(self)
+            return getattr(io_helper, name)(*args, **kwargs)
+
+        _proxy.__doc__ = io_attr.__doc__
+        setattr(Dataset, name, _proxy)
+
+    for _method in ('to_numpy', 'to_parquet', 'to_root'):
+        _bind_dataset_io_instancemethod(_method)
 
 DatasetBase = Dataset
-del _name, _attr
 
 
 @dataclass

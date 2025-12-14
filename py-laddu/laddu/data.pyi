@@ -60,6 +60,8 @@ class Dataset(Sequence[Event]):
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
     @overload
+    def __getitem__(self, index: slice) -> Dataset: ...
+    @overload
     def __getitem__(self, index: int) -> Event: ...
     @overload
     def __getitem__(
@@ -80,48 +82,57 @@ class Dataset(Sequence[Event]):
     def p4_by_name(self, index: int, name: str) -> Vec4: ...
     def aux_by_name(self, index: int, name: str) -> float: ...
     def boost_to_rest_frame_of(self, names: list[str]) -> Dataset: ...
-    @staticmethod
+    def evaluate(
+        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
+    ) -> NDArray[np.float64]: ...
+    @classmethod
     def from_dict(
+        cls,
         data: dict[str, Any],
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_numpy(
+        cls,
         data: dict[str, NDArray[np.floating]],
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_pandas(
+        cls,
         data: pd.DataFrame,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_polars(
+        cls,
         data: pl.DataFrame,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_parquet(
+        cls,
         path: str | Path,
         *,
         p4s: list[str] | None = None,
         aux: list[str] | None = None,
         aliases: dict[str, str | list[str]] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_root(
+        cls,
         path: str | Path,
         *,
         tree: str | None = None,
@@ -131,8 +142,9 @@ class Dataset(Sequence[Event]):
         backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> Dataset: ...
-    @staticmethod
+    @classmethod
     def from_amptools(
+        cls,
         path: str | Path,
         *,
         tree: str | None = None,
@@ -163,9 +175,6 @@ class Dataset(Sequence[Event]):
         precision: Literal['f64', 'f32'] = 'f64',
         uproot_kwargs: dict[str, Any] | None = None,
     ) -> None: ...
-    def evaluate(
-        self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
-    ) -> NDArray[np.float64]: ...
 
 class BinnedDataset:
     n_bins: int

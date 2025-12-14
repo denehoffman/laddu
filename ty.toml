@@ -2,5 +2,6 @@
 exclude = [
   "py-laddu/examples/**",
   "py-laddu/docs/**",
+  "crates/laddu-core/test_data/**",
   "make.py",
 ]

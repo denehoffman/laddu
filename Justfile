@@ -11,18 +11,18 @@ default:
 create-venv:
     if [ ! -d "{{venv}}" ]; then uv venv {{venv}} --python=3.14; fi
 
-build-cpu: create-venv
+build-python-cpu: create-venv
     uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 
-build-mpi: create-venv
+build-python-mpi: create-venv
     uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist
 
-build-python: build-cpu build-mpi
+build-python: build-python-cpu build-python-mpi
 
-develop: build-cpu
+develop: build-python-cpu
     uv pip install --find-links py-laddu-cpu/dist -e py-laddu
 
-develop-tests: build-cpu
+develop-tests: build-python-cpu
     uv pip install --find-links py-laddu-cpu/dist -e "py-laddu[tests]"
 
 develop-mpi: build-python
@@ -46,16 +46,14 @@ test-rust-mpi:
     cargo nextest run --features mpi
     cargo test --doc --features mpi
 
-test-all: test-rust test-python
+test: test-rust test-python
 
-test-all-mpi: test-rust-mpi test-python-mpi
+test-mpi: test-rust-mpi test-python-mpi
 
 lint-python:
-    uv tool add ruff
-    uv tool add ty
-    {{bin}}/ruff check py-laddu
-    {{bin}}/ruff format --check py-laddu
-    {{bin}}/ty check
+    ruff check py-laddu
+    ruff format --check py-laddu
+    ty check
 
 lint-rust:
     cargo clippy --all-targets
@@ -63,9 +61,9 @@ lint-rust:
 lint-rust-mpi:
     cargo clippy --all-targets --features mpi
 
-lint-all: lint-rust lint-python
+lint: lint-rust lint-python
 
-lint-all-mpi: lint-rust-mpi lint-python
+lint-mpi: lint-rust-mpi lint-python
 
 build-rust:
     cargo build --all-targets
@@ -73,9 +71,9 @@ build-rust:
 build-rust-mpi:
     cargo build --all-targets --features mpi
 
-build-all: build-rust build-cpu
+build: build-rust build-python-cpu
 
-build-all-mpi: build-rust-mpi build-mpi
+build-mpi: build-rust-mpi build-python-mpi
 
 clean-rust:
     cargo clean
@@ -83,16 +81,16 @@ clean-rust:
 clean-python:
     rm -rf .venv .uv-cache dist py-laddu/build py-laddu-cpu/dist py-laddu-mpi/dist
 
-clean-all: clean-rust clean-python
+clean: clean-rust clean-python
 
-docs-python: build-cpu
+docs-python: build-python-cpu
     uv pip install --find-links py-laddu-cpu/dist -e "py-laddu[docs]"
     make -C py-laddu/docs html
 
 docs-rust:
     cargo doc --all-features
 
-docs-all: docs-rust docs-python
+docs: docs-rust docs-python
 
 hack-check:
     cargo hack check --rust-version --each-feature --no-dev-deps
@@ -181,4 +179,4 @@ coverage-rust:
 coverage-python: develop-tests
     {{bin}}/pytest --cov --cov-report xml:coverage-python.xml
 
-coverage-all: coverage-rust coverage-python
+coverage: coverage-rust coverage-python

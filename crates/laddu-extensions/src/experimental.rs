@@ -49,6 +49,7 @@ impl BinnedGuideTerm {
     ///
     /// The intended usage is to provide some sets of amplitudes to isolate, like `[["amp1", "amp2"], ["amp3"]]`,
     /// along with some known counts for a binned fit (`count_sets ~ [[histogram counts involving "amp1" and "amp2"], [histogram counts involving "amp3"]]` and simlar for `error_sets`).
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<
         V: Variable + 'static,
         L: AsRef<str>,
@@ -275,6 +276,7 @@ impl<const P: usize> Regularizer<P> {
 
 impl Regularizer<1> {
     /// Create a new $`\ell_1`$ [`Regularizer`] expressed as a [`LikelihoodExpression`].
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<T, U, F>(
         parameters: T,
         lambda: f64,
@@ -291,6 +293,7 @@ impl Regularizer<1> {
 
 impl Regularizer<2> {
     /// Create a new $`\ell_2`$ [`Regularizer`] expressed as a [`LikelihoodExpression`].
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<T, U, F>(
         parameters: T,
         lambda: f64,

@@ -440,6 +440,45 @@ def test_binned_dataset() -> None:
     assert binned[1].n_events_weighted == 2.0
 
 
+def test_binned_dataset_bin_io_roundtrip(tmp_path: Path) -> None:
+    dataset = Dataset(
+        [
+            Event(
+                [Vec3(0.0, 0.0, 1.0).with_mass(1.0)],
+                [],
+                1.0,
+                p4_names=['p'],
+                aux_names=[],
+            ),
+            Event(
+                [Vec3(0.0, 0.0, 2.0).with_mass(2.0)],
+                [],
+                2.0,
+                p4_names=['p'],
+                aux_names=[],
+            ),
+        ],
+        p4_names=['p'],
+        aux_names=[],
+    )
+
+    mass = Mass(['p'])
+    binned = dataset.bin_by(mass, 2, (0.0, 3.0))
+
+    for idx in range(binned.n_bins):
+        bin_dataset = binned[idx]
+
+        parquet_path = tmp_path / f'bin_{idx}.parquet'
+        bin_dataset.to_parquet(parquet_path)
+        reopened_parquet = Dataset.from_parquet(parquet_path)
+        _assert_datasets_close(bin_dataset, reopened_parquet)
+
+        root_path = tmp_path / f'bin_{idx}.root'
+        bin_dataset.to_root(root_path)
+        reopened_root = Dataset.from_root(root_path)
+        _assert_datasets_close(bin_dataset, reopened_root)
+
+
 def test_dataset_bootstrap() -> None:
     dataset = Dataset(
         [
