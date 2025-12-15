@@ -51,5 +51,8 @@ jobs:
       - name: Install Just
         uses: taiki-e/install-action@just
 
-      - name: Run cargo-hack checks/tests
-        run: just hack
+      - name: Run cargo-hack check
+        run: just hack-check
+
+      - name: Run cargo-hack tests
+        run: just hack-test
