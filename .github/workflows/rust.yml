@@ -54,5 +54,5 @@ jobs:
       - name: Run cargo-hack check
         run: just hack-check
 
-      - name: Run cargo-hack tests
-        run: just hack-test
+      - name: Run tests
+        run: just test
