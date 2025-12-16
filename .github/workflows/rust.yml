@@ -50,6 +50,8 @@ jobs:
         uses: taiki-e/install-action@cargo-hack
       - name: Install Just
         uses: taiki-e/install-action@just
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Run cargo-hack check
         run: just hack-check
