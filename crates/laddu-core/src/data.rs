@@ -1262,9 +1262,6 @@ impl Dataset {
         let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
         let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
 
-        let weight_values = read_branch_values(&lookup, "weight")?;
-        let n_events = weight_values.len();
-
         struct RootP4Columns {
             px: Vec<f64>,
             py: Vec<f64>,
@@ -1311,6 +1308,30 @@ impl Dataset {
             let values = read_branch_values(&lookup, name)?;
             aux_columns.push(values);
         }
+
+        let n_events = if let Some(first) = p4_columns.first() {
+            first.px.len()
+        } else if let Some(first) = aux_columns.first() {
+            first.len()
+        } else {
+            return Err(LadduError::Custom(
+                "Unable to determine event count; dataset has no four-momentum or auxiliary columns".to_string(),
+            ));
+        };
+
+        let weight_values = match read_branch_values_optional(&lookup, "weight")? {
+            Some(values) => {
+                if values.len() != n_events {
+                    return Err(LadduError::Custom(format!(
+                        "Column 'weight' has {} entries but expected {}",
+                        values.len(),
+                        n_events
+                    )));
+                }
+                values
+            }
+            None => vec![1.0; n_events],
+        };
 
         let mut events = Vec::with_capacity(n_events);
         for row in 0..n_events {
@@ -1709,6 +1730,17 @@ fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> Laddu
     Ok(values)
 }
 
+fn read_branch_values_optional<'a>(
+    lookup: &BranchLookup<'a>,
+    column_name: &str,
+) -> LadduResult<Option<Vec<f64>>> {
+    if lookup.contains_key(column_name) {
+        read_branch_values(lookup, column_name).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 fn read_branch_values_from_candidates<'a>(
     lookup: &BranchLookup<'a>,
     candidates: &[String],
@@ -1838,11 +1870,11 @@ fn component_candidates(name: &str, suffix: &str) -> Vec<String> {
     candidates
 }
 
-fn prepare_float_column_from_candidates<'a>(
+fn find_float_column_from_candidates<'a>(
     batch: &'a RecordBatch,
     candidates: &[String],
     logical_name: &str,
-) -> LadduResult<FloatColumn<'a>> {
+) -> LadduResult<Option<FloatColumn<'a>>> {
     use arrow::datatypes::DataType;
 
     for candidate in candidates {
@@ -1853,13 +1885,15 @@ fn prepare_float_column_from_candidates<'a>(
                         .as_any()
                         .downcast_ref::<Float32Array>()
                         .expect("Column advertised as Float32 but could not be downcast"),
-                )),
+                ))
+                .map(Some),
                 DataType::Float64 => Ok(FloatColumn::F64(
                     column
                         .as_any()
                         .downcast_ref::<Float64Array>()
                         .expect("Column advertised as Float64 but could not be downcast"),
-                )),
+                ))
+                .map(Some),
                 other => {
                     return Err(LadduError::InvalidColumnType {
                         name: candidate.clone(),
@@ -1869,8 +1903,18 @@ fn prepare_float_column_from_candidates<'a>(
             };
         }
     }
-    Err(LadduError::MissingColumn {
-        name: logical_name.to_string(),
+    Ok(None)
+}
+
+fn prepare_float_column_from_candidates<'a>(
+    batch: &'a RecordBatch,
+    candidates: &[String],
+    logical_name: &str,
+) -> LadduResult<FloatColumn<'a>> {
+    find_float_column_from_candidates(batch, candidates, logical_name)?.ok_or_else(|| {
+        LadduError::MissingColumn {
+            name: logical_name.to_string(),
+        }
     })
 }
 
@@ -1890,7 +1934,8 @@ fn record_batch_to_events(
         .map(|name| prepare_float_column(batch_ref, name))
         .collect::<Result<_, _>>()?;
 
-    let weight_column = prepare_float_column(batch_ref, "weight")?;
+    let weight_column =
+        find_float_column_from_candidates(batch_ref, &["weight".to_string()], "weight")?;
 
     let mut events = Vec::with_capacity(batch_ref.num_rows());
     for row in 0..batch_ref.num_rows() {
@@ -1911,7 +1956,10 @@ fn record_batch_to_events(
         let event = EventData {
             p4s,
             aux,
-            weight: weight_column.value(row),
+            weight: weight_column
+                .as_ref()
+                .map(|column| column.value(row))
+                .unwrap_or(1.0),
         };
         events.push(Arc::new(event));
     }

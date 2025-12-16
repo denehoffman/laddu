@@ -332,7 +332,7 @@ The resulting unpolarized moments are shown below:
 
 # Data Format
 
-`laddu` focuses on a *column* layout rather than a specific file container. Each particle is represented by four floating-point columns (``_px``, ``_py``, ``_pz``, ``_e``), auxiliary scalars keep their explicit names (e.g. ``pol_magnitude``), and an optional ``weight`` column stores per-event weights. As long as those columns exist, the physical storage format may vary. Today, Parquet is the preferred container because it is small, language-agnostic, and easy to stream, but the Rust core can also read ROOT TTrees via [`oxyroot`](https://github.com/m-dupont/oxyroot), and the Python bindings add an AmpTools-aware backend on top of `uproot`.
+`laddu` focuses on a *column* layout rather than a specific file container. Each particle is represented by four floating-point columns (``_px``, ``_py``, ``_pz``, ``_e``), auxiliary scalars keep their explicit names (e.g. ``pol_magnitude``), and an optional ``weight`` column stores per-event weights. As long as those columns exist, the physical storage format may vary. Today, Parquet is the preferred container because it is small, language-agnostic, and easy to stream, but the Rust core can also read ROOT TTrees via [`oxyroot`](https://github.com/m-dupont/oxyroot), and the Python bindings add an AmpTools-aware backend on top of `uproot`. When the ``weight`` column is omitted, both the Rust and Python loaders fill it with ones so that unweighted samples continue to work without any extra preprocessing.
 
 For example, the following columns describe a dataset with four particles, the first of which is a polarized photon beam as in the GlueX experiment:
 
