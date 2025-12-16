@@ -1873,27 +1873,24 @@ fn component_candidates(name: &str, suffix: &str) -> Vec<String> {
 fn find_float_column_from_candidates<'a>(
     batch: &'a RecordBatch,
     candidates: &[String],
-    logical_name: &str,
 ) -> LadduResult<Option<FloatColumn<'a>>> {
     use arrow::datatypes::DataType;
 
     for candidate in candidates {
         if let Some(column) = batch.column_by_name(candidate) {
             return match column.data_type() {
-                DataType::Float32 => Ok(FloatColumn::F32(
+                DataType::Float32 => Ok(Some(FloatColumn::F32(
                     column
                         .as_any()
                         .downcast_ref::<Float32Array>()
                         .expect("Column advertised as Float32 but could not be downcast"),
-                ))
-                .map(Some),
-                DataType::Float64 => Ok(FloatColumn::F64(
+                ))),
+                DataType::Float64 => Ok(Some(FloatColumn::F64(
                     column
                         .as_any()
                         .downcast_ref::<Float64Array>()
                         .expect("Column advertised as Float64 but could not be downcast"),
-                ))
-                .map(Some),
+                ))),
                 other => {
                     return Err(LadduError::InvalidColumnType {
                         name: candidate.clone(),
@@ -1911,10 +1908,8 @@ fn prepare_float_column_from_candidates<'a>(
     candidates: &[String],
     logical_name: &str,
 ) -> LadduResult<FloatColumn<'a>> {
-    find_float_column_from_candidates(batch, candidates, logical_name)?.ok_or_else(|| {
-        LadduError::MissingColumn {
-            name: logical_name.to_string(),
-        }
+    find_float_column_from_candidates(batch, candidates)?.ok_or_else(|| LadduError::MissingColumn {
+        name: logical_name.to_string(),
     })
 }
 
@@ -1934,8 +1929,7 @@ fn record_batch_to_events(
         .map(|name| prepare_float_column(batch_ref, name))
         .collect::<Result<_, _>>()?;
 
-    let weight_column =
-        find_float_column_from_candidates(batch_ref, &["weight".to_string()], "weight")?;
+    let weight_column = find_float_column_from_candidates(batch_ref, &["weight".to_string()])?;
 
     let mut events = Vec::with_capacity(batch_ref.num_rows());
     for row in 0..batch_ref.num_rows() {

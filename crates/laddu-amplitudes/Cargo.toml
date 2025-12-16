@@ -17,7 +17,6 @@ laddu-python = { workspace = true, optional = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 fastrand-contrib = { workspace = true }
-ganesh = { workspace = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 pyo3 = { workspace = true, features = [
