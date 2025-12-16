@@ -52,6 +52,8 @@ jobs:
         uses: taiki-e/install-action@just
       - name: Install nextest
         uses: taiki-e/install-action@nextest
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
 
       - name: Run cargo-hack check
         run: just hack-check
