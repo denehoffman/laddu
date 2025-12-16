@@ -106,12 +106,16 @@ jobs:
         platform:
           - runner: windows-latest
             target: x64
+            python_arch: x64
+          - runner: windows-11-arm
+            target: aarch64
+            python_arch: arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-          architecture: ${{ matrix.platform.target }}
+          architecture: ${{ matrix.platform.python_arch }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -121,7 +125,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.13t
-          architecture: ${{ matrix.platform.target }}
+          architecture: ${{ matrix.platform.python_arch }}
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -230,12 +234,16 @@ jobs:
         platform:
           - runner: windows-latest
             target: x64
+            python_arch: x64
+          - runner: windows-11-arm
+            target: aarch64
+            python_arch: arm64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
-          architecture: ${{ matrix.platform.target }}
+          architecture: ${{ matrix.platform.python_arch }}
       - uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -246,7 +254,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.13t
-          architecture: ${{ matrix.platform.target }}
+          architecture: ${{ matrix.platform.python_arch }}
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
