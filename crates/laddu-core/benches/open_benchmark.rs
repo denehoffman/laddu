@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use laddu_core::data::{Dataset, DatasetReadOptions};
 
 fn open_data_benchmark(c: &mut Criterion) {
-    c.bench_function("from_parquet benchmark", |b| {
+    c.bench_function("open benchmark", |b| {
         b.iter(|| {
             let p4_names = ["beam", "proton", "kshort1", "kshort2"];
             let aux_names = ["pol_magnitude", "pol_angle"];

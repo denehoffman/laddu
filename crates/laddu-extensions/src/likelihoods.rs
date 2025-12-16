@@ -128,8 +128,8 @@ impl NLL {
     }
 
     /// Total number of parameters.
-    pub fn n_params(&self) -> usize {
-        self.data_evaluator.n_params()
+    pub fn n_parameters(&self) -> usize {
+        self.data_evaluator.n_parameters()
     }
 
     /// Return a new [`NLL`] with the given parameter fixed to a value.
@@ -1598,8 +1598,8 @@ impl PyNLL {
     }
     /// Total number of parameters
     #[getter]
-    fn n_params(&self) -> usize {
-        self.0.n_params()
+    fn n_parameters(&self) -> usize {
+        self.0.n_parameters()
     }
     /// Return a new NLL with the given parameter fixed
     fn fix(&self, name: &str, value: f64) -> PyResult<PyNLL> {

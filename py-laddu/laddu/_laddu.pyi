@@ -1,159 +1,168 @@
-from pathlib import Path
-from typing import Any, Iterator, Sequence
+from laddu.amplitudes import (
+    Evaluator,
+    Expression,
+    One,
+    ParameterLike,
+    TestAmplitude,
+    Zero,
+    constant,
+    expr_product,
+    expr_sum,
+    parameter,
+)
+from laddu.amplitudes.breit_wigner import BreitWigner
+from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from laddu.amplitudes.kmatrix import (
+    KopfKMatrixA0,
+    KopfKMatrixA2,
+    KopfKMatrixF0,
+    KopfKMatrixF2,
+    KopfKMatrixPi1,
+    KopfKMatrixRho,
+)
+from laddu.amplitudes.phase_space import PhaseSpaceFactor
+from laddu.amplitudes.piecewise import (
+    PiecewiseComplexScalar,
+    PiecewisePolarComplexScalar,
+    PiecewiseScalar,
+)
+from laddu.amplitudes.ylm import Ylm
+from laddu.amplitudes.zlm import PolPhase, Zlm
+from laddu.data import BinnedDataset, Dataset, Event
+from laddu.experimental import BinnedGuideTerm, Regularizer
+from laddu.extensions import (
+    NLL,
+    AutocorrelationTerminator,
+    ControlFlow,
+    EnsembleStatus,
+    LikelihoodEvaluator,
+    LikelihoodExpression,
+    LikelihoodOne,
+    LikelihoodScalar,
+    LikelihoodZero,
+    MCMCSummary,
+    MinimizationStatus,
+    MinimizationSummary,
+    StochasticNLL,
+    Swarm,
+    SwarmParticle,
+    Walker,
+    integrated_autocorrelation_times,
+    likelihood_product,
+    likelihood_sum,
+)
+from laddu.utils.variables import (
+    Angles,
+    CosTheta,
+    Mandelstam,
+    Mass,
+    Phi,
+    PolAngle,
+    Polarization,
+    PolMagnitude,
+    Topology,
+    VariableExpression,
+)
+from laddu.utils.vectors import Vec3, Vec4
 
-def version() -> str: ...
-def available_parallelism() -> int: ...
+__all__ = [
+    'NLL',
+    'Angles',
+    'AutocorrelationTerminator',
+    'BinnedDataset',
+    'BinnedGuideTerm',
+    'BreitWigner',
+    'ComplexScalar',
+    'ControlFlow',
+    'CosTheta',
+    'Dataset',
+    'EnsembleStatus',
+    'Evaluator',
+    'Event',
+    'Expression',
+    'KopfKMatrixA0',
+    'KopfKMatrixA2',
+    'KopfKMatrixF0',
+    'KopfKMatrixF2',
+    'KopfKMatrixPi1',
+    'KopfKMatrixRho',
+    'LikelihoodEvaluator',
+    'LikelihoodExpression',
+    'LikelihoodOne',
+    'LikelihoodScalar',
+    'LikelihoodZero',
+    'MCMCSummary',
+    'Mandelstam',
+    'Mass',
+    'MinimizationStatus',
+    'MinimizationSummary',
+    'One',
+    'ParameterLike',
+    'PhaseSpaceFactor',
+    'Phi',
+    'PiecewiseComplexScalar',
+    'PiecewisePolarComplexScalar',
+    'PiecewiseScalar',
+    'PolAngle',
+    'PolMagnitude',
+    'PolPhase',
+    'PolarComplexScalar',
+    'Polarization',
+    'Regularizer',
+    'Scalar',
+    'StochasticNLL',
+    'Swarm',
+    'SwarmParticle',
+    'TestAmplitude',
+    'Topology',
+    'VariableExpression',
+    'Vec3',
+    'Vec4',
+    'Walker',
+    'Ylm',
+    'Zero',
+    'Zlm',
+    'available_parallelism',
+    'constant',
+    'expr_product',
+    'expr_sum',
+    'finalize_mpi',
+    'get_rank',
+    'get_size',
+    'integrated_autocorrelation_times',
+    'is_mpi_available',
+    'is_root',
+    'likelihood_product',
+    'likelihood_sum',
+    'parameter',
+    'use_mpi',
+    'using_mpi',
+    'version',
+]
 
-class Evaluator: ...
-class Expression: ...
-class ParameterLike: ...
+def version() -> str:
+    """Return the version string of the loaded laddu backend."""
 
-def TestAmplitude(name: str, re: ParameterLike, im: ParameterLike) -> Expression: ...
-def One() -> Expression: ...
-def Zero() -> Expression: ...
-def expr_product(amplitudes: Sequence[Expression]) -> Expression: ...
-def expr_sum(amplitudes: Sequence[Expression]) -> Expression: ...
-def constant(name: str, value: float) -> ParameterLike: ...
-def parameter(name: str, value: float | None = ...) -> ParameterLike: ...
-def BreitWigner(*args: Any, **kwargs: Any) -> Expression: ...
-def ComplexScalar(*args: Any, **kwargs: Any) -> Expression: ...
-def PolarComplexScalar(*args: Any, **kwargs: Any) -> Expression: ...
-def Scalar(*args: Any, **kwargs: Any) -> Expression: ...
-def PhaseSpaceFactor(*args: Any, **kwargs: Any) -> Expression: ...
-def Ylm(*args: Any, **kwargs: Any) -> Expression: ...
-def PolPhase(*args: Any, **kwargs: Any) -> Expression: ...
-def Zlm(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixA0(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixA2(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixF0(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixF2(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixPi1(*args: Any, **kwargs: Any) -> Expression: ...
-def KopfKMatrixRho(*args: Any, **kwargs: Any) -> Expression: ...
-def PiecewiseScalar(*args: Any, **kwargs: Any) -> Expression: ...
-def PiecewiseComplexScalar(*args: Any, **kwargs: Any) -> Expression: ...
-def PiecewisePolarComplexScalar(*args: Any, **kwargs: Any) -> Expression: ...
+def available_parallelism() -> int:
+    """Return the number of logical CPU cores available to laddu."""
 
-class VariableExpression: ...
-class BinnedDataset: ...
+def use_mpi(*, trigger: bool = True) -> None:
+    """Enable the MPI backend if the extension was compiled with MPI support."""
 
-class Dataset(Sequence[Event]):
-    p4_names: list[str]
-    aux_names: list[str]
+def finalize_mpi() -> None:
+    """Finalize and tear down the MPI runtime."""
 
-    def __init__(
-        self,
-        events: list[Event],
-        *,
-        p4_names: list[str] | None = ...,
-        aux_names: list[str] | None = ...,
-        aliases: dict[str, str | list[str]] | None = ...,
-    ) -> None: ...
-    def __len__(self) -> int: ...
-    def __iter__(self) -> Iterator[Event]: ...
-    @staticmethod
-    def from_parquet(
-        path: str | Path,
-        *,
-        p4s: list[str] | None = ...,
-        aux: list[str] | None = ...,
-        aliases: dict[str, str | list[str]] | None = ...,
-    ) -> Dataset: ...
-    @staticmethod
-    def from_root(
-        path: str | Path,
-        *,
-        tree: str | None = ...,
-        p4s: list[str] | None = ...,
-        aux: list[str] | None = ...,
-        aliases: dict[str, str | list[str]] | None = ...,
-    ) -> Dataset: ...
-    @staticmethod
-    def from_amptools(
-        path: str | Path,
-        *,
-        tree: str | None = ...,
-        pol_in_beam: bool = ...,
-        pol_angle: float | None = ...,
-        pol_magnitude: float | None = ...,
-        pol_magnitude_name: str = ...,
-        pol_angle_name: str = ...,
-        num_entries: int | None = ...,
-    ) -> Dataset: ...
-    def to_parquet(
-        self,
-        path: str | Path,
-        *,
-        chunk_size: int | None = ...,
-        precision: str = ...,
-    ) -> None: ...
-    def to_root(
-        self,
-        path: str | Path,
-        *,
-        tree: str | None = ...,
-        chunk_size: int | None = ...,
-        precision: str = ...,
-    ) -> None: ...
+def using_mpi() -> bool:
+    """Return ``True`` if the MPI backend is currently active."""
 
-class Event:
-    p4s: Any
-    aux: Any
-    weight: float
+def is_mpi_available() -> bool:
+    """Return ``True`` when the extension was built with MPI support."""
 
-    def __init__(
-        self,
-        p4s: list[Any],
-        aux: list[float],
-        weight: float,
-        *,
-        p4_names: list[str] | None = ...,
-        aux_names: list[str] | None = ...,
-        aliases: dict[str, str | list[str]] | None = ...,
-    ) -> None: ...
+def is_root() -> bool:
+    """Return ``True`` when the current MPI rank is the root process."""
 
-class NLL: ...
-class AutocorrelationTerminator: ...
-class ControlFlow: ...
-class EnsembleStatus: ...
-class LikelihoodEvaluator: ...
-class LikelihoodExpression: ...
-class LikelihoodOne: ...
-class LikelihoodScalar: ...
-class LikelihoodZero: ...
-class MCMCObserver: ...
-class MCMCSummary: ...
-class MCMCTerminator: ...
-class MinimizationObserver: ...
-class MinimizationStatus: ...
-class MinimizationSummary: ...
-class MinimizationTerminator: ...
-class StochasticNLL: ...
-class Swarm: ...
-class SwarmParticle: ...
-class Walker: ...
+def get_rank() -> int:
+    """Return the MPI rank of the current process (``0`` when MPI is disabled)."""
 
-def integrated_autocorrelation_times(*args: Any, **kwargs: Any) -> Any: ...
-def likelihood_product(*args: Any, **kwargs: Any) -> LikelihoodExpression: ...
-def likelihood_sum(*args: Any, **kwargs: Any) -> LikelihoodExpression: ...
-
-class Angles: ...
-class CosTheta: ...
-class Mandelstam: ...
-class Mass: ...
-class Phi: ...
-class PolAngle: ...
-class PolMagnitude: ...
-class Polarization: ...
-class Topology: ...
-class Vec3: ...
-class Vec4: ...
-
-def BinnedGuideTerm(*args: Any, **kwargs: Any) -> LikelihoodExpression: ...
-def Regularizer(*args: Any, **kwargs: Any) -> LikelihoodExpression: ...
-def finalize_mpi() -> None: ...
-def get_rank() -> int: ...
-def get_size() -> int: ...
-def is_mpi_available() -> bool: ...
-def is_root() -> bool: ...
-def use_mpi(trigger: bool = ...) -> None: ...
-def using_mpi() -> bool: ...
+def get_size() -> int:
+    """Return the total number of MPI processes (``1`` when MPI is disabled)."""

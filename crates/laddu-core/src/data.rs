@@ -5,6 +5,7 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use auto_ops::impl_op_ex;
+use parking_lot::Mutex;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
@@ -2116,14 +2117,14 @@ enum ColumnKind {
 }
 
 struct ColumnIterator<T> {
-    fetcher: Arc<std::sync::Mutex<SharedEventFetcher>>,
+    fetcher: Arc<Mutex<SharedEventFetcher>>,
     index: usize,
     kind: ColumnKind,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> ColumnIterator<T> {
-    fn new(fetcher: Arc<std::sync::Mutex<SharedEventFetcher>>, kind: ColumnKind) -> Self {
+    fn new(fetcher: Arc<Mutex<SharedEventFetcher>>, kind: ColumnKind) -> Self {
         Self {
             fetcher,
             index: 0,
@@ -2140,7 +2141,7 @@ where
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut fetcher = self.fetcher.lock().expect("event fetcher lock poisoned");
+        let mut fetcher = self.fetcher.lock();
         let event = fetcher.event_for_index(self.index)?;
         self.index += 1;
 
@@ -2164,27 +2165,15 @@ fn build_root_column_iterators<T>(
 where
     T: FromF64,
 {
-    let fetcher = Arc::new(std::sync::Mutex::new(SharedEventFetcher::new(
+    let fetcher = Arc::new(Mutex::new(SharedEventFetcher::new(
         dataset,
         world,
         total,
         branch_count,
     )));
 
-    let p4_names: Vec<String> = fetcher
-        .lock()
-        .expect("event fetcher lock poisoned")
-        .dataset
-        .metadata
-        .p4_names
-        .clone();
-    let aux_names: Vec<String> = fetcher
-        .lock()
-        .expect("event fetcher lock poisoned")
-        .dataset
-        .metadata
-        .aux_names
-        .clone();
+    let p4_names: Vec<String> = fetcher.lock().dataset.metadata.p4_names.clone();
+    let aux_names: Vec<String> = fetcher.lock().dataset.metadata.aux_names.clone();
 
     let mut iterators = Vec::new();
 

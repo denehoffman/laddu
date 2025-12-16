@@ -636,7 +636,7 @@ impl Expression {
     }
 
     /// Total number of parameters.
-    pub fn n_params(&self) -> usize {
+    pub fn n_parameters(&self) -> usize {
         self.registry.resources.n_parameters()
     }
 
@@ -770,6 +770,7 @@ impl Expression {
         Self::unary_op(self, ExpressionNode::NormSqr)
     }
 
+    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
     fn write_tree(
         &self,
         t: &ExpressionNode,
@@ -903,7 +904,7 @@ impl Evaluator {
     }
 
     /// Total number of parameters.
-    pub fn n_params(&self) -> usize {
+    pub fn n_parameters(&self) -> usize {
         self.resources.read().n_parameters()
     }
 

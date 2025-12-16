@@ -128,8 +128,8 @@ impl PyExpression {
     }
     /// Total number of parameters
     #[getter]
-    fn n_params(&self) -> usize {
-        self.0.n_params()
+    fn n_parameters(&self) -> usize {
+        self.0.n_parameters()
     }
     /// Load an Expression by precalculating each term over the given Dataset
     ///
@@ -327,8 +327,8 @@ impl PyEvaluator {
     }
     /// Total number of parameters
     #[getter]
-    fn n_params(&self) -> usize {
-        self.0.n_params()
+    fn n_parameters(&self) -> usize {
+        self.0.n_parameters()
     }
     /// Return a new Evaluator with the given parameter fixed
     fn fix(&self, name: &str, value: f64) -> PyResult<PyEvaluator> {
