@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/denehoffman/laddu/releases/tag/py-laddu-cpu-v0.11.0) - 2025-12-17
+
+### Added
+
+- add intermediate `Model` and serialization updates
+- change the way NLLs are constructed to allow the user to specify a generated dataset
+- add `LadduError` struct and work in proper error forwarding for reading data and registering `Amplitude`s
+- use `AsRef` generics to allow more versatile `Variable` construction
+- first commit
+
+### Fixed
+
+- fixed python examples and readme paths
+- modify tests and workflows to new structure
+
+### Other
+
+- New file format ([#90](https://github.com/denehoffman/laddu/pull/90))
+- update moment analysis tutorial and example
+- finalize conversion of eps->aux in data formatting
+- update all documentation to include MPI modules
+- update the `Future Plans` section of docs (long overdue)
+- update README to include a section about MCMC
+- correct docs to reflect some recent changes in how NLLs are calculated
+- fix broken link
+- add RTDs documentation badge to README and link to repo in docs
+- fix data format which said that `eps` vectors have a "p" in their column names
+- update README with codspeed badge
+- update plot and add output txt file for example_1 and reorganize directory structure
+- some stylistic changes to the README
+- update README.md to include the first python example
+- update minimization example in README.md
+- change logo to wordmark
+
 ## [0.9.4](https://github.com/denehoffman/laddu/compare/py-laddu-v0.9.3...py-laddu-v0.9.4) - 2025-10-10
 
 ### Other

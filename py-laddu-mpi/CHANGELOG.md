@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.11.0...py-laddu-mpi-v0.11.1) - 2025-12-17
+
+### Other
+
+- missed a uv.lock
+- New file format ([#90](https://github.com/denehoffman/laddu/pull/90))
+
 ## [0.9.4](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.9.3...py-laddu-mpi-v0.9.4) - 2025-10-10
 
 ### Other
