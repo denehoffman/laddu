@@ -176,7 +176,7 @@ docker-shell:
     exec "${cmd[@]}"
 
 # Sync laddu's pyproject.toml's version with workspace since it isn't a Rust crate
-sync-versions:
+sync-versions: create-venv
     #!/usr/bin/env -S uv run --script
     # /// script
     # requires-python = ">=3.11"
