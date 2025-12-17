@@ -23,12 +23,12 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-version = "0.11.0"
-description = "High-level Python bindings for laddu"
+version = "0.12.0"
+description = "Python bindings for laddu"
 license = "MIT"
 readme = "README.md"
 dependencies = [
-  "laddu-cpu == 0.11.0",
+  "laddu-cpu == 0.12.0",
   "numpy",
 ]
 
@@ -41,7 +41,7 @@ pandas = ["pandas"]
 polars = ["polars"]
 tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
 uproot = ["uproot"]
-mpi = ["laddu-mpi == 0.11.0"]
+mpi = ["laddu-mpi == 0.12.0"]
 
 [tool.maturin]
 bindings = "pyo3"
@@ -50,7 +50,7 @@ profile = "dist-release"
 sdist-include = ['../Cargo.lock']
 
 [tool.ruff]
-target-version = "py37"
+target-version = "py38"
 indent-width = 4
 line-length = 90
 fix = true
