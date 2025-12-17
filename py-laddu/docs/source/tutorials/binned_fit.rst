@@ -21,12 +21,14 @@ Like before, we begin by loading each dataset, but this time we can chain a meth
 
    import laddu as ld
 
-   res_mass = ld.Mass([2, 3])
+   res_mass = ld.Mass(['kshort1', 'kshort2'])
    bins = 50
    mass_range = (1.0, 2.0)
 
-   data_ds = ld.open("data.parquet")
-   accmc_ds = ld.open("accmc.parquet")
+   p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+   aux_columns = ['pol_magnitude', 'pol_angle']
+   data_ds = ld.Dataset.from_parquet("data.parquet", p4s=p4_columns, aux=aux_columns)
+   accmc_ds = ld.Dataset.from_parquet("accmc.parquet", p4s=p4_columns, aux=aux_columns)
    # We'll want to retain the unbinned datasets for plotting later
 
    binned_data_ds = data_ds.bin_by(res_mass, bins, mass_range)
@@ -44,26 +46,26 @@ where the terms with particle names in square brackets still represent the produ
 
 .. code-block:: python
 
-   manager = ld.Manager()
-   angles = ld.Angles(0, [1], [2], [2, 3])
-   polarization = ld.Polarization(0, [1], 0)
+   topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+   angles = ld.Angles(topology, 'kshort1')
+   polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
 
-   z00p = manager.register(ld.Zlm("Z00+", 0, 0, "+", angles, polarization))
-   z22p = manager.register(ld.Zlm("Z22+", 2, 2, "+", angles, polarization))
+   z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
+   z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)
 
-   s0p = manager.register(ld.Scalar("S0+", ld.parameter("Re[S0+]")))
-   d2p = manager.register(ld.ComplexScalar("D2+", ld.parameter("Re[D2+]"), ld.parameter("Im[D2+]")))
+   s0p = ld.Scalar("S0+", ld.parameter("Re[S0+]"))
+   d2p = ld.ComplexScalar("D2+", ld.parameter("Re[D2+]"), ld.parameter("Im[D2+]"))
 
-   positive_real_sum = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr() 
-   positive_imag_sum = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr() 
-   model = manager.model(positive_real_sum + positive_imag_sum)
+   positive_real_sum = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
+   positive_imag_sum = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
+   model = positive_real_sum + positive_imag_sum
 
 Now, rather than construct a single ``NLL`` for the entire dataset, we instead make one for each bin:
 
 .. code-block:: python
 
    nlls = [ld.NLL(model, binned_data_ds[ibin], binned_accmc_ds[ibin]) for ibin in range(bins)]
-   
+
    binned_statuses = []
    for nll in nlls:
       binned_statuses.append(nll.minimize([100.0, 100.0, 100.0]))
@@ -105,7 +107,7 @@ Then, plotting would just involve something like ``plt.hist(res_mass.value_on(so
        tot_counts.append(sum(nlls[ibin].project(binned_statuses[ibin].x)))
        s0p_counts.append(sum(nlls[ibin].project_with(binned_statuses[ibin].x, ["S0+", "Z00+"])))
        d2p_counts.append(sum(nlls[ibin].project_with(binned_statuses[ibin].x, ["D2+", "Z22+"])))
-   
+
 We now have some stuff that looks like the *output* of ``np.histogram``, but we need to turn this into a plot. We can either use ``plt.stairs(counts, edges)`` or ``plt.hist(edges[:-1], edges, weights=counts)`` to do this, although the first option will be used here for simplicity.
 
 .. code-block:: python
@@ -170,7 +172,7 @@ Another useful plot to make is the phase difference between waves. Here we only 
    phase_ax = ax.twinx()
    centers = (edges[1:] + edges[:-1]) / 2
    phase_ax.plot(centers, sd_phase, color='m', label='$S-D$ Phase')
- 
+
    ax.legend()
    phase_ax.legend()
    ax.set_ylim(0)

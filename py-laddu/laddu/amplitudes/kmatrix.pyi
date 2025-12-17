@@ -1,6 +1,6 @@
 from typing import Literal, overload
 
-from laddu.amplitudes import Amplitude, ParameterLike
+from laddu.amplitudes import Expression, ParameterLike
 from laddu.utils.variables import Mass
 
 @overload
@@ -17,7 +17,7 @@ def KopfKMatrixF0(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixF0(
     name: str,
@@ -32,7 +32,7 @@ def KopfKMatrixF0(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixF2(
     name: str,
@@ -46,7 +46,7 @@ def KopfKMatrixF2(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixF2(
     name: str,
@@ -60,7 +60,7 @@ def KopfKMatrixF2(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixA0(
     name: str,
@@ -72,7 +72,7 @@ def KopfKMatrixA0(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixA0(
     name: str,
@@ -84,7 +84,7 @@ def KopfKMatrixA0(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixA2(
     name: str,
@@ -96,7 +96,7 @@ def KopfKMatrixA2(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixA2(
     name: str,
@@ -108,7 +108,7 @@ def KopfKMatrixA2(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixRho(
     name: str,
@@ -120,7 +120,7 @@ def KopfKMatrixRho(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixRho(
     name: str,
@@ -132,7 +132,7 @@ def KopfKMatrixRho(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixPi1(
     name: str,
@@ -141,7 +141,7 @@ def KopfKMatrixPi1(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def KopfKMatrixPi1(
     name: str,
@@ -150,4 +150,4 @@ def KopfKMatrixPi1(
     mass: Mass,
     *,
     seed: int | None = None,
-) -> Amplitude: ...
+) -> Expression: ...

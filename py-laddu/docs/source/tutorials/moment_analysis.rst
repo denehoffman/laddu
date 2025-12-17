@@ -52,9 +52,9 @@ To implement this in code, we could imagine a function like
 
    def get_moment(data: ld.Dataset, *, l: int, m: int) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
-       manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3]))) # indices depend on the dataset structure
-       model = manager.model(ylm.conj()) # take the conjugate
+       topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+       ylm = ld.Ylm('ylm', l, m, ld.Angles(topology, 'kshort1'))
+       model = ylm.conj() # take the conjugate
        evaluator = model.load(data)
        values = evaluator.evaluate([]) # no free parameters
        weights = data.weights # we can also include weighted events here
@@ -79,7 +79,7 @@ Theory (again)
 
 When we include acceptance, we find that the spherical harmonics take the form
 
-.. math:: 
+.. math::
 
    H^{\text{meas}}(L, M) &= \frac{1}{N_L} \int_{4\pi} \text{d}\Omega I^{\text{meas}}(\Omega) Y_L^{M*}(\Omega) \\
    &= \frac{1}{N_L} \int_{4\pi} \text{d}\Omega I(\Omega) \eta(\Omega) Y_L^{M*}(\Omega)
@@ -122,10 +122,10 @@ Again, we can write this in code in a rather simple way:
    ) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        n_l_prime = np.sqrt((2 * l_prime + 1) / (4 * np.pi))
-       manager = ld.Manager()
-       ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
-       ylm_prime = manager.register(ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles(0, [1], [2], [2, 3])))
-       model = manager.model(ylm.conj() * ylm_prime.real())
+       topo = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+       ylm = ld.Ylm('ylm', l, m, ld.Angles(topo, 'kshort1'))
+       ylm_prime = ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'))
+       model = ylm.conj() * ylm_prime.real()
        evaluator = model.load(accmc)
        values = evaluator.evaluate([]) # no free parameters
        weights = accmc.weights # only needed if the accepted MC is weighted

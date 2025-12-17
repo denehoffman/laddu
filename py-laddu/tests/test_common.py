@@ -5,12 +5,15 @@ from laddu import (
     ComplexScalar,
     Dataset,
     Event,
-    Manager,
     PolarComplexScalar,
     Scalar,
     Vec3,
     parameter,
 )
+
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:
@@ -21,60 +24,50 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_scalar_creation_and_evaluation() -> None:
-    manager = Manager()
     amp = Scalar('test_scalar', parameter('test_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([2.5])
     assert result[0].real == 2.5
     assert result[0].imag == 0.0
 
 
 def test_scalar_gradient() -> None:
-    manager = Manager()
     amp = Scalar('test_scalar', parameter('test_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    expr = aid.norm_sqr()
-    model = manager.model(expr)
-    evaluator = model.load(dataset)
+    expr = amp.norm_sqr()
+    evaluator = expr.load(dataset)
     gradient = evaluator.evaluate_gradient([2.0])
     assert gradient[0][0].real == 4.0
     assert gradient[0][0].imag == 0.0
 
 
 def test_complex_scalar_creation_and_evaluation() -> None:
-    manager = Manager()
     amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.5, 2.5])
     assert result[0].real == 1.5
     assert result[0].imag == 2.5
 
 
 def test_complex_scalar_gradient() -> None:
-    manager = Manager()
     amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    expr = aid.norm_sqr()
-    model = manager.model(expr)
-    evaluator = model.load(dataset)
+    expr = amp.norm_sqr()
+    evaluator = expr.load(dataset)
     gradient = evaluator.evaluate_gradient([3.0, 4.0])
     assert gradient[0][0].real == 6.0
     assert gradient[0][0].imag == 0.0
@@ -83,12 +76,9 @@ def test_complex_scalar_gradient() -> None:
 
 
 def test_polar_complex_scalar_creation_and_evaluation() -> None:
-    manager = Manager()
     amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
     result = evaluator.evaluate([r, theta])
@@ -97,12 +87,9 @@ def test_polar_complex_scalar_creation_and_evaluation() -> None:
 
 
 def test_polar_complex_scalar_gradient() -> None:
-    manager = Manager()
     amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
     gradient = evaluator.evaluate_gradient([r, theta])

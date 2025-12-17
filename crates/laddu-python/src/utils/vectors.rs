@@ -1,4 +1,4 @@
-use laddu_core::{Float, Vec3, Vec4};
+use laddu_core::{f64, Vec3, Vec4};
 use numpy::PyArray1;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
@@ -15,7 +15,7 @@ pub struct PyVec3(pub Vec3);
 #[pymethods]
 impl PyVec3 {
     #[new]
-    fn new(px: Float, py: Float, pz: Float) -> Self {
+    fn new(px: f64, py: f64, pz: f64) -> Self {
         Self(Vec3::new(px, py, pz))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -78,10 +78,10 @@ impl PyVec3 {
             Err(PyTypeError::new_err("Unsupported operand type for -"))
         }
     }
-    fn __mul__(&self, other: Float) -> Self {
+    fn __mul__(&self, other: f64) -> Self {
         Self(self.0 * other)
     }
-    fn __rmul__(&self, other: Float) -> Self {
+    fn __rmul__(&self, other: f64) -> Self {
         Self(self.0 * other)
     }
     fn __neg__(&self) -> PyResult<Self> {
@@ -99,7 +99,7 @@ impl PyVec3 {
     /// float
     ///     The dot product of this vector and `other`
     ///
-    pub fn dot(&self, other: Self) -> Float {
+    pub fn dot(&self, other: Self) -> f64 {
         self.0.dot(&other.0)
     }
     /// Calculate the cross product of two Vec3s.
@@ -122,7 +122,7 @@ impl PyVec3 {
     /// .. math:: |\vec{p}| = \sqrt{p_x^2 + p_y^2 + p_z^2}
     ///
     #[getter]
-    fn mag(&self) -> Float {
+    fn mag(&self) -> f64 {
         self.0.mag()
     }
     /// The squared magnitude of the 3-vector
@@ -130,7 +130,7 @@ impl PyVec3 {
     /// .. math:: |\vec{p}|^2 = p_x^2 + p_y^2 + p_z^2
     ///
     #[getter]
-    fn mag2(&self) -> Float {
+    fn mag2(&self) -> f64 {
         self.0.mag2()
     }
     /// The cosine of the polar angle of this vector in spherical coordinates
@@ -140,7 +140,7 @@ impl PyVec3 {
     /// .. math:: \cos\theta = \frac{p_z}{|\vec{p}|}
     ///
     #[getter]
-    fn costheta(&self) -> Float {
+    fn costheta(&self) -> f64 {
         self.0.costheta()
     }
     /// The polar angle of this vector in spherical coordinates
@@ -150,7 +150,7 @@ impl PyVec3 {
     /// .. math:: \theta = \arccos\left(\frac{p_z}{|\vec{p}|}\right)
     ///
     #[getter]
-    fn theta(&self) -> Float {
+    fn theta(&self) -> f64 {
         self.0.theta()
     }
     /// The azimuthal angle of this vector in spherical coordinates
@@ -160,7 +160,7 @@ impl PyVec3 {
     /// .. math:: \varphi = \text{sgn}(p_y)\arccos\left(\frac{p_x}{\sqrt{p_x^2 + p_y^2}}\right)
     ///
     #[getter]
-    fn phi(&self) -> Float {
+    fn phi(&self) -> f64 {
         self.0.phi()
     }
     /// The normalized unit vector pointing in the direction of this vector
@@ -176,7 +176,7 @@ impl PyVec3 {
     /// Vec3.x
     ///
     #[getter]
-    fn px(&self) -> Float {
+    fn px(&self) -> f64 {
         self.0.px()
     }
     /// The x-component of this vector
@@ -186,7 +186,7 @@ impl PyVec3 {
     /// Vec3.px
     ///
     #[getter]
-    fn x(&self) -> Float {
+    fn x(&self) -> f64 {
         self.0.x
     }
 
@@ -197,7 +197,7 @@ impl PyVec3 {
     /// Vec3.y
     ///
     #[getter]
-    fn py(&self) -> Float {
+    fn py(&self) -> f64 {
         self.0.py()
     }
     /// The y-component of this vector
@@ -207,7 +207,7 @@ impl PyVec3 {
     /// Vec3.py
     ///
     #[getter]
-    fn y(&self) -> Float {
+    fn y(&self) -> f64 {
         self.0.y
     }
     /// The z-component of this vector
@@ -217,7 +217,7 @@ impl PyVec3 {
     /// Vec3.z
     ///
     #[getter]
-    fn pz(&self) -> Float {
+    fn pz(&self) -> f64 {
         self.0.pz()
     }
     /// The z-component of this vector
@@ -227,7 +227,7 @@ impl PyVec3 {
     /// Vec3.pz
     ///
     #[getter]
-    fn z(&self) -> Float {
+    fn z(&self) -> f64 {
         self.0.z
     }
     /// Convert a 3-vector momentum to a 4-momentum with the given mass.
@@ -246,7 +246,7 @@ impl PyVec3 {
     /// Vec4
     ///     A new 4-momentum with the given mass
     ///
-    fn with_mass(&self, mass: Float) -> PyVec4 {
+    fn with_mass(&self, mass: f64) -> PyVec4 {
         PyVec4(self.0.with_mass(mass))
     }
     /// Convert a 3-vector momentum to a 4-momentum with the given energy.
@@ -261,7 +261,7 @@ impl PyVec3 {
     /// Vec4
     ///     A new 4-momentum with the given energy
     ///
-    fn with_energy(&self, mass: Float) -> PyVec4 {
+    fn with_energy(&self, mass: f64) -> PyVec4 {
         PyVec4(self.0.with_energy(mass))
     }
     /// Convert the 3-vector to a ``numpy`` array.
@@ -271,7 +271,7 @@ impl PyVec3 {
     /// numpy_vec: array_like
     ///     A ``numpy`` array built from the components of this ``Vec3``
     ///
-    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.0.into())
     }
     /// Convert an  array into a 3-vector.
@@ -287,7 +287,7 @@ impl PyVec3 {
     ///     A copy of the input array as a ``laddu`` vector
     ///
     #[staticmethod]
-    fn from_array(array: Vec<Float>) -> Self {
+    fn from_array(array: Vec<f64>) -> Self {
         Self::new(array[0], array[1], array[2])
     }
     fn __repr__(&self) -> String {
@@ -317,7 +317,7 @@ pub struct PyVec4(pub Vec4);
 #[pymethods]
 impl PyVec4 {
     #[new]
-    fn new(px: Float, py: Float, pz: Float, e: Float) -> Self {
+    fn new(px: f64, py: f64, pz: f64, e: f64) -> Self {
         Self(Vec4::new(px, py, pz, e))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
@@ -380,10 +380,10 @@ impl PyVec4 {
             Err(PyTypeError::new_err("Unsupported operand type for -"))
         }
     }
-    fn __mul__(&self, other: Float) -> Self {
+    fn __mul__(&self, other: f64) -> Self {
         Self(self.0 * other)
     }
-    fn __rmul__(&self, other: Float) -> Self {
+    fn __rmul__(&self, other: f64) -> Self {
         Self(self.0 * other)
     }
     fn __neg__(&self) -> PyResult<Self> {
@@ -398,7 +398,7 @@ impl PyVec4 {
     /// Vec4.m
     ///
     #[getter]
-    fn mag(&self) -> Float {
+    fn mag(&self) -> f64 {
         self.0.mag()
     }
     /// The squared magnitude of the 4-vector
@@ -410,7 +410,7 @@ impl PyVec4 {
     /// Vec4.m2
     ///
     #[getter]
-    fn mag2(&self) -> Float {
+    fn mag2(&self) -> f64 {
         self.0.mag2()
     }
     /// The 3-vector part of this 4-vector
@@ -451,50 +451,50 @@ impl PyVec4 {
     /// The energy associated with this vector
     ///
     #[getter]
-    fn e(&self) -> Float {
+    fn e(&self) -> f64 {
         self.0.e()
     }
     /// The t-component of this vector
     ///
     #[getter]
-    fn t(&self) -> Float {
+    fn t(&self) -> f64 {
         self.0.t
     }
     /// The x-component of this vector
     ///
     #[getter]
-    fn px(&self) -> Float {
+    fn px(&self) -> f64 {
         self.0.px()
     }
     /// The x-component of this vector
     ///
     #[getter]
-    fn x(&self) -> Float {
+    fn x(&self) -> f64 {
         self.0.x
     }
 
     /// The y-component of this vector
     ///
     #[getter]
-    fn py(&self) -> Float {
+    fn py(&self) -> f64 {
         self.0.py()
     }
     /// The y-component of this vector
     ///
     #[getter]
-    fn y(&self) -> Float {
+    fn y(&self) -> f64 {
         self.0.y
     }
     /// The z-component of this vector
     ///
     #[getter]
-    fn pz(&self) -> Float {
+    fn pz(&self) -> f64 {
         self.0.pz()
     }
     /// The z-component of this vector
     ///
     #[getter]
-    fn z(&self) -> Float {
+    fn z(&self) -> f64 {
         self.0.z
     }
     /// The 3-momentum part of this 4-momentum
@@ -513,7 +513,7 @@ impl PyVec4 {
     /// Vec4.boost
     ///
     #[getter]
-    fn gamma(&self) -> Float {
+    fn gamma(&self) -> f64 {
         self.0.gamma()
     }
     /// The velocity 3-vector
@@ -538,7 +538,7 @@ impl PyVec4 {
     /// Vec4.mag
     ///
     #[getter]
-    fn m(&self) -> Float {
+    fn m(&self) -> f64 {
         self.0.m()
     }
     /// The square of the invariant mass associated with the four-momentum
@@ -550,7 +550,7 @@ impl PyVec4 {
     /// Vec4.mag2
     ///
     #[getter]
-    fn m2(&self) -> Float {
+    fn m2(&self) -> f64 {
         self.0.m2()
     }
     /// Convert the 4-vector to a `numpy` array.
@@ -560,7 +560,7 @@ impl PyVec4 {
     /// numpy_vec: array_like
     ///     A ``numpy`` array built from the components of this ``Vec4``
     ///
-    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<Float>> {
+    fn to_numpy<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.0.into())
     }
     /// Convert an array into a 4-vector.
@@ -576,7 +576,7 @@ impl PyVec4 {
     ///     A copy of the input array as a ``laddu`` vector
     ///
     #[staticmethod]
-    fn from_array(array: Vec<Float>) -> Self {
+    fn from_array(array: Vec<f64>) -> Self {
         Self::new(array[0], array[1], array[2], array[3])
     }
     fn __str__(&self) -> String {

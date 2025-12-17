@@ -1,22 +1,22 @@
 use serde::{Deserialize, Serialize};
 
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
         functions::{blatt_weisskopf, breakup_momentum},
         variables::{Mass, Variable},
     },
-    Float, LadduError, PI,
+    LadduResult, PI,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
@@ -53,7 +53,7 @@ impl BreitWigner {
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
         resonance_mass: &Mass,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             mass,
@@ -65,19 +65,26 @@ impl BreitWigner {
             daughter_2_mass: daughter_2_mass.clone(),
             resonance_mass: resonance_mass.clone(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for BreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
-        self.pid_mass = resources.register_parameter(&self.mass);
-        self.pid_width = resources.register_parameter(&self.width);
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+        self.pid_mass = resources.register_parameter(&self.mass)?;
+        self.pid_width = resources.register_parameter(&self.width)?;
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        Ok(())
+    }
+
+    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
         let mass = self.resonance_mass.value(event);
         let mass0 = parameters.get(self.pid_mass).abs();
         let width0 = parameters.get(self.pid_width).abs();
@@ -88,17 +95,17 @@ impl Amplitude for BreitWigner {
         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = Float::sqrt(mass0 * width0 / PI);
-        let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex::from(f * n) / d
+        let n = f64::sqrt(mass0 * width0 / PI);
+        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+        Complex64::from(f * n) / d
     }
 
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        event: &Event,
+        event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let mut indices = Vec::with_capacity(2);
         if let ParameterID::Parameter(index) = self.pid_mass {
@@ -134,12 +141,8 @@ impl Amplitude for BreitWigner {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "BreitWigner")]
@@ -151,8 +154,8 @@ pub fn py_breit_wigner(
     daughter_1_mass: &PyMass,
     daughter_2_mass: &PyMass,
     resonance_mass: &PyMass,
-) -> PyAmplitude {
-    PyAmplitude(BreitWigner::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(BreitWigner::new(
         name,
         mass.0,
         width.0,
@@ -160,7 +163,7 @@ pub fn py_breit_wigner(
         &daughter_1_mass.0,
         &daughter_2_mass.0,
         &resonance_mass.0,
-    ))
+    )?))
 }
 
 #[cfg(test)]
@@ -169,57 +172,54 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
 
     #[test]
     fn test_bw_evaluation() {
-        let mut manager = Manager::default();
+        let dataset = Arc::new(test_dataset());
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
             parameter("mass"),
             parameter("width"),
             2,
-            &Mass::new([2]),
-            &Mass::new([3]),
-            &Mass::new([2, 3]),
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+            &daughter_1_mass,
+            &daughter_2_mass,
+            &resonance_mass,
+        )
+        .unwrap();
+        let evaluator = amp.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
-        assert_relative_eq!(result[0].re, 1.45856917, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 1.4107341, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 1.458569174900372);
+        assert_relative_eq!(result[0].im, 1.4107341131495694);
     }
 
     #[test]
     fn test_bw_gradient() {
-        let mut manager = Manager::default();
+        let dataset = Arc::new(test_dataset());
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
             parameter("mass"),
             parameter("width"),
             2,
-            &Mass::new([2]),
-            &Mass::new([3]),
-            &Mass::new([2, 3]),
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
-        dbg!(Mass::new([2, 3]).value_on(&dataset));
+            &daughter_1_mass,
+            &daughter_2_mass,
+            &resonance_mass,
+        )
+        .unwrap();
+        let evaluator = amp.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
-        assert_relative_eq!(result[0][0].re, -2.410585, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, -1.8880913, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][1].re, 1.0467031, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][1].im, 1.3683612, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -2.4105851202988857);
+        assert_relative_eq!(result[0][0].im, -1.8880913749138584);
+        assert_relative_eq!(result[0][1].re, 1.0467031328673773);
+        assert_relative_eq!(result[0][1].im, 1.3683612879088032);
     }
 }

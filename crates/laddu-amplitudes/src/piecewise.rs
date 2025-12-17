@@ -1,18 +1,18 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
+    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
-    Float, LadduError, ScalarID,
+    LadduResult, ScalarID,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyVariable,
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub struct PiecewiseScalar {
     name: String,
     variable: Box<dyn Variable>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     values: Vec<ParameterLike>,
     pids: Vec<ParameterID>,
     bin_index: ScalarID,
@@ -34,9 +34,9 @@ impl PiecewiseScalar {
         name: &str,
         variable: &V,
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
         values: Vec<ParameterLike>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             values.len(),
@@ -51,51 +51,56 @@ impl PiecewiseScalar {
             pids: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for PiecewiseScalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids = self
             .values
             .iter()
             .map(|value| resources.register_parameter(value))
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as Float);
+            cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
         }
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
-            Complex::ZERO
+            Complex64::ZERO
         } else {
-            Complex::from(parameters.get(self.pids[bin_index]))
+            Complex64::from(parameters.get(self.pids[bin_index]))
         }
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
-            gradient[bin_index] = Complex::ONE;
+            gradient[bin_index] = Complex64::ONE;
         }
     }
 }
@@ -117,8 +122,8 @@ impl Amplitude for PiecewiseScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -129,7 +134,6 @@ impl Amplitude for PiecewiseScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -143,17 +147,17 @@ pub fn py_piecewise_scalar(
     name: &str,
     variable: Bound<'_, PyAny>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     values: Vec<PyParameterLike>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewiseScalar::new(
+    Ok(PyExpression(PiecewiseScalar::new(
         name,
         &variable,
         bins,
         range,
         values.into_iter().map(|value| value.0).collect(),
-    )))
+    )?))
 }
 
 /// A piecewise complex-valued [`Amplitude`] which just contains two parameters representing its real and
@@ -163,7 +167,7 @@ pub struct PiecewiseComplexScalar {
     name: String,
     variable: Box<dyn Variable>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     re_ims: Vec<(ParameterLike, ParameterLike)>,
     pids_re_im: Vec<(ParameterID, ParameterID)>,
     bin_index: ScalarID,
@@ -174,9 +178,9 @@ impl PiecewiseComplexScalar {
         name: &str,
         variable: &V,
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
         re_ims: Vec<(ParameterLike, ParameterLike)>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             re_ims.len(),
@@ -191,62 +195,67 @@ impl PiecewiseComplexScalar {
             pids_re_im: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for PiecewiseComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids_re_im = self
             .re_ims
             .iter()
-            .map(|(re, im)| {
-                (
-                    resources.register_parameter(re),
-                    resources.register_parameter(im),
-                )
+            .map(|(re, im)| -> LadduResult<(ParameterID, ParameterID)> {
+                Ok((
+                    resources.register_parameter(re)?,
+                    resources.register_parameter(im)?,
+                ))
             })
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as Float);
+            cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
         }
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
-            Complex::ZERO
+            Complex64::ZERO
         } else {
             let pid_re_im = self.pids_re_im[bin_index];
-            Complex::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
+            Complex64::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
         }
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
             let pid_re_im = self.pids_re_im[bin_index];
             if let ParameterID::Parameter(ind) = pid_re_im.0 {
-                gradient[ind] = Complex::ONE;
+                gradient[ind] = Complex64::ONE;
             }
             if let ParameterID::Parameter(ind) = pid_re_im.1 {
-                gradient[ind] = Complex::I;
+                gradient[ind] = Complex64::I;
             }
         }
     }
@@ -270,8 +279,8 @@ impl Amplitude for PiecewiseComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -282,7 +291,6 @@ impl Amplitude for PiecewiseComplexScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -296,11 +304,11 @@ pub fn py_piecewise_complex_scalar(
     name: &str,
     variable: Bound<'_, PyAny>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     values: Vec<(PyParameterLike, PyParameterLike)>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewiseComplexScalar::new(
+    Ok(PyExpression(PiecewiseComplexScalar::new(
         name,
         &variable,
         bins,
@@ -309,7 +317,7 @@ pub fn py_piecewise_complex_scalar(
             .into_iter()
             .map(|(value_re, value_im)| (value_re.0, value_im.0))
             .collect(),
-    )))
+    )?))
 }
 
 /// A piecewise complex-valued [`Amplitude`] which just contains two parameters representing its magnitude and
@@ -319,7 +327,7 @@ pub struct PiecewisePolarComplexScalar {
     name: String,
     variable: Box<dyn Variable>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     r_thetas: Vec<(ParameterLike, ParameterLike)>,
     pids_r_theta: Vec<(ParameterID, ParameterID)>,
     bin_index: ScalarID,
@@ -330,9 +338,9 @@ impl PiecewisePolarComplexScalar {
         name: &str,
         variable: &V,
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
         r_thetas: Vec<(ParameterLike, ParameterLike)>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         assert_eq!(
             bins,
             r_thetas.len(),
@@ -347,65 +355,70 @@ impl PiecewisePolarComplexScalar {
             pids_r_theta: Default::default(),
             bin_index: Default::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for PiecewisePolarComplexScalar {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pids_r_theta = self
             .r_thetas
             .iter()
-            .map(|(r, theta)| {
-                (
-                    resources.register_parameter(r),
-                    resources.register_parameter(theta),
-                )
+            .map(|(r, theta)| -> LadduResult<(ParameterID, ParameterID)> {
+                Ok((
+                    resources.register_parameter(r)?,
+                    resources.register_parameter(theta)?,
+                ))
             })
-            .collect();
+            .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as Float);
+            cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as Float);
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
         }
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
-            Complex::ZERO
+            Complex64::ZERO
         } else {
             let pid_r_theta = self.pids_r_theta[bin_index];
-            Complex::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
+            Complex64::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
         }
     }
 
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
             let pid_r_theta = self.pids_r_theta[bin_index];
             let r = parameters.get(pid_r_theta.0);
             let theta = parameters.get(pid_r_theta.1);
-            let exp_i_theta = Complex::cis(theta);
+            let exp_i_theta = Complex64::cis(theta);
             if let ParameterID::Parameter(ind) = pid_r_theta.0 {
                 gradient[ind] = exp_i_theta;
             }
             if let ParameterID::Parameter(ind) = pid_r_theta.1 {
-                gradient[ind] = Complex::<Float>::I * Complex::from_polar(r, theta);
+                gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
             }
         }
     }
@@ -429,8 +442,8 @@ impl Amplitude for PiecewisePolarComplexScalar {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
@@ -441,7 +454,6 @@ impl Amplitude for PiecewisePolarComplexScalar {
 ///
 /// See Also
 /// --------
-/// laddu.Manager
 /// laddu.Mass
 /// laddu.CosTheta
 /// laddu.Phi
@@ -455,11 +467,11 @@ pub fn py_piecewise_polar_complex_scalar(
     name: &str,
     variable: Bound<'_, PyAny>,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     values: Vec<(PyParameterLike, PyParameterLike)>,
-) -> PyResult<PyAmplitude> {
+) -> PyResult<PyExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyAmplitude(PiecewisePolarComplexScalar::new(
+    Ok(PyExpression(PiecewisePolarComplexScalar::new(
         name,
         &variable,
         bins,
@@ -468,21 +480,20 @@ pub fn py_piecewise_polar_complex_scalar(
             .into_iter()
             .map(|(value_re, value_im)| (value_re.0, value_im.0))
             .collect(),
-    )))
+    )?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass, PI};
+    use laddu_core::{data::test_dataset, parameter, Mass, PI};
     use std::sync::Arc;
 
     #[test]
     fn test_piecewise_scalar_creation_and_evaluation() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewiseScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewiseScalar::new(
             "test_scalar",
             &v,
             3,
@@ -492,13 +503,11 @@ mod tests {
                 parameter("test_param1"),
                 parameter("test_param2"),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // Direct amplitude evaluation
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 2.2, 3.3];
         let result = evaluator.evaluate(&params);
@@ -509,9 +518,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_scalar_gradient() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewiseScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewiseScalar::new(
             "test_scalar",
             &v,
             3,
@@ -521,13 +529,12 @@ mod tests {
                 parameter("test_param1"),
                 parameter("test_param2"),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap()
+        .norm_sqr(); // |f(x)|^2
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.0, 2.0, 3.0];
         let gradient = evaluator.evaluate_gradient(&params);
@@ -543,9 +550,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewiseComplexScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewiseComplexScalar::new(
             "test_complex",
             &v,
             3,
@@ -555,13 +561,11 @@ mod tests {
                 (parameter("re_param1"), parameter("im_param1")),
                 (parameter("re_param2"), parameter("im_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 1.2, 2.1, 2.2, 3.1, 3.2]; // Real and imaginary parts
         let result = evaluator.evaluate(&params);
@@ -572,9 +576,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_complex_scalar_gradient() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewiseComplexScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewiseComplexScalar::new(
             "test_complex",
             &v,
             3,
@@ -584,13 +587,12 @@ mod tests {
                 (parameter("re_param1"), parameter("im_param1")),
                 (parameter("re_param2"), parameter("im_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap()
+        .norm_sqr(); // |f(x + iy)|^2
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.norm_sqr(); // |f(x + iy)|^2
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.1, 1.2, 2.1, 2.2, 3.1, 3.2]; // Real and imaginary parts
         let gradient = evaluator.evaluate_gradient(&params);
@@ -612,9 +614,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_polar_complex_scalar_evaluation() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewisePolarComplexScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewisePolarComplexScalar::new(
             "test_polar",
             &v,
             3,
@@ -624,13 +625,11 @@ mod tests {
                 (parameter("r_param1"), parameter("theta_param1")),
                 (parameter("r_param2"), parameter("theta_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
@@ -651,9 +650,8 @@ mod tests {
 
     #[test]
     fn test_piecewise_polar_complex_scalar_gradient() {
-        let mut manager = Manager::default();
-        let v = Mass::new([2]);
-        let amp = PiecewisePolarComplexScalar::new(
+        let v = Mass::new(["kshort1"]);
+        let expr = PiecewisePolarComplexScalar::new(
             "test_polar",
             &v,
             3,
@@ -663,13 +661,11 @@ mod tests {
                 (parameter("r_param1"), parameter("theta_param1")),
                 (parameter("r_param2"), parameter("theta_param2")),
             ],
-        );
-        let aid = manager.register(amp).unwrap();
+        )
+        .unwrap();
 
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into(); // f(r,θ) = re^(iθ)
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
         let theta = PI / 4.3;
@@ -688,10 +684,10 @@ mod tests {
         assert_relative_eq!(gradient[0][0].im, 0.0);
         assert_relative_eq!(gradient[0][1].re, 0.0);
         assert_relative_eq!(gradient[0][1].im, 0.0);
-        assert_relative_eq!(gradient[0][2].re, Float::cos(2.2 * theta));
-        assert_relative_eq!(gradient[0][2].im, Float::sin(2.2 * theta));
-        assert_relative_eq!(gradient[0][3].re, -2.1 * r * Float::sin(2.2 * theta));
-        assert_relative_eq!(gradient[0][3].im, 2.1 * r * Float::cos(2.2 * theta));
+        assert_relative_eq!(gradient[0][2].re, f64::cos(2.2 * theta));
+        assert_relative_eq!(gradient[0][2].im, f64::sin(2.2 * theta));
+        assert_relative_eq!(gradient[0][3].re, -2.1 * r * f64::sin(2.2 * theta));
+        assert_relative_eq!(gradient[0][3].im, 2.1 * r * f64::cos(2.2 * theta));
         assert_relative_eq!(gradient[0][4].re, 0.0);
         assert_relative_eq!(gradient[0][4].im, 0.0);
         assert_relative_eq!(gradient[0][5].re, 0.0);

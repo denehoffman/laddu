@@ -1,11 +1,14 @@
-use laddu_core::LadduError;
-use laddu_core::{traits::Variable, utils::histogram, Float};
+use laddu_core::{traits::Variable, utils::histogram};
+use laddu_core::{LadduError, LadduResult};
 use nalgebra::DVector;
 
-use crate::{likelihoods::LikelihoodTerm, NLL};
+use crate::{
+    likelihoods::{LikelihoodExpression, LikelihoodTerm},
+    NLL,
+};
 
 #[cfg(feature = "python")]
-use crate::likelihoods::{PyLikelihoodTerm, PyNLL};
+use crate::likelihoods::{PyLikelihoodExpression, PyNLL};
 #[cfg(feature = "python")]
 use laddu_python::utils::variables::PyVariable;
 #[cfg(feature = "python")]
@@ -29,12 +32,12 @@ use pyo3::prelude::*;
 #[derive(Clone)]
 pub struct BinnedGuideTerm {
     nll: Box<NLL>,
-    values: Vec<Float>,
+    values: Vec<f64>,
     amplitude_sets: Vec<Vec<String>>,
     bins: usize,
-    range: (Float, Float),
-    count_sets: Vec<Vec<Float>>,
-    error_sets: Vec<Vec<Float>>,
+    range: (f64, f64),
+    count_sets: Vec<Vec<f64>>,
+    error_sets: Vec<Vec<f64>>,
 }
 
 impl BinnedGuideTerm {
@@ -46,28 +49,29 @@ impl BinnedGuideTerm {
     ///
     /// The intended usage is to provide some sets of amplitudes to isolate, like `[["amp1", "amp2"], ["amp3"]]`,
     /// along with some known counts for a binned fit (`count_sets ~ [[histogram counts involving "amp1" and "amp2"], [histogram counts involving "amp3"]]` and simlar for `error_sets`).
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<
         V: Variable + 'static,
         L: AsRef<str>,
         T: AsRef<[L]>,
-        U: AsRef<[Float]>,
-        E: AsRef<[Float]>,
+        U: AsRef<[f64]>,
+        E: AsRef<[f64]>,
     >(
         nll: Box<NLL>,
         variable: &V,
         amplitude_sets: &[T],
         bins: usize,
-        range: (Float, Float),
+        range: (f64, f64),
         count_sets: &[U],
         error_sets: Option<&[E]>,
-    ) -> Box<Self> {
-        let values = variable.value_on(&nll.accmc_evaluator.dataset);
+    ) -> LikelihoodExpression {
+        let values = variable.value_on(&nll.accmc_evaluator.dataset).unwrap();
         let amplitude_sets: Vec<Vec<String>> = amplitude_sets
             .iter()
             .map(|t| t.as_ref().iter().map(|s| s.as_ref().to_string()).collect())
             .collect();
-        let count_sets: Vec<Vec<Float>> = count_sets.iter().map(|f| f.as_ref().to_vec()).collect();
-        let error_sets: Vec<Vec<Float>> = if let Some(error_sets) = error_sets {
+        let count_sets: Vec<Vec<f64>> = count_sets.iter().map(|f| f.as_ref().to_vec()).collect();
+        let error_sets: Vec<Vec<f64>> = if let Some(error_sets) = error_sets {
             error_sets.iter().map(|f| f.as_ref().to_vec()).collect()
         } else {
             count_sets
@@ -77,7 +81,7 @@ impl BinnedGuideTerm {
         };
         assert_eq!(amplitude_sets.len(), count_sets.len());
         assert_eq!(count_sets.len(), error_sets.len());
-        Box::new(Self {
+        Self {
             nll,
             amplitude_sets,
             values,
@@ -85,12 +89,13 @@ impl BinnedGuideTerm {
             range,
             count_sets,
             error_sets,
-        })
+        }
+        .into_expression()
     }
 }
 
 impl LikelihoodTerm for BinnedGuideTerm {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
         let mut result = 0.0;
         for ((counts, errors), amplitudes) in self
             .count_sets
@@ -101,7 +106,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
             let weights = self.nll.project_with(parameters, amplitudes, None).unwrap();
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
             // TODO: handle entries where e == 0
-            let chisqr: Float = eval_hist
+            let chisqr: f64 = eval_hist
                 .counts
                 .iter()
                 .zip(counts.iter())
@@ -117,9 +122,9 @@ impl LikelihoodTerm for BinnedGuideTerm {
         self.nll.parameters()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         let mut gradient = DVector::zeros(parameters.len());
-        let bin_width = (self.range.1 - self.range.0) / self.bins as Float;
+        let bin_width = (self.range.1 - self.range.0) / self.bins as f64;
         for ((counts, errors), amplitudes) in self
             .count_sets
             .iter()
@@ -131,7 +136,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
                 .project_gradient_with(parameters, amplitudes, None)
                 .unwrap();
             let mut eval_counts = vec![0.0; self.bins];
-            let mut eval_count_gradient: Vec<DVector<Float>> =
+            let mut eval_count_gradient: Vec<DVector<f64>> =
                 vec![DVector::zeros(parameters.len()); self.bins];
 
             for (j, &value) in self.values.iter().enumerate() {
@@ -184,8 +189,8 @@ impl LikelihoodTerm for BinnedGuideTerm {
 ///
 /// Returns
 /// -------
-/// LikelihoodTerm
-///
+/// LikelihoodExpression
+///     A term that can be combined with other likelihood expressions.
 #[cfg(feature = "python")]
 #[pyfunction(name = "BinnedGuideTerm", signature = (nll, variable, amplitude_sets, bins, range, count_sets, error_sets = None))]
 pub fn py_binned_guide_term(
@@ -193,12 +198,12 @@ pub fn py_binned_guide_term(
     variable: Bound<'_, PyAny>,
     amplitude_sets: Vec<Vec<String>>,
     bins: usize,
-    range: (Float, Float),
-    count_sets: Vec<Vec<Float>>,
-    error_sets: Option<Vec<Vec<Float>>>,
-) -> PyResult<PyLikelihoodTerm> {
+    range: (f64, f64),
+    count_sets: Vec<Vec<f64>>,
+    error_sets: Option<Vec<Vec<f64>>>,
+) -> PyResult<PyLikelihoodExpression> {
     let variable = variable.extract::<PyVariable>()?;
-    Ok(PyLikelihoodTerm(BinnedGuideTerm::new(
+    Ok(PyLikelihoodExpression(BinnedGuideTerm::new(
         nll.0.clone(),
         &variable,
         &amplitude_sets,
@@ -236,34 +241,22 @@ pub fn py_binned_guide_term(
 #[derive(Clone)]
 pub struct Regularizer<const P: usize> {
     parameters: Vec<String>,
-    lambda: Float,
-    weights: Vec<Float>,
+    lambda: f64,
+    weights: Vec<f64>,
 }
 
 impl<const P: usize> Regularizer<P> {
-    /// Create a new [`Regularizer`] term from a list of parameter names, a nonnegative
-    /// regularization parameter $`\lambda`$, and an optional list of weights which scale the
-    /// influence of each parameter in the regularization term. If not set, the weights will
-    /// default to unity.
-    ///
-    /// # Errors
-    ///
-    /// This method will return a [`LadduError`] if the number of parameters and weights are not equal.
-    pub fn new<T, U, F>(
-        parameters: T,
-        lambda: Float,
-        weights: Option<F>,
-    ) -> Result<Box<Self>, LadduError>
+    fn construct<T, U, F>(parameters: T, lambda: f64, weights: Option<F>) -> LadduResult<Box<Self>>
     where
         T: IntoIterator<Item = U>,
         U: AsRef<str>,
-        F: AsRef<[Float]>,
+        F: AsRef<[f64]>,
     {
         let parameters: Vec<String> = parameters
             .into_iter()
             .map(|s| s.as_ref().to_string())
             .collect();
-        let weights: Vec<Float> = weights
+        let weights: Vec<f64> = weights
             .as_ref()
             .map_or(vec![1.0; parameters.len()].as_ref(), AsRef::as_ref)
             .to_vec();
@@ -281,12 +274,46 @@ impl<const P: usize> Regularizer<P> {
     }
 }
 
+impl Regularizer<1> {
+    /// Create a new $`\ell_1`$ [`Regularizer`] expressed as a [`LikelihoodExpression`].
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new<T, U, F>(
+        parameters: T,
+        lambda: f64,
+        weights: Option<F>,
+    ) -> LadduResult<LikelihoodExpression>
+    where
+        T: IntoIterator<Item = U>,
+        U: AsRef<str>,
+        F: AsRef<[f64]>,
+    {
+        Self::construct(parameters, lambda, weights).map(|term| term.into_expression())
+    }
+}
+
+impl Regularizer<2> {
+    /// Create a new $`\ell_2`$ [`Regularizer`] expressed as a [`LikelihoodExpression`].
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new<T, U, F>(
+        parameters: T,
+        lambda: f64,
+        weights: Option<F>,
+    ) -> LadduResult<LikelihoodExpression>
+    where
+        T: IntoIterator<Item = U>,
+        U: AsRef<str>,
+        F: AsRef<[f64]>,
+    {
+        Self::construct(parameters, lambda, weights).map(|term| term.into_expression())
+    }
+}
+
 impl LikelihoodTerm for Regularizer<1> {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
-        self.lambda * parameters.iter().map(|p| p.abs()).sum::<Float>()
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
+        self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         DVector::from_vec(
             parameters
                 .iter()
@@ -303,16 +330,16 @@ impl LikelihoodTerm for Regularizer<1> {
 }
 
 impl LikelihoodTerm for Regularizer<2> {
-    fn evaluate(&self, parameters: &[Float]) -> Float {
-        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<Float>().sqrt()
+    fn evaluate(&self, parameters: &[f64]) -> f64 {
+        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt()
     }
 
-    fn evaluate_gradient(&self, parameters: &[Float]) -> DVector<Float> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
         let denom = parameters
             .iter()
             .zip(self.weights.iter())
             .map(|(p, w)| w * p.powi(2))
-            .sum::<Float>()
+            .sum::<f64>()
             .sqrt();
         DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom)
     }
@@ -365,27 +392,74 @@ impl LikelihoodTerm for Regularizer<2> {
 ///
 /// Returns
 /// -------
-/// LikelihoodTerm
-///
+/// LikelihoodExpression
+///     A term that can be combined with other likelihood expressions.
 #[cfg(feature = "python")]
 #[pyfunction(name = "Regularizer", signature = (parameters, lda, p=1, weights=None))]
 pub fn py_regularizer(
     parameters: Vec<String>,
-    lda: Float,
+    lda: f64,
     p: usize,
-    weights: Option<Vec<Float>>,
-) -> PyResult<PyLikelihoodTerm> {
+    weights: Option<Vec<f64>>,
+) -> PyResult<PyLikelihoodExpression> {
     if p == 1 {
-        Ok(PyLikelihoodTerm(Regularizer::<1>::new(
+        Ok(PyLikelihoodExpression(Regularizer::<1>::new(
             parameters, lda, weights,
         )?))
     } else if p == 2 {
-        Ok(PyLikelihoodTerm(Regularizer::<2>::new(
+        Ok(PyLikelihoodExpression(Regularizer::<2>::new(
             parameters, lda, weights,
         )?))
     } else {
         Err(PyValueError::new_err(
             "'Regularizer' only supports p = 1 or 2",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Regularizer;
+    use crate::likelihoods::LikelihoodTerm;
+    use approx::assert_relative_eq;
+
+    #[test]
+    fn l1_regularizer_respects_weights() {
+        let expr = Regularizer::<1>::new(["alpha", "beta"], 2.0, Some([1.0, 0.5])).unwrap();
+        let evaluator = expr.load();
+        let values = vec![1.5, -2.0];
+        assert_relative_eq!(evaluator.evaluate(&values), 7.0);
+        let grad = evaluator.evaluate_gradient(&values);
+        assert_relative_eq!(grad[0], 2.0);
+        assert_relative_eq!(grad[1], -1.0);
+    }
+
+    #[test]
+    fn l2_regularizer_gradient_scales_parameters() {
+        let expr = Regularizer::<2>::new(["x", "y"], 3.0, Some([1.0, 2.0])).unwrap();
+        let evaluator = expr.load();
+        let values = vec![3.0_f64, 4.0_f64];
+        assert_relative_eq!(evaluator.evaluate(&values), 15.0);
+        let grad = evaluator.evaluate_gradient(&values);
+        let denom = (1.0 * values[0].powi(2) + 2.0 * values[1].powi(2)).sqrt();
+        assert_relative_eq!(grad[0], 3.0 * values[0] / denom);
+        assert_relative_eq!(grad[1], 3.0 * values[1] / denom);
+    }
+
+    #[test]
+    fn regularizer_rejects_weight_mismatch() {
+        let err = Regularizer::<1>::new(["alpha", "beta"], 1.0, Some([1.0]));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn regularizer_defaults_to_unit_weights() {
+        let expr = Regularizer::<1>::new(["alpha", "beta"], 1.5, None::<Vec<f64>>).unwrap();
+        let evaluator = expr.load();
+        let values = vec![1.0, -2.0];
+        assert_relative_eq!(evaluator.evaluate(&values), 4.5);
+        let grad = evaluator.evaluate_gradient(&values);
+        assert_relative_eq!(grad[0], 1.5);
+        assert_relative_eq!(grad[1], -1.5);
     }
 }

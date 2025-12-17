@@ -23,7 +23,6 @@ ganesh = { workspace = true }
 mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
-num_cpus = { workspace = true, optional = true }
 numpy = { workspace = true, optional = true }
 rapidhash = { workspace = true }
 rayon = { workspace = true, optional = true }
@@ -36,13 +35,16 @@ pyo3 = { workspace = true, features = [
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-python = ["laddu-python", "pyo3", "numpy", "num_cpus"]
+python = ["laddu-python", "pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]
-num_cpus = ["dep:num_cpus"]
-f32 = ["ganesh/f32", "laddu-core/f32"]
 mpi = ["dep:mpi", "laddu-core/mpi"]
+
+[dev-dependencies]
+approx = { workspace = true }
+serde = { workspace = true }
+typetag = { workspace = true }
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

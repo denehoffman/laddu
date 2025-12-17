@@ -1,12 +1,16 @@
 import numpy as np
 import pytest
 
-from laddu import Dataset, Event, Manager, Mass, Vec3, parameter
+from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitudes.piecewise import (
     PiecewiseComplexScalar,
     PiecewisePolarComplexScalar,
     PiecewiseScalar,
 )
+
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:
@@ -17,18 +21,19 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_piecewise_scalar_evaluation() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewiseScalar(
         'test_scalar',
         v,
@@ -36,18 +41,15 @@ def test_piecewise_scalar_evaluation() -> None:
         (0.0, 1.0),
         [parameter('test_param0'), parameter('test_param1'), parameter('test_param2')],
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.1, 2.2, 3.3])
     assert pytest.approx(result[0].real) == 2.2
     assert pytest.approx(result[0].imag) == 0.0
 
 
 def test_piecewise_scalar_gradient() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewiseScalar(
         'test_scalar',
         v,
@@ -55,11 +57,9 @@ def test_piecewise_scalar_gradient() -> None:
         (0.0, 1.0),
         [parameter('test_param0'), parameter('test_param1'), parameter('test_param2')],
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    expr = aid.norm_sqr()
-    model = manager.model(expr)
-    evaluator = model.load(dataset)
+    expr = amp.norm_sqr()
+    evaluator = expr.load(dataset)
     result = evaluator.evaluate_gradient([1.0, 2.0, 3.0])
     assert pytest.approx(result[0][0].real) == 0.0
     assert pytest.approx(result[0][0].imag) == 0.0
@@ -70,8 +70,7 @@ def test_piecewise_scalar_gradient() -> None:
 
 
 def test_piecewise_complex_scalar_evaluation() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewiseComplexScalar(
         'test_complex',
         v,
@@ -83,18 +82,15 @@ def test_piecewise_complex_scalar_evaluation() -> None:
             (parameter('re_param2'), parameter('im_param2')),
         ],
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.1, 1.2, 2.1, 2.2, 3.1, 3.2])
     assert pytest.approx(result[0].real) == 2.1
     assert pytest.approx(result[0].imag) == 2.2
 
 
 def test_piecewise_complex_scalar_gradient() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewiseComplexScalar(
         'test_complex',
         v,
@@ -107,11 +103,9 @@ def test_piecewise_complex_scalar_gradient() -> None:
         ],
     )
 
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    expr = aid.norm_sqr()
-    model = manager.model(expr)
-    evaluator = model.load(dataset)
+    expr = amp.norm_sqr()
+    evaluator = expr.load(dataset)
     result = evaluator.evaluate_gradient([1.1, 1.2, 2.1, 2.2, 3.1, 3.2])
     assert pytest.approx(result[0][0].real) == 0.0
     assert pytest.approx(result[0][0].imag) == 0.0
@@ -128,8 +122,7 @@ def test_piecewise_complex_scalar_gradient() -> None:
 
 
 def test_piecewise_polar_complex_scalar_evaluation() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewisePolarComplexScalar(
         'test_polar',
         v,
@@ -141,10 +134,8 @@ def test_piecewise_polar_complex_scalar_evaluation() -> None:
             (parameter('r_param2'), parameter('theta_param2')),
         ],
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
     result = evaluator.evaluate(
@@ -155,8 +146,7 @@ def test_piecewise_polar_complex_scalar_evaluation() -> None:
 
 
 def test_piecewise_polar_complex_scalar_gradient() -> None:
-    manager = Manager()
-    v = Mass([2])
+    v = Mass(['kshort1'])
     amp = PiecewisePolarComplexScalar(
         'test_polar',
         v,
@@ -168,10 +158,8 @@ def test_piecewise_polar_complex_scalar_gradient() -> None:
             (parameter('r_param2'), parameter('theta_param2')),
         ],
     )
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     r = 2.0
     theta = np.pi / 4.3
     result = evaluator.evaluate_gradient(

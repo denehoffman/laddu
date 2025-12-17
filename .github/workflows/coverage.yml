@@ -24,43 +24,36 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install OpenMPI
         run: sudo apt install -y clang mpich libmpich-dev
       - name: Install Rust
         run: rustup update nightly
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate Rust code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --exclude py-laddu -F rayon
+        run: just coverage-rust
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-rust
           path: coverage-rust.lcov
   coverage-python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
-      - name: Set up Python
-        run: |
-          uv python install
-          uv venv
-          source .venv/bin/activate
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          working-directory: "py-laddu"
-          command: develop
-          args: --uv
-      - name: Install pytest
-        run: uv pip install pytest pytest-cov
+        uses: astral-sh/setup-uv@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Just
+        uses: taiki-e/install-action@just
       - name: Generate Python code coverage
-        run: .venv/bin/pytest --cov --cov-report xml:coverage-python.xml
+        run: just coverage-python
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-python
           path: coverage-python.xml
@@ -68,9 +61,9 @@ jobs:
     needs: [coverage-rust, coverage-python]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download coverage reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           merge-multiple: true
       - name: Upload coverage reports to Codecov

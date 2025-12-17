@@ -1,40 +1,40 @@
 use super::FixedKMatrix;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::Event,
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
-    Float, LadduError,
+    Expression, LadduResult,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyAmplitude, PyParameterLike},
+    amplitudes::{PyExpression, PyParameterLike},
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::array;
 
-const G_F2: SMatrix<Float, 4, 4> = matrix![
+const G_F2: SMatrix<f64, 4, 4> = matrix![
      0.40033,  0.01820, -0.06709, -0.49924;
      0.15479,  0.17300,  0.22941,  0.19295;
     -0.08900,  0.32393, -0.43133,  0.27975;
     -0.00113,  0.15256,  0.23721, -0.03987
 ];
 
-const C_F2: SMatrix<Float, 4, 4> = matrix![
+const C_F2: SMatrix<f64, 4, 4> = matrix![
     -0.04319,  0.00000,  0.00984,  0.01028;
      0.00000,  0.00000,  0.00000,  0.00000;
      0.00984,  0.00000, -0.07344,  0.05533;
      0.01028,  0.00000,  0.05533, -0.05183
 ];
 
-const M_F2: SVector<Float, 4> = vector![1.15299, 1.48359, 1.72923, 1.96700];
+const M_F2: SVector<f64, 4> = vector![1.15299, 1.48359, 1.72923, 1.96700];
 
-const COV_F2: SMatrix<Float, 36, 36> = matrix![
+const COV_F2: SMatrix<f64, 36, 36> = matrix![
     0.00000000000000, -0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, -0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000000, -0.00000000000000, 0.00000000000000, -0.00000000000000, 0.00000000000000;
     -0.00000000000000, 0.00000000000001, 0.00000000022965, 0.00000000000000, -0.00000000001878, -0.00000000000016, -0.00000000065337, 0.00000000000000, 0.00000000000000, -0.00000000003574, 0.00000000091495, 0.00000000000000, -0.00000000001447, -0.00000000032942, -0.00000000086530, 0.00000000000000, -0.00000000000433, 0.00000000000000, -0.00000000001051, -0.00000000002961, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000000000283, -0.00000000007379, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000005678, 0.00000000000248, 0.00000000002691, -0.00000000020470, 0.00000000000000;
     0.00000000000000, 0.00000000022965, 0.00020810475177, 0.00000000000000, -0.00002017796231, 0.00000000778406, -0.00048546523204, 0.00000000000000, -0.00000000000630, 0.00010221652645, 0.00051663367454, 0.00000000000000, -0.00000509806086, -0.00015222017267, -0.00112613397259, 0.00000000000000, 0.00000135971725, 0.00000000000000, 0.00000080623080, -0.00001338578863, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00000000000000, -0.00000617047714, -0.00000991268602, 0.00000000000000, 0.00000000000000, 0.00000000000000, 0.00001724685959, 0.00000287435535, -0.00001001652618, -0.00007549764696, 0.00000000000000;
@@ -114,7 +114,7 @@ impl KopfKMatrixF2 {
         channel: usize,
         mass: &Mass,
         seed: Option<usize>,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 4] = array::from_fn(|_| ParameterLike::default());
         let mut couplings_imag: [ParameterLike; 4] = array::from_fn(|_| ParameterLike::default());
         for i in 0..4 {
@@ -143,16 +143,18 @@ impl KopfKMatrixF2 {
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for KopfKMatrixF2 {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         for i in 0..self.couplings_indices_real.len() {
-            self.couplings_indices_real[i] = resources.register_parameter(&self.couplings_real[i]);
-            self.couplings_indices_imag[i] = resources.register_parameter(&self.couplings_imag[i]);
+            self.couplings_indices_real[i] =
+                resources.register_parameter(&self.couplings_real[i])?;
+            self.couplings_indices_imag[i] =
+                resources.register_parameter(&self.couplings_imag[i])?;
         }
         self.ikc_cache_index = resources
             .register_complex_vector(Some(&format!("KopfKMatrixF2<{}> ikc_vec", self.name)));
@@ -161,7 +163,12 @@ impl Amplitude for KopfKMatrixF2 {
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.mass.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
@@ -170,9 +177,9 @@ impl Amplitude for KopfKMatrixF2 {
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
 
-    fn compute(&self, parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
-            Complex::new(
+            Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
                 parameters.get(self.couplings_indices_imag[i]),
             )
@@ -185,9 +192,9 @@ impl Amplitude for KopfKMatrixF2 {
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         cache: &Cache,
-        gradient: &mut DVector<Complex<Float>>,
+        gradient: &mut DVector<Complex64>,
     ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
@@ -197,7 +204,7 @@ impl Amplitude for KopfKMatrixF2 {
                 gradient[index] = internal_gradient[i];
             }
             if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
-                gradient[index] = Complex::<Float>::I * internal_gradient[i];
+                gradient[index] = Complex64::I * internal_gradient[i];
             }
         }
     }
@@ -265,14 +272,14 @@ pub fn py_kopf_kmatrix_f2(
     channel: usize,
     mass: PyMass,
     seed: Option<usize>,
-) -> PyAmplitude {
-    PyAmplitude(KopfKMatrixF2::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(KopfKMatrixF2::new(
         name,
         array::from_fn(|i| array::from_fn(|j| couplings[i][j].clone().0)),
         channel,
         &mass.0,
         seed,
-    ))
+    )?))
 }
 
 #[cfg(test)]
@@ -282,12 +289,12 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, Manager, Mass};
+    use laddu_core::{data::test_dataset, parameter, Mass};
     #[test]
     fn test_f2_evaluation() {
-        let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
-        let amp = KopfKMatrixF2::new(
+        let dataset = Arc::new(test_dataset());
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr = KopfKMatrixF2::new(
             "f2",
             [
                 [parameter("p0"), parameter("p1")],
@@ -298,25 +305,21 @@ mod tests {
             1,
             &res_mass,
             None,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0].re, 0.02523304, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.39712393, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.025233045240226293);
+        assert_relative_eq!(result[0].im, 0.39712393858386263);
     }
 
     #[test]
     fn test_f2_gradient() {
-        let mut manager = Manager::default();
-        let res_mass = Mass::new([2, 3]);
-        let amp = KopfKMatrixF2::new(
+        let dataset = Arc::new(test_dataset());
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr = KopfKMatrixF2::new(
             "f2",
             [
                 [parameter("p0"), parameter("p1")],
@@ -327,37 +330,33 @@ mod tests {
             1,
             &res_mass,
             None,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0][0].re, -0.3078948, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][0].im, 0.3808689, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][0].re, -0.3078948637910409);
+        assert_relative_eq!(result[0][0].im, 0.38086899234534155);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.4290085, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][2].im, 0.0799660, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][2].re, 0.42900856602686843);
+        assert_relative_eq!(result[0][2].im, 0.0799660634186314);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
-        assert_relative_eq!(result[0][4].re, 0.1657487, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][4].im, -0.0041382, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][4].re, 0.1657487556679948);
+        assert_relative_eq!(result[0][4].im, -0.004138290603113022);
         assert_relative_eq!(result[0][5].re, -result[0][4].im);
         assert_relative_eq!(result[0][5].im, result[0][4].re);
-        assert_relative_eq!(result[0][6].re, 0.0594691, epsilon = Float::EPSILON.cbrt());
-        assert_relative_eq!(result[0][6].im, 0.1143819, epsilon = Float::EPSILON.cbrt());
+        assert_relative_eq!(result[0][6].re, 0.059469124136208376);
+        assert_relative_eq!(result[0][6].im, 0.11438194180427544);
         assert_relative_eq!(result[0][7].re, -result[0][6].im);
         assert_relative_eq!(result[0][7].im, result[0][6].re);
     }
 
     #[test]
     fn test_f2_resample() {
-        let res_mass = Mass::new([2, 3]);
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
         let _amp = KopfKMatrixF2::new(
             "f2",
             [
@@ -369,6 +368,7 @@ mod tests {
             1,
             &res_mass,
             Some(1),
-        );
+        )
+        .unwrap();
     }
 }

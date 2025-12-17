@@ -1,8 +1,6 @@
-from typing import Literal
-
 import numpy.typing as npt
 
-from laddu.extensions import NLL, LikelihoodTerm
+from laddu.extensions import NLL, LikelihoodExpression
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def BinnedGuideTerm(
@@ -13,12 +11,12 @@ def BinnedGuideTerm(
     range: tuple[float, float],
     count_sets: list[list[float]] | list[npt.NDArray],
     error_sets: list[list[float]] | list[npt.NDArray] | None,
-) -> LikelihoodTerm: ...
+) -> LikelihoodExpression: ...
 def Regularizer(
     parameters: list[str],
     lda: float,
-    p: Literal[1, 2],
-    weights: npt.NDArray | None = None,
-) -> LikelihoodTerm: ...
+    p: int = 1,
+    weights: list[float] | npt.NDArray | None = None,
+) -> LikelihoodExpression: ...
 
 __all__ = ['BinnedGuideTerm', 'Regularizer']

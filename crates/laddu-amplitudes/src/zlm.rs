@@ -1,20 +1,20 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID},
-    data::Event,
+    amplitudes::{Amplitude, AmplitudeID, Expression},
+    data::{DatasetMetadata, EventData},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
         variables::{Angles, Variable},
     },
-    Float, LadduError, Polarization, Sign,
+    LadduResult, Polarization, Sign,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::PyAmplitude,
+    amplitudes::PyExpression,
     utils::variables::{PyAngles, PyPolarization},
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ impl Zlm {
         r: Sign,
         angles: &Angles,
         polarization: &Polarization,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             l,
@@ -55,18 +55,26 @@ impl Zlm {
             polarization: polarization.clone(),
             csid: ComplexScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for Zlm {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.angles.costheta.bind(metadata)?;
+        self.angles.phi.bind(metadata)?;
+        self.polarization.pol_angle.bind(metadata)?;
+        self.polarization.pol_magnitude.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let ylm = spherical_harmonic(
             self.l,
             self.m,
@@ -75,33 +83,33 @@ impl Amplitude for Zlm {
         );
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
-        let phase = Complex::new(Float::cos(-pol_angle), Float::sin(-pol_angle));
+        let phase = Complex64::new(f64::cos(-pol_angle), f64::sin(-pol_angle));
         let zlm = ylm * phase;
         cache.store_complex_scalar(
             self.csid,
             match self.r {
-                Sign::Positive => Complex::new(
-                    Float::sqrt(1.0 + pgamma) * zlm.re,
-                    Float::sqrt(1.0 - pgamma) * zlm.im,
+                Sign::Positive => Complex64::new(
+                    f64::sqrt(1.0 + pgamma) * zlm.re,
+                    f64::sqrt(1.0 - pgamma) * zlm.im,
                 ),
-                Sign::Negative => Complex::new(
-                    Float::sqrt(1.0 - pgamma) * zlm.re,
-                    Float::sqrt(1.0 + pgamma) * zlm.im,
+                Sign::Negative => Complex64::new(
+                    f64::sqrt(1.0 - pgamma) * zlm.re,
+                    f64::sqrt(1.0 + pgamma) * zlm.im,
                 ),
             },
         );
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -129,17 +137,13 @@ impl Amplitude for Zlm {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Raises
 /// ------
 /// ValueError
 ///     If `r` is not one of the valid options
-///
-/// See Also
-/// --------
-/// laddu.Manager
 ///
 /// Notes
 /// -----
@@ -156,15 +160,15 @@ pub fn py_zlm(
     r: &str,
     angles: &PyAngles,
     polarization: &PyPolarization,
-) -> PyResult<PyAmplitude> {
-    Ok(PyAmplitude(Zlm::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(Zlm::new(
         name,
         l,
         m,
         r.parse()?,
         &angles.0,
         &polarization.0,
-    )))
+    )?))
 }
 
 /// An [`Amplitude`] representing the expression :math:`P_\gamma \text{Exp}(2\imath\Phi)` where
@@ -182,40 +186,46 @@ pub struct PolPhase {
 
 impl PolPhase {
     /// Construct a new [`PolPhase`] with the given name the given set of [`Polarization`] [`Variable`]s.
-    pub fn new(name: &str, polarization: &Polarization) -> Box<Self> {
+    pub fn new(name: &str, polarization: &Polarization) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             polarization: polarization.clone(),
             csid: ComplexScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for PolPhase {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.polarization.pol_angle.bind(metadata)?;
+        self.polarization.pol_magnitude.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
-        let phase = Complex::new(Float::cos(2.0 * pol_angle), Float::sin(2.0 * pol_angle));
+        let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));
         cache.store_complex_scalar(self.csid, pgamma * phase);
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -241,12 +251,8 @@ impl Amplitude for PolPhase {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Notes
 /// -----
@@ -254,8 +260,8 @@ impl Amplitude for PolPhase {
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "PolPhase")]
-pub fn py_polphase(name: &str, polarization: &PyPolarization) -> PyAmplitude {
-    PyAmplitude(PolPhase::new(name, &polarization.0))
+pub fn py_polphase(name: &str, polarization: &PyPolarization) -> PyResult<PyExpression> {
+    Ok(PyExpression(PolPhase::new(name, &polarization.0)?))
 }
 
 #[cfg(test)]
@@ -264,39 +270,35 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, Frame, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame};
+
+    fn reaction_topology() -> Topology {
+        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    }
 
     #[test]
     fn test_zlm_evaluation() {
-        let mut manager = Manager::default();
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-        let polarization = Polarization::new(0, [1], 0);
-        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let topology = reaction_topology();
+        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
+        let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, 0.04284127, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.23859638, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 0.042841277808013944);
+        assert_relative_eq!(result[0].im, -0.23859639139484332);
     }
 
     #[test]
     fn test_zlm_gradient() {
-        let mut manager = Manager::default();
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
-        let polarization = Polarization::new(0, [1], 0);
-        let amp = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let topology = reaction_topology();
+        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
+        let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
@@ -304,33 +306,23 @@ mod tests {
 
     #[test]
     fn test_polphase_evaluation() {
-        let mut manager = Manager::default();
-        let polarization = Polarization::new(0, [1], 0);
-        let amp = PolPhase::new("polphase", &polarization);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
+        let expr = PolPhase::new("polphase", &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
 
-        assert_relative_eq!(result[0].re, -0.28729145, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, -0.25724039, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, -0.2872914473575512);
+        assert_relative_eq!(result[0].im, -0.2572403880070272);
     }
 
     #[test]
     fn test_polphase_gradient() {
-        let mut manager = Manager::default();
-        let polarization = Polarization::new(0, [1], 0);
-        let amp = PolPhase::new("polphase", &polarization);
-        let aid = manager.register(amp).unwrap();
-
         let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
+        let expr = PolPhase::new("polphase", &polarization).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters

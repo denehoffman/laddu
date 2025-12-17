@@ -1,24 +1,30 @@
-use crate::Float;
-
 /// Useful enumerations for various frames and variables common in particle physics analyses.
 pub mod enums;
 /// Standard special functions like spherical harmonics and momentum definitions.
 pub mod functions;
 /// Traits and structs which can be used to extract complex information from
-/// [`Event`](crate::data::Event)s.
+/// [`EventData`](crate::data::EventData)s.
 pub mod variables;
 /// Traits to give additional functionality to [`nalgebra::Vector3`] and [`nalgebra::Vector4`] (in
 /// particular, to treat the latter as a four-momentum).
 pub mod vectors;
 
 /// A helper method to get histogram edges from evenly-spaced `bins` over a given `range`
+///
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_index`]
-pub fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
-    let bin_width = (range.1 - range.0) / (bins as Float);
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::get_bin_edges;
+///
+/// assert_eq!(get_bin_edges(3, (0.0, 3.0)), vec![0.0, 1.0, 2.0, 3.0]);
+/// ```
+pub fn get_bin_edges(bins: usize, range: (f64, f64)) -> Vec<f64> {
+    let bin_width = (range.1 - range.0) / (bins as f64);
     (0..=bins)
-        .map(|i| range.0 + (i as Float * bin_width))
+        .map(|i| range.0 + (i as f64 * bin_width))
         .collect()
 }
 
@@ -28,9 +34,17 @@ pub fn get_bin_edges(bins: usize, range: (Float, Float)) -> Vec<Float> {
 /// # See Also
 /// [`Histogram`]
 /// [`get_bin_edges`]
-pub fn get_bin_index(value: Float, bins: usize, range: (Float, Float)) -> Option<usize> {
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::get_bin_index;
+///
+/// assert_eq!(get_bin_index(0.25, 4, (0.0, 1.0)), Some(1));
+/// assert_eq!(get_bin_index(1.5, 4, (0.0, 1.0)), None);
+/// ```
+pub fn get_bin_index(value: f64, bins: usize, range: (f64, f64)) -> Option<usize> {
     if value >= range.0 && value < range.1 {
-        let bin_width = (range.1 - range.0) / bins as Float;
+        let bin_width = (range.1 - range.0) / bins as f64;
         let bin_index = ((value - range.0) / bin_width).floor() as usize;
         Some(bin_index.min(bins - 1))
     } else {
@@ -40,18 +54,29 @@ pub fn get_bin_index(value: Float, bins: usize, range: (Float, Float)) -> Option
 
 /// A simple struct which represents a histogram
 pub struct Histogram {
-    /// The number of counts in each bin (can be [`Float`]s since these might be weighted counts)
-    pub counts: Vec<Float>,
+    /// The number of counts in each bin (can be [`f64`]s since these might be weighted counts)
+    pub counts: Vec<f64>,
     /// The edges of each bin (length is one greater than `counts`)
-    pub bin_edges: Vec<Float>,
+    pub bin_edges: Vec<f64>,
 }
 
 /// A method which creates a histogram from some data by binning it with evenly spaced `bins` within
 /// the given `range`
-pub fn histogram<T: AsRef<[Float]>>(
+///
+/// # Examples
+/// ```rust
+/// use laddu_core::utils::histogram;
+///
+/// let values = vec![0.1, 0.4, 0.8];
+/// let weights: Option<&[f64]> = None;
+/// let hist = histogram(values.as_slice(), 2, (0.0, 1.0), weights);
+/// assert_eq!(hist.counts, vec![2.0, 1.0]);
+/// assert_eq!(hist.bin_edges, vec![0.0, 0.5, 1.0]);
+/// ```
+pub fn histogram<T: AsRef<[f64]>>(
     values: T,
     bins: usize,
-    range: (Float, Float),
+    range: (f64, f64),
     weights: Option<T>,
 ) -> Histogram {
     assert!(bins > 0, "Number of bins must be greater than zero!");
@@ -92,9 +117,11 @@ mod tests {
 
     #[test]
     fn test_binning() {
-        let v = Mass::new([2]);
+        let mut v = Mass::new(["kshort1"]);
         let dataset = Arc::new(test_dataset());
-        let bin_index = get_bin_index(v.value_on(&dataset)[0], 3, (0.0, 1.0));
+        v.bind(dataset.metadata()).unwrap();
+        let values = v.value_on(&dataset).unwrap();
+        let bin_index = get_bin_index(values[0], 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(1));
         let bin_index = get_bin_index(0.0, 3, (0.0, 1.0));
         assert_eq!(bin_index, Some(0));
@@ -106,7 +133,8 @@ mod tests {
         assert_eq!(bin_index, None);
         let bin_index = get_bin_index(2.0, 3, (0.0, 1.0));
         assert_eq!(bin_index, None);
-        let histogram = histogram(v.value_on(&dataset), 3, (0.0, 1.0), Some(dataset.weights()));
+        let weights = dataset.weights();
+        let histogram = histogram(&values, 3, (0.0, 1.0), Some(&weights));
         assert_eq!(histogram.counts, vec![0.0, 0.48, 0.0]);
         assert_eq!(histogram.bin_edges, vec![0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0])
     }

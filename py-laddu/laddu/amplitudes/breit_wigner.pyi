@@ -1,6 +1,6 @@
 from typing import Literal, overload
 
-from laddu.amplitudes import Amplitude, ParameterLike
+from laddu.amplitudes import Expression, ParameterLike
 from laddu.utils.variables import Mass
 
 @overload
@@ -12,7 +12,7 @@ def BreitWigner(
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,
-) -> Amplitude: ...
+) -> Expression: ...
 @overload
 def BreitWigner(
     name: str,
@@ -22,4 +22,4 @@ def BreitWigner(
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,
-) -> Amplitude: ...
+) -> Expression: ...

@@ -59,6 +59,11 @@
 - Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
 - Python bindings to allow users to write quick, easy-to-read code that just works.
 
+> **API note:** The low-level event container is now named `EventData`. The metadata-aware view
+> returned by [`Dataset::named_event`](https://docs.rs/laddu-core/latest/laddu_core/data/struct.Dataset.html#method.named_event)
+> is called `Event` and exposes the same kinematic helpers while enabling name-based lookups.
+> Python bindings continue to expose this view as ``laddu.Event``.
+
 # Installation
 
 `laddu` can be added to a Rust project with `cargo`:
@@ -97,12 +102,13 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 
 ```rust
 use laddu::{
-   ParameterLike, Event, Cache, Resources, Mass,
-   ParameterID, Parameters, Float, LadduError, PI, AmplitudeID, Complex,
+   AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduError, LadduResult, Mass,
+   ParameterID, ParameterLike, Parameters, Resources, PI,
 };
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
 use laddu::{Deserialize, Serialize, typetag};
+use num::complex::Complex64;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {
@@ -125,7 +131,7 @@ impl MyBreitWigner {
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
         resonance_mass: &Mass,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             mass,
@@ -137,19 +143,29 @@ impl MyBreitWigner {
             daughter_2_mass: daughter_2_mass.clone(),
             resonance_mass: resonance_mass.clone(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for MyBreitWigner {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
-        self.pid_mass = resources.register_parameter(&self.mass);
-        self.pid_width = resources.register_parameter(&self.width);
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+        self.pid_mass = resources.register_parameter(&self.mass)?;
+        self.pid_width = resources.register_parameter(&self.width)?;
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &Event, _cache: &Cache) -> Complex<Float> {
+    fn bind(
+        &mut self,
+        metadata: &DatasetMetadata,
+    ) -> LadduResult<()> {
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        Ok(())
+    }
+
+    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
         let mass = self.resonance_mass.value(event);
         let mass0 = parameters.get(self.pid_mass);
         let width0 = parameters.get(self.pid_width);
@@ -160,9 +176,9 @@ impl Amplitude for MyBreitWigner {
         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = Float::sqrt(mass0 * width0 / PI);
-        let d = Complex::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex::from(f * n) / d
+        let n = (mass0 * width0 / PI).sqrt();
+        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
+        Complex64::from(f * n) / d
     }
 }
 ```
@@ -172,15 +188,20 @@ impl Amplitude for MyBreitWigner {
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 
 ```rust
-use laddu::{Scalar, Mass, Manager, NLL, parameter, open};
-let ds_data = open("test_data/data.parquet").unwrap();
-let ds_mc = open("test_data/mc.parquet").unwrap();
+use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
+let p4_names = ["beam", "proton", "kshort1", "kshort2"];
+let aux_names = ["pol_magnitude", "pol_angle"];
+let options = DatasetReadOptions::default()
+    .p4_names(p4_names)
+    .aux_names(aux_names)
+    .alias("resonance", ["kshort1", "kshort2"]);
+let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
+let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
 
-let resonance_mass = Mass::new([2, 3]);
-let p1_mass = Mass::new([2]);
-let p2_mass = Mass::new([3]);
-let mut manager = Manager::default();
-let bw = manager.register(MyBreitWigner::new(
+let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+let p1_mass = Mass::new(["kshort1"]);
+let p2_mass = Mass::new(["kshort2"]);
+let bw = MyBreitWigner::new(
     "bw",
     parameter("mass"),
     parameter("width"),
@@ -188,12 +209,11 @@ let bw = manager.register(MyBreitWigner::new(
     &p1_mass,
     &p2_mass,
     &resonance_mass,
-)).unwrap();
-let mag = manager.register(Scalar::new("mag", parameter("magnitude"))).unwrap();
+).unwrap();
+let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
 let expr = (mag * bw).norm_sqr();
-let model = manager.model(&expr);
 
-let nll = NLL::new(&model, &ds_data, &ds_mc);
+let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
 println!("Parameters names and order: {:?}", nll.parameters());
 let result = nll.evaluate(&[1.27, 0.120, 100.0]);
 println!("The extended negative log-likelihood is {}", result);
@@ -214,27 +234,29 @@ import numpy as np
 from laddu import constant, parameter
 
 def main():
-    ds_data = ld.open("path/to/data.parquet")
-    ds_mc = ld.open("path/to/accmc.parquet")
-    angles = ld.Angles(0, [1], [2], [2, 3], "Helicity")
-    polarization = ld.Polarization(0, [1])
-    manager = ld.Manager()
-    z00p = manager.register(ld.Zlm("z00p", 0, 0, "+", angles, polarization))
-    z00n = manager.register(ld.Zlm("z00n", 0, 0, "-", angles, polarization))
-    z22p = manager.register(ld.Zlm("z22p", 2, 2, "+", angles, polarization))
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
+    ds_data = ld.Dataset.from_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_mc = ld.Dataset.from_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    angles = ld.Angles(topology, 'kshort1', 'Helicity')
+    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
 
-    s0p = manager.register(ld.Scalar("s0p", parameter("s0p")))
-    s0n = manager.register(ld.Scalar("s0n", parameter("s0n")))
-    d2p = manager.register(ld.ComplexScalar("d2p", parameter("d2 re"), parameter("d2 im")))
+    z00p = ld.Zlm("z00p", 0, 0, "+", angles, polarization)
+    z00n = ld.Zlm("z00n", 0, 0, "-", angles, polarization)
+    z22p = ld.Zlm("z22p", 2, 2, "+", angles, polarization)
+
+    s0p = ld.Scalar("s0p", parameter("s0p"))
+    s0n = ld.Scalar("s0n", parameter("s0n"))
+    d2p = ld.ComplexScalar("d2p", parameter("d2 re"), parameter("d2 im"))
 
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
     neg_re = (s0n * z00n.real()).norm_sqr()
     neg_im = (s0n * z00n.imag()).norm_sqr()
     expr = pos_re + pos_im + neg_re + neg_im
-    model = manager.model(expr)
 
-    nll = ld.NLL(model, ds_data, ds_mc)
+    nll = ld.NLL(expr, ds_data, ds_mc)
     status = nll.minimize([1.0] * len(nll.parameters))
     print(status)
     fit_weights = nll.project(status.x)
@@ -310,36 +332,48 @@ The resulting unpolarized moments are shown below:
 
 # Data Format
 
-The data format for `laddu` is a bit different from some of the alternatives like [`AmpTools`](https://github.com/mashephe/AmpTools). Since ROOT doesn't yet have bindings to Rust and projects to read ROOT files are still largely works in progress (although I hope to use [`oxyroot`](https://github.com/m-dupont/oxyroot) in the future when I can figure out a few bugs), the primary interface for data in `laddu` is Parquet files. These are easily accessible from almost any other language and they don't take up much more space than ROOT files. In the interest of future compatibility with any number of experimental setups, the data format consists of an arbitrary number of columns containing the four-momenta of each particle, the polarization vector of each particle (optional) and a single column for the weight. These columns all have standardized names. For example, the following columns would describe a dataset with four particles, the first of which is a polarized photon beam, as in the GlueX experiment:
+`laddu` focuses on a *column* layout rather than a specific file container. Each particle is represented by four floating-point columns (``_px``, ``_py``, ``_pz``, ``_e``), auxiliary scalars keep their explicit names (e.g. ``pol_magnitude``), and an optional ``weight`` column stores per-event weights. As long as those columns exist, the physical storage format may vary. Today, Parquet is the preferred container because it is small, language-agnostic, and easy to stream, but the Rust core can also read ROOT TTrees via [`oxyroot`](https://github.com/m-dupont/oxyroot), and the Python bindings add an AmpTools-aware backend on top of `uproot`. When the ``weight`` column is omitted, both the Rust and Python loaders fill it with ones so that unweighted samples continue to work without any extra preprocessing.
+
+For example, the following columns describe a dataset with four particles, the first of which is a polarized photon beam as in the GlueX experiment:
 
 | Column name | Data Type | Interpretation |
 | ----------- | --------- | -------------- |
-| `p4_0_E` | `Float32` | Beam Energy |
-| `p4_0_Px` | `Float32` | Beam Momentum (x-component) |
-| `p4_0_Py` | `Float32` | Beam Momentum (y-component) |
-| `p4_0_Pz` | `Float32` | Beam Momentum (z-component) |
-| `aux_0_x` | `Float32` | Beam Polarization (x-component) |
-| `aux_0_y` | `Float32` | Beam Polarization (y-component) |
-| `aux_0_z` | `Float32` | Beam Polarization (z-component) |
-| `p4_1_E` | `Float32` | Recoil Proton Energy |
-| `p4_1_Px` | `Float32` | Recoil Proton Momentum (x-component) |
-| `p4_1_Py` | `Float32` | Recoil Proton Momentum (y-component) |
-| `p4_1_Pz` | `Float32` | Recoil Proton Momentum (z-component) |
-| `p4_2_E` | `Float32` | Decay Product 1 Energy |
-| `p4_2_Px` | `Float32` | Decay Product 1 Momentum (x-component) |
-| `p4_2_Py` | `Float32` | Decay Product 1 Momentum (y-component) |
-| `p4_2_Pz` | `Float32` | Decay Product 1 Momentum (z-component) |
-| `p4_3_E` | `Float32` | Decay Product 2 Energy |
-| `p4_3_Px` | `Float32` | Decay Product 2 Momentum (x-component) |
-| `p4_3_Py` | `Float32` | Decay Product 2 Momentum (y-component) |
-| `p4_3_Pz` | `Float32` | Decay Product 2 Momentum (z-component) |
-| `weight` | `Float32` | Event Weight |
+| `beam_px` | `Float32` or `Float64` | Beam momentum (x-component) |
+| `beam_py` | `Float32` or `Float64` | Beam momentum (y-component) |
+| `beam_pz` | `Float32` or `Float64` | Beam momentum (z-component) |
+| `beam_e`  | `Float32` or `Float64` | Beam energy |
+| `pol_magnitude` | `Float32` or `Float64` | Beam polarization magnitude |
+| `pol_angle` | `Float32` or `Float64` | Beam polarization angle |
+| `proton_px` | `Float32` or `Float64` | Recoil proton momentum (x-component) |
+| `proton_py` | `Float32` or `Float64` | Recoil proton momentum (y-component) |
+| `proton_pz` | `Float32` or `Float64` | Recoil proton momentum (z-component) |
+| `proton_e`  | `Float32` or `Float64` | Recoil proton energy |
+| `kshort1_px`  | `Float32` or `Float64` | Decay product 1 momentum (x-component) |
+| `kshort1_py`  | `Float32` or `Float64` | Decay product 1 momentum (y-component) |
+| `kshort1_pz`  | `Float32` or `Float64` | Decay product 1 momentum (z-component) |
+| `kshort1_e`   | `Float32` or `Float64` | Decay product 1 energy |
+| `kshort2_px`  | `Float32` or `Float64` | Decay product 2 momentum (x-component) |
+| `kshort2_py`  | `Float32` or `Float64` | Decay product 2 momentum (y-component) |
+| `kshort2_pz`  | `Float32` or `Float64` | Decay product 2 momentum (z-component) |
+| `kshort2_e`   | `Float32` or `Float64` | Decay product 2 energy |
+| `weight`    | `Float32` or `Float64` | Event weight |
 
-To make it easier to get started, we can directly convert from the `AmpTools` format using the provided [`amptools-to-laddu`] script (see the `bin` directory of this repository). This is not bundled with the Python library (yet) but may be in the future.
+AmpTools-format ROOT files can be directly read as `Dataset` objects (this is currently implemented in the Python bindings; the Rust API still targets Parquet/standard ROOT TTrees):
+
+```python
+from laddu import Dataset
+
+dataset = Dataset.from_amptools(
+    'example_amp.root',
+    pol_in_beam=True,
+)
+```
+
+This loads the ROOT tree, infers the particle names, and exposes the result through the same `Dataset` interface used for Parquet inputs.
 
 # MPI Support
 
-The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` currently uses the `mpi` feature by default, since there is no way to create optional features in Python like Rust does. In the future, this package may be divided into a `laddu` and `laddu-mpi` package for users who don't require MPI. Alternatively, users can install `laddu` from source (cloning the repository and running `maturin develop -m py-laddu/Cargo.toml --no-default-features`).
+The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`.
 
 To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable). These same methods exist in Python as `laddu.mpi.use_mpi(trigger=true)` and `laddu.mpi.finalize_mpi()`, and an additional context manager, `laddu.mpi.MPI(trigger=true)`, can be used to quickly wrap a `main()` function. See the [documentation](https://laddu.readthedocs.io/en/latest/) for more details.
 

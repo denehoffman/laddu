@@ -1,6 +1,10 @@
 import pytest
 
-from laddu import Angles, Dataset, Event, Manager, Vec3, Ylm
+from laddu import Angles, Dataset, Event, Topology, Vec3, Ylm
+
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:
@@ -11,35 +15,35 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
+
+
+def reaction_topology() -> Topology:
+    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
 
 
 def test_ylm_evaluation() -> None:
-    manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
+    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == 0.2713394
-    assert pytest.approx(result[0].imag) == 0.1426897
+    assert pytest.approx(result[0].real) == 0.2713394403451028
+    assert pytest.approx(result[0].imag) == 0.1426897184196572
 
 
 def test_ylm_gradient() -> None:
-    manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
+    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
     amp = Ylm('ylm', 1, 1, angles)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters

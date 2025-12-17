@@ -1,6 +1,10 @@
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
-build-backend = "maturin"
+requires = ["uv_build>=0.9.10,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "laddu"
+module-root = ""
 
 [project]
 name = "laddu"
@@ -19,24 +23,25 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-dynamic = ["version", "license", "description", "readme"]
+version = "0.11.0"
+description = "High-level Python bindings for laddu"
+license = "MIT"
+readme = "README.md"
 dependencies = [
+  "laddu-cpu == 0.11.0",
   "numpy",
-  "docopt-ng",
-  "uproot",
-  "pandas",
-  "polars",
 ]
 
 [project.urls]
 Documentation = "https://laddu.readthedocs.io/en/stable/"
 
-[project.scripts]
-amptools-to-laddu = "laddu:convert.run"
-
 [project.optional-dependencies]
-tests = ["pytest"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
+pandas = ["pandas"]
+polars = ["polars"]
+tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
+uproot = ["uproot"]
+mpi = ["laddu-mpi == 0.11.0"]
 
 [tool.maturin]
 bindings = "pyo3"
@@ -142,7 +147,12 @@ docstring-code-line-length = "dynamic"
 
 [tool.coverage.run]
 source = ["laddu"]
-omit = ["tests/*", "docs/*"]
+omit = [
+  "tests/*",
+  "docs/*",
+  "laddu/mpi.py",
+  "*/laddu/mpi.py",
+]
 branch = true
 
 [tool.coverage.report]

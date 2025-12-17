@@ -14,7 +14,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-num = { workspace = true }
 laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
@@ -23,6 +22,7 @@ serde = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
+num = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
 fastrand = { workspace = true }
@@ -36,7 +36,6 @@ harness = false
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]
-f32 = ["laddu-core/f32", "laddu-amplitudes/f32", "laddu-extensions/f32"]
 python = [
   "laddu-core/python",
   "laddu-amplitudes/python",

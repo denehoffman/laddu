@@ -1,4 +1,4 @@
-from laddu.amplitudes import Amplitude
+from laddu.amplitudes import Expression
 from laddu.utils.variables import Mandelstam, Mass
 
 def PhaseSpaceFactor(
@@ -8,4 +8,4 @@ def PhaseSpaceFactor(
     daughter_2_mass: Mass,
     resonance_mass: Mass,
     mandelstam_s: Mandelstam,
-) -> Amplitude: ...
+) -> Expression: ...

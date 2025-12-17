@@ -2,11 +2,15 @@ import pickle
 
 import pytest
 
-from laddu import Dataset, Event, Manager, Mass, Scalar, Vec3, parameter
+from laddu import Dataset, Event, Mass, Scalar, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,
     KopfKMatrixF2,
 )
+
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:
@@ -17,18 +21,19 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
 def test_serde() -> None:
-    manager = Manager()
-    res_mass = Mass([2, 3])
+    res_mass = Mass(['kshort1', 'kshort2'])
     f0 = KopfKMatrixF0(
         'f0',
         (
@@ -53,13 +58,9 @@ def test_serde() -> None:
         res_mass,
     )
     s = Scalar('s', parameter('s'))
-    f0_aid = manager.register(f0)
-    f2_aid = manager.register(f2)
-    s_aid = manager.register(s)
-    expr = (f0_aid * s_aid + f2_aid).norm_sqr()
-    model = manager.model(expr)
+    expr = (f0 * s + f2).norm_sqr()
     dataset = make_test_dataset()
-    evaluator = model.load(dataset)
+    evaluator = expr.load(dataset)
     p = [
         0.1,
         0.2,
@@ -82,9 +83,9 @@ def test_serde() -> None:
         1.9,
     ]
     result = evaluator.evaluate(p)
-    pickled_model = pickle.dumps(model)
-    unpickled_model = pickle.loads(pickled_model)
-    unpickled_evaluator = unpickled_model.load(dataset)
+    pickled_expr = pickle.dumps(expr)
+    unpickled_expr = pickle.loads(pickled_expr)
+    unpickled_evaluator = unpickled_expr.load(dataset)
     unpickled_result = unpickled_evaluator.evaluate(p)
 
     assert pytest.approx(result[0].real) == pytest.approx(unpickled_result[0].real)

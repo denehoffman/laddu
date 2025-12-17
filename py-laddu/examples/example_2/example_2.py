@@ -36,7 +36,10 @@ if TYPE_CHECKING:
 
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
-    polarization = ld.Polarization(0, [1], 0)
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -44,9 +47,15 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
         pol_term = np.cos(2 * big_phi) / p_gamma
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
-    manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
-    model = manager.model(ylm.conj())
+    ylm = ld.Ylm(
+        'ylm',
+        l,
+        m,
+        ld.Angles(
+            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
+        ),
+    )
+    model = ylm.conj()
     evaluator = model.load(data)
     values = evaluator.evaluate([])
     weights = data.weights
@@ -67,7 +76,10 @@ def get_norm_int_term(
     const = (
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
-    polarization = ld.Polarization(0, [1], 0)
+    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
@@ -79,10 +91,23 @@ def get_norm_int_term(
         pol_term *= np.cos(2 * big_phi) * p_gamma
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
-    manager = ld.Manager()
-    ylm = manager.register(ld.Ylm('ylm', l, m, ld.Angles(0, [1], [2], [2, 3])))
-    ylpmp = manager.register(ld.Ylm('ylpmp', lp, mp, ld.Angles(0, [1], [2], [2, 3])))
-    model = manager.model(ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real()))
+    ylm = ld.Ylm(
+        'ylm',
+        l,
+        m,
+        ld.Angles(
+            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
+        ),
+    )
+    ylpmp = ld.Ylm(
+        'ylpmp',
+        lp,
+        mp,
+        ld.Angles(
+            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
+        ),
+    )
+    model = ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real())
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])
     weights = accmc.weights
@@ -156,16 +181,30 @@ def get_names(*, l_max: int, polarized: bool) -> list[tuple[str, int, int, int]]
 if __name__ == '__main__':
     args = docopt(__doc__ or '')
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
+    data_dir = script_dir.parent / 'data'
+    data_file = data_dir / 'data.parquet'
+    accmc_file = data_dir / 'accmc.parquet'
     bins = int(args['-n'])
     nboot = int(args['-b'])
     l_max = int(args['-l'])
     edges = np.histogram_bin_edges([], bins, (1.0, 2.0))
     centers = (edges[1:] + edges[:-1]) / 2
 
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
+
     if not (script_dir / 'unpolarized_moments.pkl').exists():
-        data = ld.open(script_dir / 'data_2.parquet', rest_frame_indices=[1, 2, 3])
-        accmc = ld.open(script_dir / 'mc_2.parquet', rest_frame_indices=[1, 2, 3])
-        mass = ld.Mass([2, 3])
+        data = ld.Dataset.from_parquet(
+            data_file,
+            p4s=p4_columns,
+            aux=aux_columns,
+        )
+        accmc = ld.Dataset.from_parquet(
+            accmc_file,
+            p4s=p4_columns,
+            aux=aux_columns,
+        )
+        mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []
@@ -220,9 +259,9 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.open(script_dir / 'data_2.parquet')
-        accmc = ld.open(script_dir / 'mc_2.parquet')
-        mass = ld.Mass([2, 3])
+        data = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
+        accmc = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
+        mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))
         binned_moments = []

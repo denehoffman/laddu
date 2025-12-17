@@ -3,6 +3,7 @@
 //! This is an internal crate used by `laddu`.
 #![warn(clippy::perf, clippy::style, missing_docs)]
 #![allow(clippy::excessive_precision)]
+#![allow(clippy::new_ret_no_self)] // Amplitudes should return Expressions when constructed
 
 /// The Breit-Wigner amplitude.
 pub mod breit_wigner;

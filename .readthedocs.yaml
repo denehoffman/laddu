@@ -10,8 +10,8 @@ build:
     rust: "latest"
   jobs:
     post_create_environment:
-      - rustup toolchain install 1.87.0
-      - rustup default 1.87.0
+      - rustup toolchain install 1.88.0
+      - rustup default 1.88.0
 
 sphinx:
   configuration: py-laddu/docs/source/conf.py
@@ -21,6 +21,8 @@ formats:
 
 python:
   install:
+    - method: pip
+      path: py-laddu-cpu
     - method: pip
       path: py-laddu
       extra_requirements:

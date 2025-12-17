@@ -49,13 +49,13 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
         self.d2s = []
 
     def check_for_termination(
-        self, step: int, ensemble: ld.EnsembleStatus
+        self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = ensemble.get_chain()[:, -1, :]
+        latest_step = status.get_chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
-        for i_walker in range(ensemble.dimension[0]):
+        for i_walker in range(status.dimension[0]):
             tot.append(np.sum(self.nll.project(latest_step[i_walker])))
             s0s.append(
                 np.sum(self.nll.project_with(latest_step[i_walker], ['Z00+', 'S0+']))
@@ -69,7 +69,7 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
         if step % self.ncheck == 0:
             logger.info('Checking Autocorrelation (custom)')
             logger.info(
-                f'Chain dimensions: {ensemble.dimension[0]} walkers, {ensemble.dimension[1]} steps, {ensemble.dimension[2]} parameters'
+                f'Chain dimensions: {status.dimension[0]} walkers, {status.dimension[1]} steps, {status.dimension[2]} parameters'
             )
             chain = np.array([self.s0s, self.d2s]).transpose(
                 2, 1, 0
@@ -104,14 +104,17 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
 
 def main() -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
-    data_file = str(script_dir / 'data_1.parquet')
-    accmc_file = str(script_dir / 'accmc_1.parquet')
+    data_dir = script_dir.parent / 'data'
+    data_file = str(data_dir / 'data.parquet')
+    accmc_file = str(data_dir / 'accmc.parquet')
+    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
+    aux_columns = ['pol_magnitude', 'pol_angle']
     logger.info('Opening Data file...')
-    data_ds = ld.open(data_file)
+    data_ds = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
     logger.info('Opening AccMC file...')
-    accmc_ds = ld.open(accmc_file)
+    accmc_ds = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
 
-    res_mass = ld.Mass([2, 3])
+    res_mass = ld.Mass(['kshort1', 'kshort2'])
     m_data = res_mass.value_on(data_ds)
 
     font = {'family': 'DejaVu Sans', 'weight': 'normal', 'size': 22}

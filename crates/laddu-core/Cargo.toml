@@ -26,6 +26,7 @@ mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 numpy = { workspace = true, optional = true }
+oxyroot = { workspace = true }
 parquet = { workspace = true }
 parking_lot = { workspace = true }
 pyo3 = { workspace = true, features = [
@@ -50,11 +51,15 @@ harness = false
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-f32 = ["ganesh/f32"]
 python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]
 mpi = ["dep:mpi"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(coverage,coverage_nightly)',
+] }
 
 
 [package.metadata.docs.rs]

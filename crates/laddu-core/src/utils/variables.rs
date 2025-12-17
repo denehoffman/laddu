@@ -8,12 +8,12 @@ use rayon::prelude::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
 use crate::{
-    data::{Dataset, Event},
+    data::{Dataset, DatasetMetadata, EventData},
     utils::{
         enums::{Channel, Frame},
-        vectors::Vec3,
+        vectors::{Vec3, Vec4},
     },
-    Float, LadduError,
+    LadduError, LadduResult,
 };
 
 use auto_ops::impl_op_ex;
@@ -21,28 +21,41 @@ use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
-/// Standard methods for extracting some value out of an [`Event`].
+/// Standard methods for extracting some value out of an [`EventData`].
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {
-    /// This method takes an [`Event`] and extracts a single value (like the mass of a particle).
-    fn value(&self, event: &Event) -> Float;
+    /// Bind the variable to dataset metadata so that any referenced names can be resolved to
+    /// concrete indices. Implementations that do not require metadata may keep the default
+    /// no-op.
+    fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
+        Ok(())
+    }
 
-    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// This method takes an [`EventData`] and extracts a single value (like the mass of a particle).
+    fn value(&self, event: &EventData) -> f64;
+
+    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
     /// [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
-    fn value_on_local(&self, dataset: &Dataset) -> Vec<Float> {
+    fn value_on_local(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
+        let mut variable = dyn_clone::clone_box(self);
+        variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
-        let local_values: Vec<Float> = dataset.events.par_iter().map(|e| self.value(e)).collect();
+        let local_values: Vec<f64> = dataset
+            .events
+            .par_iter()
+            .map(|e| variable.value(e))
+            .collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<Float> = dataset.events.iter().map(|e| self.value(e)).collect();
-        local_values
+        let local_values: Vec<f64> = dataset.events.iter().map(|e| variable.value(e)).collect();
+        Ok(local_values)
     }
 
-    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
     /// [`Dataset`] (MPI-compatible version).
     ///
     /// # Notes
@@ -50,21 +63,21 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Variable::value_on`] instead.
     #[cfg(feature = "mpi")]
-    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> Vec<Float> {
-        let local_weights = self.value_on_local(dataset);
+    fn value_on_mpi(&self, dataset: &Dataset, world: &SimpleCommunicator) -> LadduResult<Vec<f64>> {
+        let local_weights = self.value_on_local(dataset)?;
         let n_events = dataset.n_events();
-        let mut buffer: Vec<Float> = vec![0.0; n_events];
+        let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
         }
-        buffer
+        Ok(buffer)
     }
 
-    /// This method distributes the [`Variable::value`] method over each [`Event`] in a
+    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
     /// [`Dataset`].
-    fn value_on(&self, dataset: &Dataset) -> Vec<Float> {
+    fn value_on(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -75,7 +88,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self == val`
-    fn eq(&self, val: Float) -> VariableExpression
+    fn eq(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -83,7 +96,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self < val`
-    fn lt(&self, val: Float) -> VariableExpression
+    fn lt(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -91,7 +104,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self > val`
-    fn gt(&self, val: Float) -> VariableExpression
+    fn gt(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -99,7 +112,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self >= val`
-    fn ge(&self, val: Float) -> VariableExpression
+    fn ge(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -107,7 +120,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self <= val`
-    fn le(&self, val: Float) -> VariableExpression
+    fn le(&self, val: f64) -> VariableExpression
     where
         Self: std::marker::Sized + 'static,
     {
@@ -116,15 +129,15 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
 }
 dyn_clone::clone_trait_object!(Variable);
 
-/// Expressions which can be used to compare [`Variable`]s to [`Float`]s.
+/// Expressions which can be used to compare [`Variable`]s to [`f64`]s.
 #[derive(Clone, Debug)]
 pub enum VariableExpression {
     /// Expression which is true when the variable is equal to the float.
-    Eq(Box<dyn Variable>, Float),
+    Eq(Box<dyn Variable>, f64),
     /// Expression which is true when the variable is less than the float.
-    Lt(Box<dyn Variable>, Float),
+    Lt(Box<dyn Variable>, f64),
     /// Expression which is true when the variable is greater than the float.
-    Gt(Box<dyn Variable>, Float),
+    Gt(Box<dyn Variable>, f64),
     /// Expression which is true when both inner expressions are true.
     And(Box<VariableExpression>, Box<VariableExpression>),
     /// Expression which is true when either inner expression is true.
@@ -144,9 +157,12 @@ impl VariableExpression {
         VariableExpression::Or(Box::new(self.clone()), Box::new(rhs.clone()))
     }
 
-    /// Comple the [`VariableExpression`] into a [`CompiledExpression`].
-    pub(crate) fn compile(&self) -> CompiledExpression {
-        compile_expression(self.clone())
+    /// Comple the [`VariableExpression`] into a [`CompiledExpression`] bound to the supplied
+    /// metadata so that all variable references are resolved.
+    pub(crate) fn compile(&self, metadata: &DatasetMetadata) -> LadduResult<CompiledExpression> {
+        let mut compiled = compile_expression(self.clone());
+        compiled.bind(metadata)?;
+        Ok(compiled)
     }
 }
 impl Display for VariableExpression {
@@ -188,9 +204,9 @@ impl_op_ex!(! |exp: &VariableExpression| -> VariableExpression{ not(exp) });
 
 #[derive(Debug)]
 enum Opcode {
-    PushEq(usize, Float),
-    PushLt(usize, Float),
-    PushGt(usize, Float),
+    PushEq(usize, f64),
+    PushLt(usize, f64),
+    PushGt(usize, f64),
     And,
     Or,
     Not,
@@ -202,8 +218,15 @@ pub(crate) struct CompiledExpression {
 }
 
 impl CompiledExpression {
-    /// Evaluate the [`CompiledExpression`] on a given [`Event`].
-    pub fn evaluate(&self, event: &Event) -> bool {
+    pub fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        for variable in &mut self.variables {
+            variable.bind(metadata)?;
+        }
+        Ok(())
+    }
+
+    /// Evaluate the [`CompiledExpression`] on a given [`EventData`].
+    pub fn evaluate(&self, event: &EventData) -> bool {
         let mut stack = Vec::with_capacity(self.bytecode.len());
 
         for op in &self.bytecode {
@@ -279,41 +302,540 @@ pub(crate) fn compile_expression(expr: VariableExpression) -> CompiledExpression
     }
 }
 
-fn sort_indices<T: AsRef<[usize]>>(indices: T) -> Vec<usize> {
-    let mut indices = indices.as_ref().to_vec();
-    indices.sort();
-    indices
+fn names_to_string(names: &[String]) -> String {
+    names.join(", ")
 }
 
-fn indices_to_string<T: AsRef<[usize]>>(indices: T) -> String {
-    indices
-        .as_ref()
-        .iter()
-        .map(|n| n.to_string())
-        .collect::<Vec<_>>()
-        .join(", ")
+/// A reusable selection that may span one or more four-momentum names.
+///
+/// Instances are constructed from metadata-facing identifiers and later bound to
+/// column indices so that variable evaluators can resolve aliases or grouped
+/// particles efficiently.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct P4Selection {
+    names: Vec<String>,
+    #[serde(skip, default)]
+    indices: Vec<usize>,
+}
+
+impl P4Selection {
+    fn new_many<I, S>(names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            names: names.into_iter().map(Into::into).collect(),
+            indices: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_indices<I, S>(names: I, indices: Vec<usize>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            names: names.into_iter().map(Into::into).collect(),
+            indices,
+        }
+    }
+
+    /// Returns the metadata names contributing to this selection.
+    pub fn names(&self) -> &[String] {
+        &self.names
+    }
+
+    pub(crate) fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        let mut resolved = Vec::with_capacity(self.names.len());
+        for name in &self.names {
+            metadata.append_indices_for_name(name, &mut resolved)?;
+        }
+        self.indices = resolved;
+        Ok(())
+    }
+
+    /// The resolved column indices backing this selection.
+    pub fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    pub(crate) fn momentum(&self, event: &EventData) -> Vec4 {
+        event.get_p4_sum(self.indices())
+    }
+}
+
+/// Helper trait to convert common particle specifications into [`P4Selection`] instances.
+pub trait IntoP4Selection {
+    /// Convert the input into a [`P4Selection`].
+    fn into_selection(self) -> P4Selection;
+}
+
+impl IntoP4Selection for P4Selection {
+    fn into_selection(self) -> P4Selection {
+        self
+    }
+}
+
+impl IntoP4Selection for &P4Selection {
+    fn into_selection(self) -> P4Selection {
+        self.clone()
+    }
+}
+
+impl IntoP4Selection for String {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self])
+    }
+}
+
+impl IntoP4Selection for &String {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self.clone()])
+    }
+}
+
+impl IntoP4Selection for &str {
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(vec![self.to_string()])
+    }
+}
+
+impl<S> IntoP4Selection for Vec<S>
+where
+    S: Into<String>,
+{
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.into_iter().map(Into::into).collect::<Vec<_>>())
+    }
+}
+
+impl<S> IntoP4Selection for &[S]
+where
+    S: Clone + Into<String>,
+{
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.iter().cloned().map(Into::into).collect::<Vec<_>>())
+    }
+}
+
+impl<S, const N: usize> IntoP4Selection for [S; N]
+where
+    S: Into<String>,
+{
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.into_iter().map(Into::into).collect::<Vec<_>>())
+    }
+}
+
+impl<S, const N: usize> IntoP4Selection for &[S; N]
+where
+    S: Clone + Into<String>,
+{
+    fn into_selection(self) -> P4Selection {
+        P4Selection::new_many(self.iter().cloned().map(Into::into).collect::<Vec<_>>())
+    }
+}
+
+/// A reusable 2-to-2 reaction description shared by several kinematic variables.
+///
+/// A topology records the four canonical vertices $`k_1 + k_2 \to k_3 + k_4`$.
+/// When one vertex is omitted, it is reconstructed by enforcing four-momentum
+/// conservation, which is unambiguous in that frame. Use [`Topology::com_boost_vector`]
+/// and the `*_com` helpers to access particles in the center-of-momentum frame.
+///
+/// ```text
+/// k1  k3
+///  ╲  ╱
+///   ╭╮
+///   ╰╯
+///  ╱  ╲
+/// k2  k4
+/// ```
+///
+/// Note that variables are typically designed to use $`k_1`$ as the incoming beam, $`k_2`$ as a
+/// target, $`k_3`$ as some resonance, and $`k_4`$ as the recoiling target particle, but this
+/// notation should be extensible to any 2-to-2 reaction.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Topology {
+    /// All four vertices are explicitly provided.
+    Full {
+        /// First incoming vertex.
+        k1: P4Selection,
+        /// Second incoming vertex.
+        k2: P4Selection,
+        /// First outgoing vertex.
+        k3: P4Selection,
+        /// Second outgoing vertex.
+        k4: P4Selection,
+    },
+    /// The first incoming vertex (`k1`) is reconstructed.
+    MissingK1 {
+        /// Second incoming vertex.
+        k2: P4Selection,
+        /// First outgoing vertex.
+        k3: P4Selection,
+        /// Second outgoing vertex.
+        k4: P4Selection,
+    },
+    /// The second incoming vertex (`k2`) is reconstructed.
+    MissingK2 {
+        /// First incoming vertex.
+        k1: P4Selection,
+        /// First outgoing vertex.
+        k3: P4Selection,
+        /// Second outgoing vertex.
+        k4: P4Selection,
+    },
+    /// The first outgoing vertex (`k3`) is reconstructed.
+    MissingK3 {
+        /// First incoming vertex.
+        k1: P4Selection,
+        /// Second incoming vertex.
+        k2: P4Selection,
+        /// Second outgoing vertex.
+        k4: P4Selection,
+    },
+    /// The second outgoing vertex (`k4`) is reconstructed.
+    MissingK4 {
+        /// First incoming vertex.
+        k1: P4Selection,
+        /// Second incoming vertex.
+        k2: P4Selection,
+        /// First outgoing vertex.
+        k3: P4Selection,
+    },
+}
+
+impl Topology {
+    /// Construct a topology with all four vertices explicitly defined.
+    pub fn new<K1, K2, K3, K4>(k1: K1, k2: K2, k3: K3, k4: K4) -> Self
+    where
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
+    {
+        Self::Full {
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
+        }
+    }
+
+    /// Construct a topology when the first incoming vertex (`k1`) is omitted.
+    pub fn missing_k1<K2, K3, K4>(k2: K2, k3: K3, k4: K4) -> Self
+    where
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
+    {
+        Self::MissingK1 {
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
+        }
+    }
+
+    /// Construct a topology when the second incoming vertex (`k2`) is omitted.
+    pub fn missing_k2<K1, K3, K4>(k1: K1, k3: K3, k4: K4) -> Self
+    where
+        K1: IntoP4Selection,
+        K3: IntoP4Selection,
+        K4: IntoP4Selection,
+    {
+        Self::MissingK2 {
+            k1: k1.into_selection(),
+            k3: k3.into_selection(),
+            k4: k4.into_selection(),
+        }
+    }
+
+    /// Construct a topology when the first outgoing vertex (`k3`) is omitted.
+    pub fn missing_k3<K1, K2, K4>(k1: K1, k2: K2, k4: K4) -> Self
+    where
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K4: IntoP4Selection,
+    {
+        Self::MissingK3 {
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k4: k4.into_selection(),
+        }
+    }
+
+    /// Construct a topology when the second outgoing vertex (`k4`) is omitted.
+    pub fn missing_k4<K1, K2, K3>(k1: K1, k2: K2, k3: K3) -> Self
+    where
+        K1: IntoP4Selection,
+        K2: IntoP4Selection,
+        K3: IntoP4Selection,
+    {
+        Self::MissingK4 {
+            k1: k1.into_selection(),
+            k2: k2.into_selection(),
+            k3: k3.into_selection(),
+        }
+    }
+
+    /// Bind every vertex to dataset metadata so the particle names resolve to indices.
+    pub fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        match self {
+            Topology::Full { k1, k2, k3, k4 } => {
+                k1.bind(metadata)?;
+                k2.bind(metadata)?;
+                k3.bind(metadata)?;
+                k4.bind(metadata)?;
+            }
+            Topology::MissingK1 { k2, k3, k4 } => {
+                k2.bind(metadata)?;
+                k3.bind(metadata)?;
+                k4.bind(metadata)?;
+            }
+            Topology::MissingK2 { k1, k3, k4 } => {
+                k1.bind(metadata)?;
+                k3.bind(metadata)?;
+                k4.bind(metadata)?;
+            }
+            Topology::MissingK3 { k1, k2, k4 } => {
+                k1.bind(metadata)?;
+                k2.bind(metadata)?;
+                k4.bind(metadata)?;
+            }
+            Topology::MissingK4 { k1, k2, k3 } => {
+                k1.bind(metadata)?;
+                k2.bind(metadata)?;
+                k3.bind(metadata)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the velocity vector that boosts lab-frame momenta into the diagram's
+    /// center-of-momentum frame.
+    pub fn com_boost_vector(&self, event: &EventData) -> Vec3 {
+        match self {
+            Topology::Full { k3, k4, .. }
+            | Topology::MissingK1 { k3, k4, .. }
+            | Topology::MissingK2 { k3, k4, .. } => {
+                -(k3.momentum(event) + k4.momentum(event)).beta()
+            }
+            Topology::MissingK3 { k1, k2, .. } | Topology::MissingK4 { k1, k2, .. } => {
+                -(k1.momentum(event) + k2.momentum(event)).beta()
+            }
+        }
+    }
+
+    /// Convenience helper returning the beam four-momentum (`k1`).
+    pub fn k1(&self, event: &EventData) -> Vec4 {
+        match self {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => k1.momentum(event),
+            Topology::MissingK1 { k2, k3, k4 } => {
+                k3.momentum(event) + k4.momentum(event) - k2.momentum(event)
+            }
+        }
+    }
+
+    /// Convenience helper returning the target four-momentum (`k2`).
+    pub fn k2(&self, event: &EventData) -> Vec4 {
+        match self {
+            Topology::Full { k2, .. }
+            | Topology::MissingK1 { k2, .. }
+            | Topology::MissingK3 { k2, .. }
+            | Topology::MissingK4 { k2, .. } => k2.momentum(event),
+            Topology::MissingK2 { k1, k3, k4 } => {
+                k3.momentum(event) + k4.momentum(event) - k1.momentum(event)
+            }
+        }
+    }
+
+    /// Convenience helper returning the resonance four-momentum (`k3`).
+    pub fn k3(&self, event: &EventData) -> Vec4 {
+        match self {
+            Topology::Full { k3, .. }
+            | Topology::MissingK1 { k3, .. }
+            | Topology::MissingK2 { k3, .. }
+            | Topology::MissingK4 { k3, .. } => k3.momentum(event),
+            Topology::MissingK3 { k1, k2, k4 } => {
+                k1.momentum(event) + k2.momentum(event) - k4.momentum(event)
+            }
+        }
+    }
+
+    /// Convenience helper returning the recoil four-momentum (`k4`).
+    pub fn k4(&self, event: &EventData) -> Vec4 {
+        match self {
+            Topology::Full { k4, .. }
+            | Topology::MissingK1 { k4, .. }
+            | Topology::MissingK2 { k4, .. }
+            | Topology::MissingK3 { k4, .. } => k4.momentum(event),
+            Topology::MissingK4 { k1, k2, k3 } => {
+                k1.momentum(event) + k2.momentum(event) - k3.momentum(event)
+            }
+        }
+    }
+
+    /// Beam four-momentum (`k1`) expressed in the center-of-momentum frame.
+    pub fn k1_com(&self, event: &EventData) -> Vec4 {
+        self.k1(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Target four-momentum (`k2`) expressed in the center-of-momentum frame.
+    pub fn k2_com(&self, event: &EventData) -> Vec4 {
+        self.k2(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Resonance four-momentum (`k3`) expressed in the center-of-momentum frame.
+    pub fn k3_com(&self, event: &EventData) -> Vec4 {
+        self.k3(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Recoil four-momentum (`k4`) expressed in the center-of-momentum frame.
+    pub fn k4_com(&self, event: &EventData) -> Vec4 {
+        self.k4(event).boost(&self.com_boost_vector(event))
+    }
+
+    /// Returns the resolved names for `k1` if it was explicitly provided.
+    pub fn k1_names(&self) -> Option<&[String]> {
+        match self {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => Some(k1.names()),
+            Topology::MissingK1 { .. } => None,
+        }
+    }
+
+    /// Returns the resolved names for `k2` if it was explicitly provided.
+    pub fn k2_names(&self) -> Option<&[String]> {
+        match self {
+            Topology::Full { k2, .. }
+            | Topology::MissingK1 { k2, .. }
+            | Topology::MissingK3 { k2, .. }
+            | Topology::MissingK4 { k2, .. } => Some(k2.names()),
+            Topology::MissingK2 { .. } => None,
+        }
+    }
+
+    /// Returns the resolved names for `k3` if it was explicitly provided.
+    pub fn k3_names(&self) -> Option<&[String]> {
+        match self {
+            Topology::Full { k3, .. }
+            | Topology::MissingK1 { k3, .. }
+            | Topology::MissingK2 { k3, .. }
+            | Topology::MissingK4 { k3, .. } => Some(k3.names()),
+            Topology::MissingK3 { .. } => None,
+        }
+    }
+
+    /// Returns the resolved names for `k4` if it was explicitly provided.
+    pub fn k4_names(&self) -> Option<&[String]> {
+        match self {
+            Topology::Full { k4, .. }
+            | Topology::MissingK1 { k4, .. }
+            | Topology::MissingK2 { k4, .. }
+            | Topology::MissingK3 { k4, .. } => Some(k4.names()),
+            Topology::MissingK4 { .. } => None,
+        }
+    }
+}
+
+impl Display for Topology {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Topology(k1=[{}], k2=[{}], k3=[{}], k4=[{}])",
+            format_topology_names(self.k1_names()),
+            format_topology_names(self.k2_names()),
+            format_topology_names(self.k3_names()),
+            format_topology_names(self.k4_names())
+        )
+    }
+}
+
+fn format_topology_names(names: Option<&[String]>) -> String {
+    match names {
+        Some(names) if !names.is_empty() => names_to_string(names),
+        Some(_) => String::new(),
+        None => "<reconstructed>".to_string(),
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct AuxSelection {
+    name: String,
+    #[serde(skip, default)]
+    index: Option<usize>,
+}
+
+impl AuxSelection {
+    fn new<S: Into<String>>(name: S) -> Self {
+        Self {
+            name: name.into(),
+            index: None,
+        }
+    }
+
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        let idx = metadata
+            .aux_index(&self.name)
+            .ok_or_else(|| LadduError::UnknownName {
+                category: "aux",
+                name: self.name.clone(),
+            })?;
+        self.index = Some(idx);
+        Ok(())
+    }
+
+    fn index(&self) -> usize {
+        self.index.expect("AuxSelection must be bound before use")
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// A struct for obtaining the mass of a particle by indexing the four-momenta of an event, adding
-/// together multiple four-momenta if more than one index is given.
+/// together multiple four-momenta if more than one entry is given.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Mass(Vec<usize>);
+pub struct Mass {
+    constituents: P4Selection,
+}
 impl Mass {
-    /// Create a new [`Mass`] from the sum of the four-momenta at the given indices in the
-    /// [`Event`]'s `p4s` field.
-    pub fn new<T: AsRef<[usize]>>(constituents: T) -> Self {
-        Self(sort_indices(constituents))
+    /// Create a new [`Mass`] from the sum of the four-momenta identified by `constituents` in the
+    /// [`EventData`]'s `p4s` field.
+    pub fn new<C>(constituents: C) -> Self
+    where
+        C: IntoP4Selection,
+    {
+        Self {
+            constituents: constituents.into_selection(),
+        }
     }
 }
 impl Display for Mass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Mass(constituents=[{}])", indices_to_string(&self.0))
+        write!(
+            f,
+            "Mass(constituents=[{}])",
+            names_to_string(self.constituents.names())
+        )
     }
 }
 #[typetag::serde]
 impl Variable for Mass {
-    fn value(&self, event: &Event) -> Float {
-        event.get_p4_sum(&self.0).m()
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.constituents.bind(metadata)
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
+        self.constituents.momentum(event).m()
     }
 }
 
@@ -321,91 +843,71 @@ impl Variable for Mass {
 /// a given reference frame of its parent resonance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CosTheta {
-    beam: usize,
-    recoil: Vec<usize>,
-    daughter: Vec<usize>,
-    resonance: Vec<usize>,
+    topology: Topology,
+    daughter: P4Selection,
     frame: Frame,
 }
 impl Display for CosTheta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "CosTheta(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
-            self.beam,
-            indices_to_string(&self.recoil),
-            indices_to_string(&self.daughter),
-            indices_to_string(&self.resonance),
+            "CosTheta(topology={}, daughter=[{}], frame={})",
+            self.topology,
+            names_to_string(self.daughter.names()),
             self.frame
         )
     }
 }
 impl CosTheta {
-    /// Construct the angle given the four-momentum indices for each specified particle. Fields
-    /// which can take lists of more than one index will add the relevant four-momenta to make a
-    /// new particle from the constituents. See [`Frame`] for options regarding the reference
+    /// Construct the angle given a [`Topology`] describing the production kinematics along with a
+    /// decay daughter of the `k3` resonance. See [`Frame`] for options regarding the reference
     /// frame.
-    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
-        beam: usize,
-        recoil: T,
-        daughter: U,
-        resonance: V,
-        frame: Frame,
-    ) -> Self {
+    pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
+    where
+        D: IntoP4Selection,
+    {
         Self {
-            beam,
-            recoil: recoil.as_ref().into(),
-            daughter: daughter.as_ref().into(),
-            resonance: resonance.as_ref().into(),
+            topology,
+            daughter: daughter.into_selection(),
             frame,
         }
     }
 }
-impl Default for CosTheta {
-    fn default() -> Self {
-        Self {
-            beam: 0,
-            recoil: vec![1],
-            daughter: vec![2],
-            resonance: vec![2, 3],
-            frame: Frame::Helicity,
-        }
-    }
-}
+
 #[typetag::serde]
 impl Variable for CosTheta {
-    fn value(&self, event: &Event) -> Float {
-        let beam = event.p4s[self.beam];
-        let recoil = event.get_p4_sum(&self.recoil);
-        let daughter = event.get_p4_sum(&self.daughter);
-        let resonance = event.get_p4_sum(&self.resonance);
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.topology.bind(metadata)?;
+        self.daughter.bind(metadata)?;
+        Ok(())
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
+        let com_boost = self.topology.com_boost_vector(event);
+        let beam = self.topology.k1_com(event);
+        let resonance = self.topology.k3_com(event);
+        let daughter = self.daughter.momentum(event).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
-        match self.frame {
+        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
+        let z = match self.frame {
             Frame::Helicity => {
+                let recoil = self.topology.k4_com(event);
                 let recoil_res = recoil.boost(&-resonance.beta());
-                let z = -recoil_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.costheta()
+                (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => {
                 let beam_res = beam.boost(&-resonance.beta());
-                let z = beam_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.costheta()
+                beam_res.vec3().unit()
             }
-        }
+        };
+        let x = plane_normal.cross(&z).unit();
+        let y = z.cross(&x).unit();
+        let angles = Vec3::new(
+            daughter_res.vec3().dot(&x),
+            daughter_res.vec3().dot(&y),
+            daughter_res.vec3().dot(&z),
+        );
+        angles.costheta()
     }
 }
 
@@ -413,91 +915,70 @@ impl Variable for CosTheta {
 /// reference frame of its parent resonance.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Phi {
-    beam: usize,
-    recoil: Vec<usize>,
-    daughter: Vec<usize>,
-    resonance: Vec<usize>,
+    topology: Topology,
+    daughter: P4Selection,
     frame: Frame,
 }
 impl Display for Phi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Phi(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
-            self.beam,
-            indices_to_string(&self.recoil),
-            indices_to_string(&self.daughter),
-            indices_to_string(&self.resonance),
+            "Phi(topology={}, daughter=[{}], frame={})",
+            self.topology,
+            names_to_string(self.daughter.names()),
             self.frame
         )
     }
 }
 impl Phi {
-    /// Construct the angle given the four-momentum indices for each specified particle. Fields
-    /// which can take lists of more than one index will add the relevant four-momenta to make a
-    /// new particle from the constituents. See [`Frame`] for options regarding the reference
-    /// frame.
-    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
-        beam: usize,
-        recoil: T,
-        daughter: U,
-        resonance: V,
-        frame: Frame,
-    ) -> Self {
+    /// Construct the angle given a [`Topology`] describing the production kinematics along with a
+    /// daughter of the resonance defined by `k3`. See [`Frame`] for options regarding the
+    /// reference frame.
+    pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
+    where
+        D: IntoP4Selection,
+    {
         Self {
-            beam,
-            recoil: recoil.as_ref().into(),
-            daughter: daughter.as_ref().into(),
-            resonance: resonance.as_ref().into(),
+            topology,
+            daughter: daughter.into_selection(),
             frame,
-        }
-    }
-}
-impl Default for Phi {
-    fn default() -> Self {
-        Self {
-            beam: 0,
-            recoil: vec![1],
-            daughter: vec![2],
-            resonance: vec![2, 3],
-            frame: Frame::Helicity,
         }
     }
 }
 #[typetag::serde]
 impl Variable for Phi {
-    fn value(&self, event: &Event) -> Float {
-        let beam = event.p4s[self.beam];
-        let recoil = event.get_p4_sum(&self.recoil);
-        let daughter = event.get_p4_sum(&self.daughter);
-        let resonance = event.get_p4_sum(&self.resonance);
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.topology.bind(metadata)?;
+        self.daughter.bind(metadata)?;
+        Ok(())
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
+        let com_boost = self.topology.com_boost_vector(event);
+        let beam = self.topology.k1_com(event);
+        let resonance = self.topology.k3_com(event);
+        let daughter = self.daughter.momentum(event).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
-        match self.frame {
+        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
+        let z = match self.frame {
             Frame::Helicity => {
+                let recoil = self.topology.k4_com(event);
                 let recoil_res = recoil.boost(&-resonance.beta());
-                let z = -recoil_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.phi()
+                (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => {
                 let beam_res = beam.boost(&-resonance.beta());
-                let z = beam_res.vec3().unit();
-                let y = beam.vec3().cross(&-recoil.vec3()).unit();
-                let x = y.cross(&z);
-                let angles = Vec3::new(
-                    daughter_res.vec3().dot(&x),
-                    daughter_res.vec3().dot(&y),
-                    daughter_res.vec3().dot(&z),
-                );
-                angles.phi()
+                beam_res.vec3().unit()
             }
-        }
+        };
+        let x = plane_normal.cross(&z).unit();
+        let y = z.cross(&x).unit();
+        let angles = Vec3::new(
+            daughter_res.vec3().dot(&x),
+            daughter_res.vec3().dot(&y),
+            daughter_res.vec3().dot(&z),
+        );
+        angles.phi()
     }
 }
 
@@ -514,109 +995,107 @@ impl Display for Angles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Angles(beam={}, recoil=[{}], daughter=[{}], resonance=[{}], frame={})",
-            self.costheta.beam,
-            indices_to_string(&self.costheta.recoil),
-            indices_to_string(&self.costheta.daughter),
-            indices_to_string(&self.costheta.resonance),
+            "Angles(topology={}, daughter=[{}], frame={})",
+            self.costheta.topology,
+            names_to_string(self.costheta.daughter.names()),
             self.costheta.frame
         )
     }
 }
 impl Angles {
-    /// Construct the angles given the four-momentum indices for each specified particle. Fields
-    /// which can take lists of more than one index will add the relevant four-momenta to make a
-    /// new particle from the constituents. See [`Frame`] for options regarding the reference
-    /// frame.
-    pub fn new<T: AsRef<[usize]>, U: AsRef<[usize]>, V: AsRef<[usize]>>(
-        beam: usize,
-        recoil: T,
-        daughter: U,
-        resonance: V,
-        frame: Frame,
-    ) -> Self {
-        Self {
-            costheta: CosTheta::new(beam, &recoil, &daughter, &resonance, frame),
-            phi: Phi {
-                beam,
-                recoil: recoil.as_ref().into(),
-                daughter: daughter.as_ref().into(),
-                resonance: resonance.as_ref().into(),
-                frame,
-            },
-        }
+    /// Construct the angles given a [`Topology`] along with the daughter selection.
+    /// See [`Frame`] for options regarding the reference frame.
+    pub fn new<D>(topology: Topology, daughter: D, frame: Frame) -> Self
+    where
+        D: IntoP4Selection,
+    {
+        let daughter_vertex = daughter.into_selection();
+        let costheta = CosTheta::new(topology.clone(), daughter_vertex.clone(), frame);
+        let phi = Phi::new(topology, daughter_vertex, frame);
+        Self { costheta, phi }
     }
 }
 
 /// A struct defining the polarization angle for a beam relative to the production plane.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolAngle {
-    beam: usize,
-    recoil: Vec<usize>,
-    beam_polarization: usize,
+    topology: Topology,
+    angle_aux: AuxSelection,
 }
 impl Display for PolAngle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PolAngle(beam={}, recoil=[{}], beam_polarization={})",
-            self.beam,
-            indices_to_string(&self.recoil),
-            self.beam_polarization,
+            "PolAngle(topology={}, angle_aux={})",
+            self.topology,
+            self.angle_aux.name(),
         )
     }
 }
 impl PolAngle {
-    /// Constructs the polarization angle given the four-momentum indices for each specified
-    /// particle. Fields which can take lists of more than one index will add the relevant
-    /// four-momenta to make a new particle from the constituents.
-    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T, beam_polarization: usize) -> Self {
+    /// Constructs the polarization angle given a [`Topology`] describing the production plane and
+    /// the auxiliary column storing the precomputed angle.
+    pub fn new<A>(topology: Topology, angle_aux: A) -> Self
+    where
+        A: Into<String>,
+    {
         Self {
-            beam,
-            recoil: recoil.as_ref().into(),
-            beam_polarization,
+            topology,
+            angle_aux: AuxSelection::new(angle_aux.into()),
         }
     }
 }
 #[typetag::serde]
 impl Variable for PolAngle {
-    fn value(&self, event: &Event) -> Float {
-        let beam = event.p4s[self.beam];
-        let recoil = event.get_p4_sum(&self.recoil);
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.topology.bind(metadata)?;
+        self.angle_aux.bind(metadata)?;
+        Ok(())
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
+        let beam = self.topology.k1(event);
+        let recoil = self.topology.k4(event);
+        let pol_angle = event.aux[self.angle_aux.index()];
+        let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
-        Float::atan2(
-            y.dot(&event.aux[self.beam_polarization]),
-            beam.vec3()
-                .unit()
-                .dot(&event.aux[self.beam_polarization].cross(&y)),
-        )
+        let numerator = y.dot(&polarization);
+        let denominator = beam.vec3().unit().dot(&polarization.cross(&y));
+        f64::atan2(numerator, denominator)
     }
 }
 
 /// A struct defining the polarization magnitude for a beam relative to the production plane.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PolMagnitude {
-    beam_polarization: usize,
+    magnitude_aux: AuxSelection,
 }
 impl Display for PolMagnitude {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PolMagnitude(beam_polarization={})",
-            self.beam_polarization,
+            "PolMagnitude(magnitude_aux={})",
+            self.magnitude_aux.name(),
         )
     }
 }
 impl PolMagnitude {
-    /// Constructs the polarization magnitude given the four-momentum index for the beam.
-    pub fn new(beam_polarization: usize) -> Self {
-        Self { beam_polarization }
+    /// Constructs the polarization magnitude given the named auxiliary column containing the
+    /// magnitude value.
+    pub fn new<S: Into<String>>(magnitude_aux: S) -> Self {
+        Self {
+            magnitude_aux: AuxSelection::new(magnitude_aux.into()),
+        }
     }
 }
 #[typetag::serde]
 impl Variable for PolMagnitude {
-    fn value(&self, event: &Event) -> Float {
-        event.aux[self.beam_polarization].mag()
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.magnitude_aux.bind(metadata)
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
+        event.aux[self.magnitude_aux.index()]
     }
 }
 
@@ -632,21 +1111,34 @@ impl Display for Polarization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Polarization(beam={}, recoil=[{}], beam_polarization={})",
-            self.pol_angle.beam,
-            indices_to_string(&self.pol_angle.recoil),
-            self.pol_angle.beam_polarization,
+            "Polarization(topology={}, magnitude_aux={}, angle_aux={})",
+            self.pol_angle.topology,
+            self.pol_magnitude.magnitude_aux.name(),
+            self.pol_angle.angle_aux.name(),
         )
     }
 }
 impl Polarization {
-    /// Constructs the polarization angle and magnitude given the four-momentum indices for
-    /// the beam and target (recoil) particle. Fields which can take lists of more than one index will add
-    /// the relevant four-momenta to make a new particle from the constituents.
-    pub fn new<T: AsRef<[usize]>>(beam: usize, recoil: T, beam_polarization: usize) -> Self {
+    /// Constructs the polarization angle and magnitude given a [`Topology`] and distinct
+    /// auxiliary columns for magnitude and angle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `magnitude_aux` and `angle_aux` refer to the same auxiliary column name.
+    pub fn new<M, A>(topology: Topology, magnitude_aux: M, angle_aux: A) -> Self
+    where
+        M: Into<String>,
+        A: Into<String>,
+    {
+        let magnitude_aux = magnitude_aux.into();
+        let angle_aux = angle_aux.into();
+        assert!(
+            magnitude_aux != angle_aux,
+            "Polarization magnitude and angle must reference distinct auxiliary columns"
+        );
         Self {
-            pol_magnitude: PolMagnitude::new(beam_polarization),
-            pol_angle: PolAngle::new(beam, recoil, beam_polarization),
+            pol_magnitude: PolMagnitude::new(magnitude_aux),
+            pol_angle: PolAngle::new(topology, angle_aux),
         }
     }
 }
@@ -663,116 +1155,48 @@ impl Polarization {
 /// $`u = (p_1 - p_4)^2 = (p_3 - p_2)^2`$
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mandelstam {
-    p1: Vec<usize>,
-    p2: Vec<usize>,
-    p3: Vec<usize>,
-    p4: Vec<usize>,
-    missing: Option<u8>,
+    topology: Topology,
     channel: Channel,
 }
 impl Display for Mandelstam {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Mandelstam(p1=[{}], p2=[{}], p3=[{}], p4=[{}], channel={})",
-            indices_to_string(&self.p1),
-            indices_to_string(&self.p2),
-            indices_to_string(&self.p3),
-            indices_to_string(&self.p4),
-            self.channel,
+            "Mandelstam(topology={}, channel={})",
+            self.topology, self.channel,
         )
     }
 }
 impl Mandelstam {
-    /// Constructs the Mandelstam variable for the given `channel` and particles.
-    /// Fields which can take lists of more than one index will add
-    /// the relevant four-momenta to make a new particle from the constituents.
-    pub fn new<T, U, V, W>(p1: T, p2: U, p3: V, p4: W, channel: Channel) -> Result<Self, LadduError>
-    where
-        T: AsRef<[usize]>,
-        U: AsRef<[usize]>,
-        V: AsRef<[usize]>,
-        W: AsRef<[usize]>,
-    {
-        let mut missing = None;
-        if p1.as_ref().is_empty() {
-            missing = Some(1)
-        }
-        if p2.as_ref().is_empty() {
-            if missing.is_none() {
-                missing = Some(2)
-            } else {
-                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
-            }
-        }
-        if p3.as_ref().is_empty() {
-            if missing.is_none() {
-                missing = Some(3)
-            } else {
-                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
-            }
-        }
-        if p4.as_ref().is_empty() {
-            if missing.is_none() {
-                missing = Some(4)
-            } else {
-                return Err(LadduError::Custom("A maximum of one particle may be ommitted while constructing a Mandelstam variable!".to_string()));
-            }
-        }
-        Ok(Self {
-            p1: p1.as_ref().into(),
-            p2: p2.as_ref().into(),
-            p3: p3.as_ref().into(),
-            p4: p4.as_ref().into(),
-            missing,
-            channel,
-        })
+    /// Constructs the Mandelstam variable for the given `channel` using the supplied [`Topology`].
+    pub fn new(topology: Topology, channel: Channel) -> Self {
+        Self { topology, channel }
     }
 }
 
 #[typetag::serde]
 impl Variable for Mandelstam {
-    fn value(&self, event: &Event) -> Float {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.topology.bind(metadata)
+    }
+
+    fn value(&self, event: &EventData) -> f64 {
         match self.channel {
-            Channel::S => match self.missing {
-                None | Some(3) | Some(4) => {
-                    let p1 = event.get_p4_sum(&self.p1);
-                    let p2 = event.get_p4_sum(&self.p2);
-                    (p1 + p2).mag2()
-                }
-                Some(1) | Some(2) => {
-                    let p3 = event.get_p4_sum(&self.p3);
-                    let p4 = event.get_p4_sum(&self.p4);
-                    (p3 + p4).mag2()
-                }
-                _ => unreachable!(),
-            },
-            Channel::T => match self.missing {
-                None | Some(2) | Some(4) => {
-                    let p1 = event.get_p4_sum(&self.p1);
-                    let p3 = event.get_p4_sum(&self.p3);
-                    (p1 - p3).mag2()
-                }
-                Some(1) | Some(3) => {
-                    let p2 = event.get_p4_sum(&self.p2);
-                    let p4 = event.get_p4_sum(&self.p4);
-                    (p4 - p2).mag2()
-                }
-                _ => unreachable!(),
-            },
-            Channel::U => match self.missing {
-                None | Some(2) | Some(3) => {
-                    let p1 = event.get_p4_sum(&self.p1);
-                    let p4 = event.get_p4_sum(&self.p4);
-                    (p1 - p4).mag2()
-                }
-                Some(1) | Some(4) => {
-                    let p2 = event.get_p4_sum(&self.p2);
-                    let p3 = event.get_p4_sum(&self.p3);
-                    (p3 - p2).mag2()
-                }
-                _ => unreachable!(),
-            },
+            Channel::S => {
+                let k1 = self.topology.k1(event);
+                let k2 = self.topology.k2(event);
+                (k1 + k2).mag2()
+            }
+            Channel::T => {
+                let k1 = self.topology.k1(event);
+                let k3 = self.topology.k3(event);
+                (k1 - k3).mag2()
+            }
+            Channel::U => {
+                let k1 = self.topology.k1(event);
+                let k4 = self.topology.k4(event);
+                (k1 - k4).mag2()
+            }
         }
     }
 }
@@ -783,214 +1207,290 @@ mod tests {
     use crate::data::{test_dataset, test_event};
     use approx::assert_relative_eq;
 
+    fn topology_test_metadata() -> DatasetMetadata {
+        DatasetMetadata::new(
+            vec!["beam", "target", "resonance", "recoil"],
+            Vec::<String>::new(),
+        )
+        .expect("topology metadata should be valid")
+    }
+
+    fn topology_test_event() -> EventData {
+        let p1 = Vec4::new(0.0, 0.0, 3.0, 3.5);
+        let p2 = Vec4::new(0.0, 0.0, -3.0, 3.5);
+        let p3 = Vec4::new(0.5, -0.25, 1.0, 1.9);
+        let p4 = p1 + p2 - p3;
+        EventData {
+            p4s: vec![p1, p2, p3, p4],
+            aux: vec![],
+            weight: 1.0,
+        }
+    }
+
+    fn reaction_topology() -> Topology {
+        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    }
+
+    #[test]
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    fn test_topology_accepts_varied_inputs() {
+        let topo = Topology::new(
+            "particle1",
+            ["particle2a", "particle2b"],
+            &["particle3"],
+            "particle4".to_string(),
+        );
+        assert_eq!(
+            topo.k1_names()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["particle1"]
+        );
+        assert_eq!(
+            topo.k2_names()
+                .unwrap()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["particle2a", "particle2b"]
+        );
+        let missing = Topology::missing_k2("particle1", vec!["particle3"], "particle4");
+        assert!(missing.k2_names().is_none());
+        assert!(missing.to_string().contains("<reconstructed>"));
+    }
+
+    #[test]
+    fn test_topology_reconstructs_missing_vertices() {
+        let metadata = topology_test_metadata();
+        let event = topology_test_event();
+
+        let mut full = Topology::new("beam", "target", "resonance", "recoil");
+        full.bind(&metadata).unwrap();
+        assert_relative_eq!(full.k3(&event), event.p4s[2], epsilon = 1e-12);
+
+        let mut missing_k1 = Topology::missing_k1("target", "resonance", "recoil");
+        missing_k1.bind(&metadata).unwrap();
+        assert!(missing_k1.k1_names().is_none());
+        assert_relative_eq!(missing_k1.k1(&event), event.p4s[0], epsilon = 1e-12);
+
+        let mut missing_k2 = Topology::missing_k2("beam", "resonance", "recoil");
+        missing_k2.bind(&metadata).unwrap();
+        assert!(missing_k2.k2_names().is_none());
+        assert_relative_eq!(missing_k2.k2(&event), event.p4s[1], epsilon = 1e-12);
+
+        let mut missing_k3 = Topology::missing_k3("beam", "target", "recoil");
+        missing_k3.bind(&metadata).unwrap();
+        assert!(missing_k3.k3_names().is_none());
+        assert_relative_eq!(missing_k3.k3(&event), event.p4s[2], epsilon = 1e-12);
+
+        let mut missing_k4 = Topology::missing_k4("beam", "target", "resonance");
+        missing_k4.bind(&metadata).unwrap();
+        assert!(missing_k4.k4_names().is_none());
+        assert_relative_eq!(missing_k4.k4(&event), event.p4s[3], epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_topology_com_helpers_match_manual_boost() {
+        let metadata = topology_test_metadata();
+        let event = topology_test_event();
+        let mut topo = Topology::new("beam", "target", "resonance", "recoil");
+        topo.bind(&metadata).unwrap();
+        let beta = topo.com_boost_vector(&event);
+        assert_relative_eq!(topo.k1_com(&event), topo.k1(&event).boost(&beta));
+        assert_relative_eq!(topo.k2_com(&event), topo.k2(&event).boost(&beta));
+        assert_relative_eq!(topo.k3_com(&event), topo.k3(&event).boost(&beta));
+        assert_relative_eq!(topo.k4_com(&event), topo.k4(&event).boost(&beta));
+    }
+
     #[test]
     fn test_mass_single_particle() {
-        let event = test_event();
-        let mass = Mass::new([1]);
-        assert_relative_eq!(mass.value(&event), 1.007);
+        let dataset = test_dataset();
+        let mut mass = Mass::new("proton");
+        mass.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(mass.value(&dataset[0]), 1.007);
     }
 
     #[test]
     fn test_mass_multiple_particles() {
-        let event = test_event();
-        let mass = Mass::new([2, 3]);
-        assert_relative_eq!(
-            mass.value(&event),
-            1.37437863,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut mass = Mass::new(["kshort1", "kshort2"]);
+        mass.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(mass.value(&dataset[0]), 1.3743786309153077);
     }
 
     #[test]
     fn test_mass_display() {
-        let mass = Mass::new([2, 3]);
-        assert_eq!(mass.to_string(), "Mass(constituents=[2, 3])");
+        let mass = Mass::new(["kshort1", "kshort2"]);
+        assert_eq!(mass.to_string(), "Mass(constituents=[kshort1, kshort2])");
     }
 
     #[test]
     fn test_costheta_helicity() {
-        let event = test_event();
-        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let dataset = test_dataset();
+        let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
+        costheta.bind(dataset.metadata()).unwrap();
         assert_relative_eq!(
-            costheta.value(&event),
-            -0.4611175,
-            epsilon = Float::EPSILON.sqrt()
+            costheta.value(&dataset[0]),
+            -0.4611175068834238,
+            epsilon = 1e-12
         );
     }
 
     #[test]
     fn test_costheta_display() {
-        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
         assert_eq!(
             costheta.to_string(),
-            "CosTheta(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+            "CosTheta(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), daughter=[kshort1], frame=Helicity)"
         );
     }
 
     #[test]
     fn test_phi_helicity() {
-        let event = test_event();
-        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
-        assert_relative_eq!(
-            phi.value(&event),
-            -2.65746258,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
+        phi.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066, epsilon = 1e-12);
     }
 
     #[test]
     fn test_phi_display() {
-        let phi = Phi::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
         assert_eq!(
             phi.to_string(),
-            "Phi(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+            "Phi(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), daughter=[kshort1], frame=Helicity)"
         );
     }
 
     #[test]
     fn test_costheta_gottfried_jackson() {
-        let event = test_event();
-        let costheta = CosTheta::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
+        let dataset = test_dataset();
+        let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
+        costheta.bind(dataset.metadata()).unwrap();
         assert_relative_eq!(
-            costheta.value(&event),
-            0.09198832,
-            epsilon = Float::EPSILON.sqrt()
+            costheta.value(&dataset[0]),
+            0.09198832278031577,
+            epsilon = 1e-12
         );
     }
 
     #[test]
     fn test_phi_gottfried_jackson() {
-        let event = test_event();
-        let phi = Phi::new(0, [1], [2], [2, 3], Frame::GottfriedJackson);
-        assert_relative_eq!(
-            phi.value(&event),
-            -2.71391319,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
+        phi.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907, epsilon = 1e-12);
     }
 
     #[test]
     fn test_angles() {
-        let event = test_event();
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let dataset = test_dataset();
+        let mut angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        angles.costheta.bind(dataset.metadata()).unwrap();
+        angles.phi.bind(dataset.metadata()).unwrap();
         assert_relative_eq!(
-            angles.costheta.value(&event),
-            -0.4611175,
-            epsilon = Float::EPSILON.sqrt()
+            angles.costheta.value(&dataset[0]),
+            -0.4611175068834238,
+            epsilon = 1e-12
         );
         assert_relative_eq!(
-            angles.phi.value(&event),
-            -2.65746258,
-            epsilon = Float::EPSILON.sqrt()
+            angles.phi.value(&dataset[0]),
+            -2.657462587335066,
+            epsilon = 1e-12
         );
     }
 
     #[test]
     fn test_angles_display() {
-        let angles = Angles::new(0, [1], [2], [2, 3], Frame::Helicity);
+        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         assert_eq!(
             angles.to_string(),
-            "Angles(beam=0, recoil=[1], daughter=[2], resonance=[2, 3], frame=Helicity)"
+            "Angles(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), daughter=[kshort1], frame=Helicity)"
         );
     }
 
     #[test]
     fn test_pol_angle() {
-        let event = test_event();
-        let pol_angle = PolAngle::new(0, vec![1], 0);
-        assert_relative_eq!(
-            pol_angle.value(&event),
-            1.93592989,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
+        pol_angle.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.935929887818673);
     }
 
     #[test]
     fn test_pol_angle_display() {
-        let pol_angle = PolAngle::new(0, vec![1], 0);
+        let pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
         assert_eq!(
             pol_angle.to_string(),
-            "PolAngle(beam=0, recoil=[1], beam_polarization=0)"
+            "PolAngle(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), angle_aux=pol_angle)"
         );
     }
 
     #[test]
     fn test_pol_magnitude() {
-        let event = test_event();
-        let pol_magnitude = PolMagnitude::new(0);
-        assert_relative_eq!(
-            pol_magnitude.value(&event),
-            0.38562805,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
+        pol_magnitude.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(pol_magnitude.value(&dataset[0]), 0.38562805);
     }
 
     #[test]
     fn test_pol_magnitude_display() {
-        let pol_magnitude = PolMagnitude::new(0);
+        let pol_magnitude = PolMagnitude::new("pol_magnitude");
         assert_eq!(
             pol_magnitude.to_string(),
-            "PolMagnitude(beam_polarization=0)"
+            "PolMagnitude(magnitude_aux=pol_magnitude)"
         );
     }
 
     #[test]
     fn test_polarization() {
-        let event = test_event();
-        let polarization = Polarization::new(0, vec![1], 0);
-        assert_relative_eq!(
-            polarization.pol_angle.value(&event),
-            1.93592989,
-            epsilon = Float::EPSILON.sqrt()
-        );
-        assert_relative_eq!(
-            polarization.pol_magnitude.value(&event),
-            0.38562805,
-            epsilon = Float::EPSILON.sqrt()
-        );
+        let dataset = test_dataset();
+        let mut polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
+        polarization.pol_angle.bind(dataset.metadata()).unwrap();
+        polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
+        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.935929887818673);
+        assert_relative_eq!(polarization.pol_magnitude.value(&dataset[0]), 0.38562805);
     }
 
     #[test]
     fn test_polarization_display() {
-        let polarization = Polarization::new(0, vec![1], 0);
+        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         assert_eq!(
             polarization.to_string(),
-            "Polarization(beam=0, recoil=[1], beam_polarization=0)"
+            "Polarization(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), magnitude_aux=pol_magnitude, angle_aux=pol_angle)"
         );
     }
 
     #[test]
     fn test_mandelstam() {
-        let event = test_event();
-        let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
-        let t = Mandelstam::new([0], [], [2, 3], [1], Channel::T).unwrap();
-        let u = Mandelstam::new([0], [], [2, 3], [1], Channel::U).unwrap();
-        let sp = Mandelstam::new([], [0], [1], [2, 3], Channel::S).unwrap();
-        let tp = Mandelstam::new([], [0], [1], [2, 3], Channel::T).unwrap();
-        let up = Mandelstam::new([], [0], [1], [2, 3], Channel::U).unwrap();
-        assert_relative_eq!(
-            s.value(&event),
-            18.50401105,
-            epsilon = Float::EPSILON.sqrt()
-        );
-        assert_relative_eq!(s.value(&event), sp.value(&event),);
-        assert_relative_eq!(
-            t.value(&event),
-            -0.19222859,
-            epsilon = Float::EPSILON.sqrt()
-        );
-        assert_relative_eq!(t.value(&event), tp.value(&event),);
-        assert_relative_eq!(
-            u.value(&event),
-            -14.40419893,
-            epsilon = Float::EPSILON.sqrt()
-        );
-        assert_relative_eq!(u.value(&event), up.value(&event),);
+        let dataset = test_dataset();
+        let metadata = dataset.metadata();
+        let mut s = Mandelstam::new(reaction_topology(), Channel::S);
+        let mut t = Mandelstam::new(reaction_topology(), Channel::T);
+        let mut u = Mandelstam::new(reaction_topology(), Channel::U);
+        for variable in [&mut s, &mut t, &mut u] {
+            variable.bind(metadata).unwrap();
+        }
+        let event = &dataset[0];
+        assert_relative_eq!(s.value(event), 18.504011052120063);
+        assert_relative_eq!(t.value(event), -0.19222859969898076);
+        assert_relative_eq!(u.value(event), -14.404198931464428);
+        let mut direct_topology = reaction_topology();
+        direct_topology.bind(metadata).unwrap();
+        let k2 = direct_topology.k2(event);
+        let k3 = direct_topology.k3(event);
+        let k4 = direct_topology.k4(event);
+        assert_relative_eq!(s.value(event), (k3 + k4).mag2());
+        assert_relative_eq!(t.value(event), (k2 - k4).mag2());
+        assert_relative_eq!(u.value(event), (k3 - k2).mag2());
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
         let m2_res = test_event().get_p4_sum([2, 3]).m2();
         assert_relative_eq!(
-            s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
+            s.value(event) + t.value(event) + u.value(event) - m2_beam - m2_recoil - m2_res,
             1.00,
             epsilon = 1e-2
         );
@@ -1000,20 +1500,20 @@ mod tests {
 
     #[test]
     fn test_mandelstam_display() {
-        let s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
+        let s = Mandelstam::new(reaction_topology(), Channel::S);
         assert_eq!(
             s.to_string(),
-            "Mandelstam(p1=[0], p2=[], p3=[2, 3], p4=[1], channel=s)"
+            "Mandelstam(topology=Topology(k1=[beam], k2=[<reconstructed>], k3=[kshort1, kshort2], k4=[proton]), channel=s)"
         );
     }
 
     #[test]
     fn test_variable_value_on() {
         let dataset = test_dataset();
-        let mass = Mass::new(vec![2, 3]);
+        let mass = Mass::new(["kshort1", "kshort2"]);
 
-        let values = mass.value_on(&dataset);
+        let values = mass.value_on(&dataset).unwrap();
         assert_eq!(values.len(), 1);
-        assert_relative_eq!(values[0], 1.37437863, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(values[0], 1.3743786309153077);
     }
 }

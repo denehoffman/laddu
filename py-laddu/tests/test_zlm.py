@@ -1,7 +1,11 @@
 import pytest
 
-from laddu import Angles, Dataset, Event, Manager, Polarization, Vec3, Zlm
+from laddu import Angles, Dataset, Event, Polarization, Topology, Vec3, Zlm
 from laddu.amplitudes.zlm import PolPhase
+
+P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
+AUX_NAMES = ['pol_magnitude', 'pol_angle']
+AUX_VALUES = [0.38562805, 0.05708078]
 
 
 def make_test_event() -> Event:
@@ -12,62 +16,65 @@ def make_test_event() -> Event:
             Vec3(-0.112, 0.293, 3.081).with_mass(0.498),
             Vec3(-0.007, -0.667, 5.446).with_mass(0.498),
         ],
-        [Vec3(0.385, 0.022, 0.000)],
+        AUX_VALUES.copy(),
         0.48,
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
     )
 
 
 def make_test_dataset() -> Dataset:
-    return Dataset([make_test_event()])
+    return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
+
+
+def reaction_topology() -> Topology:
+    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
 
 
 def test_zlm_evaluation() -> None:
-    manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
-    polarization = Polarization(0, [1], 0)
+    topo = reaction_topology()
+    angles = Angles(topo, 'kshort1', 'Helicity')
+    polarization = Polarization(
+        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == 0.04284127
-    assert pytest.approx(result[0].imag) == -0.2385963
+    assert pytest.approx(result[0].real) == 0.042841277026400094
+    assert pytest.approx(result[0].imag) == -0.23859639145706923
 
 
 def test_zlm_gradient() -> None:
-    manager = Manager()
-    angles = Angles(0, [1], [2], [2, 3], 'Helicity')
-    polarization = Polarization(0, [1], 0)
+    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
+    polarization = Polarization(
+        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     amp = Zlm('zlm', 1, 1, '+', angles, polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters
 
 
 def test_polphase_evaluation() -> None:
-    manager = Manager()
-    polarization = Polarization(0, [1], 0)
+    polarization = Polarization(
+        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     amp = PolPhase('polphase', polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
-    assert pytest.approx(result[0].real) == -0.28729145
-    assert pytest.approx(result[0].imag) == -0.25724039
+    assert pytest.approx(result[0].real) == -0.28729144623530045
+    assert pytest.approx(result[0].imag) == -0.2572403892603803
 
 
 def test_polphase_gradient() -> None:
-    manager = Manager()
-    polarization = Polarization(0, [1], 0)
+    polarization = Polarization(
+        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     amp = PolPhase('polphase', polarization)
-    aid = manager.register(amp)
     dataset = make_test_dataset()
-    model = manager.model(aid)
-    evaluator = model.load(dataset)
+    evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([])
     assert len(result[0]) == 0  # amplitude has no parameters

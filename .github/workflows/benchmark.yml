@@ -14,7 +14,7 @@ jobs:
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install OpenMPI
         run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
 
@@ -29,7 +29,8 @@ jobs:
         run: cargo codspeed build --profile dist-release
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@v3
+        uses: CodSpeedHQ/action@v4
         with:
+          mode: simulation
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}

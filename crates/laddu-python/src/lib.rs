@@ -130,13 +130,11 @@ pub mod mpi {
     /// laddu.mpi.is_root
     ///
     #[pyfunction]
-    pub fn using_mpi() -> PyResult<bool> {
+    pub fn using_mpi() -> bool {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::using_mpi());
+        return laddu_core::mpi::using_mpi();
         #[cfg(not(feature = "mpi"))]
-        return Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
-        ));
+        return false;
     }
 
     /// Check if the current MPI process is the root process
@@ -150,63 +148,57 @@ pub mod mpi {
     /// laddu.mpi.using_mpi
     ///
     #[pyfunction]
-    pub fn is_root() -> PyResult<bool> {
+    pub fn is_root() -> bool {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::is_root());
+        return laddu_core::mpi::is_root();
         #[cfg(not(feature = "mpi"))]
-        return Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
-        ));
+        return true;
     }
 
     /// Get the rank of the current MPI process
     ///
-    /// Returns ``None`` if MPI is not enabled
+    /// Returns ``0`` if MPI is not enabled
     ///
     /// See Also
     /// --------
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_rank() -> PyResult<Option<i32>> {
+    pub fn get_rank() -> i32 {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::get_rank());
+        return laddu_core::mpi::get_rank();
         #[cfg(not(feature = "mpi"))]
-        return Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
-        ));
+        return 0;
     }
 
     /// Get the total number of MPI processes (including the root process)
     ///
-    /// Returns ``None`` if MPI is not enabled
+    /// Returns ``1`` if MPI is not enabled
     ///
     /// See Also
     /// --------
     /// laddu.mpi.use_mpi
     ///
     #[pyfunction]
-    pub fn get_size() -> PyResult<Option<i32>> {
+    pub fn get_size() -> i32 {
         #[cfg(feature = "mpi")]
-        return Ok(laddu_core::mpi::get_size());
+        return laddu_core::mpi::get_size();
         #[cfg(not(feature = "mpi"))]
-        return Err(PyModuleNotFoundError::new_err(
-            "`laddu` was not compiled with MPI support! Please use `laddu-mpi` instead.",
-        ));
+        return 1;
     }
 }
 
 pub trait GetStrExtractObj {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
-        T: for<'py> FromPyObject<'py>;
+        T: for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>;
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 impl GetStrExtractObj for Bound<'_, PyDict> {
     fn get_extract<T>(&self, key: &str) -> PyResult<Option<T>>
     where
-        T: for<'py> FromPyObject<'py>,
+        T: for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>,
     {
         self.get_item(key)?
             .map(|value| value.extract::<T>())

@@ -12,7 +12,7 @@ repository.workspace = true
 exclude = ["examples/*", "tests/*", "laddu/*", "docs/*", "pyproject.toml"]
 
 [lib]
-name = "laddu"
+name = "laddu_mpi"
 crate-type = ["cdylib"]
 
 [dependencies]

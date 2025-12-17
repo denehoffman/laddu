@@ -1,0 +1,7 @@
+[pytest]
+addopts = ["--doctest-modules"]
+testpaths = [
+    "py-laddu/tests",
+    "py-laddu/laddu",
+]
+norecursedirs = ["examples"]

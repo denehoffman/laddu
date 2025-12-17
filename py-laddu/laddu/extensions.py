@@ -2,18 +2,15 @@ from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
 
-from laddu.laddu import (
+from .laddu import (
     NLL,
     AutocorrelationTerminator,
     ControlFlow,
     EnsembleStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
-    LikelihoodID,
-    LikelihoodManager,
     LikelihoodOne,
     LikelihoodScalar,
-    LikelihoodTerm,
     LikelihoodZero,
     MCMCSummary,
     MinimizationStatus,
@@ -59,11 +56,8 @@ __all__ = [
     'EnsembleStatus',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
-    'LikelihoodID',
-    'LikelihoodManager',
     'LikelihoodOne',
     'LikelihoodScalar',
-    'LikelihoodTerm',
     'LikelihoodZero',
     'MCMCObserver',
     'MCMCSummary',

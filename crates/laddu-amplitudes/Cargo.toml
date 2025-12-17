@@ -17,7 +17,6 @@ laddu-python = { workspace = true, optional = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 fastrand-contrib = { workspace = true }
-ganesh = { workspace = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
 pyo3 = { workspace = true, features = [
@@ -35,7 +34,6 @@ default = []
 python = ["laddu-python", "pyo3"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
-f32 = ["laddu-core/f32"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

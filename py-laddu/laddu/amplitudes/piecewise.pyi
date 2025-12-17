@@ -1,4 +1,4 @@
-from laddu.amplitudes import Amplitude, ParameterLike
+from laddu.amplitudes import Expression, ParameterLike
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def PiecewiseScalar(
@@ -7,18 +7,18 @@ def PiecewiseScalar(
     bins: int,
     range: tuple[float, float],
     values: list[ParameterLike],
-) -> Amplitude: ...
+) -> Expression: ...
 def PiecewiseComplexScalar(
     name: str,
     variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
     bins: int,
     range: tuple[float, float],
     values: list[tuple[ParameterLike, ParameterLike]],
-) -> Amplitude: ...
+) -> Expression: ...
 def PiecewisePolarComplexScalar(
     name: str,
     variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam,
     bins: int,
     range: tuple[float, float],
     values: list[tuple[ParameterLike, ParameterLike]],
-) -> Amplitude: ...
+) -> Expression: ...

@@ -2,27 +2,61 @@ name: Rust
 
 on:
   push:
-  pull_request:
     branches: ["main"]
+    tags: ["*"]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  clippy:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
-      - name: Install OpenMPI
+      - uses: actions/checkout@v6
+      - name: Install deps (OpenMPI, clang)
         run: |
           sudo apt update
           sudo apt install -y clang libopenmpi-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Just
+        uses: taiki-e/install-action@just
+      - name: Clippy
+        run: just lint-rust-mpi
+
+  build-check-test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install deps (OpenMPI, clang)
+        run: |
+          sudo apt update
+          sudo apt install -y clang libopenmpi-dev
+
+      - name: Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      - name: Run checks
-        run: cargo hack check --rust-version --each-feature --no-dev-deps
-      - name: Build
-        run: cargo build --verbose
+      - name: Install Just
+        uses: taiki-e/install-action@just
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Run cargo-hack check
+        run: just hack-check
+
       - name: Run tests
-        run: cargo hack test --verbose --each-feature
+        run: just test

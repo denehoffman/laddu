@@ -1,0 +1,356 @@
+name: Python Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-linux:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: x86
+          - runner: ubuntu-22.04
+            target: aarch64
+          - runner: ubuntu-22.04
+            target: armv7
+          - runner: ubuntu-22.04
+            target: s390x
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --zig
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --zig -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpu-linux-${{ matrix.platform.target }}
+          path: dist
+
+  cpu-musllinux:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: x86
+          - runner: ubuntu-22.04
+            target: aarch64
+          - runner: ubuntu-22.04
+            target: armv7
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: musllinux_1_2
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: musllinux_1_2
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpu-musllinux-${{ matrix.platform.target }}
+          path: dist
+
+  cpu-windows:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+            python_arch: x64
+          - runner: windows-11-arm
+            target: aarch64
+            python_arch: arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.13t
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpu-windows-${{ matrix.platform.target }}
+          path: dist
+
+  cpu-macos:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpu-macos-${{ matrix.platform.target }}
+          path: dist
+
+  cpu-sdist:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path py-laddu-cpu/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpu-sdist
+          path: dist
+
+  mpi-linux:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Install Clang
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev build-essential
+      - uses: mpi4py/setup-mpi@v1
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --zig
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --zig -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: mpi-linux-${{ matrix.platform.target }}
+          path: dist
+
+  mpi-windows:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+            python_arch: x64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+          architecture: ${{ matrix.platform.python_arch }}
+      - uses: mpi4py/setup-mpi@v1
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.13t
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: mpi-windows-${{ matrix.platform.target }}
+          path: dist
+
+  mpi-macos:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - uses: mpi4py/setup-mpi@v1
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Build free-threaded wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml -i python3.13t
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: mpi-macos-${{ matrix.platform.target }}
+          path: dist
+
+  mpi-sdist:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path py-laddu-mpi/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v5
+        with:
+          name: mpi-sdist
+          path: dist
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - cpu-linux
+      - cpu-musllinux
+      - cpu-windows
+      - cpu-macos
+      - cpu-sdist
+      - mpi-linux
+      - mpi-windows
+      - mpi-macos
+      - mpi-sdist
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: astral-sh/setup-uv@v7
+      - name: Prepare wheel artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist/cpu dist/mpi
+          cp cpu-*/* dist/cpu/
+          cp mpi-*/* dist/mpi/
+      - name: Publish py-laddu-cpu to PyPI
+        run: uv publish --trusted-publishing always dist/cpu/*
+      - name: Publish py-laddu-mpi to PyPI
+        run: uv publish --trusted-publishing always dist/mpi/*
+      - name: Build py-laddu distributions
+        run: |
+          mkdir -p dist/laddu
+          uv build py-laddu --out-dir dist/laddu
+      - name: Publish py-laddu wrapper
+        run: uv publish --trusted-publishing always dist/laddu/*

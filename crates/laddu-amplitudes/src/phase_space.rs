@@ -1,17 +1,17 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID},
-    data::Event,
+    amplitudes::{Amplitude, AmplitudeID, Expression},
+    data::{DatasetMetadata, EventData},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
-    Float, LadduError, Mandelstam, Mass, ScalarID, PI,
+    LadduResult, Mandelstam, Mass, ScalarID, PI,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::PyAmplitude,
+    amplitudes::PyExpression,
     utils::variables::{PyMandelstam, PyMass},
 };
 use nalgebra::DVector;
-use num::Complex;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -44,8 +44,10 @@ pub struct PhaseSpaceFactor {
 }
 
 impl PhaseSpaceFactor {
-    /// Construct a new [`Zlm`] with the given name, angular momentum (`l`), moment (`m`), and
-    /// reflectivity (`r`) over the given set of [`Angles`] and [`Polarization`] [`Variable`]s.
+    /// Construct a new [`PhaseSpaceFactor`] that models the two-body phase-space density.
+    ///
+    /// Parameters specify the recoiling particle mass, the daughter masses, the resonance
+    /// mass, and the Mandelstam-s variable controlling the production kinematics.
     pub fn new(
         name: &str,
         recoil_mass: &Mass,
@@ -53,7 +55,7 @@ impl PhaseSpaceFactor {
         daughter_2_mass: &Mass,
         resonance_mass: &Mass,
         mandelstam_s: &Mandelstam,
-    ) -> Box<Self> {
+    ) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             recoil_mass: recoil_mass.clone(),
@@ -63,18 +65,27 @@ impl PhaseSpaceFactor {
             mandelstam_s: mandelstam_s.clone(),
             sid: ScalarID::default(),
         }
-        .into()
+        .into_expression()
     }
 }
 
 #[typetag::serde]
 impl Amplitude for PhaseSpaceFactor {
-    fn register(&mut self, resources: &mut Resources) -> Result<AmplitudeID, LadduError> {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.sid = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &Event, cache: &mut Cache) {
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.recoil_mass.bind(metadata)?;
+        self.daughter_1_mass.bind(metadata)?;
+        self.daughter_2_mass.bind(metadata)?;
+        self.resonance_mass.bind(metadata)?;
+        self.mandelstam_s.bind(metadata)?;
+        Ok(())
+    }
+
+    fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let m_recoil = self.recoil_mass.value(event);
         let m_1 = self.daughter_1_mass.value(event);
         let m_2 = self.daughter_2_mass.value(event);
@@ -86,16 +97,16 @@ impl Amplitude for PhaseSpaceFactor {
         cache.store_scalar(self.sid, term.sqrt());
     }
 
-    fn compute(&self, _parameters: &Parameters, _event: &Event, cache: &Cache) -> Complex<Float> {
+    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         cache.get_scalar(self.sid).into()
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &Event,
+        _event: &EventData,
         _cache: &Cache,
-        _gradient: &mut DVector<Complex<Float>>,
+        _gradient: &mut DVector<Complex64>,
     ) {
         // This amplitude is independent of free parameters
     }
@@ -123,12 +134,8 @@ impl Amplitude for PhaseSpaceFactor {
 ///
 /// Returns
 /// -------
-/// laddu.Amplitude
-///     An Amplitude which can be registered by a laddu.Manager
-///
-/// See Also
-/// --------
-/// laddu.Manager
+/// laddu.Expression
+///     An Expression which can be loaded and evaluated directly
 ///
 /// Notes
 /// -----
@@ -143,15 +150,15 @@ pub fn py_phase_space_factor(
     daughter_2_mass: &PyMass,
     resonance_mass: &PyMass,
     mandelstam_s: &PyMandelstam,
-) -> PyResult<PyAmplitude> {
-    Ok(PyAmplitude(PhaseSpaceFactor::new(
+) -> PyResult<PyExpression> {
+    Ok(PyExpression(PhaseSpaceFactor::new(
         name,
         &recoil_mass.0,
         &daughter_1_mass.0,
         &daughter_2_mass.0,
         &resonance_mass.0,
         &mandelstam_s.0,
-    )))
+    )?))
 }
 
 #[cfg(test)]
@@ -160,64 +167,55 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, Channel, Manager};
+    use laddu_core::{data::test_dataset, utils::variables::Topology, Channel};
 
     #[test]
     fn test_phase_space_factor_evaluation() {
-        let mut manager = Manager::default();
-        let recoil_mass = Mass::new([1]);
-        let daughter_1_mass = Mass::new([2]);
-        let daughter_2_mass = Mass::new([3]);
-        let resonance_mass = Mass::new([2, 3]);
-        let mandelstam_s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
-        let amp = PhaseSpaceFactor::new(
+        let dataset = Arc::new(test_dataset());
+        let recoil_mass = Mass::new(["proton"]);
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+        let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
+        let mandelstam_s = Mandelstam::new(topology, Channel::S);
+        let expr = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
             &mandelstam_s,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
-        println!("{}", recoil_mass.value(&dataset[0]));
-        println!("{}", daughter_1_mass.value(&dataset[0]));
-        println!("{}", daughter_2_mass.value(&dataset[0]));
-        println!("{}", resonance_mass.value(&dataset[0]));
-        println!("{}", mandelstam_s.value(&dataset[0]));
 
-        assert_relative_eq!(result[0].re, 0.0000702838, epsilon = Float::EPSILON.sqrt());
-        assert_relative_eq!(result[0].im, 0.0, epsilon = Float::EPSILON.sqrt());
+        assert_relative_eq!(result[0].re, 7.028417575882146e-5);
+        assert_relative_eq!(result[0].im, 0.0);
     }
 
     #[test]
     fn test_phase_space_factor_gradient() {
-        let mut manager = Manager::default();
-        let recoil_mass = Mass::new([1]);
-        let daughter_1_mass = Mass::new([2]);
-        let daughter_2_mass = Mass::new([3]);
-        let resonance_mass = Mass::new([2, 3]);
-        let mandelstam_s = Mandelstam::new([0], [], [2, 3], [1], Channel::S).unwrap();
-        let amp = PhaseSpaceFactor::new(
+        let dataset = Arc::new(test_dataset());
+        let recoil_mass = Mass::new(["proton"]);
+        let daughter_1_mass = Mass::new(["kshort1"]);
+        let daughter_2_mass = Mass::new(["kshort2"]);
+        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+        let mandelstam_s = Mandelstam::new(
+            Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
+            Channel::S,
+        );
+        let expr = PhaseSpaceFactor::new(
             "kappa",
             &recoil_mass,
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
             &mandelstam_s,
-        );
-        let aid = manager.register(amp).unwrap();
-
-        let dataset = Arc::new(test_dataset());
-        let expr = aid.into();
-        let model = manager.model(&expr);
-        let evaluator = model.load(&dataset);
+        )
+        .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
