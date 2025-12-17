@@ -337,7 +337,9 @@ def fit_binned(
     res_mass = ld.Mass(['kshort1', 'kshort2'])
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     angles = ld.Angles(topology, 'kshort1')
-    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -484,12 +486,14 @@ def fit_unbinned(
     res_mass = ld.Mass(['kshort1', 'kshort2'])
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     angles = ld.Angles(topology, 'kshort1')
-    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     z00p = ld.Zlm('Z00+', 0, 0, '+', angles, polarization)
     z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
     bw_f01500 = ld.BreitWigner(
         'f0(1500)',
-        ld.constant(1.506),
+        ld.constant('f0_mass', 1.506),
         ld.parameter('f0_width'),
         0,
         ld.Mass(['kshort1']),
@@ -498,7 +502,7 @@ def fit_unbinned(
     )
     bw_f21525 = ld.BreitWigner(
         'f2(1525)',
-        ld.constant(1.517),
+        ld.constant('f2_mass', 1.517),
         ld.parameter('f2_width'),
         2,
         ld.Mass(['kshort1']),
@@ -516,11 +520,11 @@ def fit_unbinned(
     best_nll = np.inf
     best_fit = None
     bounds = [
+        (-1000.0, 1000.0),
         (0.001, 1.0),
+        (-1000.0, 1000.0),
+        (-1000.0, 1000.0),
         (0.001, 1.0),
-        (-1000.0, 1000.0),
-        (-1000.0, 1000.0),
-        (-1000.0, 1000.0),
     ]
     nll = ld.NLL(model, data_ds, accmc_ds)
     gen_eval = model.load(
@@ -529,7 +533,7 @@ def fit_unbinned(
     for iiter in range(niters):
         logger.info(f'Fitting Iteration #{iiter}')
         p0 = rng.uniform(-1000.0, 1000.0, 3)
-        p0 = np.append([0.8, 0.5], p0)
+        p0 = [p0[0], 0.8, p0[1], p0[2], 0.5]
         fit = nll.minimize(p0, bounds=bounds)
         if fit.fx < best_nll:
             best_nll = fit.fx

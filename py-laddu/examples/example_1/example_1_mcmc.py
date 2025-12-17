@@ -49,13 +49,13 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
         self.d2s = []
 
     def check_for_termination(
-        self, step: int, ensemble: ld.EnsembleStatus
+        self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = ensemble.get_chain()[:, -1, :]
+        latest_step = status.get_chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
-        for i_walker in range(ensemble.dimension[0]):
+        for i_walker in range(status.dimension[0]):
             tot.append(np.sum(self.nll.project(latest_step[i_walker])))
             s0s.append(
                 np.sum(self.nll.project_with(latest_step[i_walker], ['Z00+', 'S0+']))
@@ -69,7 +69,7 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
         if step % self.ncheck == 0:
             logger.info('Checking Autocorrelation (custom)')
             logger.info(
-                f'Chain dimensions: {ensemble.dimension[0]} walkers, {ensemble.dimension[1]} steps, {ensemble.dimension[2]} parameters'
+                f'Chain dimensions: {status.dimension[0]} walkers, {status.dimension[1]} steps, {status.dimension[2]} parameters'
             )
             chain = np.array([self.s0s, self.d2s]).transpose(
                 2, 1, 0

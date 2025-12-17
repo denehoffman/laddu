@@ -151,6 +151,7 @@ class Polarization:
     def __init__(
         self,
         topology: Topology,
+        *,
         pol_magnitude: str,
         pol_angle: str,
     ) -> None: ...

@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -75,7 +77,9 @@ def get_norm_int_term(
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
+    polarization = ld.Polarization(
+        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+    )
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
