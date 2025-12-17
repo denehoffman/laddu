@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/denehoffman/laddu/compare/py-laddu-cpu-v0.12.0...py-laddu-cpu-v0.12.1) - 2025-12-17
+
+### Other
+
+- *(py-laddu-cpu)* release v0.12.0 ([#92](https://github.com/denehoffman/laddu/pull/92))
+
 ## [0.12.0](https://github.com/denehoffman/laddu/releases/tag/py-laddu-cpu-v0.12.0) - 2025-12-17
 
 ### Added
