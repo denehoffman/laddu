@@ -5,6 +5,14 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "laddu"
 module-root = ""
+source-include = [
+  "laddu/**",
+  "pyproject.toml",
+  "README.md",
+  "MANIFEST.in",
+]
+source-exclude = ["*.so", "*.pyd", "*.dll", "*.dylib", "*.lib"]
+wheel-exclude = ["*.so", "*.pyd", "*.dll", "*.dylib", "*.lib"]
 
 [project]
 name = "laddu"
@@ -23,12 +31,12 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-version = "0.12.0"
+version = "0.12.1"
 description = "Python bindings for laddu"
 license = "MIT"
 readme = "README.md"
 dependencies = [
-  "laddu-cpu == 0.12.0",
+  "laddu-cpu == 0.12.1",
   "numpy",
 ]
 
@@ -41,7 +49,7 @@ pandas = ["pandas"]
 polars = ["polars"]
 tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
 uproot = ["uproot"]
-mpi = ["laddu-mpi == 0.12.0"]
+mpi = ["laddu-mpi == 0.12.1"]
 
 [tool.maturin]
 bindings = "pyo3"
