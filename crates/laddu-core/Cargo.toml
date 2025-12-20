@@ -43,6 +43,7 @@ typetag = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+sysinfo = { workspace = true }
 
 [[bench]]
 name = "open_benchmark"
