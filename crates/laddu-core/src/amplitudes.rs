@@ -732,6 +732,7 @@ impl Expression {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events());
+        resources.refresh_active_indices();
         let mut amplitudes: Vec<Box<dyn Amplitude>> = self
             .registry
             .amplitudes
@@ -877,6 +878,19 @@ pub struct Evaluator {
 
 #[allow(missing_docs)]
 impl Evaluator {
+    fn fill_amplitude_values(
+        &self,
+        amplitude_values: &mut [Complex64],
+        active_indices: &[usize],
+        parameters: &Parameters,
+        event: &EventData,
+        cache: &Cache,
+    ) {
+        for &amp_idx in active_indices {
+            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, event, cache);
+        }
+    }
+
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
@@ -1019,48 +1033,44 @@ impl Evaluator {
     pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
         #[cfg(feature = "rayon")]
         {
             self.dataset
                 .events
                 .par_iter()
                 .zip(resources.caches.par_iter())
-                .map(|(event, cache)| {
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
-                })
+                .map_init(
+                    || vec![Complex64::ZERO; amplitude_len],
+                    |amplitude_values, (event, cache)| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.expression.evaluate(amplitude_values)
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             self.dataset
                 .events
                 .iter()
                 .zip(resources.caches.iter())
                 .map(|(event, cache)| {
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
                     self.expression.evaluate(&amplitude_values)
                 })
                 .collect()
@@ -1104,48 +1114,44 @@ impl Evaluator {
     pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
         #[cfg(feature = "rayon")]
         {
             indices
                 .par_iter()
-                .map(|&idx| {
-                    let event = &self.dataset.events[idx];
-                    let cache = &resources.caches[idx];
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
-                })
+                .map_init(
+                    || vec![Complex64::ZERO; amplitude_len],
+                    |amplitude_values, &idx| {
+                        let event = &self.dataset.events[idx];
+                        let cache = &resources.caches[idx];
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.expression.evaluate(amplitude_values)
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             indices
                 .iter()
                 .map(|&idx| {
                     let event = &self.dataset.events[idx];
                     let cache = &resources.caches[idx];
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
                     self.expression.evaluate(&amplitude_values)
                 })
                 .collect()
