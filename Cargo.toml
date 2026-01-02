@@ -66,3 +66,13 @@ inherits = "release"
 codegen-units = 1
 debug = false
 lto = "fat"
+
+[profile.profiling]
+inherits = "release"
+opt-level = 3
+debug = true
+strip = "none"
+lto = true
+codegen-units = 1
+incremental = false
+panic = "abort"

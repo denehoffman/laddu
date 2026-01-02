@@ -78,6 +78,11 @@ lint-rust:
 lint-rust-mpi:
     cargo clippy --all-targets --features mpi
 
+# Profile laddu example with Samply
+profile *args:
+    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p laddu --example profile_kmatrix
+    samply record ./target/profiling/examples/profile_kmatrix {{args}}
+
 # Run Rust (CPU) and Python lints and checks
 lint: lint-rust lint-python
 
