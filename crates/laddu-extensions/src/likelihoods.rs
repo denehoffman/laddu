@@ -855,10 +855,9 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.data_evaluator.expression.evaluate(&amp_vals),
+                    self.data_evaluator.evaluate_expression_value(&amp_vals),
                     self.data_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
@@ -906,8 +905,7 @@ impl NLL {
                 (
                     weight,
                     self.accmc_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
@@ -954,10 +952,9 @@ impl NLL {
             .map(|(weight, amp_vals, grad_vals)| {
                 (
                     weight,
-                    self.data_evaluator.expression.evaluate(&amp_vals),
+                    self.data_evaluator.evaluate_expression_value(&amp_vals),
                     self.data_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
@@ -1003,8 +1000,7 @@ impl NLL {
                 (
                     weight,
                     self.accmc_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
@@ -1291,11 +1287,10 @@ impl StochasticNLL {
                     .collect();
                 (
                     event.weight,
-                    self.nll.data_evaluator.expression.evaluate(&amp_vals),
+                    self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
                     self.nll
                         .data_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &gradient_values),
+                        .evaluate_expression_gradient(&amp_vals, &gradient_values),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
@@ -1349,8 +1344,7 @@ impl StochasticNLL {
                     weight,
                     self.nll
                         .accmc_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
@@ -1394,11 +1388,10 @@ impl StochasticNLL {
                     .collect();
                 (
                     event.weight,
-                    self.nll.data_evaluator.expression.evaluate(&amp_vals),
+                    self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
                     self.nll
                         .data_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &gradient_values),
+                        .evaluate_expression_gradient(&amp_vals, &gradient_values),
                 )
             })
             .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
@@ -1450,8 +1443,7 @@ impl StochasticNLL {
                     weight,
                     self.nll
                         .accmc_evaluator
-                        .expression
-                        .evaluate_gradient(&amp_vals, &grad_vals),
+                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
                 )
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
