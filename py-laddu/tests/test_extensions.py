@@ -4,7 +4,16 @@ import math
 
 import pytest
 
-from laddu import NLL, Dataset, Event, Scalar, Vec3, likelihood_sum, parameter
+from laddu import (
+    NLL,
+    Dataset,
+    Event,
+    Scalar,
+    Vec3,
+    constant,
+    likelihood_sum,
+    parameter,
+)
 from laddu.experimental import Regularizer
 
 
@@ -74,3 +83,44 @@ def test_nll_project_returns_expected_weights() -> None:
     nll = NLL(expr, data, mc)
     projection = nll.project([2.0])
     assert projection.tolist() == pytest.approx([1.0, 3.0])
+
+
+def test_nll_parameter_fix_free_and_rename() -> None:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    nll = NLL(expr, data, mc)
+
+    reference = nll.evaluate([1.7])
+    fixed = nll.fix('scale', 1.7)
+    assert fixed.parameters == ['scale']
+    assert fixed.free_parameters == []
+    assert fixed.fixed_parameters == ['scale']
+    assert fixed.n_free == 0
+    assert pytest.approx(fixed.evaluate([])) == reference
+
+    renamed = nll.rename_parameter('scale', 'beta')
+    assert renamed.parameters == ['beta']
+    assert pytest.approx(renamed.evaluate([1.7])) == reference
+
+    renamed_multi = nll.rename_parameters({'scale': 'gamma'})
+    assert renamed_multi.parameters == ['gamma']
+
+
+def test_nll_free_from_fixed_parameter() -> None:
+    amp = Scalar('scale', constant('scale', 2.0))
+    expr = amp.norm_sqr()
+    data = _dataset_from_weights([1.0])
+    mc = _dataset_from_weights([1.0])
+    nll = NLL(expr, data, mc)
+    assert nll.n_free == 0
+    assert nll.fixed_parameters == ['scale']
+
+    freed = nll.free('scale')
+    assert freed.n_free == 1
+    assert freed.free_parameters == ['scale']
+    assert freed.fixed_parameters == []
+
+    reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
+    assert pytest.approx(freed.evaluate([2.5])) == reference.evaluate([2.5])
