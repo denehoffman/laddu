@@ -288,6 +288,12 @@
 //!
 //! To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable).
 //!
+//! <div class="warning">
+//!
+//! The current ROOT backend always materializes the entire TTree on rank 0 before partitioning, so distributed runs do not yet see the same memory savings they do with Parquet inputs.
+//!
+//! </div>
+//!
 //! # Future Plans
 //! * GPU integration (this is incredibly difficult to do right now, but it's something I'm looking into).
 //! * As always, more tests and documentation.

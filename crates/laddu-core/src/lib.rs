@@ -38,6 +38,7 @@ pub use std::f64;
 #[cfg(feature = "mpi")]
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {
+    use std::ops::Range;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::OnceLock;
 
@@ -220,6 +221,67 @@ pub mod mpi {
         }
     }
 
+    /// Canonical partitioning information for distributing a dataset across MPI ranks.
+    #[derive(Clone, Debug)]
+    pub struct Partition {
+        counts: Vec<i32>,
+        displs: Vec<i32>,
+        total: usize,
+    }
+
+    impl Partition {
+        /// Build a new distribution for `total` items across `size` ranks.
+        pub fn new(size: usize, total: usize) -> Self {
+            assert!(size > 0, "Communicator must have at least one rank");
+            let (counts, displs) = counts_displs(size, total, 1);
+            Self {
+                counts,
+                displs,
+                total,
+            }
+        }
+
+        /// Total number of items tracked by this partition.
+        pub fn total(&self) -> usize {
+            self.total
+        }
+
+        /// Number of ranks described by this partition.
+        pub fn n_ranks(&self) -> usize {
+            self.counts.len()
+        }
+
+        /// Number of items assigned to `rank`.
+        pub fn len_for_rank(&self, rank: usize) -> usize {
+            self.counts[rank] as usize
+        }
+
+        /// Starting global index for `rank`.
+        pub fn start_for_rank(&self, rank: usize) -> usize {
+            self.displs[rank] as usize
+        }
+
+        /// Contiguous global range owned by `rank`.
+        pub fn range_for_rank(&self, rank: usize) -> Range<usize> {
+            let start = self.start_for_rank(rank);
+            start..start + self.len_for_rank(rank)
+        }
+
+        /// Determine the owning rank and local index for a global dataset index.
+        pub fn owner_of(&self, global_index: usize) -> (usize, usize) {
+            assert!(
+                self.total > 0,
+                "Cannot map global indices when dataset is empty"
+            );
+            rank_local_from_global(global_index, self.n_ranks(), self.total)
+        }
+
+        /// Convert into raw `(counts, displacements)` buffers.
+        pub fn into_raw(self) -> (Vec<i32>, Vec<i32>) {
+            (self.counts, self.displs)
+        }
+    }
+
     /// A trait including some useful auxiliary methods for MPI
     pub trait LadduMPI {
         /// Get the process at the root rank
@@ -252,6 +314,9 @@ pub mod mpi {
         /// Get the counts/displacements for partitioning a buffer of length
         /// `buf_len`
         fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>);
+        /// Build a [`Partition`] describing how `total` items are distributed
+        /// across ranks.
+        fn partition(&self, total: usize) -> Partition;
         /// Get the counts/displacements for partitioning a nested buffer (like
         /// a [`Vec<Vec<T>>`]). If the internal vectors all have the same length
         /// `internal_len` and there are `unflattened_len` elements in the
@@ -319,10 +384,11 @@ pub mod mpi {
                 "Cannot gather batched data from an empty dataset"
             );
 
+            let partition = Partition::new(size, total);
             let mut locals_by_rank = vec![Vec::<usize>::new(); size];
             let mut targets_by_rank = vec![Vec::<usize>::new(); size];
             for (position, &global_index) in global_indices.iter().enumerate() {
-                let (rank, local_index) = rank_local_from_global(global_index, size, total);
+                let (rank, local_index) = partition.owner_of(global_index);
                 locals_by_rank[rank].push(local_index);
                 targets_by_rank[rank].push(position);
             }
@@ -368,23 +434,22 @@ pub mod mpi {
         }
 
         fn owner_of_global_index(&self, global_index: usize, total: usize) -> (i32, usize) {
-            assert!(total > 0, "Cannot look up ownership in an empty dataset");
-            let size = self.size() as usize;
-            let (rank, local) = rank_local_from_global(global_index, size, total);
+            let partition = Partition::new(self.size() as usize, total);
+            let (rank, local) = partition.owner_of(global_index);
             (rank as i32, local)
         }
 
         /// Translate a list of global dataset indices into the corresponding
         /// local indices owned by this rank, preserving their original order.
         fn locals_from_globals(&self, global_indices: &[usize], total: usize) -> Vec<usize> {
-            let size = self.size() as usize;
+            let partition = Partition::new(self.size() as usize, total);
             let this_rank = self.rank() as usize;
             let mut locals = Vec::new();
             if total == 0 {
                 return locals;
             }
             for &global_index in global_indices {
-                let (rank, local_index) = rank_local_from_global(global_index, size, total);
+                let (rank, local_index) = partition.owner_of(global_index);
                 if rank == this_rank {
                     locals.push(local_index);
                 }
@@ -392,23 +457,11 @@ pub mod mpi {
             locals
         }
         fn get_counts_displs(&self, buf_len: usize) -> (Vec<i32>, Vec<i32>) {
-            let mut counts = vec![0; self.size() as usize];
-            let mut displs = vec![0; self.size() as usize];
-            let chunk_size = buf_len / self.size() as usize;
-            let surplus = buf_len % self.size() as usize;
-            for i in 0..self.size() as usize {
-                counts[i] = if i < surplus {
-                    chunk_size + 1
-                } else {
-                    chunk_size
-                } as i32;
-                displs[i] = if i == 0 {
-                    0
-                } else {
-                    displs[i - 1] + counts[i - 1]
-                };
-            }
-            (counts, displs)
+            self.partition(buf_len).into_raw()
+        }
+
+        fn partition(&self, total: usize) -> Partition {
+            Partition::new(self.size() as usize, total)
         }
 
         fn get_flattened_counts_displs(

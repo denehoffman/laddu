@@ -17,6 +17,7 @@ rust-version.workspace = true
 laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
+mpi = { workspace = true, optional = true }
 
 serde = { workspace = true }
 typetag = { workspace = true }
@@ -41,7 +42,7 @@ python = [
   "laddu-amplitudes/python",
   "laddu-extensions/python",
 ]
-mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

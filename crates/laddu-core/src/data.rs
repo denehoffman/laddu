@@ -7,6 +7,8 @@ use arrow::{
 use auto_ops::impl_op_ex;
 use parking_lot::Mutex;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
+#[cfg(feature = "mpi")]
+use parquet::file::metadata::ParquetMetaData;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::path::Path;
@@ -530,17 +532,11 @@ impl Dataset {
         events: Vec<Arc<EventData>>,
         world: &SimpleCommunicator,
     ) -> Vec<Vec<Arc<EventData>>> {
-        let (counts, displs) = world.get_counts_displs(events.len());
-        counts
-            .iter()
-            .zip(displs.iter())
-            .map(|(&count, &displ)| {
-                events
-                    .iter()
-                    .skip(displ as usize)
-                    .take(count as usize)
-                    .cloned()
-                    .collect()
+        let partition = world.partition(events.len());
+        (0..partition.n_ranks())
+            .map(|rank| {
+                let range = partition.range_for_rank(rank);
+                events[range.clone()].iter().cloned().collect()
             })
             .collect()
     }
@@ -1277,11 +1273,118 @@ pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResul
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            return read_parquet_mpi(builder, metadata, &world);
+        }
+    }
+
+    read_parquet_local(builder, metadata)
+}
+
+fn read_parquet_local(
+    builder: ParquetRecordBatchReaderBuilder<File>,
+    metadata: Arc<DatasetMetadata>,
+) -> LadduResult<Arc<Dataset>> {
     let reader = builder.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let events = batches_to_events(batches, metadata.as_ref())?;
+    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+}
 
+#[cfg(feature = "mpi")]
+fn read_parquet_mpi(
+    mut builder: ParquetRecordBatchReaderBuilder<File>,
+    metadata: Arc<DatasetMetadata>,
+    world: &SimpleCommunicator,
+) -> LadduResult<Arc<Dataset>> {
+    let parquet_metadata = builder.metadata().clone();
+    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
+    if total_rows == 0 {
+        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
+    }
+
+    let partition = world.partition(total_rows);
+    let rank = world.rank() as usize;
+    let local_range = partition.range_for_rank(rank);
+    let local_start = local_range.start;
+    let local_end = local_range.end;
+    if local_start == local_end {
+        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
+    }
+
+    let (row_groups, first_row_start) =
+        row_groups_for_range(&parquet_metadata, local_start, local_end);
+    if !row_groups.is_empty() {
+        builder = builder.with_row_groups(row_groups);
+    }
+
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let mut events = batches_to_events(batches, metadata.as_ref())?;
+
+    let drop_front = local_start.saturating_sub(first_row_start);
+    if drop_front > 0 {
+        events.drain(0..drop_front);
+    }
+    let expected_local = local_end - local_start;
+    if events.len() > expected_local {
+        events.truncate(expected_local);
+    }
+    if events.len() != expected_local {
+        return Err(LadduError::Custom(format!(
+            "Loaded {} rows on rank {} but expected {}",
+            events.len(),
+            rank,
+            expected_local
+        )));
+    }
+
+    Ok(Arc::new(Dataset::new_local(events, metadata)))
+}
+
+#[cfg(feature = "mpi")]
+fn row_groups_for_range(
+    metadata: &Arc<ParquetMetaData>,
+    start: usize,
+    end: usize,
+) -> (Vec<usize>, usize) {
+    let mut selected = Vec::new();
+    let mut first_row_start = start;
+    let mut offset = 0usize;
+
+    for (idx, row_group) in metadata.row_groups().iter().enumerate() {
+        let group_start = offset;
+        let rows = row_group.num_rows() as usize;
+        let group_end = group_start + rows;
+        offset = group_end;
+
+        if group_end <= start {
+            continue;
+        }
+        if group_start >= end {
+            break;
+        }
+        if selected.is_empty() {
+            first_row_start = group_start;
+        }
+        selected.push(idx);
+        if group_end >= end {
+            break;
+        }
+    }
+
+    (selected, first_row_start)
+}
+
+fn batches_to_events(
+    batches: Vec<RecordBatch>,
+    metadata: &DatasetMetadata,
+) -> LadduResult<Vec<Arc<EventData>>> {
     #[cfg(feature = "rayon")]
-    let events: Vec<Arc<EventData>> = {
+    {
         let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
             .into_par_iter()
             .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
@@ -1291,21 +1394,19 @@ pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResul
             let mut batch = batch?;
             events.append(&mut batch);
         }
-        events
-    };
+        Ok(events)
+    }
 
     #[cfg(not(feature = "rayon"))]
-    let events: Vec<Arc<EventData>> = {
-        batches
+    {
+        Ok(batches
             .into_iter()
             .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
             .collect::<LadduResult<Vec<_>>>()?
             .into_iter()
             .flatten()
-            .collect()
-    };
-
-    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+            .collect())
+    }
 }
 
 /// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
