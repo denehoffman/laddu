@@ -47,11 +47,11 @@ sysinfo = "0.37.2"
 thiserror = "2.0.17"
 typetag = "0.2.21"
 
-laddu = { version = "0.12.1", path = "crates/laddu" }
+laddu = { version = "0.13.0", path = "crates/laddu" }
 laddu-core = { version = "0.13.0", path = "crates/laddu-core" }
-laddu-amplitudes = { version = "0.12.1", path = "crates/laddu-amplitudes" }
-laddu-extensions = { version = "0.12.1", path = "crates/laddu-extensions" }
-laddu-python = { version = "0.12.1", path = "crates/laddu-python" }
+laddu-amplitudes = { version = "0.13.0", path = "crates/laddu-amplitudes" }
+laddu-extensions = { version = "0.13.0", path = "crates/laddu-extensions" }
+laddu-python = { version = "0.13.0", path = "crates/laddu-python" }
 
 [profile.release]
 lto = "thin"
