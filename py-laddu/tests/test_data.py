@@ -8,6 +8,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+import laddu.io as ldio
 from laddu import Dataset, Event, Mass, Vec3, Vec4
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
@@ -235,11 +236,11 @@ def test_dataset_conversion() -> None:
         'weight': [1.0, 1.0, 2.0, 6.6],
         'extra_column': [10, 20, 30, 40],
     }
-    ds_from_dict = Dataset.from_dict(data)
+    ds_from_dict = ldio.from_dict(data)
     np_data = {k: np.array(v) for k, v in data.items()}
-    ds_from_numpy = Dataset.from_numpy(np_data)
-    ds_from_pandas = Dataset.from_pandas(pd.DataFrame(data))
-    ds_from_polars = Dataset.from_polars(pl.DataFrame(data))
+    ds_from_numpy = ldio.from_numpy(np_data)
+    ds_from_pandas = ldio.from_pandas(pd.DataFrame(data))
+    ds_from_polars = ldio.from_polars(pl.DataFrame(data))
     assert ds_from_dict[1].p4s['beam'].px == 2.0
     assert pytest.approx(ds_from_numpy[0].aux['pol_angle']) == 0.1
     assert ds_from_pandas[2].weight == 2.0
@@ -293,12 +294,12 @@ def test_dataset_weights() -> None:
 def test_dataset_from_dict_missing_components() -> None:
     data = {'beam_px': [1.0]}
     with pytest.raises(KeyError):
-        Dataset.from_dict(data)
+        ldio.from_dict(data)
 
 
 def test_dataset_from_dict_requires_p4_columns() -> None:
     with pytest.raises(ValueError):
-        Dataset.from_dict({'weight': [1.0]})
+        ldio.from_dict({'weight': [1.0]})
 
 
 def test_from_dict_accepts_names_and_aliases() -> None:
@@ -310,9 +311,7 @@ def test_from_dict_accepts_names_and_aliases() -> None:
         'aux': [3.0, 4.0],
     }
 
-    dataset = Dataset.from_dict(
-        data, p4s=['beam'], aux=['aux'], aliases={'primary': 'beam'}
-    )
+    dataset = ldio.from_dict(data, p4s=['beam'], aux=['aux'], aliases={'primary': 'beam'})
 
     assert dataset.p4_names == ['beam']
     assert dataset.aux_names == ['aux']
@@ -330,7 +329,7 @@ def test_from_numpy_propagates_aliases_and_names() -> None:
         'aux': np.array([2.0]),
     }
 
-    dataset = Dataset.from_numpy(
+    dataset = ldio.from_numpy(
         data,
         p4s=['beam'],
         aux=['aux'],
@@ -469,13 +468,13 @@ def test_binned_dataset_bin_io_roundtrip(tmp_path: Path) -> None:
         bin_dataset = binned[idx]
 
         parquet_path = tmp_path / f'bin_{idx}.parquet'
-        bin_dataset.to_parquet(parquet_path)
-        reopened_parquet = Dataset.from_parquet(parquet_path)
+        ldio.write_parquet(bin_dataset, parquet_path)
+        reopened_parquet = ldio.read_parquet(parquet_path)
         _assert_datasets_close(bin_dataset, reopened_parquet)
 
         root_path = tmp_path / f'bin_{idx}.root'
-        bin_dataset.to_root(root_path)
-        reopened_root = Dataset.from_root(root_path)
+        ldio.write_root(bin_dataset, root_path)
+        reopened_root = ldio.read_root(root_path)
         _assert_datasets_close(bin_dataset, reopened_root)
 
 
@@ -539,11 +538,11 @@ def test_event_display() -> None:
 
 
 def test_dataset_from_parquet_auto_vs_named() -> None:
-    auto = Dataset.from_parquet(DATA_F32_PARQUET)
+    auto = ldio.read_parquet(DATA_F32_PARQUET)
     assert auto.p4_names == P4_NAMES
     assert auto.aux_names == AUX_NAMES
 
-    explicit = Dataset.from_parquet(
+    explicit = ldio.read_parquet(
         DATA_F32_PARQUET,
         p4s=P4_NAMES,
         aux=AUX_NAMES,
@@ -552,13 +551,13 @@ def test_dataset_from_parquet_auto_vs_named() -> None:
 
 
 def test_dataset_from_root_matches_parquet() -> None:
-    parquet = Dataset.from_parquet(DATA_F32_PARQUET)
-    root_auto = Dataset.from_root(DATA_F32_ROOT)
+    parquet = ldio.read_parquet(DATA_F32_PARQUET)
+    root_auto = ldio.read_root(DATA_F32_ROOT)
     assert root_auto.p4_names == P4_NAMES
     assert root_auto.aux_names == AUX_NAMES
     _assert_datasets_close(root_auto, parquet)
 
-    root_named = Dataset.from_root(
+    root_named = ldio.read_root(
         DATA_F32_ROOT,
         p4s=P4_NAMES,
         aux=AUX_NAMES,
@@ -567,7 +566,7 @@ def test_dataset_from_root_matches_parquet() -> None:
 
 
 def test_dataset_from_parquet_with_aliases() -> None:
-    dataset = Dataset.from_parquet(
+    dataset = ldio.read_parquet(
         DATA_F32_PARQUET,
         aliases={'resonance': ['kshort1', 'kshort2']},
     )
@@ -577,7 +576,7 @@ def test_dataset_from_parquet_with_aliases() -> None:
 
 
 def test_mass_uses_alias_string() -> None:
-    dataset = Dataset.from_parquet(
+    dataset = ldio.read_parquet(
         DATA_F32_PARQUET,
         aliases={'resonance': ['kshort1', 'kshort2']},
     )
@@ -589,8 +588,8 @@ def test_mass_uses_alias_string() -> None:
 
 
 def test_dataset_from_amptools_matches_native_vectors() -> None:
-    native = Dataset.from_parquet(DATA_F32_PARQUET)
-    amptools = Dataset.from_amptools(DATA_AMPTOOLS_ROOT)
+    native = ldio.read_parquet(DATA_F32_PARQUET)
+    amptools = ldio.read_amptools(DATA_AMPTOOLS_ROOT)
     assert amptools.p4_names == [
         'beam',
         'final_state_0',
@@ -610,8 +609,8 @@ def test_dataset_from_amptools_matches_native_vectors() -> None:
 
 
 def test_dataset_from_amptools_pol_in_beam_columns() -> None:
-    native = Dataset.from_parquet(DATA_F32_PARQUET)
-    amptools = Dataset.from_amptools(DATA_AMPTOOLS_POL_ROOT, pol_in_beam=True)
+    native = ldio.read_parquet(DATA_F32_PARQUET)
+    amptools = ldio.read_amptools(DATA_AMPTOOLS_POL_ROOT, pol_in_beam=True)
     assert amptools.aux_names == AUX_NAMES
     for idx in range(native.n_events):
         amp_event = amptools[idx]
@@ -627,7 +626,7 @@ def test_dataset_from_amptools_pol_in_beam_columns() -> None:
 
 
 def test_dataset_from_amptools_custom_polarization_names() -> None:
-    dataset = Dataset.from_amptools(
+    dataset = ldio.read_amptools(
         DATA_AMPTOOLS_ROOT,
         pol_angle=30.0,
         pol_magnitude=0.75,
@@ -645,20 +644,20 @@ def test_dataset_from_amptools_custom_polarization_names() -> None:
 
 def test_dataset_from_amptools_rejects_unknown_option() -> None:
     with pytest.raises(TypeError):
-        Dataset.from_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # type: ignore[arg-type]
+        ldio.read_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # type: ignore[arg-type]
 
 
 def test_dataset_from_parquet_f64_matches_f32() -> None:
-    f32 = Dataset.from_parquet(DATA_F32_PARQUET)
-    f64 = Dataset.from_parquet(DATA_F64_PARQUET)
+    f32 = ldio.read_parquet(DATA_F32_PARQUET)
+    f64 = ldio.read_parquet(DATA_F64_PARQUET)
     assert f64.p4_names == P4_NAMES
     assert f64.aux_names == AUX_NAMES
     _assert_datasets_close(f32, f64)
 
 
 def test_dataset_from_root_f64_matches_parquet() -> None:
-    parquet = Dataset.from_parquet(DATA_F32_PARQUET)
-    root_f64 = Dataset.from_root(DATA_F64_ROOT)
+    parquet = ldio.read_parquet(DATA_F32_PARQUET)
+    root_f64 = ldio.read_root(DATA_F64_ROOT)
     assert root_f64.p4_names == P4_NAMES
     assert root_f64.aux_names == AUX_NAMES
     _assert_datasets_close(root_f64, parquet)
@@ -666,28 +665,28 @@ def test_dataset_from_root_f64_matches_parquet() -> None:
 
 def test_dataset_to_numpy_precision() -> None:
     dataset = make_test_dataset()
-    arrays64 = dataset.to_numpy()
+    arrays64 = ldio.to_numpy(dataset)
     assert arrays64['beam_px'].dtype == np.float64
     assert arrays64['weight'].dtype == np.float64
 
-    arrays32 = dataset.to_numpy(precision='f32')
+    arrays32 = ldio.to_numpy(dataset, precision='f32')
     assert arrays32['beam_px'].dtype == np.float32
     assert arrays32['weight'].dtype == np.float32
 
 
 def test_dataset_parquet_roundtrip_tempfile() -> None:
-    dataset = Dataset.from_parquet(DATA_F32_PARQUET)
+    dataset = ldio.read_parquet(DATA_F32_PARQUET)
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / 'roundtrip.parquet'
-        dataset.to_parquet(path)
-        reopened = Dataset.from_parquet(path)
+        ldio.write_parquet(dataset, path)
+        reopened = ldio.read_parquet(path)
     _assert_datasets_close(dataset, reopened)
 
 
 def test_dataset_root_roundtrip_tempfile() -> None:
-    dataset = Dataset.from_parquet(DATA_F32_PARQUET)
+    dataset = ldio.read_parquet(DATA_F32_PARQUET)
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / 'roundtrip.root'
-        dataset.to_root(path)
-        reopened = Dataset.from_root(path)
+        ldio.write_root(dataset, path)
+        reopened = ldio.read_root(path)
     _assert_datasets_close(dataset, reopened)

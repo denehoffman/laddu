@@ -59,4 +59,7 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
+
+    #[pymodule_export]
+    use laddu_python::data::{read_parquet, read_root, write_parquet, write_root};
 }

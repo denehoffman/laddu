@@ -194,12 +194,12 @@ if __name__ == '__main__':
     aux_columns = ['pol_magnitude', 'pol_angle']
 
     if not (script_dir / 'unpolarized_moments.pkl').exists():
-        data = ld.Dataset.from_parquet(
+        data = ld.io.read_parquet(
             data_file,
             p4s=p4_columns,
             aux=aux_columns,
         )
-        accmc = ld.Dataset.from_parquet(
+        accmc = ld.io.read_parquet(
             accmc_file,
             p4s=p4_columns,
             aux=aux_columns,
@@ -259,8 +259,8 @@ if __name__ == '__main__':
     plt.close()
 
     if not (script_dir / 'polarized_moments.pkl').exists():
-        data = ld.Dataset.from_parquet(data_file, p4s=p4_columns, aux=aux_columns)
-        accmc = ld.Dataset.from_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
+        data = ld.io.read_parquet(data_file, p4s=p4_columns, aux=aux_columns)
+        accmc = ld.io.read_parquet(accmc_file, p4s=p4_columns, aux=aux_columns)
         mass = ld.Mass(['kshort1', 'kshort2'])
         data_binned = data.bin_by(mass, bins, (1.0, 2.0))
         accmc_binned = accmc.bin_by(mass, bins, (1.0, 2.0))

@@ -1,10 +1,7 @@
 from collections.abc import Mapping, Sequence
-from pathlib import Path
-from typing import Any, Literal, overload
+from typing import overload
 
 import numpy as np
-import pandas as pd
-import polars as pl
 from numpy.typing import NDArray
 
 from laddu.utils.variables import (
@@ -85,96 +82,6 @@ class Dataset(Sequence[Event]):
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
-    @classmethod
-    def from_dict(
-        cls,
-        data: dict[str, Any],
-        *,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_numpy(
-        cls,
-        data: dict[str, NDArray[np.floating]],
-        *,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_pandas(
-        cls,
-        data: pd.DataFrame,
-        *,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_polars(
-        cls,
-        data: pl.DataFrame,
-        *,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_parquet(
-        cls,
-        path: str | Path,
-        *,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_root(
-        cls,
-        path: str | Path,
-        *,
-        tree: str | None = None,
-        p4s: list[str] | None = None,
-        aux: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
-        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
-        uproot_kwargs: dict[str, Any] | None = None,
-    ) -> Dataset: ...
-    @classmethod
-    def from_amptools(
-        cls,
-        path: str | Path,
-        *,
-        tree: str | None = None,
-        pol_in_beam: bool = False,
-        pol_angle: float | None = None,
-        pol_magnitude: float | None = None,
-        pol_magnitude_name: str = 'pol_magnitude',
-        pol_angle_name: str = 'pol_angle',
-        num_entries: int | None = None,
-    ) -> Dataset: ...
-    def to_numpy(
-        self, *, precision: Literal['f64', 'f32'] = 'f64'
-    ) -> dict[str, NDArray[np.floating]]: ...
-    def to_parquet(
-        self,
-        path: str | Path,
-        *,
-        chunk_size: int = 10000,
-        precision: Literal['f64', 'f32'] = 'f64',
-    ) -> None: ...
-    def to_root(
-        self,
-        path: str | Path,
-        *,
-        tree: str | None = None,
-        backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
-        chunk_size: int = 10000,
-        precision: Literal['f64', 'f32'] = 'f64',
-        uproot_kwargs: dict[str, Any] | None = None,
-    ) -> None: ...
 
 class BinnedDataset:
     n_bins: int

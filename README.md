@@ -59,11 +59,6 @@
 - Efficient parallelism using [`rayon`](https://github.com/rayon-rs/rayon).
 - Python bindings to allow users to write quick, easy-to-read code that just works.
 
-> **API note:** The low-level event container is now named `EventData`. The metadata-aware view
-> returned by [`Dataset::named_event`](https://docs.rs/laddu-core/latest/laddu_core/data/struct.Dataset.html#method.named_event)
-> is called `Event` and exposes the same kinematic helpers while enabling name-based lookups.
-> Python bindings continue to expose this view as ``laddu.Event``.
-
 # Installation
 
 `laddu` can be added to a Rust project with `cargo`:
@@ -188,15 +183,15 @@ impl Amplitude for MyBreitWigner {
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 
 ```rust
-use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
+use laddu::{io, Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 let aux_names = ["pol_magnitude", "pol_angle"];
 let options = DatasetReadOptions::default()
     .p4_names(p4_names)
     .aux_names(aux_names)
     .alias("resonance", ["kshort1", "kshort2"]);
-let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
-let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
+let ds_data = io::read_parquet("test_data/data.parquet", &options).unwrap();
+let ds_mc = io::read_parquet("test_data/mc.parquet", &options).unwrap();
 
 let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 let p1_mass = Mass::new(["kshort1"]);
@@ -236,8 +231,8 @@ from laddu import constant, parameter
 def main():
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
     aux_columns = ['pol_magnitude', 'pol_angle']
-    ds_data = ld.Dataset.from_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
-    ds_mc = ld.Dataset.from_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_data = ld.io.read_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_mc = ld.io.read_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     angles = ld.Angles(topology, 'kshort1', 'Helicity')
     polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
@@ -361,9 +356,9 @@ For example, the following columns describe a dataset with four particles, the f
 AmpTools-format ROOT files can be directly read as `Dataset` objects (this is currently implemented in the Python bindings; the Rust API still targets Parquet/standard ROOT TTrees):
 
 ```python
-from laddu import Dataset
+import laddu as ld
 
-dataset = Dataset.from_amptools(
+dataset = ld.io.read_amptools(
     'example_amp.root',
     pol_in_beam=True,
 )
@@ -376,6 +371,9 @@ This loads the ROOT tree, infers the particle names, and exposes the result thro
 The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`.
 
 To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable). These same methods exist in Python as `laddu.mpi.use_mpi(trigger=true)` and `laddu.mpi.finalize_mpi()`, and an additional context manager, `laddu.mpi.MPI(trigger=true)`, can be used to quickly wrap a `main()` function. See the [documentation](https://laddu.readthedocs.io/en/latest/) for more details.
+
+> [!WARNING]
+> The current ROOT backend always materializes the entire TTree on rank 0 before broadcasting partitions to other ranks. Large ROOT files therefore negate the MPI memory-savings you get with Parquet until upstream `oxyroot` gains range-aware reads.
 
 # Future Plans
 

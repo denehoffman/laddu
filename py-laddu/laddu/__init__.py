@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, cast
 
-from . import amplitudes, data, experimental, extensions, mpi, utils
+from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
 from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner
@@ -61,8 +61,6 @@ class _BackendProtocol(Protocol):
 
 _laddu = cast('_BackendProtocol', _backend_module)
 
-DatasetBase = Dataset
-
 __doc__: str | None = _laddu.__doc__
 __version__: str = _laddu.version()
 available_parallelism = _laddu.available_parallelism
@@ -78,7 +76,6 @@ __all__ = [
     'ControlFlow',
     'CosTheta',
     'Dataset',
-    'DatasetBase',
     'EnsembleStatus',
     'Evaluator',
     'Event',
@@ -126,6 +123,7 @@ __all__ = [
     'expr_sum',
     'extensions',
     'integrated_autocorrelation_times',
+    'io',
     'likelihood_product',
     'likelihood_sum',
     'mpi',

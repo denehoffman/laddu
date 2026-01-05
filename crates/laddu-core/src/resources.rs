@@ -50,6 +50,8 @@ pub struct Resources {
     amplitudes: HashMap<String, AmplitudeID>,
     /// A list indicating which amplitudes are active (using [`AmplitudeID`]s as indices)
     pub active: Vec<bool>,
+    #[serde(default)]
+    active_indices: Vec<usize>,
     /// The set of all registered free parameter names across registered [`Amplitude`]s
     pub free_parameters: IndexSet<String>,
     /// The set of all registered fixed parameter names across registered [`Amplitude`]s
@@ -314,80 +316,183 @@ impl Resources {
         self.n_free_parameters() + self.n_fixed_parameters()
     }
 
+    fn rebuild_active_indices(&mut self) {
+        self.active_indices.clear();
+        self.active_indices.extend(
+            self.active
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &is_active)| if is_active { Some(idx) } else { None }),
+        );
+    }
+
+    pub(crate) fn refresh_active_indices(&mut self) {
+        self.rebuild_active_indices();
+    }
+
+    /// Return the indices of active amplitudes.
+    pub fn active_indices(&self) -> &[usize] {
+        &self.active_indices
+    }
+
     #[inline]
-    fn set_activation_state(&mut self, name: &str, active: bool) -> bool {
-        if let Some(amplitude) = self.amplitudes.get(name) {
-            self.active[amplitude.1] = active;
-            true
-        } else {
-            false
-        }
+    fn set_activation_state(&mut self, name: &str, active: bool) -> Option<bool> {
+        self.amplitudes.get(name).map(|amplitude| {
+            let idx = amplitude.1;
+            let changed = self.active[idx] != active;
+            self.active[idx] = active;
+            changed
+        })
     }
     /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
     pub fn activate<T: AsRef<str>>(&mut self, name: T) {
-        let name_ref = name.as_ref();
-        self.set_activation_state(name_ref, true);
+        if self
+            .set_activation_state(name.as_ref(), true)
+            .unwrap_or(false)
+        {
+            self.rebuild_active_indices();
+        }
     }
     /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
     pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+        let mut changed = false;
         for name in names {
-            self.activate(name);
+            if self
+                .set_activation_state(name.as_ref(), true)
+                .unwrap_or(false)
+            {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
         }
     }
     /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         let name_ref = name.as_ref();
-        if self.set_activation_state(name_ref, true) {
-            Ok(())
-        } else {
-            Err(LadduError::AmplitudeNotFoundError {
+        match self.set_activation_state(name_ref, true) {
+            Some(changed) => {
+                if changed {
+                    self.rebuild_active_indices();
+                }
+                Ok(())
+            }
+            None => Err(LadduError::AmplitudeNotFoundError {
                 name: name_ref.to_string(),
-            })
+            }),
         }
     }
     /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        let mut changed = false;
         for name in names {
-            self.activate_strict(name)?
+            let name_ref = name.as_ref();
+            match self.set_activation_state(name_ref, true) {
+                Some(state_changed) => {
+                    if state_changed {
+                        changed = true;
+                    }
+                }
+                None => {
+                    return Err(LadduError::AmplitudeNotFoundError {
+                        name: name_ref.to_string(),
+                    })
+                }
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
         }
         Ok(())
     }
     /// Activate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
     pub fn activate_all(&mut self) {
-        self.active = vec![true; self.active.len()];
+        let mut changed = false;
+        for active in self.active.iter_mut() {
+            if !*active {
+                *active = true;
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
     }
     /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
     pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
-        let name_ref = name.as_ref();
-        self.set_activation_state(name_ref, false);
+        if self
+            .set_activation_state(name.as_ref(), false)
+            .unwrap_or(false)
+        {
+            self.rebuild_active_indices();
+        }
     }
     /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
     pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+        let mut changed = false;
         for name in names {
-            self.deactivate(name);
+            if self
+                .set_activation_state(name.as_ref(), false)
+                .unwrap_or(false)
+            {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
         }
     }
     /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
         let name_ref = name.as_ref();
-        if self.set_activation_state(name_ref, false) {
-            Ok(())
-        } else {
-            Err(LadduError::AmplitudeNotFoundError {
+        match self.set_activation_state(name_ref, false) {
+            Some(changed) => {
+                if changed {
+                    self.rebuild_active_indices();
+                }
+                Ok(())
+            }
+            None => Err(LadduError::AmplitudeNotFoundError {
                 name: name_ref.to_string(),
-            })
+            }),
         }
     }
     /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        let mut changed = false;
         for name in names {
-            self.deactivate_strict(name)?;
+            let name_ref = name.as_ref();
+            match self.set_activation_state(name_ref, false) {
+                Some(state_changed) => {
+                    if state_changed {
+                        changed = true;
+                    }
+                }
+                None => {
+                    return Err(LadduError::AmplitudeNotFoundError {
+                        name: name_ref.to_string(),
+                    })
+                }
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
         }
         Ok(())
     }
     /// Deactivate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
     pub fn deactivate_all(&mut self) {
-        self.active = vec![false; self.active.len()];
+        let mut changed = false;
+        for active in self.active.iter_mut() {
+            if *active {
+                *active = false;
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
     }
     /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
     pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
@@ -428,6 +533,7 @@ impl Resources {
         let next_id = AmplitudeID(name.to_string(), self.amplitudes.len());
         self.amplitudes.insert(name.to_string(), next_id.clone());
         self.active.push(true);
+        self.rebuild_active_indices();
         Ok(next_id)
     }
 

@@ -229,8 +229,8 @@
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 //! let aux_names = ["pol_magnitude", "pol_angle"];
 //! let options = DatasetReadOptions::default().p4_names(p4_names).aux_names(aux_names);
-//! let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
-//! let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
+//! let ds_data = laddu::io::read_parquet("test_data/data.parquet", &options).unwrap();
+//! let ds_mc = laddu::io::read_parquet("test_data/mc.parquet", &options).unwrap();
 //!
 //! let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 //! let p1_mass = Mass::new(["kshort1"]);
@@ -279,7 +279,7 @@
 //! | `weight`      | `Float32` or `Float64` | Event weight                         |
 //!
 //! AmpTools-format ROOT tuples can also be loaded through the Python bindings of `laddu` by calling
-//! `Dataset::from_amptools(...)`, which performs the conversion automatically. The Rust
+//! `laddu.io.read_amptools(...)`, which performs the conversion automatically. The Rust
 //! API currently supports Parquet and standard ROOT TTrees.
 //!
 //! # MPI Support
@@ -287,6 +287,12 @@
 //! The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager.
 //!
 //! To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable).
+//!
+//! <div class="warning">
+//!
+//! The current ROOT backend always materializes the entire TTree on rank 0 before partitioning, so distributed runs do not yet see the same memory savings they do with Parquet inputs.
+//!
+//! </div>
 //!
 //! # Future Plans
 //! * GPU integration (this is incredibly difficult to do right now, but it's something I'm looking into).
@@ -311,8 +317,12 @@
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data {
     pub use laddu_core::data::{
-        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, EventData,
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, EventData,
     };
+}
+/// Format-specific IO helpers for [`Dataset`]s.
+pub mod io {
+    pub use laddu_core::data::{read_parquet, read_root, write_parquet, write_root};
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
@@ -356,7 +366,8 @@ pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike,
 };
 pub use laddu_core::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
+    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
+    EventData,
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{

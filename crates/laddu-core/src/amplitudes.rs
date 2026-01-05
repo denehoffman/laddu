@@ -8,7 +8,7 @@ use std::{
 
 use auto_ops::*;
 use dyn_clone::DynClone;
-use nalgebra::{ComplexField, DVector};
+use nalgebra::DVector;
 use num::complex::Complex64;
 
 use parking_lot::RwLock;
@@ -451,6 +451,392 @@ pub enum ExpressionNode {
     NormSqr(Box<ExpressionNode>),
 }
 
+#[derive(Clone, Debug)]
+struct ExpressionProgram {
+    ops: Vec<ExpressionOp>,
+    slot_count: usize,
+    root_slot: usize,
+}
+
+#[derive(Clone, Debug)]
+enum ExpressionOp {
+    LoadZero {
+        dst: usize,
+    },
+    LoadOne {
+        dst: usize,
+    },
+    LoadAmp {
+        dst: usize,
+        amp_idx: usize,
+    },
+    Add {
+        dst: usize,
+        left: usize,
+        right: usize,
+    },
+    Sub {
+        dst: usize,
+        left: usize,
+        right: usize,
+    },
+    Mul {
+        dst: usize,
+        left: usize,
+        right: usize,
+    },
+    Div {
+        dst: usize,
+        left: usize,
+        right: usize,
+    },
+    Neg {
+        dst: usize,
+        input: usize,
+    },
+    Real {
+        dst: usize,
+        input: usize,
+    },
+    Imag {
+        dst: usize,
+        input: usize,
+    },
+    Conj {
+        dst: usize,
+        input: usize,
+    },
+    NormSqr {
+        dst: usize,
+        input: usize,
+    },
+}
+
+#[derive(Default)]
+struct ExpressionProgramBuilder {
+    ops: Vec<ExpressionOp>,
+    next_slot: usize,
+}
+
+impl ExpressionProgramBuilder {
+    fn alloc_slot(&mut self) -> usize {
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        slot
+    }
+
+    fn build(self, root: usize) -> ExpressionProgram {
+        ExpressionProgram {
+            ops: self.ops,
+            slot_count: self.next_slot,
+            root_slot: root,
+        }
+    }
+
+    fn emit(&mut self, op: ExpressionOp) {
+        self.ops.push(op);
+    }
+
+    fn compile(&mut self, node: &ExpressionNode) -> usize {
+        match node {
+            ExpressionNode::Zero => {
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::LoadZero { dst });
+                dst
+            }
+            ExpressionNode::One => {
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::LoadOne { dst });
+                dst
+            }
+            ExpressionNode::Amp(idx) => {
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::LoadAmp { dst, amp_idx: *idx });
+                dst
+            }
+            ExpressionNode::Add(a, b) => {
+                let left = self.compile(a);
+                let right = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Add { dst, left, right });
+                dst
+            }
+            ExpressionNode::Sub(a, b) => {
+                let left = self.compile(a);
+                let right = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Sub { dst, left, right });
+                dst
+            }
+            ExpressionNode::Mul(a, b) => {
+                let left = self.compile(a);
+                let right = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Mul { dst, left, right });
+                dst
+            }
+            ExpressionNode::Div(a, b) => {
+                let left = self.compile(a);
+                let right = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Div { dst, left, right });
+                dst
+            }
+            ExpressionNode::Neg(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Neg { dst, input });
+                dst
+            }
+            ExpressionNode::Real(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Real { dst, input });
+                dst
+            }
+            ExpressionNode::Imag(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Imag { dst, input });
+                dst
+            }
+            ExpressionNode::Conj(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Conj { dst, input });
+                dst
+            }
+            ExpressionNode::NormSqr(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::NormSqr { dst, input });
+                dst
+            }
+        }
+    }
+}
+
+impl ExpressionProgram {
+    fn from_node(node: &ExpressionNode) -> Self {
+        let mut builder = ExpressionProgramBuilder::default();
+        let root = builder.compile(node);
+        builder.build(root)
+    }
+
+    fn slot_count(&self) -> usize {
+        self.slot_count
+    }
+
+    fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
+        debug_assert!(slots.len() >= self.slot_count);
+        for op in &self.ops {
+            match *op {
+                ExpressionOp::LoadZero { dst } => slots[dst] = Complex64::ZERO,
+                ExpressionOp::LoadOne { dst } => slots[dst] = Complex64::ONE,
+                ExpressionOp::LoadAmp { dst, amp_idx } => {
+                    slots[dst] = amplitude_values.get(amp_idx).copied().unwrap_or_default();
+                }
+                ExpressionOp::Add { dst, left, right } => {
+                    slots[dst] = slots[left] + slots[right];
+                }
+                ExpressionOp::Sub { dst, left, right } => {
+                    slots[dst] = slots[left] - slots[right];
+                }
+                ExpressionOp::Mul { dst, left, right } => {
+                    slots[dst] = slots[left] * slots[right];
+                }
+                ExpressionOp::Div { dst, left, right } => {
+                    slots[dst] = slots[left] / slots[right];
+                }
+                ExpressionOp::Neg { dst, input } => {
+                    slots[dst] = -slots[input];
+                }
+                ExpressionOp::Real { dst, input } => {
+                    slots[dst] = Complex64::new(slots[input].re, 0.0);
+                }
+                ExpressionOp::Imag { dst, input } => {
+                    slots[dst] = Complex64::new(slots[input].im, 0.0);
+                }
+                ExpressionOp::Conj { dst, input } => {
+                    slots[dst] = slots[input].conj();
+                }
+                ExpressionOp::NormSqr { dst, input } => {
+                    slots[dst] = Complex64::new(slots[input].norm_sqr(), 0.0);
+                }
+            }
+        }
+    }
+
+    fn evaluate_into(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) -> Complex64 {
+        if self.slot_count == 0 {
+            return Complex64::ZERO;
+        }
+        self.fill_values(amplitude_values, slots);
+        slots[self.root_slot]
+    }
+
+    pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        if self.slot_count == 0 {
+            return Complex64::ZERO;
+        }
+        let mut slots = vec![Complex64::ZERO; self.slot_count];
+        self.evaluate_into(amplitude_values, &mut slots)
+    }
+
+    pub fn evaluate_gradient_into(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        if self.slot_count == 0 {
+            let dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+            return DVector::zeros(dim);
+        }
+        self.fill_values(amplitude_values, value_slots);
+        self.fill_gradients(gradient_values, value_slots, gradient_slots);
+        gradient_slots[self.root_slot].clone()
+    }
+
+    pub fn evaluate_gradient(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        let grad_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; self.slot_count];
+        let mut gradient_slots: Vec<DVector<Complex64>> = (0..self.slot_count)
+            .map(|_| DVector::zeros(grad_dim))
+            .collect();
+        self.evaluate_gradient_into(
+            amplitude_values,
+            gradient_values,
+            &mut value_slots,
+            &mut gradient_slots,
+        )
+    }
+
+    fn fill_gradients(
+        &self,
+        amplitude_gradients: &[DVector<Complex64>],
+        values: &[Complex64],
+        gradients: &mut [DVector<Complex64>],
+    ) {
+        debug_assert!(gradients.len() >= self.slot_count);
+        debug_assert!(values.len() >= self.slot_count);
+        fn borrow_dst(
+            gradients: &mut [DVector<Complex64>],
+            dst: usize,
+        ) -> (&[DVector<Complex64>], &mut DVector<Complex64>) {
+            let (before, tail) = gradients.split_at_mut(dst);
+            let (dst_ref, _) = tail.split_first_mut().expect("dst slot should exist");
+            (before, dst_ref)
+        }
+        for op in &self.ops {
+            match *op {
+                ExpressionOp::LoadZero { dst } | ExpressionOp::LoadOne { dst } => {
+                    let (_, dst_grad) = borrow_dst(gradients, dst);
+                    for item in dst_grad.iter_mut() {
+                        *item = Complex64::ZERO;
+                    }
+                }
+                ExpressionOp::LoadAmp { dst, amp_idx } => {
+                    let (_, dst_grad) = borrow_dst(gradients, dst);
+                    if let Some(source) = amplitude_gradients.get(amp_idx) {
+                        dst_grad.clone_from(source);
+                    } else {
+                        for item in dst_grad.iter_mut() {
+                            *item = Complex64::ZERO;
+                        }
+                    }
+                }
+                ExpressionOp::Add { dst, left, right } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    dst_grad.clone_from(&before_dst[left]);
+                    for (dst_item, right_item) in dst_grad.iter_mut().zip(before_dst[right].iter())
+                    {
+                        *dst_item += *right_item;
+                    }
+                }
+                ExpressionOp::Sub { dst, left, right } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    dst_grad.clone_from(&before_dst[left]);
+                    for (dst_item, right_item) in dst_grad.iter_mut().zip(before_dst[right].iter())
+                    {
+                        *dst_item -= *right_item;
+                    }
+                }
+                ExpressionOp::Mul { dst, left, right } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let f_left = values[left];
+                    let f_right = values[right];
+                    dst_grad.clone_from(&before_dst[right]);
+                    for item in dst_grad.iter_mut() {
+                        *item *= f_left;
+                    }
+                    for (dst_item, left_item) in dst_grad.iter_mut().zip(before_dst[left].iter()) {
+                        *dst_item += *left_item * f_right;
+                    }
+                }
+                ExpressionOp::Div { dst, left, right } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let f_left = values[left];
+                    let f_right = values[right];
+                    let denom = f_right * f_right;
+                    dst_grad.clone_from(&before_dst[left]);
+                    for item in dst_grad.iter_mut() {
+                        *item *= f_right;
+                    }
+                    for (dst_item, right_item) in dst_grad.iter_mut().zip(before_dst[right].iter())
+                    {
+                        *dst_item -= *right_item * f_left;
+                    }
+                    for item in dst_grad.iter_mut() {
+                        *item /= denom;
+                    }
+                }
+                ExpressionOp::Neg { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    dst_grad.clone_from(&before_dst[input]);
+                    for item in dst_grad.iter_mut() {
+                        *item = -*item;
+                    }
+                }
+                ExpressionOp::Real { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = Complex64::new(input_item.re, 0.0);
+                    }
+                }
+                ExpressionOp::Imag { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = Complex64::new(input_item.im, 0.0);
+                    }
+                }
+                ExpressionOp::Conj { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = input_item.conj();
+                    }
+                }
+                ExpressionOp::NormSqr { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let conj_value = values[input].conj();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = Complex64::new(2.0 * (*input_item * conj_value).re, 0.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl ExpressionNode {
     fn remap(&self, mapping: &[usize]) -> Self {
         match self {
@@ -469,94 +855,27 @@ impl ExpressionNode {
         }
     }
 
-    /// Evaluate an [`ExpressionNode`] over a single event using calculated [`AmplitudeValues`]
-    ///
-    /// This method parses the underlying [`ExpressionNode`] but doesn't actually calculate the values
-    /// from the [`Amplitude`]s themselves.
-    pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
-        match self {
-            ExpressionNode::Amp(idx) => amplitude_values[*idx],
-            ExpressionNode::Add(a, b) => {
-                a.evaluate(amplitude_values) + b.evaluate(amplitude_values)
-            }
-            ExpressionNode::Sub(a, b) => {
-                a.evaluate(amplitude_values) - b.evaluate(amplitude_values)
-            }
-            ExpressionNode::Mul(a, b) => {
-                a.evaluate(amplitude_values) * b.evaluate(amplitude_values)
-            }
-            ExpressionNode::Div(a, b) => {
-                a.evaluate(amplitude_values) / b.evaluate(amplitude_values)
-            }
-            ExpressionNode::Neg(a) => -a.evaluate(amplitude_values),
-            ExpressionNode::Real(a) => Complex64::new(a.evaluate(amplitude_values).re, 0.0),
-            ExpressionNode::Imag(a) => Complex64::new(a.evaluate(amplitude_values).im, 0.0),
-            ExpressionNode::Conj(a) => a.evaluate(amplitude_values).conj(),
-            ExpressionNode::NormSqr(a) => {
-                let value = a.evaluate(amplitude_values);
-                Complex64::new(value.norm_sqr(), 0.0)
-            }
-            ExpressionNode::Zero => Complex64::ZERO,
-            ExpressionNode::One => Complex64::ONE,
-        }
+    fn program(&self) -> ExpressionProgram {
+        ExpressionProgram::from_node(self)
     }
 
-    /// Evaluate the gradient of an [`ExpressionNode`] over a single event using calculated [`AmplitudeValues`]
+    /// Evaluate an [`ExpressionNode`] by compiling it to bytecode on the fly.
     ///
-    /// This method parses the underlying [`ExpressionNode`] but doesn't actually calculate the
-    /// gradient from the [`Amplitude`]s themselves.
+    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
+    pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        self.program().evaluate(amplitude_values)
+    }
+
+    /// Evaluate the gradient of an [`ExpressionNode`].
+    ///
+    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
     pub fn evaluate_gradient(
         &self,
         amplitude_values: &[Complex64],
         gradient_values: &[DVector<Complex64>],
     ) -> DVector<Complex64> {
-        match self {
-            ExpressionNode::Amp(idx) => gradient_values[*idx].clone(),
-            ExpressionNode::Add(a, b) => {
-                a.evaluate_gradient(amplitude_values, gradient_values)
-                    + b.evaluate_gradient(amplitude_values, gradient_values)
-            }
-            ExpressionNode::Sub(a, b) => {
-                a.evaluate_gradient(amplitude_values, gradient_values)
-                    - b.evaluate_gradient(amplitude_values, gradient_values)
-            }
-            ExpressionNode::Mul(a, b) => {
-                let f_a = a.evaluate(amplitude_values);
-                let f_b = b.evaluate(amplitude_values);
-                b.evaluate_gradient(amplitude_values, gradient_values)
-                    .map(|g| g * f_a)
-                    + a.evaluate_gradient(amplitude_values, gradient_values)
-                        .map(|g| g * f_b)
-            }
-            ExpressionNode::Div(a, b) => {
-                let f_a = a.evaluate(amplitude_values);
-                let f_b = b.evaluate(amplitude_values);
-                (a.evaluate_gradient(amplitude_values, gradient_values)
-                    .map(|g| g * f_b)
-                    - b.evaluate_gradient(amplitude_values, gradient_values)
-                        .map(|g| g * f_a))
-                    / (f_b * f_b)
-            }
-            ExpressionNode::Neg(a) => -a.evaluate_gradient(amplitude_values, gradient_values),
-            ExpressionNode::Real(a) => a
-                .evaluate_gradient(amplitude_values, gradient_values)
-                .map(|g| Complex64::new(g.re, 0.0)),
-            ExpressionNode::Imag(a) => a
-                .evaluate_gradient(amplitude_values, gradient_values)
-                .map(|g| Complex64::new(g.im, 0.0)),
-            ExpressionNode::Conj(a) => a
-                .evaluate_gradient(amplitude_values, gradient_values)
-                .map(|g| g.conj()),
-            ExpressionNode::NormSqr(a) => {
-                let conj_f_a = a.evaluate(amplitude_values).conjugate();
-                a.evaluate_gradient(amplitude_values, gradient_values)
-                    .map(|g| Complex64::new(2.0 * (g * conj_f_a).re, 0.0))
-            }
-            ExpressionNode::Zero | ExpressionNode::One => {
-                let max_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
-                DVector::zeros(max_dim)
-            }
-        }
+        self.program()
+            .evaluate_gradient(amplitude_values, gradient_values)
     }
 }
 
@@ -732,6 +1051,7 @@ impl Expression {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events());
+        resources.refresh_active_indices();
         let mut amplitudes: Vec<Box<dyn Amplitude>> = self
             .registry
             .amplitudes
@@ -749,6 +1069,7 @@ impl Expression {
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
+            expression_program: ExpressionProgram::from_node(&self.tree),
             registry: self.registry.clone(),
         })
     }
@@ -872,11 +1193,86 @@ pub struct Evaluator {
     pub resources: Arc<RwLock<Resources>>,
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
+    expression_program: ExpressionProgram,
     registry: ExpressionRegistry,
 }
 
 #[allow(missing_docs)]
 impl Evaluator {
+    fn fill_amplitude_values(
+        &self,
+        amplitude_values: &mut [Complex64],
+        active_indices: &[usize],
+        parameters: &Parameters,
+        event: &EventData,
+        cache: &Cache,
+    ) {
+        for &amp_idx in active_indices {
+            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, event, cache);
+        }
+    }
+
+    fn fill_amplitude_gradients(
+        &self,
+        gradient_values: &mut [DVector<Complex64>],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        event: &EventData,
+        cache: &Cache,
+    ) {
+        self.amplitudes
+            .iter()
+            .zip(active_mask.iter())
+            .zip(gradient_values.iter_mut())
+            .for_each(|((amp, active), grad)| {
+                grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
+                if *active {
+                    amp.compute_gradient(parameters, event, cache, grad);
+                }
+            });
+    }
+
+    pub fn expression_slot_count(&self) -> usize {
+        self.expression_program.slot_count()
+    }
+
+    pub fn evaluate_expression_value_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        self.expression_program
+            .evaluate_into(amplitude_values, scratch)
+    }
+
+    pub fn evaluate_expression_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        self.expression_program.evaluate_gradient_into(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+        )
+    }
+
+    pub fn evaluate_expression_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        self.expression_program.evaluate(amplitude_values)
+    }
+
+    pub fn evaluate_expression_gradient(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        self.expression_program
+            .evaluate_gradient(amplitude_values, gradient_values)
+    }
+
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
@@ -1019,49 +1415,52 @@ impl Evaluator {
     pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
             self.dataset
                 .events
                 .par_iter()
                 .zip(resources.caches.par_iter())
-                .map(|(event, cache)| {
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
-                })
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                        )
+                    },
+                    |(amplitude_values, expr_slots), (event, cache)| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut expr_slots = vec![Complex64::ZERO; slot_count];
             self.dataset
                 .events
                 .iter()
                 .zip(resources.caches.iter())
                 .map(|(event, cache)| {
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
                 })
                 .collect()
         }
@@ -1104,49 +1503,52 @@ impl Evaluator {
     pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
             indices
                 .par_iter()
-                .map(|&idx| {
-                    let event = &self.dataset.events[idx];
-                    let cache = &resources.caches[idx];
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
-                })
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                        )
+                    },
+                    |(amplitude_values, expr_slots), &idx| {
+                        let event = &self.dataset.events[idx];
+                        let cache = &resources.caches[idx];
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut expr_slots = vec![Complex64::ZERO; slot_count];
             indices
                 .iter()
                 .map(|&idx| {
                     let event = &self.dataset.events[idx];
                     let cache = &resources.caches[idx];
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression.evaluate(&amplitude_values)
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
                 })
                 .collect()
         }
@@ -1189,74 +1591,82 @@ impl Evaluator {
     pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
             self.dataset
                 .events
                 .par_iter()
                 .zip(resources.caches.par_iter())
-                .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression
-                        .evaluate_gradient(&amplitude_values, &gradient_values)
-                })
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                     (event, cache)| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.fill_amplitude_gradients(
+                            gradient_values,
+                            &resources.active,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.evaluate_expression_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        )
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
             self.dataset
                 .events
                 .iter()
                 .zip(resources.caches.iter())
                 .map(|(event, cache)| {
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-
-                    self.expression
-                        .evaluate_gradient(&amplitude_values, &gradient_values)
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.fill_amplitude_gradients(
+                        &mut gradient_values,
+                        &resources.active,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                    )
                 })
                 .collect()
         }
@@ -1317,74 +1727,81 @@ impl Evaluator {
     ) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
             indices
                 .par_iter()
-                .map(|&idx| {
-                    let event = &self.dataset.events[idx];
-                    let cache = &resources.caches[idx];
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-                    self.expression
-                        .evaluate_gradient(&amplitude_values, &gradient_values)
-                })
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
+                        let event = &self.dataset.events[idx];
+                        let cache = &resources.caches[idx];
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.fill_amplitude_gradients(
+                            gradient_values,
+                            &resources.active,
+                            &parameters,
+                            event,
+                            cache,
+                        );
+                        self.evaluate_expression_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        )
+                    },
+                )
                 .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
             indices
                 .iter()
                 .map(|&idx| {
                     let event = &self.dataset.events[idx];
                     let cache = &resources.caches[idx];
-                    let mut gradient_values =
-                        vec![DVector::zeros(parameters.len()); self.amplitudes.len()];
-                    self.amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .zip(gradient_values.iter_mut())
-                        .for_each(|((amp, active), grad)| {
-                            if *active {
-                                amp.compute_gradient(&parameters, event, cache, grad)
-                            }
-                        });
-                    let amplitude_values: Vec<Complex64> = self
-                        .amplitudes
-                        .iter()
-                        .zip(resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect();
-
-                    self.expression
-                        .evaluate_gradient(&amplitude_values, &gradient_values)
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.fill_amplitude_gradients(
+                        &mut gradient_values,
+                        &resources.active,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                    )
                 })
                 .collect()
         }

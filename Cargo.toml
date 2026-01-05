@@ -43,6 +43,7 @@ serde = "1.0.228"
 serde-pickle = "1.2.0"
 serde_with = "3.16.0"
 shellexpand = "3.1.1"
+sysinfo = "0.37.2"
 thiserror = "2.0.17"
 typetag = "0.2.21"
 
@@ -65,3 +66,13 @@ inherits = "release"
 codegen-units = 1
 debug = false
 lto = "fat"
+
+[profile.profiling]
+inherits = "release"
+opt-level = 3
+debug = true
+strip = "none"
+lto = true
+codegen-units = 1
+incremental = false
+panic = "abort"

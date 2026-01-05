@@ -26,19 +26,29 @@ build-python: build-python-cpu build-python-mpi
 
 # Install laddu (Python, CPU)
 develop: build-python-cpu
-    uv pip install --find-links py-laddu-cpu/dist -e py-laddu
+    uv pip uninstall laddu laddu-cpu laddu-mpi || true
+    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
+    uv pip install --no-cache-dir -e py-laddu
 
 # Install laddu (Python, CPU, tests)
 develop-tests: build-python-cpu
-    uv pip install --find-links py-laddu-cpu/dist -e "py-laddu[tests]"
+    uv pip uninstall laddu laddu-cpu laddu-mpi || true
+    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
+    uv pip install --no-cache-dir -e "py-laddu[tests]"
 
 # Install laddu (Python, CPU, MPI)
 develop-mpi: build-python
-    uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e "py-laddu[mpi]"
+    uv pip uninstall laddu laddu-cpu laddu-mpi || true
+    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
+    uv pip install --no-cache-dir --find-links py-laddu-mpi/dist laddu-mpi
+    uv pip install --no-cache-dir -e "py-laddu[mpi]"
 
 # Install laddu (Python, CPU, MPI, tests)
 develop-tests-mpi: build-python
-    uv pip install --find-links py-laddu-cpu/dist --find-links py-laddu-mpi/dist -e "py-laddu[tests,mpi]"
+    uv pip uninstall laddu laddu-cpu laddu-mpi || true
+    uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
+    uv pip install --no-cache-dir --find-links py-laddu-mpi/dist laddu-mpi
+    uv pip install --no-cache-dir -e "py-laddu[tests,mpi]"
 
 # Test Python library (CPU)
 test-python: develop-tests
@@ -49,12 +59,12 @@ test-python-mpi: develop-tests-mpi
     LADDU_BACKEND="MPI" {{bin}}/pytest
 
 # Test Rust crate (CPU)
-test-rust:
+test-rust: create-venv
     cargo nextest run
     cargo test --doc
 
 # Test Rust crate (MPI)
-test-rust-mpi:
+test-rust-mpi: create-venv
     cargo nextest run --features mpi
     cargo test --doc --features mpi
 
@@ -77,6 +87,11 @@ lint-rust:
 # Run Rust lints and checks (MPI)
 lint-rust-mpi:
     cargo clippy --all-targets --features mpi
+
+# Profile laddu example with Samply
+profile *args:
+    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling -p laddu --example profile_kmatrix
+    samply record ./target/profiling/examples/profile_kmatrix {{args}}
 
 # Run Rust (CPU) and Python lints and checks
 lint: lint-rust lint-python
@@ -104,6 +119,10 @@ clean-rust:
 
 # Clean Python targets
 clean-python:
+    if [ -d "{{venv}}" ] && [ -f "{{venv}}/bin/activate" ] && [ "$VIRTUAL_ENV" = "$(pwd)/{{venv}}" ]; then \
+        . "{{venv}}/bin/activate"; \
+        deactivate; \
+    fi
     rm -rf .venv .uv-cache dist py-laddu/build py-laddu-cpu/dist py-laddu-mpi/dist
 
 # Clean Rust and Python targets

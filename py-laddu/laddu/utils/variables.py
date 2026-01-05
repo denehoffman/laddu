@@ -7,13 +7,13 @@ an :class:`laddu.extensions.NLL`.
 
 Examples
 --------
->>> from laddu import Dataset
+>>> import laddu as ld
 >>> from laddu.utils.variables import Mass
 >>> columns = {
 ...     'kshort1_px': [0.1], 'kshort1_py': [0.0], 'kshort1_pz': [0.2], 'kshort1_e': [0.3],
 ...     'kshort2_px': [-0.1], 'kshort2_py': [0.0], 'kshort2_pz': [0.1], 'kshort2_e': [0.25],
 ... }
->>> dataset = Dataset.from_dict(columns)
+>>> dataset = ld.io.from_dict(columns)
 >>> mass = Mass(['kshort1', 'kshort2'])
 >>> mass
 Mass { constituents: P4Selection { names: ["kshort1", "kshort2"], indices: [] } }

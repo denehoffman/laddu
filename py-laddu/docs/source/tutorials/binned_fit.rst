@@ -27,8 +27,8 @@ Like before, we begin by loading each dataset, but this time we can chain a meth
 
    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
    aux_columns = ['pol_magnitude', 'pol_angle']
-   data_ds = ld.Dataset.from_parquet("data.parquet", p4s=p4_columns, aux=aux_columns)
-   accmc_ds = ld.Dataset.from_parquet("accmc.parquet", p4s=p4_columns, aux=aux_columns)
+   data_ds = ld.io.read_parquet("data.parquet", p4s=p4_columns, aux=aux_columns)
+   accmc_ds = ld.io.read_parquet("accmc.parquet", p4s=p4_columns, aux=aux_columns)
    # We'll want to retain the unbinned datasets for plotting later
 
    binned_data_ds = data_ds.bin_by(res_mass, bins, mass_range)
