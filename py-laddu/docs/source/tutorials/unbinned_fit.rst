@@ -56,9 +56,9 @@ Example
 
 For a simple unbinned fit, we must first obtain some data. ``laddu`` does not currently have a built-in event generator, so it is recommended that users utilize other methods of generating Monte Carlo data. For the sake of this tutorial, we will assume that these data files are readily available as Parquet files.
 
-.. note:: ``laddu`` only requires the column naming convention described in :ref:`the API reference <laddu.data.Dataset>`. Parquet remains the recommended container (and works in both Rust and Python), but the reader can also ingest generic ROOT TTrees via :meth:`laddu.Dataset.from_root` (either with the native oxyroot backend or ``backend='uproot'``) and, in Python, AmpTools-style ROOT tuples through :meth:`laddu.Dataset.from_amptools`. This avoids the need for any intermediate conversion scripts when working with those formats.
+.. note:: ``laddu`` only requires the column naming convention described in :ref:`the API reference <laddu.data.Dataset>`. Parquet remains the recommended container (and works in both Rust and Python), but the reader can also ingest generic ROOT TTrees via :func:`laddu.io.read_root` (either with the native oxyroot backend or ``backend='uproot'``) and, in Python, AmpTools-style ROOT tuples through :func:`laddu.io.read_amptools`. This avoids the need for any intermediate conversion scripts when working with those formats.
 
-Reading data with ``laddu`` is as simple as using the `laddu.Dataset.from_parquet` method. It takes the path to the data file as its argument:
+Reading data with ``laddu`` is as simple as using the `laddu.io.read_parquet` function. It takes the path to the data file as its argument:
 
 .. code-block:: python
 
@@ -66,9 +66,9 @@ Reading data with ``laddu`` is as simple as using the `laddu.Dataset.from_parque
 
    p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
    aux_columns = ['pol_magnitude', 'pol_angle']
-   data_ds = ld.Dataset.from_parquet("data.parquet", p4s=p4_columns, aux=aux_columns)
-   accmc_ds = ld.Dataset.from_parquet("accmc.parquet", p4s=p4_columns, aux=aux_columns)
-   genmc_ds = ld.Dataset.from_parquet("genmc.parquet", p4s=p4_columns, aux=aux_columns)
+   data_ds = ld.io.read_parquet("data.parquet", p4s=p4_columns, aux=aux_columns)
+   accmc_ds = ld.io.read_parquet("accmc.parquet", p4s=p4_columns, aux=aux_columns)
+   genmc_ds = ld.io.read_parquet("genmc.parquet", p4s=p4_columns, aux=aux_columns)
 
 Next, we need to construct a model. Let's assume that the dataset contains events from the channel :math:`\gamma p \to K_S^0 K_S^0 p'` and that the measured particles in the data files are :math:`[\gamma, p', K_{S,1}^0, K_{S,2}^0]`. This setup mimics the GlueX experiment at Jefferson Lab (the momentum of the initial proton target is not measured and can be reasonably assumed to be close to zero in magnitude). Furthermore, because GlueX uses a polarized beam, we will assume the polarization fraction and angle are stored in the data files.
 

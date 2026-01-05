@@ -5,7 +5,7 @@
 //! `mpirun -n 4 cargo run -p laddu-core --example mpi_memtrace --features mpi -- path/to/data.parquet`
 //! (the dataset argument defaults to `test_data/data_f32.parquet`).
 
-use laddu_core::data::{Dataset, DatasetReadOptions};
+use laddu_core::data::{read_parquet, read_root, Dataset, DatasetReadOptions};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use sysinfo::{get_current_pid, Process, ProcessesToUpdate, System};
@@ -121,8 +121,8 @@ fn load_dataset(
     options: &DatasetReadOptions,
 ) -> Result<std::sync::Arc<Dataset>, Box<dyn Error>> {
     match extension_of(data_path).as_str() {
-        "parquet" => Ok(Dataset::from_parquet(data_path_str, options)?),
-        "root" => Ok(Dataset::from_root(data_path_str, options)?),
+        "parquet" => Ok(read_parquet(data_path_str, options)?),
+        "root" => Ok(read_root(data_path_str, options)?),
         other => Err(format!("Unsupported dataset extension '{other}'").into()),
     }
 }

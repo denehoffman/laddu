@@ -1,4 +1,4 @@
-from . import amplitudes, data, experimental, extensions, mpi, utils
+from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
@@ -10,7 +10,6 @@ from .extensions import (
     NLL,
     AutocorrelationTerminator,
     ControlFlow,
-    EnsembleStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodOne,
@@ -59,7 +58,6 @@ __all__ = [
     'ControlFlow',
     'CosTheta',
     'Dataset',
-    'EnsembleStatus',
     'Evaluator',
     'Event',
     'Expression',
@@ -106,6 +104,7 @@ __all__ = [
     'expr_sum',
     'extensions',
     'integrated_autocorrelation_times',
+    'io',
     'likelihood_product',
     'likelihood_sum',
     'mpi',

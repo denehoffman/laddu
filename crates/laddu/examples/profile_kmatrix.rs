@@ -10,8 +10,9 @@ use laddu::{
         parameter,
         zlm::Zlm,
     },
-    data::{Dataset, DatasetReadOptions},
+    data::DatasetReadOptions,
     extensions::NLL,
+    io,
     traits::LikelihoodTerm,
     utils::{
         enums::{Frame, Sign},
@@ -172,9 +173,8 @@ fn build_kmatrix_nll(dataset_path: &str) -> Box<NLL> {
     let options = DatasetReadOptions::default()
         .p4_names(p4_names)
         .aux_names(aux_names);
-    let ds_data =
-        Dataset::from_parquet(dataset_path, &options).expect("failed to load data sample");
-    let ds_mc = Dataset::from_parquet(dataset_path, &options).expect("failed to load MC sample");
+    let ds_data = io::read_parquet(dataset_path, &options).expect("failed to load data sample");
+    let ds_mc = io::read_parquet(dataset_path, &options).expect("failed to load MC sample");
     let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
     let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
     let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");

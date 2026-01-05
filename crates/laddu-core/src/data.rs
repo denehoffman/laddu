@@ -1147,220 +1147,6 @@ impl Dataset {
         variable.value_on(self)
     }
 
-    /// Open a file and construct a [`Dataset`] using named columns.
-    ///
-    /// Each entry in `p4_names` identifies a particle; the loader expects columns named
-    /// ``{identifier}_px``, ``{identifier}_py``, ``{identifier}_pz``, and ``{identifier}_e`` for
-    /// each identifier (component suffixes are matched case-insensitively). Auxiliary scalars are
-    /// listed explicitly via `aux_names` and stored in the same order. Columns may be encoded as
-    /// `Float32` or `Float64` and are promoted to `f64` on load.
-    ///
-    /// Load a dataset from a Parquet file.
-    pub fn from_parquet(
-        file_path: &str,
-        options: &DatasetReadOptions,
-    ) -> LadduResult<Arc<Dataset>> {
-        let path = Self::canonicalize_dataset_path(file_path)?;
-        Self::open_parquet_impl(path, options)
-    }
-
-    /// Load a dataset from a ROOT TTree using the oxyroot backend.
-    ///
-    /// When reading ROOT files containing multiple trees, set [`DatasetReadOptions::tree`]
-    /// to select one.
-    pub fn from_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-        let path = Self::canonicalize_dataset_path(file_path)?;
-        Self::open_root_impl(path, options)
-    }
-
-    /// Write the dataset to a Parquet file.
-    pub fn to_parquet(&self, file_path: &str, options: &DatasetWriteOptions) -> LadduResult<()> {
-        let path = Self::expand_output_path(file_path)?;
-        self.write_parquet_impl(path, options)
-    }
-
-    /// Write the dataset to a ROOT TTree using the oxyroot backend.
-    pub fn to_root(&self, file_path: &str, options: &DatasetWriteOptions) -> LadduResult<()> {
-        let path = Self::expand_output_path(file_path)?;
-        self.write_root_impl(path, options)
-    }
-    fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
-        Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)
-    }
-
-    fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
-        Ok(PathBuf::from(&*shellexpand::full(file_path)?))
-    }
-
-    fn open_parquet_impl(
-        file_path: PathBuf,
-        options: &DatasetReadOptions,
-    ) -> LadduResult<Arc<Dataset>> {
-        let (detected_p4_names, detected_aux_names) = detect_columns(&file_path)?;
-        let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-        let file = File::open(file_path)?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let reader = builder.build()?;
-        let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-
-        #[cfg(feature = "rayon")]
-        let events: Vec<Arc<EventData>> = {
-            let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
-                .into_par_iter()
-                .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-                .collect();
-            let mut events = Vec::new();
-            for batch in batch_events {
-                let mut batch = batch?;
-                events.append(&mut batch);
-            }
-            events
-        };
-
-        #[cfg(not(feature = "rayon"))]
-        let events: Vec<Arc<EventData>> = {
-            batches
-                .into_iter()
-                .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-                .collect::<LadduResult<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect()
-        };
-
-        Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
-    }
-
-    fn open_root_impl(
-        file_path: PathBuf,
-        options: &DatasetReadOptions,
-    ) -> LadduResult<Arc<Dataset>> {
-        let mut file = RootFile::open(&file_path).map_err(|err| {
-            LadduError::Custom(format!(
-                "Failed to open ROOT file '{}': {err}",
-                file_path.display()
-            ))
-        })?;
-
-        let (tree, tree_name) = resolve_root_tree(&mut file, options.tree.as_deref())?;
-
-        let branches: Vec<&Branch> = tree.branches().collect();
-        let mut lookup: BranchLookup<'_> = IndexMap::new();
-        for &branch in &branches {
-            if let Some(kind) = branch_scalar_kind(branch) {
-                lookup.insert(branch.name(), (kind, branch));
-            }
-        }
-
-        if lookup.is_empty() {
-            return Err(LadduError::Custom(format!(
-                "No float or double branches found in ROOT tree '{tree_name}'"
-            )));
-        }
-
-        let column_names: Vec<&str> = lookup.keys().copied().collect();
-        let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
-        let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-
-        struct RootP4Columns {
-            px: Vec<f64>,
-            py: Vec<f64>,
-            pz: Vec<f64>,
-            e: Vec<f64>,
-        }
-
-        // TODO: do all reads in parallel if possible to match parquet impl
-        let mut p4_columns = Vec::with_capacity(metadata.p4_names.len());
-        for name in &metadata.p4_names {
-            let logical = format!("{name}_px");
-            let px = read_branch_values_from_candidates(
-                &lookup,
-                &component_candidates(name, "px"),
-                &logical,
-            )?;
-
-            let logical = format!("{name}_py");
-            let py = read_branch_values_from_candidates(
-                &lookup,
-                &component_candidates(name, "py"),
-                &logical,
-            )?;
-
-            let logical = format!("{name}_pz");
-            let pz = read_branch_values_from_candidates(
-                &lookup,
-                &component_candidates(name, "pz"),
-                &logical,
-            )?;
-
-            let logical = format!("{name}_e");
-            let e = read_branch_values_from_candidates(
-                &lookup,
-                &component_candidates(name, "e"),
-                &logical,
-            )?;
-
-            p4_columns.push(RootP4Columns { px, py, pz, e });
-        }
-
-        let mut aux_columns = Vec::with_capacity(metadata.aux_names.len());
-        for name in &metadata.aux_names {
-            let values = read_branch_values(&lookup, name)?;
-            aux_columns.push(values);
-        }
-
-        let n_events = if let Some(first) = p4_columns.first() {
-            first.px.len()
-        } else if let Some(first) = aux_columns.first() {
-            first.len()
-        } else {
-            return Err(LadduError::Custom(
-                "Unable to determine event count; dataset has no four-momentum or auxiliary columns".to_string(),
-            ));
-        };
-
-        let weight_values = match read_branch_values_optional(&lookup, "weight")? {
-            Some(values) => {
-                if values.len() != n_events {
-                    return Err(LadduError::Custom(format!(
-                        "Column 'weight' has {} entries but expected {}",
-                        values.len(),
-                        n_events
-                    )));
-                }
-                values
-            }
-            None => vec![1.0; n_events],
-        };
-
-        let mut events = Vec::with_capacity(n_events);
-        for row in 0..n_events {
-            let mut p4s = Vec::with_capacity(p4_columns.len());
-            for columns in &p4_columns {
-                p4s.push(Vec4::new(
-                    columns.px[row],
-                    columns.py[row],
-                    columns.pz[row],
-                    columns.e[row],
-                ));
-            }
-
-            let mut aux = Vec::with_capacity(aux_columns.len());
-            for column in &aux_columns {
-                aux.push(column[row]);
-            }
-
-            let event = EventData {
-                p4s,
-                aux,
-                weight: weight_values[row],
-            };
-            events.push(Arc::new(event));
-        }
-
-        Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
-    }
-
     fn write_parquet_impl(
         &self,
         file_path: PathBuf,
@@ -1476,6 +1262,202 @@ impl Dataset {
     }
 }
 
+fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
+    Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)
+}
+
+fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
+    Ok(PathBuf::from(&*shellexpand::full(file_path)?))
+}
+
+/// Load a [`Dataset`] from a Parquet file.
+pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
+    let path = canonicalize_dataset_path(file_path)?;
+    let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
+    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+
+    #[cfg(feature = "rayon")]
+    let events: Vec<Arc<EventData>> = {
+        let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
+            .into_par_iter()
+            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
+            .collect();
+        let mut events = Vec::new();
+        for batch in batch_events {
+            let mut batch = batch?;
+            events.append(&mut batch);
+        }
+        events
+    };
+
+    #[cfg(not(feature = "rayon"))]
+    let events: Vec<Arc<EventData>> = {
+        batches
+            .into_iter()
+            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
+            .collect::<LadduResult<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect()
+    };
+
+    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+}
+
+/// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
+pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
+    let path = canonicalize_dataset_path(file_path)?;
+    let mut file = RootFile::open(&path).map_err(|err| {
+        LadduError::Custom(format!(
+            "Failed to open ROOT file '{}': {err}",
+            path.display()
+        ))
+    })?;
+
+    let (tree, tree_name) = resolve_root_tree(&mut file, options.tree.as_deref())?;
+
+    let branches: Vec<&Branch> = tree.branches().collect();
+    let mut lookup: BranchLookup<'_> = IndexMap::new();
+    for &branch in &branches {
+        if let Some(kind) = branch_scalar_kind(branch) {
+            lookup.insert(branch.name(), (kind, branch));
+        }
+    }
+
+    if lookup.is_empty() {
+        return Err(LadduError::Custom(format!(
+            "No float or double branches found in ROOT tree '{tree_name}'"
+        )));
+    }
+
+    let column_names: Vec<&str> = lookup.keys().copied().collect();
+    let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
+    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+
+    struct RootP4Columns {
+        px: Vec<f64>,
+        py: Vec<f64>,
+        pz: Vec<f64>,
+        e: Vec<f64>,
+    }
+
+    // TODO: do all reads in parallel if possible to match parquet impl
+    let mut p4_columns = Vec::with_capacity(metadata.p4_names.len());
+    for name in &metadata.p4_names {
+        let logical = format!("{name}_px");
+        let px = read_branch_values_from_candidates(
+            &lookup,
+            &component_candidates(name, "px"),
+            &logical,
+        )?;
+
+        let logical = format!("{name}_py");
+        let py = read_branch_values_from_candidates(
+            &lookup,
+            &component_candidates(name, "py"),
+            &logical,
+        )?;
+
+        let logical = format!("{name}_pz");
+        let pz = read_branch_values_from_candidates(
+            &lookup,
+            &component_candidates(name, "pz"),
+            &logical,
+        )?;
+
+        let logical = format!("{name}_e");
+        let e = read_branch_values_from_candidates(
+            &lookup,
+            &component_candidates(name, "e"),
+            &logical,
+        )?;
+
+        p4_columns.push(RootP4Columns { px, py, pz, e });
+    }
+
+    let mut aux_columns = Vec::with_capacity(metadata.aux_names.len());
+    for name in &metadata.aux_names {
+        let values = read_branch_values(&lookup, name)?;
+        aux_columns.push(values);
+    }
+
+    let n_events = if let Some(first) = p4_columns.first() {
+        first.px.len()
+    } else if let Some(first) = aux_columns.first() {
+        first.len()
+    } else {
+        return Err(LadduError::Custom(
+            "Unable to determine event count; dataset has no four-momentum or auxiliary columns"
+                .to_string(),
+        ));
+    };
+
+    let weight_values = match read_branch_values_optional(&lookup, "weight")? {
+        Some(values) => {
+            if values.len() != n_events {
+                return Err(LadduError::Custom(format!(
+                    "Column 'weight' has {} entries but expected {}",
+                    values.len(),
+                    n_events
+                )));
+            }
+            values
+        }
+        None => vec![1.0; n_events],
+    };
+
+    let mut events = Vec::with_capacity(n_events);
+    for row in 0..n_events {
+        let mut p4s = Vec::with_capacity(p4_columns.len());
+        for columns in &p4_columns {
+            p4s.push(Vec4::new(
+                columns.px[row],
+                columns.py[row],
+                columns.pz[row],
+                columns.e[row],
+            ));
+        }
+
+        let mut aux = Vec::with_capacity(aux_columns.len());
+        for column in &aux_columns {
+            aux.push(column[row]);
+        }
+
+        let event = EventData {
+            p4s,
+            aux,
+            weight: weight_values[row],
+        };
+        events.push(Arc::new(event));
+    }
+
+    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+}
+
+/// Persist a [`Dataset`] to a Parquet file.
+pub fn write_parquet(
+    dataset: &Dataset,
+    file_path: &str,
+    options: &DatasetWriteOptions,
+) -> LadduResult<()> {
+    let path = expand_output_path(file_path)?;
+    dataset.write_parquet_impl(path, options)
+}
+
+/// Persist a [`Dataset`] to a ROOT file using the oxyroot backend.
+pub fn write_root(
+    dataset: &Dataset,
+    file_path: &str,
+    options: &DatasetWriteOptions,
+) -> LadduResult<()> {
+    let path = expand_output_path(file_path)?;
+    dataset.write_root_impl(path, options)
+}
+
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
     debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
     debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
@@ -1493,7 +1475,7 @@ impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
 /// Options for reading a [`Dataset`] from a file.
 ///
 /// # See Also
-/// [`Dataset::from_parquet`], [`Dataset::from_root`]
+/// [`read_parquet`], [`read_root`]
 #[derive(Default, Clone)]
 pub struct DatasetReadOptions {
     /// Particle names to read from the data file.
@@ -2414,8 +2396,8 @@ mod tests {
             .unwrap_or_default()
             .to_ascii_lowercase();
         match ext.as_str() {
-            "parquet" => Dataset::from_parquet(path_str, &options),
-            "root" => Dataset::from_root(path_str, &options),
+            "parquet" => read_parquet(path_str, &options),
+            "root" => read_root(path_str, &options),
             other => panic!("Unsupported extension in test data: {other}"),
         }
         .expect("dataset should open")
@@ -2859,10 +2841,9 @@ mod tests {
         let path = dir.join("roundtrip.parquet");
         let path_str = path.to_str().expect("path should be valid UTF-8");
 
-        dataset
-            .to_parquet(path_str, &DatasetWriteOptions::default())
+        write_parquet(&dataset, path_str, &DatasetWriteOptions::default())
             .expect("writing parquet should succeed");
-        let reopened = Dataset::from_parquet(path_str, &DatasetReadOptions::new())
+        let reopened = read_parquet(path_str, &DatasetReadOptions::new())
             .expect("parquet roundtrip should reopen");
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
@@ -2876,11 +2857,10 @@ mod tests {
         let path = dir.join("roundtrip.root");
         let path_str = path.to_str().expect("path should be valid UTF-8");
 
-        dataset
-            .to_root(path_str, &DatasetWriteOptions::default())
+        write_root(&dataset, path_str, &DatasetWriteOptions::default())
             .expect("writing root should succeed");
-        let reopened = Dataset::from_root(path_str, &DatasetReadOptions::new())
-            .expect("root roundtrip should reopen");
+        let reopened =
+            read_root(path_str, &DatasetReadOptions::new()).expect("root roundtrip should reopen");
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");

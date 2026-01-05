@@ -1,3 +1,6 @@
+import os
+from typing import Literal, Mapping, Sequence
+
 from laddu.amplitudes import (
     Evaluator,
     Expression,
@@ -135,9 +138,13 @@ __all__ = [
     'likelihood_product',
     'likelihood_sum',
     'parameter',
+    'read_parquet',
+    'read_root',
     'use_mpi',
     'using_mpi',
     'version',
+    'write_parquet',
+    'write_root',
 ]
 
 def version() -> str:
@@ -166,3 +173,41 @@ def get_rank() -> int:
 
 def get_size() -> int:
     """Return the total number of MPI processes (``1`` when MPI is disabled)."""
+
+def read_parquet(
+    path: str | os.PathLike[str],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset:
+    """Load a dataset from a Parquet file using the loaded backend."""
+
+def read_root(
+    path: str | os.PathLike[str],
+    *,
+    tree: str | None = None,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset:
+    """Load a dataset from a ROOT file using the loaded backend."""
+
+def write_parquet(
+    dataset: Dataset,
+    path: str | os.PathLike[str],
+    *,
+    chunk_size: int | None = None,
+    precision: Literal['f64', 'f32'] = 'f64',
+) -> None:
+    """Write a dataset to a Parquet file using the loaded backend."""
+
+def write_root(
+    dataset: Dataset,
+    path: str | os.PathLike[str],
+    *,
+    tree: str | None = None,
+    chunk_size: int | None = None,
+    precision: Literal['f64', 'f32'] = 'f64',
+) -> None:
+    """Write a dataset to a ROOT file using the loaded backend."""

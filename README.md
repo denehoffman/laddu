@@ -188,15 +188,15 @@ impl Amplitude for MyBreitWigner {
 We could then write some code to use this amplitude. For demonstration purposes, let's just calculate an extended unbinned negative log-likelihood, assuming we have some data and Monte Carlo in the proper [parquet format](#data-format):
 
 ```rust
-use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
+use laddu::{io, Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 let p4_names = ["beam", "proton", "kshort1", "kshort2"];
 let aux_names = ["pol_magnitude", "pol_angle"];
 let options = DatasetReadOptions::default()
     .p4_names(p4_names)
     .aux_names(aux_names)
     .alias("resonance", ["kshort1", "kshort2"]);
-let ds_data = Dataset::from_parquet("test_data/data.parquet", &options).unwrap();
-let ds_mc = Dataset::from_parquet("test_data/mc.parquet", &options).unwrap();
+let ds_data = io::read_parquet("test_data/data.parquet", &options).unwrap();
+let ds_mc = io::read_parquet("test_data/mc.parquet", &options).unwrap();
 
 let resonance_mass = Mass::new(["kshort1", "kshort2"]);
 let p1_mass = Mass::new(["kshort1"]);
@@ -236,8 +236,8 @@ from laddu import constant, parameter
 def main():
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']
     aux_columns = ['pol_magnitude', 'pol_angle']
-    ds_data = ld.Dataset.from_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
-    ds_mc = ld.Dataset.from_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_data = ld.io.read_parquet('path/to/data.parquet', p4s=p4_columns, aux=aux_columns)
+    ds_mc = ld.io.read_parquet('path/to/accmc.parquet', p4s=p4_columns, aux=aux_columns)
     topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
     angles = ld.Angles(topology, 'kshort1', 'Helicity')
     polarization = ld.Polarization(topology, 'pol_magnitude', 'pol_angle')
@@ -361,9 +361,9 @@ For example, the following columns describe a dataset with four particles, the f
 AmpTools-format ROOT files can be directly read as `Dataset` objects (this is currently implemented in the Python bindings; the Rust API still targets Parquet/standard ROOT TTrees):
 
 ```python
-from laddu import Dataset
+import laddu as ld
 
-dataset = Dataset.from_amptools(
+dataset = ld.io.read_amptools(
     'example_amp.root',
     pol_in_beam=True,
 )

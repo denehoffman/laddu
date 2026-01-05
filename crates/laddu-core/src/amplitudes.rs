@@ -725,10 +725,10 @@ impl ExpressionProgram {
     ) {
         debug_assert!(gradients.len() >= self.slot_count);
         debug_assert!(values.len() >= self.slot_count);
-        fn borrow_dst<'a>(
-            gradients: &'a mut [DVector<Complex64>],
+        fn borrow_dst(
+            gradients: &mut [DVector<Complex64>],
             dst: usize,
-        ) -> (&'a [DVector<Complex64>], &'a mut DVector<Complex64>) {
+        ) -> (&[DVector<Complex64>], &mut DVector<Complex64>) {
             let (before, tail) = gradients.split_at_mut(dst);
             let (dst_ref, _) = tail.split_first_mut().expect("dst slot should exist");
             (before, dst_ref)

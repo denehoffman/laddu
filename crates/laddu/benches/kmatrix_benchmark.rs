@@ -9,6 +9,7 @@ use laddu::{
     },
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
+    io,
     traits::LikelihoodTerm,
     utils::{
         enums::{Frame, Sign},
@@ -24,8 +25,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let options = DatasetReadOptions::default()
         .p4_names(p4_names)
         .aux_names(aux_names);
-    let ds_data = Dataset::from_parquet("benches/bench.parquet", &options).unwrap();
-    let ds_mc = Dataset::from_parquet("benches/bench.parquet", &options).unwrap();
+    let ds_data = io::read_parquet("benches/bench.parquet", &options).unwrap();
+    let ds_mc = io::read_parquet("benches/bench.parquet", &options).unwrap();
 
     let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
     let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);

@@ -1,8 +1,9 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{
-        BinnedDataset, Dataset, DatasetMetadata, DatasetWriteOptions, Event, EventData,
-        FloatPrecision,
+        read_parquet as core_read_parquet, read_root as core_read_root,
+        write_parquet as core_write_parquet, write_root as core_write_root, BinnedDataset, Dataset,
+        DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
     },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
@@ -301,8 +302,8 @@ impl PyEvent {
 /// A set of Events
 ///
 /// Datasets can be created from lists of Events or by using the constructor helpers
-/// such as :meth:`laddu.Dataset.from_parquet`, :meth:`laddu.Dataset.from_root`, and
-/// :meth:`laddu.Dataset.from_amptools`
+/// such as :func:`laddu.io.read_parquet`, :func:`laddu.io.read_root`, and
+/// :func:`laddu.io.read_amptools`
 ///
 /// Datasets can also be indexed directly to access individual Events
 ///
@@ -414,95 +415,6 @@ impl PyDataset {
         Ok(Self(Arc::new(dataset)))
     }
 
-    /// Read a Dataset from a Parquet file.
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str or Path
-    ///     The path to the Parquet file.
-    /// p4s : list[str], optional
-    ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
-    /// aux : list[str], optional
-    ///     Auxiliary scalar column names copied verbatim in order.
-    ///
-    /// Notes
-    /// -----
-    /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
-    /// the valid suffixes are provided for a particle, the corresponding columns will be read as a
-    /// four-momentum, otherwise they will be read as auxiliary scalars.
-    ///
-    #[staticmethod]
-    #[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None))]
-    fn from_parquet(
-        path: Bound<PyAny>,
-        p4s: Option<Vec<String>>,
-        aux: Option<Vec<String>>,
-        aliases: Option<Bound<PyDict>>,
-    ) -> PyResult<Self> {
-        let path_str = parse_dataset_path(path)?;
-
-        let mut read_options = DatasetReadOptions::default();
-        if let Some(p4s) = p4s {
-            read_options = read_options.p4_names(p4s);
-        }
-        if let Some(aux) = aux {
-            read_options = read_options.aux_names(aux);
-        }
-        for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
-            read_options = read_options.alias(alias_name, selection);
-        }
-        let dataset = Dataset::from_parquet(&path_str, &read_options)?;
-
-        Ok(Self(dataset))
-    }
-
-    /// Read a Dataset from a ROOT TTree using the oxyroot backend.
-    ///
-    /// Parameters
-    /// ----------
-    /// path : str or Path
-    ///     The path to the ROOT file.
-    /// tree : str, optional
-    ///     Name of the TTree to read when opening ROOT files.
-    /// p4s : list[str], optional
-    ///     Particle identifiers corresponding to ``*_px``, ``*_py``, ``*_pz``, ``*_e`` columns.
-    /// aux : list[str], optional
-    ///     Auxiliary scalar column names copied verbatim in order.
-    ///
-    /// Notes
-    /// -----
-    /// If `p4s` or `aux` are not provided, they will be inferred from the column names. If all of
-    /// the valid suffixes are provided for a particle, the corresponding columns will be read as a
-    /// four-momentum, otherwise they will be read as auxiliary scalars.
-    ///
-    #[staticmethod]
-    #[pyo3(signature = (path, *, tree=None, p4s=None, aux=None, aliases=None))]
-    fn from_root(
-        path: Bound<PyAny>,
-        tree: Option<String>,
-        p4s: Option<Vec<String>>,
-        aux: Option<Vec<String>>,
-        aliases: Option<Bound<PyDict>>,
-    ) -> PyResult<Self> {
-        let path_str = parse_dataset_path(path)?;
-
-        let mut read_options = DatasetReadOptions::default();
-        if let Some(p4s) = p4s {
-            read_options = read_options.p4_names(p4s);
-        }
-        if let Some(aux) = aux {
-            read_options = read_options.aux_names(aux);
-        }
-        if let Some(tree) = tree {
-            read_options = read_options.tree(tree);
-        }
-        for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
-            read_options = read_options.alias(alias_name, selection);
-        }
-        let dataset = Dataset::from_root(&path_str, &read_options)?;
-
-        Ok(Self(dataset))
-    }
     fn __len__(&self) -> usize {
         self.0.n_events()
     }
@@ -565,49 +477,6 @@ impl PyDataset {
         self.0.aux_names().to_vec()
     }
 
-    /// Write the dataset to a Parquet file.
-    #[pyo3(signature = (path, *, chunk_size=None, precision="f64"))]
-    fn to_parquet(
-        &self,
-        path: Bound<'_, PyAny>,
-        chunk_size: Option<usize>,
-        precision: &str,
-    ) -> PyResult<()> {
-        let path_str = parse_dataset_path(path)?;
-        let mut write_options = DatasetWriteOptions::default();
-        if let Some(size) = chunk_size {
-            write_options.batch_size = size.max(1);
-        }
-        write_options.precision = parse_precision_arg(Some(precision))?;
-
-        self.0
-            .to_parquet(&path_str, &write_options)
-            .map_err(PyErr::from)
-    }
-
-    /// Write the dataset to a ROOT file using the oxyroot backend.
-    #[pyo3(signature = (path, *, tree=None, chunk_size=None, precision="f64"))]
-    fn to_root(
-        &self,
-        path: Bound<'_, PyAny>,
-        tree: Option<String>,
-        chunk_size: Option<usize>,
-        precision: &str,
-    ) -> PyResult<()> {
-        let path_str = parse_dataset_path(path)?;
-        let mut write_options = DatasetWriteOptions::default();
-        if let Some(name) = tree {
-            write_options.tree = Some(name);
-        }
-        if let Some(size) = chunk_size {
-            write_options.batch_size = size.max(1);
-        }
-        write_options.precision = parse_precision_arg(Some(precision))?;
-
-        self.0
-            .to_root(&path_str, &write_options)
-            .map_err(PyErr::from)
-    }
     /// Get the weighted number of Events in the Dataset
     ///
     /// Returns
@@ -830,6 +699,98 @@ impl PyDataset {
         let values = self.0.evaluate(&bound_variable).map_err(PyErr::from)?;
         Ok(PyArray1::from_vec(py, values))
     }
+}
+
+/// Read a Dataset from a Parquet file.
+#[pyfunction]
+#[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None))]
+pub fn read_parquet(
+    path: Bound<PyAny>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<PyDict>>,
+) -> PyResult<PyDataset> {
+    let path_str = parse_dataset_path(path)?;
+    let mut read_options = DatasetReadOptions::default();
+    if let Some(p4s) = p4s {
+        read_options = read_options.p4_names(p4s);
+    }
+    if let Some(aux) = aux {
+        read_options = read_options.aux_names(aux);
+    }
+    for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+        read_options = read_options.alias(alias_name, selection);
+    }
+    let dataset = core_read_parquet(&path_str, &read_options)?;
+    Ok(PyDataset(dataset))
+}
+
+/// Read a Dataset from a ROOT file using the oxyroot backend.
+#[pyfunction]
+#[pyo3(signature = (path, *, tree=None, p4s=None, aux=None, aliases=None))]
+pub fn read_root(
+    path: Bound<PyAny>,
+    tree: Option<String>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<PyDict>>,
+) -> PyResult<PyDataset> {
+    let path_str = parse_dataset_path(path)?;
+    let mut read_options = DatasetReadOptions::default();
+    if let Some(p4s) = p4s {
+        read_options = read_options.p4_names(p4s);
+    }
+    if let Some(aux) = aux {
+        read_options = read_options.aux_names(aux);
+    }
+    if let Some(tree) = tree {
+        read_options = read_options.tree(tree);
+    }
+    for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+        read_options = read_options.alias(alias_name, selection);
+    }
+    let dataset = core_read_root(&path_str, &read_options)?;
+    Ok(PyDataset(dataset))
+}
+
+/// Write a Dataset to a Parquet file.
+#[pyfunction]
+#[pyo3(signature = (dataset, path, *, chunk_size=None, precision="f64"))]
+pub fn write_parquet(
+    dataset: &PyDataset,
+    path: Bound<PyAny>,
+    chunk_size: Option<usize>,
+    precision: &str,
+) -> PyResult<()> {
+    let path_str = parse_dataset_path(path)?;
+    let mut write_options = DatasetWriteOptions::default();
+    if let Some(size) = chunk_size {
+        write_options.batch_size = size.max(1);
+    }
+    write_options.precision = parse_precision_arg(Some(precision))?;
+    core_write_parquet(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
+}
+
+/// Write a Dataset to a ROOT file using the oxyroot backend.
+#[pyfunction]
+#[pyo3(signature = (dataset, path, *, tree=None, chunk_size=None, precision="f64"))]
+pub fn write_root(
+    dataset: &PyDataset,
+    path: Bound<PyAny>,
+    tree: Option<String>,
+    chunk_size: Option<usize>,
+    precision: &str,
+) -> PyResult<()> {
+    let path_str = parse_dataset_path(path)?;
+    let mut write_options = DatasetWriteOptions::default();
+    if let Some(name) = tree {
+        write_options.tree = Some(name);
+    }
+    if let Some(size) = chunk_size {
+        write_options.batch_size = size.max(1);
+    }
+    write_options.precision = parse_precision_arg(Some(precision))?;
+    core_write_root(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
 }
 
 /// A collection of Datasets binned by a Variable
