@@ -7,7 +7,7 @@ use laddu::{
         parameter,
         zlm::Zlm,
     },
-    data::{Dataset, DatasetReadOptions},
+    data::DatasetReadOptions,
     extensions::NLL,
     io,
     traits::LikelihoodTerm,

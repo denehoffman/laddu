@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use laddu_core::data::{read_parquet, Dataset, DatasetReadOptions};
+use laddu_core::data::{read_parquet, DatasetReadOptions};
 
 fn open_data_benchmark(c: &mut Criterion) {
     c.bench_function("open benchmark", |b| {
