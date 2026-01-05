@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.12.1...py-laddu-mpi-v0.12.2) - 2026-01-05
+
+### Other
+
+- Development ([#94](https://github.com/denehoffman/laddu/pull/94))
+
 ## [0.11.1](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.11.0...py-laddu-mpi-v0.11.1) - 2025-12-17
 
 ### Other
