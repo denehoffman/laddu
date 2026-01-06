@@ -12,8 +12,9 @@ use fastrand::Rng;
 use laddu_core::{
     amplitudes::{central_difference, Evaluator, Expression},
     data::Dataset,
+    parameter_manager::ParameterManager,
     resources::Parameters,
-    LadduResult,
+    LadduError, LadduResult,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -30,8 +31,6 @@ use crate::ganesh_ext::{
     py_ganesh::{FromPyArgs, PyMCMCSummary, PyMinimizationSummary},
     MCMCSettings, MinimizationSettings,
 };
-#[cfg(feature = "python")]
-use laddu_core::LadduError;
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyEvaluator, PyExpression},
@@ -61,6 +60,8 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     }
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
+    /// Access the parameter manager describing free/fixed state.
+    fn parameter_manager(&self) -> &ParameterManager;
     /// A method called every step of any minimization/MCMC algorithm.
     fn update(&self) {}
 
@@ -85,6 +86,7 @@ pub struct NLL {
     pub data_evaluator: Evaluator,
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
+    parameter_manager: ParameterManager,
 }
 
 impl NLL {
@@ -95,75 +97,90 @@ impl NLL {
         ds_data: &Arc<Dataset>,
         ds_accmc: &Arc<Dataset>,
     ) -> LadduResult<Box<Self>> {
+        let data_evaluator = expression.load(ds_data)?;
+        let accmc_evaluator = expression.load(ds_accmc)?;
         Ok(Self {
-            data_evaluator: expression.load(ds_data)?,
-            accmc_evaluator: expression.load(ds_accmc)?,
+            parameter_manager: data_evaluator.parameter_manager().clone(),
+            data_evaluator,
+            accmc_evaluator,
         }
         .into())
     }
 
     /// The parameter names for this NLL.
     pub fn parameters(&self) -> Vec<String> {
-        self.data_evaluator.parameters()
+        self.parameter_manager.parameters()
     }
 
     /// The free parameter names for this NLL.
     pub fn free_parameters(&self) -> Vec<String> {
-        self.data_evaluator.free_parameters()
+        self.parameter_manager.free_parameters()
     }
 
     /// The fixed parameter names for this NLL.
     pub fn fixed_parameters(&self) -> Vec<String> {
-        self.data_evaluator.fixed_parameters()
+        self.parameter_manager.fixed_parameters()
     }
 
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.data_evaluator.n_free()
+        self.parameter_manager.n_free_parameters()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed(&self) -> usize {
-        self.data_evaluator.n_fixed()
+        self.parameter_manager.n_fixed_parameters()
     }
 
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
-        self.data_evaluator.n_parameters()
+        self.parameter_manager.n_parameters()
     }
 
     /// Return a new [`NLL`] with the given parameter fixed to a value.
     pub fn fix(&self, name: &str, value: f64) -> LadduResult<Box<Self>> {
+        let data_evaluator = self.data_evaluator.fix(name, value)?;
+        let accmc_evaluator = self.accmc_evaluator.fix(name, value)?;
         Ok(Self {
-            data_evaluator: self.data_evaluator.fix(name, value)?,
-            accmc_evaluator: self.accmc_evaluator.fix(name, value)?,
+            parameter_manager: self.parameter_manager.fix(name, value)?,
+            data_evaluator,
+            accmc_evaluator,
         }
         .into())
     }
 
     /// Return a new [`NLL`] with the given parameter freed.
     pub fn free(&self, name: &str) -> LadduResult<Box<Self>> {
+        let data_evaluator = self.data_evaluator.free(name)?;
+        let accmc_evaluator = self.accmc_evaluator.free(name)?;
         Ok(Self {
-            data_evaluator: self.data_evaluator.free(name)?,
-            accmc_evaluator: self.accmc_evaluator.free(name)?,
+            parameter_manager: self.parameter_manager.free(name)?,
+            data_evaluator,
+            accmc_evaluator,
         }
         .into())
     }
 
     /// Return a new [`NLL`] with a single parameter renamed.
     pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Box<Self>> {
+        let data_evaluator = self.data_evaluator.rename_parameter(old, new)?;
+        let accmc_evaluator = self.accmc_evaluator.rename_parameter(old, new)?;
         Ok(Self {
-            data_evaluator: self.data_evaluator.rename_parameter(old, new)?,
-            accmc_evaluator: self.accmc_evaluator.rename_parameter(old, new)?,
+            parameter_manager: self.parameter_manager.rename(old, new)?,
+            data_evaluator,
+            accmc_evaluator,
         }
         .into())
     }
 
     /// Return a new [`NLL`] with several parameters renamed.
     pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<Box<Self>> {
+        let data_evaluator = self.data_evaluator.rename_parameters(mapping)?;
+        let accmc_evaluator = self.accmc_evaluator.rename_parameters(mapping)?;
         Ok(Self {
-            data_evaluator: self.data_evaluator.rename_parameters(mapping)?,
-            accmc_evaluator: self.accmc_evaluator.rename_parameters(mapping)?,
+            parameter_manager: self.parameter_manager.rename_parameters(mapping)?,
+            data_evaluator,
+            accmc_evaluator,
         }
         .into())
     }
@@ -1032,7 +1049,10 @@ impl LikelihoodTerm for NLL {
     /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
     /// method.
     fn parameters(&self) -> Vec<String> {
-        self.data_evaluator.parameters()
+        self.parameters()
+    }
+    fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
     }
 
     /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -1088,6 +1108,9 @@ pub struct StochasticNLL {
 impl LikelihoodTerm for StochasticNLL {
     fn parameters(&self) -> Vec<String> {
         self.nll.parameters()
+    }
+    fn parameter_manager(&self) -> &ParameterManager {
+        self.nll.parameter_manager()
     }
     fn evaluate(&self, parameters: &[f64]) -> f64 {
         let indices = self.batch_indices.lock();
@@ -1158,6 +1181,36 @@ impl StochasticNLL {
     pub fn resample(&self) {
         let mut rng = self.rng.lock();
         *self.batch_indices.lock() = rng.subset(self.batch_size, self.n);
+    }
+
+    /// The parameter names for this stochastic NLL.
+    pub fn parameters(&self) -> Vec<String> {
+        self.nll.parameters()
+    }
+
+    /// The free parameter names for this stochastic NLL.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.nll.free_parameters()
+    }
+
+    /// The fixed parameter names for this stochastic NLL.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.nll.fixed_parameters()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.nll.n_free()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.nll.n_fixed()
+    }
+
+    /// Total number of parameters.
+    pub fn n_parameters(&self) -> usize {
+        self.nll.n_parameters()
     }
     fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
         let data_result = self
@@ -1981,7 +2034,7 @@ impl PyNLL {
     /// Parameters
     /// ----------
     /// p0 : array_like
-    ///     The initial parameters at the start of optimization
+    ///     The initial values for the free parameters (length ``n_free``)
     /// bounds : list of tuple of float or None, optional
     ///     Optional bounds on each parameter (use None or an infinity for no bound)
     /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
@@ -2772,18 +2825,26 @@ impl LikelihoodNode {
 }
 
 /// A combination of [`LikelihoodTerm`]s as well as sums and products of them.
+///
+/// # Notes
+/// When multiple terms provide parameters with the same name, the term earliest in the expression
+/// (or argument list) defines the fixed/free status and default value.
 #[derive(Clone, Default)]
 pub struct LikelihoodExpression {
     registry: LikelihoodRegistry,
     tree: LikelihoodNode,
+    parameter_manager: ParameterManager,
 }
 
 impl LikelihoodExpression {
     /// Build a [`LikelihoodExpression`] from a single [`LikelihoodTerm`].
     pub fn from_term(term: Box<dyn LikelihoodTerm>) -> Self {
+        let registry = LikelihoodRegistry::singleton(term);
+        let parameter_manager = registry.parameter_manager.clone();
         Self {
-            registry: LikelihoodRegistry::singleton(term),
+            registry,
             tree: LikelihoodNode::Term(0),
+            parameter_manager,
         }
     }
 
@@ -2792,6 +2853,7 @@ impl LikelihoodExpression {
         Self {
             registry: LikelihoodRegistry::default(),
             tree: LikelihoodNode::Zero,
+            parameter_manager: ParameterManager::default(),
         }
     }
 
@@ -2800,6 +2862,7 @@ impl LikelihoodExpression {
         Self {
             registry: LikelihoodRegistry::default(),
             tree: LikelihoodNode::One,
+            parameter_manager: ParameterManager::default(),
         }
     }
 
@@ -2811,9 +2874,11 @@ impl LikelihoodExpression {
         let (registry, left_map, right_map) = a.registry.merge(&b.registry);
         let left_tree = a.tree.remap(&left_map);
         let right_tree = b.tree.remap(&right_map);
+        let (parameter_manager, _, _) = a.parameter_manager.merge(&b.parameter_manager);
         LikelihoodExpression {
             registry,
             tree: build(Box::new(left_tree), Box::new(right_tree)),
+            parameter_manager,
         }
     }
 
@@ -2828,16 +2893,78 @@ impl LikelihoodExpression {
             .write_tree(f, parent_prefix, immediate_prefix, parent_suffix)
     }
 
-    /// The free parameters used across all terms in this expression.
+    /// The parameter names referenced across all terms in this expression.
     pub fn parameters(&self) -> Vec<String> {
-        self.registry.parameters()
+        self.parameter_manager.parameters()
+    }
+
+    /// The free parameter names which require user-provided values.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.parameter_manager.free_parameters()
+    }
+
+    /// The names of parameters with constant (fixed) values.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.parameter_manager.fixed_parameters()
+    }
+
+    fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
+        if self.parameter_manager.contains(name) {
+            Ok(())
+        } else {
+            Err(LadduError::UnregisteredParameter {
+                name: name.to_string(),
+                reason: "parameter not found".into(),
+            })
+        }
+    }
+
+    /// Return a new [`LikelihoodExpression`] with the given parameter fixed to a value.
+    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
+        self.assert_parameter_exists(name)?;
+        let mut output = self.clone();
+        output.parameter_manager = self.parameter_manager.fix(name, value)?;
+        Ok(output)
+    }
+
+    /// Return a new [`LikelihoodExpression`] with the given parameter freed.
+    pub fn free(&self, name: &str) -> LadduResult<Self> {
+        self.assert_parameter_exists(name)?;
+        let mut output = self.clone();
+        output.parameter_manager = self.parameter_manager.free(name)?;
+        Ok(output)
+    }
+
+    /// Return a new [`LikelihoodExpression`] with the given parameter renamed.
+    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
+        self.assert_parameter_exists(old)?;
+        if old == new {
+            return Ok(self.clone());
+        }
+        let mut output = self.clone();
+        output.parameter_manager = self.parameter_manager.rename(old, new)?;
+        Ok(output)
+    }
+
+    /// Return a new [`LikelihoodExpression`] with several parameters renamed.
+    pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<Self> {
+        for old in mapping.keys() {
+            self.assert_parameter_exists(old)?;
+        }
+        let mut output = self.clone();
+        output.parameter_manager = self.parameter_manager.rename_parameters(mapping)?;
+        Ok(output)
     }
 
     /// Load a `LikelihoodExpression` so it can be evaluated repeatedly.
     pub fn load(&self) -> LikelihoodEvaluator {
+        let parameter_manager = self.parameter_manager.clone();
+        let free_parameter_indices = parameter_manager.free_parameter_indices();
         LikelihoodEvaluator {
             likelihood_registry: self.registry.clone(),
             likelihood_expression: self.tree.clone(),
+            free_parameter_indices,
+            parameter_manager,
         }
     }
 }
@@ -2866,8 +2993,7 @@ impl_op_ex!(
 #[derive(Clone, Default)]
 struct LikelihoodRegistry {
     terms: Vec<Box<dyn LikelihoodTerm>>,
-    param_name_to_index: HashMap<String, usize>,
-    param_names: Vec<String>,
+    parameter_manager: ParameterManager,
     param_layouts: Vec<Vec<usize>>,
     param_counts: Vec<usize>,
 }
@@ -2879,26 +3005,14 @@ impl LikelihoodRegistry {
         registry
     }
 
-    fn parameters(&self) -> Vec<String> {
-        self.param_names.clone()
-    }
-
     fn push_term(&mut self, term: Box<dyn LikelihoodTerm>) -> usize {
         let term_idx = self.terms.len();
-        let parameters = term.parameters();
-        for param_name in &parameters {
-            if !self.param_name_to_index.contains_key(param_name) {
-                let index = self.param_name_to_index.len();
-                self.param_name_to_index.insert(param_name.clone(), index);
-                self.param_names.push(param_name.clone());
-            }
-        }
-        let param_layout: Vec<usize> = parameters
-            .iter()
-            .map(|name| self.param_name_to_index[name])
-            .collect();
+        let term_manager = term.parameter_manager().clone();
+        let (merged_manager, _left_map, layout) = self.parameter_manager.merge(&term_manager);
+        self.parameter_manager = merged_manager;
+        let param_layout = layout;
         self.param_layouts.push(param_layout);
-        self.param_counts.push(parameters.len());
+        self.param_counts.push(term_manager.n_parameters());
         self.terms.push(term);
         term_idx
     }
@@ -2951,6 +3065,11 @@ pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 /// 0.5
 /// >>> likelihood_sum([]).load().evaluate([])
 /// 0.0
+///
+/// Notes
+/// -----
+/// When multiple inputs share the same parameter name, the value and fixed/free status from the
+/// earliest term in the sequence take precedence.
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3006,6 +3125,10 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 /// ['alpha', 'beta']
 /// >>> evaluator.evaluate([2.0, 3.0])
 /// 6.0
+///
+/// Notes
+/// -----
+/// When parameters overlap between inputs, the parameter definition from the earliest term is used.
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3087,15 +3210,98 @@ pub fn py_likelihood_one() -> PyLikelihoodExpression {
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodExpression {
-    /// The free parameters used by the expression.
+    /// All parameter names referenced by the expression.
     #[getter]
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
     }
 
+    /// The free parameter names (those requiring optimization inputs).
+    #[getter]
+    fn free_parameters(&self) -> Vec<String> {
+        self.0.free_parameters()
+    }
+
+    /// The names of parameters fixed to constant values.
+    #[getter]
+    fn fixed_parameters(&self) -> Vec<String> {
+        self.0.fixed_parameters()
+    }
+
     /// Load the expression into a reusable evaluator.
     fn load(&self) -> PyLikelihoodEvaluator {
         PyLikelihoodEvaluator(self.0.load())
+    }
+
+    /// Fix a parameter to a constant value.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Name of the parameter.
+    /// value : float
+    ///     Value used during evaluation.
+    ///
+    /// Returns
+    /// -------
+    /// LikelihoodExpression
+    ///     A new expression with the parameter fixed.
+    ///
+    fn fix(&self, name: &str, value: f64) -> PyResult<PyLikelihoodExpression> {
+        Ok(PyLikelihoodExpression(self.0.fix(name, value)?))
+    }
+
+    /// Free a parameter that was previously fixed.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Name of the parameter.
+    ///
+    /// Returns
+    /// -------
+    /// LikelihoodExpression
+    ///     A new expression with the parameter restored as free.
+    ///
+    fn free(&self, name: &str) -> PyResult<PyLikelihoodExpression> {
+        Ok(PyLikelihoodExpression(self.0.free(name)?))
+    }
+
+    /// Rename a parameter.
+    ///
+    /// Parameters
+    /// ----------
+    /// old : str
+    ///     Current parameter name.
+    /// new : str
+    ///     Desired parameter name.
+    ///
+    /// Returns
+    /// -------
+    /// LikelihoodExpression
+    ///     A new expression with the parameter renamed.
+    ///
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyLikelihoodExpression> {
+        Ok(PyLikelihoodExpression(self.0.rename_parameter(old, new)?))
+    }
+
+    /// Rename multiple parameters at once.
+    ///
+    /// Parameters
+    /// ----------
+    /// mapping : dict[str, str]
+    ///     Mapping from old names to new names.
+    ///
+    /// Returns
+    /// -------
+    /// LikelihoodExpression
+    ///     A new expression with all provided renames applied.
+    ///
+    fn rename_parameters(
+        &self,
+        mapping: HashMap<String, String>,
+    ) -> PyResult<PyLikelihoodExpression> {
+        Ok(PyLikelihoodExpression(self.0.rename_parameters(&mapping)?))
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
         if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
@@ -3162,6 +3368,53 @@ impl PyLikelihoodExpression {
 pub struct LikelihoodEvaluator {
     likelihood_registry: LikelihoodRegistry,
     likelihood_expression: LikelihoodNode,
+    free_parameter_indices: Vec<usize>,
+    parameter_manager: ParameterManager,
+}
+
+impl LikelihoodEvaluator {
+    /// The ordered list of parameter names (free and fixed) referenced by this expression.
+    pub fn parameters(&self) -> Vec<String> {
+        self.parameter_manager.parameters()
+    }
+
+    /// The ordered list of free parameter names required to evaluate this expression.
+    pub fn free_parameters(&self) -> Vec<String> {
+        self.parameter_manager.free_parameters()
+    }
+
+    /// The ordered list of parameters that currently have fixed values.
+    pub fn fixed_parameters(&self) -> Vec<String> {
+        self.parameter_manager.fixed_parameters()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.free_parameter_indices.len()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.parameter_manager.n_fixed_parameters()
+    }
+
+    /// Total number of parameters (free + fixed).
+    pub fn n_parameters(&self) -> usize {
+        self.parameter_manager.n_parameters()
+    }
+
+    fn assemble_parameters(&self, parameters: &[f64]) -> Vec<f64> {
+        if parameters.len() != self.free_parameter_indices.len() {
+            panic!(
+                "mismatched parameter dimension: received {}, expected {} free",
+                parameters.len(),
+                self.free_parameter_indices.len()
+            );
+        }
+        self.parameter_manager
+            .assemble_full(parameters)
+            .expect("slice length should match free parameter count")
+    }
 }
 
 impl LikelihoodTerm for LikelihoodEvaluator {
@@ -3171,13 +3424,17 @@ impl LikelihoodTerm for LikelihoodEvaluator {
             .iter()
             .for_each(|term| term.update())
     }
-    /// The parameter names used in [`LikelihoodEvaluator::evaluate`]'s input in order.
+    /// The parameter names associated with this evaluator (free and fixed).
     fn parameters(&self) -> Vec<String> {
-        self.likelihood_registry.parameters()
+        self.parameters()
+    }
+    fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
     fn evaluate(&self, parameters: &[f64]) -> f64 {
+        let parameters = self.assemble_parameters(parameters);
         let mut param_buffers: Vec<Vec<f64>> = self
             .likelihood_registry
             .param_counts
@@ -3208,6 +3465,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
     fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+        let parameters = self.assemble_parameters(parameters);
         let mut param_buffers: Vec<Vec<f64>> = self
             .likelihood_registry
             .param_counts
@@ -3233,7 +3491,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
                 .collect(),
         );
         let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
-            .map(|_| DVector::zeros(self.likelihood_registry.param_names.len()))
+            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
             .collect();
         for (((term, param_buffer), gradient_buffer), layout) in self
             .likelihood_registry
@@ -3249,8 +3507,14 @@ impl LikelihoodTerm for LikelihoodEvaluator {
             }
         }
         let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        self.likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients)
+        let full_gradient = self
+            .likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
+        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
+        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
+            reduced[out_idx] = full_gradient[global_idx];
+        }
+        reduced
     }
 }
 
@@ -3264,7 +3528,7 @@ pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodEvaluator {
-    /// A list of the names of the free parameters across all terms in all models
+    /// A list of the names of all parameters across all terms in all models.
     ///
     /// Returns
     /// -------
@@ -3274,12 +3538,43 @@ impl PyLikelihoodEvaluator {
     fn parameters(&self) -> Vec<String> {
         self.0.parameters()
     }
+
+    /// A list of names of the free parameters.
+    #[getter]
+    fn free_parameters(&self) -> Vec<String> {
+        self.0.free_parameters()
+    }
+
+    /// A list of names for parameters fixed to constant values.
+    #[getter]
+    fn fixed_parameters(&self) -> Vec<String> {
+        self.0.fixed_parameters()
+    }
+
+    /// Number of free parameters in the evaluator.
+    #[getter]
+    fn n_free(&self) -> usize {
+        self.0.n_free()
+    }
+
+    /// Number of fixed parameters in the evaluator.
+    #[getter]
+    fn n_fixed(&self) -> usize {
+        self.0.n_fixed()
+    }
+
+    /// Total number of parameters (free + fixed).
+    #[getter]
+    fn n_parameters(&self) -> usize {
+        self.0.n_parameters()
+    }
+
     /// Evaluate the sum of all terms in the evaluator
     ///
     /// Parameters
     /// ----------
     /// parameters : list of float
-    ///     The values to use for the free parameters
+    ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
@@ -3313,15 +3608,15 @@ impl PyLikelihoodEvaluator {
     /// Parameters
     /// ----------
     /// parameters : list of float
-    ///     The values to use for the free parameters
+    ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
     ///     The number of threads to use (setting this to None will use all available CPUs)
     ///
     /// Returns
     /// -------
     /// result : array_like
-    ///     A ``numpy`` array of representing the gradient of the sum of all terms in the
-    ///     evaluator
+    ///     A ``numpy`` array representing the gradient of the sum of all terms in the
+    ///     evaluator with length ``n_free``.
     ///
     /// Raises
     /// ------
@@ -3626,7 +3921,10 @@ impl PyLikelihoodEvaluator {
 
 /// A [`LikelihoodTerm`] which represents a single scaling parameter.
 #[derive(Clone)]
-pub struct LikelihoodScalar(String);
+pub struct LikelihoodScalar {
+    name: String,
+    parameter_manager: ParameterManager,
+}
 
 impl LikelihoodScalar {
     /// Create a new [`LikelihoodScalar`] with a parameter with the given name and wrap it as a
@@ -3638,7 +3936,13 @@ impl LikelihoodScalar {
 
     /// Construct the underlying [`LikelihoodTerm`] for advanced use cases.
     pub fn new_term<T: AsRef<str>>(name: T) -> Box<Self> {
-        Self(name.as_ref().into()).into()
+        let name_str: String = name.as_ref().into();
+        let manager = ParameterManager::new_from_names(std::slice::from_ref(&name_str));
+        Self {
+            name: name_str,
+            parameter_manager: manager,
+        }
+        .into()
     }
 }
 
@@ -3652,7 +3956,11 @@ impl LikelihoodTerm for LikelihoodScalar {
     }
 
     fn parameters(&self) -> Vec<String> {
-        vec![self.0.clone()]
+        vec![self.name.clone()]
+    }
+
+    fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
     }
 }
 
@@ -3798,6 +4106,25 @@ mod tests {
         let grad = evaluator.evaluate_gradient(&params);
         assert_relative_eq!(grad[0], 3.0);
         assert_relative_eq!(grad[1], 2.0);
+    }
+
+    #[test]
+    fn likelihood_expression_tracks_fixed_parameters() {
+        let alpha = LikelihoodScalar::new("alpha");
+        let beta = LikelihoodScalar::new("beta");
+        let expr = (&alpha + &beta).fix("alpha", 1.5).unwrap();
+        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(expr.free_parameters(), vec!["beta"]);
+        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+        let evaluator = expr.load();
+        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
+        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
+        let params_free = vec![2.0];
+        assert_relative_eq!(evaluator.evaluate(&params_free), 3.5);
+        let grad_free = evaluator.evaluate_gradient(&params_free);
+        assert_eq!(grad_free.len(), 1);
+        assert_relative_eq!(grad_free[0], 1.0);
     }
 
     #[test]

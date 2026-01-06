@@ -496,6 +496,8 @@ use thiserror::Error;
 pub mod amplitudes;
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data;
+/// Utilities for tracking parameter state across expressions and likelihoods.
+pub mod parameter_manager;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
 /// Utility functions, enums, and traits

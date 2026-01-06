@@ -8,6 +8,7 @@ use serde_with::serde_as;
 
 use crate::{
     amplitudes::{AmplitudeID, ParameterLike},
+    parameter_manager::ParameterTransform,
     LadduError, LadduResult,
 };
 
@@ -252,28 +253,6 @@ struct ParameterEntry {
     fixed: Option<f64>,
 }
 
-/// Parameter transformation instructions applied during re-registration.
-#[derive(Default, Clone, Debug, Serialize, Deserialize)]
-pub struct ParameterTransform {
-    /// Mapping from old parameter names to new names.
-    pub renames: HashMap<String, String>,
-    /// Parameters to force fixed with the provided value.
-    pub fixed: HashMap<String, f64>,
-    /// Parameters to force free (ignore any fixed value).
-    pub freed: IndexSet<String>,
-}
-
-impl ParameterTransform {
-    /// Merge two transforms, with `other` overriding `self` where keys overlap.
-    pub fn merged(&self, other: &Self) -> Self {
-        let mut merged = self.clone();
-        merged.renames.extend(other.renames.clone());
-        merged.fixed.extend(other.fixed.clone());
-        merged.freed.extend(other.freed.clone());
-        merged
-    }
-}
-
 impl Resources {
     /// Create a new [`Resources`] instance with a parameter transform applied.
     pub fn with_transform(transform: ParameterTransform) -> Self {
@@ -291,6 +270,14 @@ impl Resources {
     /// The list of fixed parameter names.
     pub fn fixed_parameter_names(&self) -> Vec<String> {
         self.fixed_parameters.iter().cloned().collect()
+    }
+
+    /// Map from fixed parameter names to their values.
+    pub fn fixed_parameter_values(&self) -> HashMap<String, f64> {
+        self.parameter_entries
+            .iter()
+            .filter_map(|(name, entry)| entry.fixed.map(|value| (name.clone(), value)))
+            .collect()
     }
 
     /// All parameter names (free first, then fixed).

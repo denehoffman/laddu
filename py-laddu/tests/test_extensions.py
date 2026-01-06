@@ -8,6 +8,7 @@ from laddu import (
     NLL,
     Dataset,
     Event,
+    LikelihoodScalar,
     Scalar,
     Vec3,
     constant,
@@ -124,3 +125,20 @@ def test_nll_free_from_fixed_parameter() -> None:
 
     reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
     assert pytest.approx(freed.evaluate([2.5])) == reference.evaluate([2.5])
+
+
+def test_evaluator_parameters_include_fixed_entries() -> None:
+    expr = likelihood_sum([LikelihoodScalar('alpha'), LikelihoodScalar('beta')])
+    expr = expr.fix('alpha', 1.5)
+    evaluator = expr.load()
+    assert evaluator.parameters == ['alpha', 'beta']
+    assert evaluator.free_parameters == ['beta']
+    assert evaluator.fixed_parameters == ['alpha']
+    assert evaluator.evaluate([2.0]) == pytest.approx(3.5)
+    # NOTE: Passing the wrong number of parameters currently panics within Rust,
+    # so we skip calling evaluator.evaluate([10.0, 2.0]) here until the API
+    # surfaces a safe error.
+    grad_free = evaluator.evaluate_gradient([2.0]).tolist()
+    assert grad_free == pytest.approx([1.0])
+    # NOTE: evaluator.evaluate_gradient([10.0, 2.0]) would also panic for the
+    # same reason as above.

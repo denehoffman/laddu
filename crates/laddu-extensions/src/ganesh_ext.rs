@@ -292,7 +292,7 @@ impl NLL {
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
         }?
-        .with_parameter_names(self.parameters()))
+        .with_parameter_names(self.free_parameters()))
     }
 
     /// Run an MCMC sampling algorithm over the [`NLL`] with the given [`MCMCSettings`].
@@ -325,7 +325,7 @@ impl NLL {
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
         }?
-        .with_parameter_names(self.parameters()))
+        .with_parameter_names(self.free_parameters()))
     }
 }
 
@@ -430,7 +430,7 @@ impl StochasticNLL {
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
         }?
-        .with_parameter_names(self.parameters()))
+        .with_parameter_names(self.free_parameters()))
     }
 
     /// Run an MCMC sampling algorithm over the [`StochasticNLL`] with the given [`MCMCSettings`].
@@ -463,7 +463,7 @@ impl StochasticNLL {
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
         }?
-        .with_parameter_names(self.parameters()))
+        .with_parameter_names(self.free_parameters()))
     }
 }
 

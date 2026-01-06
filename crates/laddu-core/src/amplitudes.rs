@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -24,7 +25,8 @@ fn next_amplitude_id() -> u64 {
 
 use crate::{
     data::{Dataset, DatasetMetadata, EventData},
-    resources::{Cache, ParameterTransform, Parameters, Resources},
+    parameter_manager::{ParameterManager, ParameterTransform},
+    resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
 };
 
@@ -1052,6 +1054,10 @@ impl Expression {
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events());
         resources.refresh_active_indices();
+        let parameter_manager = ParameterManager::with_fixed_values(
+            &resources.parameter_names(),
+            &resources.fixed_parameter_values(),
+        );
         let mut amplitudes: Vec<Box<dyn Amplitude>> = self
             .registry
             .amplitudes
@@ -1071,6 +1077,7 @@ impl Expression {
             expression: self.tree.clone(),
             expression_program: ExpressionProgram::from_node(&self.tree),
             registry: self.registry.clone(),
+            parameter_manager,
         })
     }
 
@@ -1195,6 +1202,7 @@ pub struct Evaluator {
     pub expression: ExpressionNode,
     expression_program: ExpressionProgram,
     registry: ExpressionRegistry,
+    parameter_manager: ParameterManager,
 }
 
 #[allow(missing_docs)]
@@ -1276,32 +1284,42 @@ impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.resources.read().parameter_names()
+        self.parameter_manager.parameters()
     }
 
     /// Get the list of free parameter names.
     pub fn free_parameters(&self) -> Vec<String> {
-        self.resources.read().free_parameter_names()
+        self.parameter_manager.free_parameters()
     }
 
     /// Get the list of fixed parameter names.
     pub fn fixed_parameters(&self) -> Vec<String> {
-        self.resources.read().fixed_parameter_names()
+        self.parameter_manager.fixed_parameters()
+    }
+
+    /// Values of parameters fixed to constants.
+    pub fn fixed_parameter_values(&self) -> HashMap<String, f64> {
+        self.resources.read().fixed_parameter_values()
     }
 
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.resources.read().n_free_parameters()
+        self.parameter_manager.n_free_parameters()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed(&self) -> usize {
-        self.resources.read().n_fixed_parameters()
+        self.parameter_manager.n_fixed_parameters()
     }
 
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
-        self.resources.read().n_parameters()
+        self.parameter_manager.n_parameters()
+    }
+
+    /// Access the parameter manager carried by this evaluator.
+    pub fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
     }
 
     fn as_expression(&self) -> Expression {

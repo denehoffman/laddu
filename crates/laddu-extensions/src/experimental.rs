@@ -1,5 +1,7 @@
-use laddu_core::{traits::Variable, utils::histogram};
-use laddu_core::{LadduError, LadduResult};
+use laddu_core::{
+    parameter_manager::ParameterManager, traits::Variable, utils::histogram, LadduError,
+    LadduResult,
+};
 use nalgebra::DVector;
 
 use crate::{
@@ -120,6 +122,10 @@ impl LikelihoodTerm for BinnedGuideTerm {
 
     fn parameters(&self) -> Vec<String> {
         self.nll.parameters()
+    }
+
+    fn parameter_manager(&self) -> &ParameterManager {
+        self.nll.parameter_manager()
     }
 
     fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
@@ -243,6 +249,7 @@ pub struct Regularizer<const P: usize> {
     parameters: Vec<String>,
     lambda: f64,
     weights: Vec<f64>,
+    parameter_manager: ParameterManager,
 }
 
 impl<const P: usize> Regularizer<P> {
@@ -265,10 +272,12 @@ impl<const P: usize> Regularizer<P> {
                 "The number of parameters and weights must be equal".into(),
             ));
         }
+        let parameter_manager = ParameterManager::new_from_names(&parameters);
         Ok(Self {
             parameters: parameters.clone(),
             lambda,
             weights,
+            parameter_manager,
         }
         .into())
     }
@@ -327,6 +336,10 @@ impl LikelihoodTerm for Regularizer<1> {
     fn parameters(&self) -> Vec<String> {
         self.parameters.clone()
     }
+
+    fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
+    }
 }
 
 impl LikelihoodTerm for Regularizer<2> {
@@ -346,6 +359,10 @@ impl LikelihoodTerm for Regularizer<2> {
 
     fn parameters(&self) -> Vec<String> {
         self.parameters.clone()
+    }
+
+    fn parameter_manager(&self) -> &ParameterManager {
+        &self.parameter_manager
     }
 }
 
