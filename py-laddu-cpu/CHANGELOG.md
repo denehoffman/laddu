@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/denehoffman/laddu/compare/py-laddu-cpu-v0.13.0...py-laddu-cpu-v0.13.1) - 2026-01-06
+
+### Added
+
+- separate parameter logic into a new struct and unify fixing/freeing/renaming
+
 ## [0.12.2](https://github.com/denehoffman/laddu/compare/py-laddu-cpu-v0.12.1...py-laddu-cpu-v0.12.2) - 2026-01-05
 
 ### Other
