@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.13.0...laddu-python-v0.13.1) - 2026-01-06
+
+### Other
+
+- updated the following local packages: laddu-core
+
 ## [0.12.1](https://github.com/denehoffman/laddu/compare/laddu-python-v0.12.0...laddu-python-v0.12.1) - 2026-01-05
 
 ### Other

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.13.0...laddu-core-v0.14.0) - 2026-01-06
+
+### Added
+
+- separate parameter logic into a new struct and unify fixing/freeing/renaming
+
 ## [0.13.0](https://github.com/denehoffman/laddu/compare/laddu-core-v0.12.0...laddu-core-v0.13.0) - 2026-01-05
 
 ### Other
