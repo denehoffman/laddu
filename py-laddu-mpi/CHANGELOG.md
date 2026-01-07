@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.14.0...py-laddu-mpi-v0.14.1) - 2026-01-07
+
+### Fixed
+
+- ensure LikelihoodEvaluators report parameter names in fit/mcmc summaries
+
 ## [0.13.1](https://github.com/denehoffman/laddu/compare/py-laddu-mpi-v0.13.0...py-laddu-mpi-v0.13.1) - 2026-01-06
 
 ### Added
