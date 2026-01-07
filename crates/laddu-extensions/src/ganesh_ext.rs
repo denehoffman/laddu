@@ -526,7 +526,7 @@ impl LikelihoodEvaluator {
         settings: MinimizationSettings<Self>,
     ) -> LadduResult<MinimizationSummary> {
         let mtp = settings.get_pool()?;
-        match settings {
+        Ok(match settings {
             MinimizationSettings::LBFGSB {
                 config,
                 callbacks,
@@ -567,7 +567,8 @@ impl LikelihoodEvaluator {
                 config,
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
-        }
+        }?
+        .with_parameter_names(self.free_parameters()))
     }
 
     /// Run an MCMC sampling algorithm over the [`LikelihoodEvaluator`] with the given [`MCMCSettings`].
@@ -578,7 +579,7 @@ impl LikelihoodEvaluator {
     /// evaluating the underlying model.
     pub fn mcmc(&self, settings: MCMCSettings<Self>) -> LadduResult<MCMCSummary> {
         let mtp = settings.get_pool()?;
-        match settings {
+        Ok(match settings {
             MCMCSettings::AIES {
                 config,
                 callbacks,
@@ -599,7 +600,8 @@ impl LikelihoodEvaluator {
                 config,
                 callbacks.with_observer(LikelihoodTermObserver),
             ),
-        }
+        }?
+        .with_parameter_names(self.free_parameters()))
     }
 }
 
