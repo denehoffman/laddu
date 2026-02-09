@@ -159,7 +159,7 @@ jobs:
           manylinux: auto
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -247,7 +247,7 @@ jobs:
           manylinux: musllinux_1_2
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -315,7 +315,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -374,7 +374,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -492,7 +492,7 @@ jobs:
           manylinux: auto
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -582,7 +582,7 @@ jobs:
           manylinux: musllinux_1_2
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -652,7 +652,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -713,7 +713,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:

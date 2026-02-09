@@ -235,7 +235,7 @@ def create_build_job(
             Maturin(
                 name='Build wheels',
                 target=context.matrix.platform.target.as_str(),
-                args=f'--release --out dist --manifest-path crates/py-laddu-{"mpi" if mpi else "cpu"}/Cargo.toml --interpreter {context.matrix.platform.python_versions.as_array().join(" ")}',
+                args=f'--release --out dist --manifest-path py-laddu-{"mpi" if mpi else "cpu"}/Cargo.toml --interpreter {context.matrix.platform.python_versions.as_array().join(" ")}',
                 sccache=~context.github.ref.startswith('refs/tags/'),
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
