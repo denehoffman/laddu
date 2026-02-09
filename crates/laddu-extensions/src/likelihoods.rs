@@ -1814,6 +1814,7 @@ impl PyNLL {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -1849,6 +1850,7 @@ impl PyNLL {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
@@ -1902,6 +1904,7 @@ impl PyNLL {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project<'py>(
         &self,
         py: Python<'py>,
@@ -1973,6 +1976,7 @@ impl PyNLL {
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     ///
     #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project_with<'py>(
         &self,
         py: Python<'py>,
@@ -3589,6 +3593,7 @@ impl PyLikelihoodEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -3625,6 +3630,7 @@ impl PyLikelihoodEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
