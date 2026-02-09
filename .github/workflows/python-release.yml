@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.7"
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - run: cargo clippy
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
@@ -44,7 +44,7 @@ jobs:
           uv pip install --no-cache-dir -e "py-laddu[tests]"
       - run: uvx ruff check . --extend-exclude=.yamloom.py
       - run: uvx ty check . --exclude=.yamloom.py
-      - run: uvx pytest
+      - run: uv run pytest
   linux-cpu:
     name: Build Linux Wheels (cpu)
     permissions:
@@ -481,7 +481,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -571,7 +571,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -642,7 +642,7 @@ jobs:
           python-version-file: version.txt
           architecture: ${{ matrix.platform.python_arch }}
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -703,7 +703,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

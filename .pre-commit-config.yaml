@@ -24,7 +24,7 @@ repos:
         types_or: [ python, pyi ]
         additional_dependencies: [pytest, yamloom]
   - repo: https://github.com/denehoffman/yamloom
-    rev: yamloom-v0.5.4
+    rev: yamloom-v0.5.5
     hooks:
       - id: yamloom-sync
         files: ^(\.github/workflows/.*\.ya?ml|\.yamloom\.py)$

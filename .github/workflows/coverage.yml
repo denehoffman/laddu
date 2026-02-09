@@ -32,6 +32,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
+      - name: Setup MPI
+        uses: mpi4py/setup-mpi@v1
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
         with:

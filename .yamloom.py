@@ -1,4 +1,4 @@
-from __future__ import annotations  # noqa: INP001
+from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -194,7 +194,13 @@ def resolve_python_versions(skip: list[str] | None) -> list[str]:
 
 
 def create_build_job(
-    job_name: str, name: str, targets: list[Target], *, mpi: bool, needs: list[str] | None = None, upload: bool = True
+    job_name: str,
+    name: str,
+    targets: list[Target],
+    *,
+    mpi: bool,
+    needs: list[str] | None = None,
+    upload: bool = True,
 ) -> Job:
     def platform_entry(target: Target) -> dict[str, object]:
         entry = {
@@ -202,7 +208,11 @@ def create_build_job(
             'target': target.target,
             'python_versions': resolve_python_versions(target.skip_python_versions),
         }
-        python_arch = ('arm64' if target.target == 'aarch64' else target.target) if name == 'windows' else None
+        python_arch = (
+            ('arm64' if target.target == 'aarch64' else target.target)
+            if name == 'windows'
+            else None
+        )
         if python_arch is not None:
             entry['python_arch'] = python_arch
         return entry
@@ -215,7 +225,9 @@ def create_build_job(
             ),
             SetupPython(
                 python_version_file='version.txt',
-                architecture=context.matrix.platform.python_arch.as_str() if name == 'windows' else None,
+                architecture=context.matrix.platform.python_arch.as_str()
+                if name == 'windows'
+                else None,
             ),
         ]
         + ([SetupMPI()] if mpi else [])
@@ -225,7 +237,9 @@ def create_build_job(
                 target=context.matrix.platform.target.as_str(),
                 args=f'--release --out dist --manifest-path crates/py-laddu-{"mpi" if mpi else "cpu"}/Cargo.toml --interpreter {context.matrix.platform.python_versions.as_array().join(" ")}',
                 sccache=~context.github.ref.startswith('refs/tags/'),
-                manylinux='musllinux_1_2' if name == 'musllinux' else ('auto' if name == 'linux' else None),
+                manylinux='musllinux_1_2'
+                if name == 'musllinux'
+                else ('auto' if name == 'linux' else None),
             ),
         ]
         + (
@@ -259,11 +273,15 @@ test_build_workflow = Workflow(
     ),
     jobs={
         **{
-            f'{tj.short_name}-cpu': create_build_job(tj.job_name, tj.short_name, tj.targets, mpi=False, upload=False)
+            f'{tj.short_name}-cpu': create_build_job(
+                tj.job_name, tj.short_name, tj.targets, mpi=False, upload=False
+            )
             for tj in TARGET_JOBS_CPU
         },
         **{
-            f'{tj.short_name}-mpi': create_build_job(tj.job_name, tj.short_name, tj.targets, mpi=True, upload=False)
+            f'{tj.short_name}-mpi': create_build_job(
+                tj.job_name, tj.short_name, tj.targets, mpi=True, upload=False
+            )
             for tj in TARGET_JOBS_CPU
         },
     },
@@ -273,7 +291,9 @@ test_build_workflow = Workflow(
 python_release_workflow = Workflow(
     name='Build and Release laddu (Python)',
     on=Events(
-        push=PushEvent(branches=['main'], tags=['py-laddu*', '!py-laddu-cpu*', '!py-laddu-mpi*']),
+        push=PushEvent(
+            branches=['main'], tags=['py-laddu*', '!py-laddu-cpu*', '!py-laddu-mpi*']
+        ),
         pull_request=PullRequestEvent(),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
@@ -286,7 +306,9 @@ python_release_workflow = Workflow(
                 SetupMPI(),
                 script('cargo clippy'),
                 InstallRustTool(tool=['cargo-hack']),
-                script('cargo hack check --rust-version --feature-powerset --no-dev-deps'),
+                script(
+                    'cargo hack check --rust-version --feature-powerset --no-dev-deps'
+                ),
                 script('cargo hack test --feature-powerset --no-dev-deps'),
                 script(
                     'uv venv',
@@ -298,26 +320,38 @@ python_release_workflow = Workflow(
                 ),
                 script('uvx ruff check . --extend-exclude=.yamloom.py'),
                 script('uvx ty check . --exclude=.yamloom.py'),
-                script('uvx pytest'),
+                script('uv run pytest'),
             ],
             runs_on='ubuntu-latest',
         ),
         **{
             f'{tj.short_name}-cpu': create_build_job(
-                tj.job_name, tj.short_name, tj.targets, needs=['build-check-test'], mpi=False
+                tj.job_name,
+                tj.short_name,
+                tj.targets,
+                needs=['build-check-test'],
+                mpi=False,
             )
             for tj in TARGET_JOBS_CPU
         },
         **{
             f'{tj.short_name}-mpi': create_build_job(
-                tj.job_name, tj.short_name, tj.targets, needs=['build-check-test'], mpi=True
+                tj.job_name,
+                tj.short_name,
+                tj.targets,
+                needs=['build-check-test'],
+                mpi=True,
             )
             for tj in TARGET_JOBS_CPU
         },
         'sdist-cpu': Job(
             steps=[
                 Checkout(),
-                Maturin(name='Build sdist', command='sdist', args='--out dist --manifest-path py-laddu-cpu/Cargo.toml'),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-cpu/Cargo.toml',
+                ),
                 UploadArtifact(path='dist', artifact_name='cpu-sdist'),
             ],
             name='Build Source Distribution',
@@ -329,7 +363,11 @@ python_release_workflow = Workflow(
         'sdist-mpi': Job(
             steps=[
                 Checkout(),
-                Maturin(name='Build sdist', command='sdist', args='--out dist --manifest-path py-laddu-mpi/Cargo.toml'),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-mpi/Cargo.toml',
+                ),
                 UploadArtifact(path='dist', artifact_name='mpi-sdist'),
             ],
             name='Build Source Distribution',
@@ -348,7 +386,10 @@ python_release_workflow = Workflow(
                 script(
                     'uv publish --trusted-publishing always mpi-*/*',
                 ),
-                script('uv build py-laddu --out-dir dist', 'uv publish --trusted-publishing always dist/*'),
+                script(
+                    'uv build py-laddu --out-dir dist',
+                    'uv publish --trusted-publishing always dist/*',
+                ),
             ],
             name='Release',
             runs_on='ubuntu-22.04',
@@ -379,14 +420,27 @@ release_please_workflow = Workflow(
                     id='release',
                     token=context.secrets.RELEASE_PLEASE,
                 ),
-                Checkout(condition=ReleasePlease.releases_created('release').from_json_to_bool()),
-                SetupRust(condition=ReleasePlease.releases_created('release').from_json_to_bool()),
+                Checkout(
+                    condition=ReleasePlease.releases_created(
+                        'release'
+                    ).from_json_to_bool()
+                ),
+                SetupRust(
+                    condition=ReleasePlease.releases_created(
+                        'release'
+                    ).from_json_to_bool()
+                ),
                 InstallRustTool(
-                    tool=['cargo-workspaces'], condition=ReleasePlease.releases_created('release').from_json_to_bool()
+                    tool=['cargo-workspaces'],
+                    condition=ReleasePlease.releases_created(
+                        'release'
+                    ).from_json_to_bool(),
                 ),
                 script(
                     f'cargo workspaces publish --from-git --token {context.secrets.CARGO_REGISTRY_TOKEN} --yes',
-                    condition=ReleasePlease.releases_created('release').from_json_to_bool(),
+                    condition=ReleasePlease.releases_created(
+                        'release'
+                    ).from_json_to_bool(),
                 ),
             ],
             runs_on='ubuntu-latest',
@@ -397,7 +451,9 @@ release_please_workflow = Workflow(
 benchmark_workflow = Workflow(
     name='CodSpeed Benchmarks',
     on=Events(
-        push=PushEvent(branches=['main']), pull_request=PullRequestEvent(), workflow_dispatch=WorkflowDispatchEvent()
+        push=PushEvent(branches=['main']),
+        pull_request=PullRequestEvent(),
+        workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
         'benchmarks': Job(
@@ -426,9 +482,15 @@ benchmark_workflow = Workflow(
 coverage_workflow = Workflow(
     name='Coverage',
     on=Events(
-        push=PushEvent(branches=['main'], paths=['**.rs', '**.py', '.github/workflows/coverage.yml']),
-        pull_request=PullRequestEvent(paths=['**.rs', '**.py', '.github/workflows/coverage.yml']),
-        workflow_call=WorkflowCallEvent(secrets={'codecov_token': WorkflowSecret(required=True)}),
+        push=PushEvent(
+            branches=['main'], paths=['**.rs', '**.py', '.github/workflows/coverage.yml']
+        ),
+        pull_request=PullRequestEvent(
+            paths=['**.rs', '**.py', '.github/workflows/coverage.yml']
+        ),
+        workflow_call=WorkflowCallEvent(
+            secrets={'codecov_token': WorkflowSecret(required=True)}
+        ),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
@@ -436,6 +498,7 @@ coverage_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(toolchain='nightly'),
+                SetupMPI(),
                 InstallRustTool(tool=['cargo-llvm-cov']),
                 script(
                     'cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu'
@@ -459,7 +522,9 @@ coverage_workflow = Workflow(
                     'uv pip install --no-cache-dir -e "py-laddu[tests]"',
                     'pytest --cov --cov-report xml:coverage-python.xml',
                 ),
-                UploadArtifact(path='coverage-python.xml', artifact_name='coverage-python'),
+                UploadArtifact(
+                    path='coverage-python.xml', artifact_name='coverage-python'
+                ),
             ],
             runs_on='ubuntu-latest',
             env={'CARGO_TERM_COLOR': 'always'},

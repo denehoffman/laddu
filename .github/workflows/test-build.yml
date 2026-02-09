@@ -408,7 +408,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -491,7 +491,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -555,7 +555,7 @@ jobs:
           python-version-file: version.txt
           architecture: ${{ matrix.platform.python_arch }}
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -609,7 +609,7 @@ jobs:
         with:
           python-version-file: version.txt
       - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
+        uses: mpi4py/setup-mpi@v1
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
