@@ -21,7 +21,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-codspeed
-      - run: cargo codspeed build --release
+      - run: cargo codspeed build
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:

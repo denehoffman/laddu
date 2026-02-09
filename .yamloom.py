@@ -405,7 +405,7 @@ benchmark_workflow = Workflow(
                 Checkout(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-codspeed']),
-                script('cargo codspeed build --release'),
+                script('cargo codspeed build'),
                 action(
                     'CodSpeed Action',
                     'CodSpeedHQ/action',
