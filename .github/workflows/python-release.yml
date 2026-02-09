@@ -38,7 +38,7 @@ jobs:
         with:
           tool: cargo-hack
       - run: cargo hack check --rust-version --feature-powerset --no-dev-deps
-      - run: cargo hack test --feature-powerset --no-dev-deps
+      - run: cargo hack test --feature-powerset
       - run: |-
           uv venv
           . .venv/bin/activate

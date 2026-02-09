@@ -309,7 +309,7 @@ python_release_workflow = Workflow(
                 script(
                     'cargo hack check --rust-version --feature-powerset --no-dev-deps'
                 ),
-                script('cargo hack test --feature-powerset --no-dev-deps'),
+                script('cargo hack test --feature-powerset'),
                 script(
                     'uv venv',
                     '. .venv/bin/activate',
