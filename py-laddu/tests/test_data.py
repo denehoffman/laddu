@@ -3,12 +3,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import laddu.io as ldio
 import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
-
-import laddu.io as ldio
 from laddu import Dataset, Event, Mass, Vec3, Vec4
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']

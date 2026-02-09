@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import BreitWigner, Dataset, Event, Mass, Vec3, parameter
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']

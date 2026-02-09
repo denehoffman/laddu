@@ -19,10 +19,12 @@ def read_parquet() -> pl.DataFrame:
 
 
 def convert_to_f64(df: pl.DataFrame) -> pl.DataFrame:
-    return df.lazy().select(*[pl.col(col).cast(pl.Float64) for col in df.columns]).collect()
+    return (
+        df.lazy().select(*[pl.col(col).cast(pl.Float64) for col in df.columns]).collect()
+    )
 
 
-def write_root(tree: str = 'events'):
+def write_root(tree: str = 'events') -> None:
     df_parquet_f32 = read_parquet()
     file_root_f32 = uproot.recreate('data_f32.root')
     file_root_f32.mktree(tree, df_parquet_f32.to_dict())
@@ -31,7 +33,7 @@ def write_root(tree: str = 'events'):
     file_root_f64.mktree(tree, df_parquet_f64.to_dict())
 
 
-def write_amptools(tree: str = 'kin'):
+def write_amptools(tree: str = 'kin') -> None:
     df_parquet_f32 = read_parquet()
     file_amptools = uproot.recreate('data_amptools.root')
     df_dict_f32 = df_parquet_f32.to_dict()
@@ -42,20 +44,46 @@ def write_amptools(tree: str = 'kin'):
         'Pz_Beam': df_dict_f32['beam_pz'],
         'NumFinalState': np.full(len(df_dict_f32['proton_e']), 3, dtype=np.int32),
         'E_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_e'], df_dict_f32['kshort1_e'], df_dict_f32['kshort2_e']]).transpose().tolist()
+            np.array(
+                [
+                    df_dict_f32['proton_e'],
+                    df_dict_f32['kshort1_e'],
+                    df_dict_f32['kshort2_e'],
+                ]
+            )
+            .transpose()
+            .tolist()
         ),
         'Px_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_px'], df_dict_f32['kshort1_px'], df_dict_f32['kshort2_px']])
+            np.array(
+                [
+                    df_dict_f32['proton_px'],
+                    df_dict_f32['kshort1_px'],
+                    df_dict_f32['kshort2_px'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
         'Py_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_py'], df_dict_f32['kshort1_py'], df_dict_f32['kshort2_py']])
+            np.array(
+                [
+                    df_dict_f32['proton_py'],
+                    df_dict_f32['kshort1_py'],
+                    df_dict_f32['kshort2_py'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
         'Pz_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_pz'], df_dict_f32['kshort1_pz'], df_dict_f32['kshort2_pz']])
+            np.array(
+                [
+                    df_dict_f32['proton_pz'],
+                    df_dict_f32['kshort1_pz'],
+                    df_dict_f32['kshort2_pz'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
@@ -70,20 +98,46 @@ def write_amptools(tree: str = 'kin'):
         'Pz_Beam': df_dict_f32['beam_pz'],
         'NumFinalState': np.full(len(df_dict_f32['proton_e']), 3, dtype=np.int32),
         'E_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_e'], df_dict_f32['kshort1_e'], df_dict_f32['kshort2_e']]).transpose().tolist()
+            np.array(
+                [
+                    df_dict_f32['proton_e'],
+                    df_dict_f32['kshort1_e'],
+                    df_dict_f32['kshort2_e'],
+                ]
+            )
+            .transpose()
+            .tolist()
         ),
         'Px_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_px'], df_dict_f32['kshort1_px'], df_dict_f32['kshort2_px']])
+            np.array(
+                [
+                    df_dict_f32['proton_px'],
+                    df_dict_f32['kshort1_px'],
+                    df_dict_f32['kshort2_px'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
         'Py_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_py'], df_dict_f32['kshort1_py'], df_dict_f32['kshort2_py']])
+            np.array(
+                [
+                    df_dict_f32['proton_py'],
+                    df_dict_f32['kshort1_py'],
+                    df_dict_f32['kshort2_py'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
         'Pz_FinalState': ak.Array(
-            np.array([df_dict_f32['proton_pz'], df_dict_f32['kshort1_pz'], df_dict_f32['kshort2_pz']])
+            np.array(
+                [
+                    df_dict_f32['proton_pz'],
+                    df_dict_f32['kshort1_pz'],
+                    df_dict_f32['kshort2_pz'],
+                ]
+            )
             .transpose()
             .tolist()
         ),
@@ -92,7 +146,7 @@ def write_amptools(tree: str = 'kin'):
     file_amptools_pol.mktree(tree, df_amptools_pol_dict)
 
 
-def main():
+def main() -> None:
     df_parquet_f32 = read_parquet()
     convert_to_f64(df_parquet_f32).write_parquet('data_f64.parquet')
     write_root()

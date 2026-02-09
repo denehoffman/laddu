@@ -14,12 +14,11 @@ import os
 import pickle
 from pathlib import Path
 
+import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
 from corner import corner
 from loguru import logger
-
-import laddu as ld
 
 
 # This custom terminator differs from the one provided by `laddu`. Rather than tracing the

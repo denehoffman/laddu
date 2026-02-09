@@ -27,6 +27,7 @@ import pickle
 from pathlib import Path
 from time import perf_counter
 
+import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
 import uncertainties.umath as unp
@@ -35,8 +36,6 @@ from loguru import logger
 from rich import print as pprint
 from rich.table import Table
 from uncertainties import ufloat
-
-import laddu as ld
 
 
 def main(bins: int, niters: int, nboot: int) -> None:

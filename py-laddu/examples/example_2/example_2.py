@@ -24,11 +24,10 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
 from docopt import docopt
-
-import laddu as ld
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

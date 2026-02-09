@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-
 from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitudes.piecewise import (
     PiecewiseComplexScalar,

@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import Angles, Dataset, Event, Polarization, Topology, Vec3, Zlm
 from laddu.amplitudes.zlm import PolPhase
 

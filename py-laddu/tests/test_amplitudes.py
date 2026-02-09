@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import (
     ComplexScalar,
     Dataset,
@@ -486,7 +485,7 @@ def test_tree_printing() -> None:
    └─ ×
       ├─ parametric_1(id=0)
       └─ parametric_2(id=1)
-"""
+"""  # noqa: RUF001
     )
 
 
