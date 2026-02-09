@@ -22,8 +22,9 @@ laddu-python = { workspace = true }
 
 pyo3 = { workspace = true, features = [
   "num-complex",
-  "abi3-py37",
+  "abi3",
   "extension-module",
+  "generate-import-lib"
 ] }
 
 [features]

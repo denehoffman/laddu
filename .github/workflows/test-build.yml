@@ -1,56 +1,11 @@
 ---
-name: Build and Release laddu (Python)
-"on":
-  push:
-    branches:
-      - main
-    tags:
-      - py-laddu*
-      - "!py-laddu-cpu*"
-      - "!py-laddu-mpi*"
-  pull_request: ~
-  workflow_dispatch: ~
+name: Build laddu (Python)
+"on": workflow_dispatch
 jobs:
-  build-check-test:
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: clippy
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.7"
-      - name: Setup MPI
-        uses: mpi-action/setup-mpi@v1
-      - run: cargo clippy
-      - name: Install Rust Tool
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-hack
-      - run: cargo hack check --rust-version --feature-powerset --no-dev-deps
-      - run: cargo hack test --feature-powerset --no-dev-deps
-      - run: |-
-          uv venv
-          . .venv/bin/activate
-          echo PATH=$PATH >> $GITHUB_ENV
-          uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
-          uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-          uv pip install --no-cache-dir -e "py-laddu[tests]"
-      - run: uvx ruff check . --extend-exclude=.yamloom.py
-      - run: uvx ty check . --exclude=.yamloom.py
-      - run: uvx pytest
   linux-cpu:
     name: Build Linux Wheels (cpu)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -156,17 +111,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-linux-${{ matrix.platform.target }}
   musllinux-cpu:
     name: Build (musl) Linux Wheels (cpu)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -244,17 +192,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-musllinux-${{ matrix.platform.target }}
   windows-cpu:
     name: Build Windows Wheels (cpu)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -312,17 +253,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-windows-${{ matrix.platform.target }}
   macos-cpu:
     name: Build macOS Wheels (cpu)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -371,17 +305,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-macos-${{ matrix.platform.target }}
   linux-mpi:
     name: Build Linux Wheels (mpi)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -489,17 +416,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-linux-${{ matrix.platform.target }}
   musllinux-mpi:
     name: Build (musl) Linux Wheels (mpi)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -579,17 +499,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-musllinux-${{ matrix.platform.target }}
   windows-mpi:
     name: Build Windows Wheels (mpi)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -649,17 +562,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-windows-${{ matrix.platform.target }}
   macos-mpi:
     name: Build macOS Wheels (mpi)
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -710,76 +616,3 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path crates/py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-macos-${{ matrix.platform.target }}
-  sdist-cpu:
-    name: Build Source Distribution
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: "--out dist --manifest-path py-laddu-cpu/Cargo.toml"
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: cpu-sdist
-  sdist-mpi:
-    name: Build Source Distribution
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: "--out dist --manifest-path py-laddu-mpi/Cargo.toml"
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-sdist
-  release:
-    name: Release
-    needs:
-      - linux-cpu
-      - musllinux-cpu
-      - windows-cpu
-      - macos-cpu
-      - linux-mpi
-      - musllinux-mpi
-      - windows-mpi
-      - macos-mpi
-      - sdist-cpu
-      - sdist-mpi
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ubuntu-22.04
-    environment: pypi
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v7
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-      - run: uv publish --trusted-publishing always cpu-*/*
-      - run: uv publish --trusted-publishing always mpi-*/*
-      - run: |-
-          uv build py-laddu --out-dir dist
-          uv publish --trusted-publishing always dist/*
