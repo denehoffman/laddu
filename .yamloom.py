@@ -302,7 +302,7 @@ python_release_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(components=['clippy']),
-                SetupUV(python_version='3.7'),
+                SetupUV(python_version='3.10'),
                 SetupMPI(),
                 script('cargo clippy'),
                 InstallRustTool(tool=['cargo-hack']),
