@@ -494,6 +494,7 @@ impl PyEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
@@ -538,6 +539,7 @@ impl PyEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, indices, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_batch<'py>(
         &self,
         py: Python<'py>,
@@ -585,6 +587,7 @@ impl PyEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
@@ -646,6 +649,7 @@ impl PyEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, indices, *, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient_batch<'py>(
         &self,
         py: Python<'py>,
