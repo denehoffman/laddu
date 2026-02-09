@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import Angles, Dataset, Event, Topology, Vec3, Ylm
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']

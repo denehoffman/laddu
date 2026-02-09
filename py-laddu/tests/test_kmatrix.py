@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,

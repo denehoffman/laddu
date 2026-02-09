@@ -1,11 +1,15 @@
+---
 name: Coverage
-
-on:
+"on":
   pull_request:
     paths:
       - "**.rs"
       - "**.py"
       - ".github/workflows/coverage.yml"
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
       - main
@@ -17,60 +21,78 @@ on:
     secrets:
       codecov_token:
         required: true
-  workflow_dispatch:
+  workflow_dispatch: ~
 jobs:
   coverage-rust:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v6
-      - name: Install OpenMPI
-        run: sudo apt install -y clang mpich libmpich-dev
-      - name: Install Rust
-        run: rustup update nightly
-      - name: Install Just
-        uses: taiki-e/install-action@just
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate Rust code coverage
-        run: just coverage-rust
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v5
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          name: coverage-rust
+          toolchain: nightly
+      - name: Setup MPI
+        uses: mpi4py/setup-mpi@v1
+      - name: Install Rust Tool
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
           path: coverage-rust.lcov
+          name: coverage-rust
   coverage-python:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v6
-      - name: Install uv
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Setup uv
         uses: astral-sh/setup-uv@v7
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install Just
-        uses: taiki-e/install-action@just
-      - name: Generate Python code coverage
-        run: just coverage-python
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v5
+      - run: |-
+          uv venv
+          . .venv/bin/activate
+          echo PATH=$PATH >> $GITHUB_ENV
+          uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+          uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
+          uv pip install --no-cache-dir -e "py-laddu[tests]"
+          pytest --cov --cov-report xml:coverage-python.xml
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
         with:
-          name: coverage-python
           path: coverage-python.xml
+          name: coverage-python
   upload-coverage:
-    needs: [coverage-rust, coverage-python]
+    permissions:
+      contents: read
+    needs:
+      - coverage-rust
+      - coverage-python
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - name: Download coverage reports
-        uses: actions/download-artifact@v6
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Download Artifact
+        uses: actions/download-artifact@v7
         with:
           merge-multiple: true
-      - name: Upload coverage reports to Codecov
+      - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage-rust.lcov,coverage-python.xml
           fail_ci_if_error: true
-          verbose: true
+          files: "coverage-rust.lcov,coverage-python.xml"
           root_dir: ${{ github.workspace }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true

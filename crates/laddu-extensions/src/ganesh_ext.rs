@@ -192,6 +192,7 @@ where
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -206,6 +207,7 @@ impl CostFunction<MaybeThreadPool, LadduError> for NLL {
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for NLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
@@ -224,6 +226,7 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for NLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -330,6 +333,7 @@ impl NLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -344,6 +348,7 @@ impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
@@ -362,6 +367,7 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -468,6 +474,7 @@ impl StochasticNLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
@@ -482,6 +489,7 @@ impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
@@ -500,6 +508,7 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {

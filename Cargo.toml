@@ -54,18 +54,16 @@ laddu-extensions = { version = "0.14.1", path = "crates/laddu-extensions" }
 laddu-python = { version = "0.14.0", path = "crates/laddu-python" }
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 debug = false
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
 
 [profile.debug-release]
 inherits = "release"
 debug = true
-
-[profile.dist-release]
-inherits = "release"
-codegen-units = 1
-debug = false
-lto = "fat"
 
 [profile.profiling]
 inherits = "release"

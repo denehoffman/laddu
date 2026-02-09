@@ -12,9 +12,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 import laddu as ld
+import numpy as np
 
 
 @dataclass

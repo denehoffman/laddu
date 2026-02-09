@@ -1,3 +1,6 @@
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
+#[cfg(feature = "rayon")]
 use accurate::{sum::Klein, traits::*};
 use arrow::{
     array::{Float32Array, Float64Array},
@@ -5,26 +8,23 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use auto_ops::impl_op_ex;
+#[cfg(feature = "mpi")]
+use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
+use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
 use parking_lot::Mutex;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
 #[cfg(feature = "mpi")]
 use parquet::file::metadata::ParquetMetaData;
-use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut, Index, IndexMut};
-use std::path::Path;
-use std::{fmt::Display, fs::File};
-use std::{path::PathBuf, sync::Arc};
-
-use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
-
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-
-#[cfg(feature = "mpi")]
-use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
-
-#[cfg(feature = "mpi")]
-use crate::mpi::LadduMPI;
+use serde::{Deserialize, Serialize};
+use std::{
+    fmt::Display,
+    fs::File,
+    ops::{Deref, DerefMut, Index, IndexMut},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[cfg(feature = "mpi")]
 type WorldHandle = SimpleCommunicator;
@@ -1978,7 +1978,7 @@ fn find_float_column_from_candidates<'a>(
                     return Err(LadduError::InvalidColumnType {
                         name: candidate.clone(),
                         datatype: other.to_string(),
-                    })
+                    });
                 }
             };
         }

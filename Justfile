@@ -15,11 +15,11 @@ create-venv:
 
 # Build the laddu-cpu wheel
 build-python-cpu: create-venv
-    uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
+    uvx --with "maturin[patchelf]" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 
 # Build the laddu-mpi wheel
 build-python-mpi: create-venv
-    uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist
+    uvx --with "maturin[patchelf]" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist
 
 # Build both laddu-cpu and laddu-mpi wheels
 build-python: build-python-cpu build-python-mpi

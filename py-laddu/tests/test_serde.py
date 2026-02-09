@@ -1,7 +1,6 @@
 import pickle
 
 import pytest
-
 from laddu import Dataset, Event, Mass, Scalar, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,

@@ -1,5 +1,4 @@
 import pytest
-
 from laddu import (
     Angles,
     CosTheta,

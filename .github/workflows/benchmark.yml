@@ -1,34 +1,32 @@
-name: CodSpeed
-
-on:
+---
+name: CodSpeed Benchmarks
+"on":
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
-      - "main"
-  pull_request:
-  # `workflow_dispatch` allows CodSpeed to trigger backtest
-  # performance analysis in order to generate initial data.
-  workflow_dispatch:
-
+      - main
+  workflow_dispatch: ~
 jobs:
   benchmarks:
-    name: Run benchmarks
+    name: Run Benchmarks
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - name: Install OpenMPI
-        run: sudo apt install -y openmpi-bin openmpi-doc libopenmpi-dev
-
-      - name: Setup rust toolchain, cache and cargo-codspeed binary
-        uses: moonrepo/setup-rust@v1
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Rust Tool
+        uses: taiki-e/install-action@v2
         with:
-          channel: stable
-          cache-target: release
-          bins: cargo-codspeed
-
-      - name: Build the benchmark target(s)
-        run: cargo codspeed build --profile dist-release
-
-      - name: Run the benchmarks
+          tool: cargo-codspeed
+      - run: cargo codspeed build
+      - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
