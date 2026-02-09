@@ -1,10 +1,14 @@
 ---
 name: CodSpeed Benchmarks
 "on":
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
       - main
-  pull_request: ~
   workflow_dispatch: ~
 jobs:
   benchmarks:

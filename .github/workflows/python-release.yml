@@ -1,6 +1,11 @@
 ---
 name: Build and Release laddu (Python)
 "on":
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
       - main
@@ -8,7 +13,6 @@ name: Build and Release laddu (Python)
       - py-laddu*
       - "!py-laddu-cpu*"
       - "!py-laddu-mpi*"
-  pull_request: ~
   workflow_dispatch: ~
 jobs:
   build-check-test:

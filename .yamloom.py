@@ -294,7 +294,7 @@ python_release_workflow = Workflow(
         push=PushEvent(
             branches=['main'], tags=['py-laddu*', '!py-laddu-cpu*', '!py-laddu-mpi*']
         ),
-        pull_request=PullRequestEvent(),
+        pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
@@ -452,7 +452,7 @@ benchmark_workflow = Workflow(
     name='CodSpeed Benchmarks',
     on=Events(
         push=PushEvent(branches=['main']),
-        pull_request=PullRequestEvent(),
+        pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     jobs={
@@ -486,7 +486,10 @@ coverage_workflow = Workflow(
             branches=['main'], paths=['**.rs', '**.py', '.github/workflows/coverage.yml']
         ),
         pull_request=PullRequestEvent(
-            paths=['**.rs', '**.py', '.github/workflows/coverage.yml']
+            opened=True,
+            synchronize=True,
+            reopened=True,
+            paths=['**.rs', '**.py', '.github/workflows/coverage.yml'],
         ),
         workflow_call=WorkflowCallEvent(
             secrets={'codecov_token': WorkflowSecret(required=True)}

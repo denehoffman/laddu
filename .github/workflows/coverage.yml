@@ -6,6 +6,10 @@ name: Coverage
       - "**.rs"
       - "**.py"
       - ".github/workflows/coverage.yml"
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
       - main
