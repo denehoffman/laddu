@@ -158,12 +158,12 @@ TARGET_JOBS_MPI = [
         'windows',
         [
             Target('windows-latest', 'x64'),
-            Target('windows-latest', 'x86', ['pypy3.11']),
-            Target(
-                'windows-11-arm',
-                'aarch64',
-                ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
-            ),
+            # Target('windows-latest', 'x86', ['pypy3.11']),
+            # Target(
+            #     'windows-11-arm',
+            #     'aarch64',
+            #     ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
+            # ),
         ],
     ),
     TargetJob(
@@ -237,6 +237,11 @@ def create_build_job(
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
                 else ('auto' if name == 'linux' else None),
+                env={
+                    'PKG_CONFIG_PATH': '/usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/'
+                }
+                if 'linux' in name
+                else None,
             ),
         ]
         + (
