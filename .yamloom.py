@@ -227,7 +227,7 @@ def create_build_job(
                 else None,
             ),
         ]
-        + ([SetupMPI(mpi='intelmpi' if name != 'windows' else 'openmpi')] if mpi else [])
+        + ([SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi')] if mpi else [])
         + [
             Maturin(
                 name='Build wheels',

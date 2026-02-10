@@ -406,10 +406,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup intelmpi
+      - name: Setup openmpi
         uses: mpi4py/setup-mpi@v1
         with:
-          mpi: intelmpi
+          mpi: openmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -491,10 +491,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup intelmpi
+      - name: Setup openmpi
         uses: mpi4py/setup-mpi@v1
         with:
-          mpi: intelmpi
+          mpi: openmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -557,10 +557,10 @@ jobs:
         with:
           python-version-file: version.txt
           architecture: ${{ matrix.platform.python_arch }}
-      - name: Setup openmpi
+      - name: Setup intelmpi
         uses: mpi4py/setup-mpi@v1
         with:
-          mpi: openmpi
+          mpi: intelmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -612,10 +612,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup intelmpi
+      - name: Setup openmpi
         uses: mpi4py/setup-mpi@v1
         with:
-          mpi: intelmpi
+          mpi: openmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
