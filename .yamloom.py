@@ -130,29 +130,29 @@ TARGET_JOBS_MPI = [
             for target in [
                 'x86_64',
                 'x86',
-                'aarch64',
-                'armv7',
-                's390x',
-                'ppc64le',
+                # 'aarch64',
+                # 'armv7',
+                # 's390x',
+                # 'ppc64le',
             ]
         ],
     ),
-    TargetJob(
-        'Build (musl) Linux Wheels',
-        'musllinux',
-        [
-            Target(
-                'ubuntu-22.04',
-                target,
-            )
-            for target in [
-                'x86_64',
-                'x86',
-                'aarch64',
-                'armv7',
-            ]
-        ],
-    ),
+    # TargetJob(
+    #     'Build (musl) Linux Wheels',
+    #     'musllinux',
+    #     [
+    #         Target(
+    #             'ubuntu-22.04',
+    #             target,
+    #         )
+    #         for target in [
+    #             # 'x86_64',
+    #             # 'x86',
+    #             # 'aarch64',
+    #             # 'armv7',
+    #         ]
+    #     ],
+    # ),
     TargetJob(
         'Build Windows Wheels',
         'windows',
@@ -185,18 +185,6 @@ def resolve_python_versions(skip: list[str] | None) -> list[str]:
         return DEFAULT_PYTHON_VERSIONS
     skipped = set(skip)
     return [version for version in DEFAULT_PYTHON_VERSIONS if version not in skipped]
-
-
-mpi_install_script = {
-    'linux': """yum -y install openmpi openmpi-devel pkgconfig
-export PATH=/usr/lib64/openmpi/bin:$PATH
-export PKG_CONFIG_PATH=/usr/lib64/openmpi/lib/pkgconfig:$PKG_CONFIG_PATH
-export MPI_PKG_CONFIG=ompi
-""",
-    'musllinux': """apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
-export MPICC=/usr/lib64/openmpi/bin/mpicc""",
-}
 
 
 def create_build_job(
@@ -249,8 +237,13 @@ def create_build_job(
                 sccache=~context.github.ref.startswith('refs/tags/'),
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
-                else ('auto' if name == 'linux' else None),
-                before_script_linux=mpi_install_script.get(name) if mpi else None,
+                else ('2_28' if name == 'linux' else None),
+                before_script_linux="""yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel
+export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}" """[:-1]
+                if mpi and name == 'linux'
+                else None,
             ),
         ]
         + (
@@ -272,7 +265,7 @@ def create_build_job(
             ),
         ),
         needs=needs,
-        condition=context.github.ref.startswith('refs/tags/py-laddu')
+        condition=context.github.ref.startswith('refs/tags/')
         | (context.github.event_name == 'workflow_dispatch'),
     )
 
@@ -302,9 +295,7 @@ test_build_workflow = Workflow(
 python_release_workflow = Workflow(
     name='Build and Release laddu (Python)',
     on=Events(
-        push=PushEvent(
-            branches=['main'], tags=['py-laddu*', '!py-laddu-cpu*', '!py-laddu-mpi*']
-        ),
+        push=PushEvent(branches=['main'], tags=['*']),
         pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
@@ -368,7 +359,7 @@ python_release_workflow = Workflow(
             name='Build Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
         ),
         'sdist-mpi': Job(
@@ -384,7 +375,7 @@ python_release_workflow = Workflow(
             name='Build Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
         ),
         'release': Job(
@@ -404,7 +395,7 @@ python_release_workflow = Workflow(
             ],
             name='Release',
             runs_on='ubuntu-22.04',
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
             needs=[
                 *[f'{tj.short_name}-cpu' for tj in TARGET_JOBS_CPU],

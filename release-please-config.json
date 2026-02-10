@@ -1,88 +1,84 @@
 {
-  "plugins": [
-    { "type": "cargo-workspace", "merge": false },
-    { "type": "sentence-case" },
-    {
-      "type": "linked-versions",
-      "groupName": "laddu",
-      "components": ["laddu", "py-laddu", "py-laddu-cpu", "py-laddu-mpi"]
-    }
-  ],
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-v-in-tag": true,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
-  "release-type": "rust",
+  "plugins": [{ "type": "sentence-case" }],
   "packages": {
-    "crates/laddu": {
-      "component": "laddu",
+    ".": {
+      "include-component-in-tag": false,
       "extra-files": [
         {
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu'].version"
-        }
-      ]
-    },
-    "crates/laddu-amplitudes": {
-      "component": "laddu-amplitudes",
-      "extra-files": [
-        {
-          "type": "toml",
-          "path": "Cargo.toml",
-          "jsonpath": "$.workspace.dependencies['laddu-amplitudes'].version"
-        }
-      ]
-    },
-    "crates/laddu-core": {
-      "component": "laddu-core",
-      "extra-files": [
+        },
         {
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-core'].version"
-        }
-      ]
-    },
-    "crates/laddu-extensions": {
-      "component": "laddu-extensions",
-      "extra-files": [
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.dependencies['laddu-amplitudes'].version"
+        },
         {
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-extensions'].version"
-        }
-      ]
-    },
-    "crates/laddu-python": {
-      "component": "laddu-python",
-      "extra-files": [
+        },
         {
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-python'].version"
-        }
-      ]
-    },
-    "py-laddu-cpu": {
-      "component": "py-laddu-cpu",
-      "extra-files": [
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu-core/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu-amplitudes/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu-extensions/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/laddu-python/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "py-laddu-cpu/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "py-laddu-mpi/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "py-laddu/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
         {
           "type": "generic",
           "path": "py-laddu/pyproject.toml"
         }
       ]
-    },
-    "py-laddu-mpi": {
-      "component": "py-laddu-mpi",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "py-laddu/pyproject.toml"
-        }
-      ]
-    },
-    "py-laddu": {
-      "component": "py-laddu",
-      "release-type": "python"
     }
   }
 }
