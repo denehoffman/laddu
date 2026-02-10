@@ -174,10 +174,7 @@ TARGET_JOBS_MPI = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target(
-                'macos-latest',
-                'aarch64',
-            ),
+            Target('macos-latest', 'aarch64', ['3.7']),
         ],
     ),
 ]
@@ -232,8 +229,8 @@ def create_build_job(
                 SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi'),
                 script(
                     'echo $PKG_CONFIG_PATH',
-                    'find / -type f -name "ompi.ps"',
                     'ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig',
+                    continue_on_error=True,
                 ),
             ]
             if mpi
@@ -249,7 +246,7 @@ def create_build_job(
                 if name == 'musllinux'
                 else ('auto' if name == 'linux' else None),
                 env={
-                    'PKG_CONFIG_PATH': '/usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/'
+                    'MPI_PKG_CONFIG': '/usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/',
                 }
                 if 'linux' in name
                 else None,

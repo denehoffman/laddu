@@ -112,7 +112,7 @@ jobs:
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
+          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
   musllinux-cpu:
     name: Build (musl) Linux Wheels (cpu)
     permissions:
@@ -195,7 +195,7 @@ jobs:
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
+          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
   windows-cpu:
     name: Build Windows Wheels (cpu)
     permissions:
@@ -416,8 +416,8 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
+        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -426,7 +426,7 @@ jobs:
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
+          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
   musllinux-mpi:
     name: Build (musl) Linux Wheels (mpi)
     permissions:
@@ -507,8 +507,8 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
+        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -517,7 +517,7 @@ jobs:
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
+          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
   windows-mpi:
     name: Build Windows Wheels (mpi)
     permissions:
@@ -558,8 +558,8 @@ jobs:
           mpi: intelmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
+        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -592,7 +592,6 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.7"
               - "3.8"
               - "3.9"
               - "3.10"
@@ -618,8 +617,8 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
+        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
