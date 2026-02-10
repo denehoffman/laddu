@@ -265,7 +265,7 @@ export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}" """[:-1]
             ),
         ),
         needs=needs,
-        condition=context.github.ref.startswith('refs/tags/py-laddu')
+        condition=context.github.ref.startswith('refs/tags/')
         | (context.github.event_name == 'workflow_dispatch'),
     )
 
@@ -295,9 +295,7 @@ test_build_workflow = Workflow(
 python_release_workflow = Workflow(
     name='Build and Release laddu (Python)',
     on=Events(
-        push=PushEvent(
-            branches=['main'], tags=['py-laddu*', '!py-laddu-cpu*', '!py-laddu-mpi*']
-        ),
+        push=PushEvent(branches=['main'], tags=['*']),
         pull_request=PullRequestEvent(opened=True, synchronize=True, reopened=True),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
@@ -361,7 +359,7 @@ python_release_workflow = Workflow(
             name='Build Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
         ),
         'sdist-mpi': Job(
@@ -377,7 +375,7 @@ python_release_workflow = Workflow(
             name='Build Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
         ),
         'release': Job(
@@ -397,7 +395,7 @@ python_release_workflow = Workflow(
             ],
             name='Release',
             runs_on='ubuntu-22.04',
-            condition=context.github.ref.startswith('refs/tags/py-laddu')
+            condition=context.github.ref.startswith('refs/tags/')
             | (context.github.event_name == 'workflow_dispatch'),
             needs=[
                 *[f'{tj.short_name}-cpu' for tj in TARGET_JOBS_CPU],

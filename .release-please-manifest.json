@@ -1,10 +1,3 @@
 {
-  "crates/laddu": "0.14.1",
-  "crates/laddu-amplitudes": "0.14.0",
-  "crates/laddu-core": "0.14.0",
-  "crates/laddu-extensions": "0.14.1",
-  "crates/laddu-python": "0.14.0",
-  "py-laddu-cpu": "0.14.1",
-  "py-laddu-mpi": "0.14.1",
-  "py-laddu": "0.14.1"
+  ".": "0.14.1"
 }

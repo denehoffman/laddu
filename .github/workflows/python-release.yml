@@ -10,9 +10,7 @@ name: Build and Release laddu (Python)
     branches:
       - main
     tags:
-      - py-laddu*
-      - "!py-laddu-cpu*"
-      - "!py-laddu-mpi*"
+      - "*"
   workflow_dispatch: ~
 jobs:
   build-check-test:
@@ -55,7 +53,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -171,7 +169,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -259,7 +257,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -327,7 +325,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -385,7 +383,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -450,7 +448,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -501,7 +499,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -563,7 +561,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Repository
@@ -584,7 +582,7 @@ jobs:
       contents: read
     needs:
       - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Repository
@@ -611,7 +609,7 @@ jobs:
       - macos-mpi
       - sdist-cpu
       - sdist-mpi
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ubuntu-22.04
     environment: pypi
     steps:

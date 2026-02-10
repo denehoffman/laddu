@@ -6,7 +6,7 @@ jobs:
     name: Build Linux Wheels (cpu)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -115,7 +115,7 @@ jobs:
     name: Build (musl) Linux Wheels (cpu)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -196,7 +196,7 @@ jobs:
     name: Build Windows Wheels (cpu)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -257,7 +257,7 @@ jobs:
     name: Build macOS Wheels (cpu)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -308,7 +308,7 @@ jobs:
     name: Build Linux Wheels (mpi)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -366,7 +366,7 @@ jobs:
     name: Build Windows Wheels (mpi)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -410,7 +410,7 @@ jobs:
     name: Build macOS Wheels (mpi)
     permissions:
       contents: read
-    if: ${{ (startsWith(github.ref, 'refs/tags/py-laddu') || (github.event_name == 'workflow_dispatch')) }}
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
