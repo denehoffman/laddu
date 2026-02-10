@@ -147,9 +147,9 @@ TARGET_JOBS_MPI = [
             )
             for target in [
                 'x86_64',
-                'x86',
-                'aarch64',
-                'armv7',
+                # 'x86',
+                # 'aarch64',
+                # 'armv7',
             ]
         ],
     ),
@@ -187,19 +187,22 @@ def resolve_python_versions(skip: list[str] | None) -> list[str]:
     return [version for version in DEFAULT_PYTHON_VERSIONS if version not in skipped]
 
 
-mpi_install_script = {
-    'linux': """yum -y install openmpi openmpi-devel pkgconfig
-export MPICC=/usr/lib64/openmpi/bin/mpicc
-echo $MPICC
-ls /usr/lib64/openmpi/bin
-""",
-    'musllinux': """apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
-export MPICC=/usr/bin/mpicc
-echo $MPICC
-ls /usr/bin
-""",
-}
+def get_mpi_install_script(name: str, architecture: str) -> str:
+    script = ''
+    if name == 'linux':
+        if architecture in ['x86', 'x86_64']:
+            script += 'yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel libclang libclang-devel'
+        else:
+            script += """apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config"""
+    else:
+        script += """apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config"""
+    script += """
+export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}" """[:-1]
+    return script
 
 
 def create_build_job(
@@ -224,6 +227,8 @@ def create_build_job(
         )
         if python_arch is not None:
             entry['python_arch'] = python_arch
+        if name in ['linux', 'musllinux']:
+            entry['script'] = get_mpi_install_script(name, target.target)
         return entry
 
     return Job(
@@ -253,7 +258,9 @@ def create_build_job(
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
                 else ('auto' if name == 'linux' else None),
-                before_script_linux=mpi_install_script.get(name) if mpi else None,
+                before_script_linux=context.matrix.platform.script.as_str()
+                if mpi
+                else None,
             ),
         ]
         + (

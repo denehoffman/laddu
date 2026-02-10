@@ -25,6 +25,11 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel libclang libclang-devel
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: x86
             python_versions:
@@ -39,6 +44,11 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel libclang libclang-devel
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
@@ -53,6 +63,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
@@ -67,6 +83,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: s390x
             python_versions:
@@ -81,6 +103,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: ppc64le
             python_versions:
@@ -95,6 +123,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
       fail-fast: false
     steps:
       - name: Checkout Repository
@@ -134,6 +168,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: x86
             python_versions:
@@ -148,6 +188,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
@@ -162,6 +208,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
@@ -176,6 +228,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
       fail-fast: false
     steps:
       - name: Checkout Repository
@@ -327,6 +385,11 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel libclang libclang-devel
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: x86
             python_versions:
@@ -341,6 +404,11 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel libclang libclang-devel
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
@@ -355,6 +423,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
@@ -369,6 +443,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: s390x
             python_versions:
@@ -383,6 +463,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
           - runner: ubuntu-22.04
             target: ppc64le
             python_versions:
@@ -397,6 +483,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
       fail-fast: false
     steps:
       - name: Checkout Repository
@@ -412,11 +504,7 @@ jobs:
           manylinux: auto
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          before-script-linux: |
-            yum -y install openmpi openmpi-devel pkgconfig
-            export MPICC=/usr/lib64/openmpi/bin/mpicc
-            echo $MPICC
-            ls /usr/lib64/openmpi/bin
+          before-script-linux: ${{ matrix.platform.script }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
   musllinux-mpi:
     name: Build (musl) Linux Wheels (mpi)
@@ -441,48 +529,12 @@ jobs:
               - "3.14"
               - 3.14t
               - pypy3.11
-          - runner: ubuntu-22.04
-            target: x86
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: aarch64
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: armv7
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
+            script: |-
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+              export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
+              MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
+              export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
       fail-fast: false
     steps:
       - name: Checkout Repository
@@ -498,12 +550,7 @@ jobs:
           manylinux: musllinux_1_2
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          before-script-linux: |
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
-            export MPICC=/usr/bin/mpicc
-            echo $MPICC
-            ls /usr/bin
+          before-script-linux: ${{ matrix.platform.script }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
   windows-mpi:
     name: Build Windows Wheels (mpi)
@@ -548,6 +595,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          before-script-linux: ${{ matrix.platform.script }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
   macos-mpi:
     name: Build macOS Wheels (mpi)
@@ -603,4 +651,5 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          before-script-linux: ${{ matrix.platform.script }}
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
