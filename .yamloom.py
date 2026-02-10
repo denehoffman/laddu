@@ -187,6 +187,12 @@ def resolve_python_versions(skip: list[str] | None) -> list[str]:
     return [version for version in DEFAULT_PYTHON_VERSIONS if version not in skipped]
 
 
+mpi_install_script = {
+    'linux': 'yum -y install openmpi openmpi-devel pkgconfig',
+    'musllinux': 'apk add --no-cache openmpi openmpi-dev pkgconf',
+}
+
+
 def create_build_job(
     job_name: str,
     name: str,
@@ -225,15 +231,8 @@ def create_build_job(
             ),
         ]
         + (
-            [
-                SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi'),
-                script(
-                    'echo $PKG_CONFIG_PATH',
-                    'ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig',
-                    continue_on_error=True,
-                ),
-            ]
-            if mpi
+            [SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi')]
+            if mpi and name not in ['linux', 'musllinux']
             else []
         )
         + [
@@ -245,11 +244,7 @@ def create_build_job(
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
                 else ('auto' if name == 'linux' else None),
-                env={
-                    'MPI_PKG_CONFIG': '/usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/',
-                }
-                if 'linux' in name
-                else None,
+                before_script_linux=mpi_install_script.get(name) if mpi else None,
             ),
         ]
         + (

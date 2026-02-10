@@ -160,8 +160,6 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-        env:
-          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -250,8 +248,6 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-        env:
-          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -487,23 +483,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup openmpi
-        uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: openmpi
-      - run: |-
-          echo $PKG_CONFIG_PATH
-          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
-        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           manylinux: auto
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          before-script-linux: yum -y install openmpi openmpi-devel pkgconfig
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-        env:
-          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -585,23 +572,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup openmpi
-        uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: openmpi
-      - run: |-
-          echo $PKG_CONFIG_PATH
-          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
-        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           manylinux: musllinux_1_2
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
+          before-script-linux: apk add --no-cache openmpi openmpi-dev pkgconf
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-        env:
-          MPI_PKG_CONFIG: /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig/
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
@@ -647,10 +625,6 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: intelmpi
-      - run: |-
-          echo $PKG_CONFIG_PATH
-          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
-        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -713,10 +687,6 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
-      - run: |-
-          echo $PKG_CONFIG_PATH
-          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
-        continue-on-error: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
