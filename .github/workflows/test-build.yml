@@ -412,7 +412,11 @@ jobs:
           manylinux: auto
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          before-script-linux: yum -y install openmpi openmpi-devel pkgconfig
+          before-script-linux: |
+            yum -y install openmpi openmpi-devel pkgconfig
+            export PATH=/usr/lib64/openmpi/bin:$PATH
+            export PKG_CONFIG_PATH=/usr/lib64/openmpi/lib/pkgconfig:$PKG_CONFIG_PATH
+            export MPI_PKG_CONFIG=ompi
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
   musllinux-mpi:
     name: Build (musl) Linux Wheels (mpi)
@@ -494,7 +498,10 @@ jobs:
           manylinux: musllinux_1_2
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          before-script-linux: apk add --no-cache openmpi openmpi-dev pkgconf
+          before-script-linux: |-
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
+            export MPICC=/usr/lib64/openmpi/bin/mpicc
           args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
   windows-mpi:
     name: Build Windows Wheels (mpi)
