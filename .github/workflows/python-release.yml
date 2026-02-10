@@ -491,6 +491,10 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
+      - run: |-
+          echo $PKG_CONFIG_PATH
+          ls $PKG_CONFIG_PATH
+          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -585,6 +589,10 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
+      - run: |-
+          echo $PKG_CONFIG_PATH
+          ls $PKG_CONFIG_PATH
+          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -625,27 +633,6 @@ jobs:
               - 3.14t
               - pypy3.11
             python_arch: x64
-          - runner: windows-latest
-            target: x86
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-            python_arch: x86
-          - runner: windows-11-arm
-            target: aarch64
-            python_versions:
-              - "3.12"
-              - "3.13"
-              - "3.14"
-            python_arch: arm64
       fail-fast: false
     steps:
       - name: Checkout Repository
@@ -660,6 +647,10 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: intelmpi
+      - run: |-
+          echo $PKG_CONFIG_PATH
+          ls $PKG_CONFIG_PATH
+          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -699,6 +690,7 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
+              - "3.7"
               - "3.8"
               - "3.9"
               - "3.10"
@@ -722,6 +714,10 @@ jobs:
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
+      - run: |-
+          echo $PKG_CONFIG_PATH
+          ls $PKG_CONFIG_PATH
+          ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

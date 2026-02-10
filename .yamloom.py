@@ -227,7 +227,18 @@ def create_build_job(
                 else None,
             ),
         ]
-        + ([SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi')] if mpi else [])
+        + (
+            [
+                SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi'),
+                script(
+                    'echo $PKG_CONFIG_PATH',
+                    'ls $PKG_CONFIG_PATH',
+                    'ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig',
+                ),
+            ]
+            if mpi
+            else []
+        )
         + [
             Maturin(
                 name='Build wheels',
@@ -284,7 +295,7 @@ test_build_workflow = Workflow(
             f'{tj.short_name}-mpi': create_build_job(
                 tj.job_name, tj.short_name, tj.targets, mpi=True, upload=False
             )
-            for tj in TARGET_JOBS_CPU
+            for tj in TARGET_JOBS_MPI
         },
     },
 )
@@ -344,7 +355,7 @@ python_release_workflow = Workflow(
                 needs=['build-check-test'],
                 mpi=True,
             )
-            for tj in TARGET_JOBS_CPU
+            for tj in TARGET_JOBS_MPI
         },
         'sdist-cpu': Job(
             steps=[
