@@ -113,10 +113,7 @@ TARGET_JOBS_CPU = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target(
-                'macos-latest',
-                'aarch64',
-            ),
+            Target('macos-latest', 'aarch64', ['3.7']),
         ],
     ),
 ]
@@ -230,7 +227,7 @@ def create_build_job(
                 else None,
             ),
         ]
-        + ([SetupMPI()] if mpi else [])
+        + ([SetupMPI(mpi='intelmpi' if name != 'windows' else 'openmpi')] if mpi else [])
         + [
             Maturin(
                 name='Build wheels',

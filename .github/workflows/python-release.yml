@@ -349,7 +349,6 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.7"
               - "3.8"
               - "3.9"
               - "3.10"
@@ -484,8 +483,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup MPI
+      - name: Setup intelmpi
         uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: intelmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -574,8 +575,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup MPI
+      - name: Setup intelmpi
         uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: intelmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -645,8 +648,10 @@ jobs:
         with:
           python-version-file: version.txt
           architecture: ${{ matrix.platform.python_arch }}
-      - name: Setup MPI
+      - name: Setup openmpi
         uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: openmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -686,7 +691,6 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.7"
               - "3.8"
               - "3.9"
               - "3.10"
@@ -706,8 +710,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version-file: version.txt
-      - name: Setup MPI
+      - name: Setup intelmpi
         uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: intelmpi
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
