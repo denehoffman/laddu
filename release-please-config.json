@@ -17,7 +17,7 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
+          "path": "../../Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu'].version"
         }
       ]
@@ -27,7 +27,7 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
+          "path": "../../Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-amplitudes'].version"
         }
       ]
@@ -37,7 +37,7 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
+          "path": "../../Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-core'].version"
         }
       ]
@@ -47,7 +47,7 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
+          "path": "../../Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-extensions'].version"
         }
       ]
@@ -57,7 +57,7 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "Cargo.toml",
+          "path": "../../Cargo.toml",
           "jsonpath": "$.workspace.dependencies['laddu-python'].version"
         }
       ]
@@ -67,7 +67,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "py-laddu/pyproject.toml"
+          "path": "../py-laddu/pyproject.toml"
         }
       ]
     },
@@ -76,7 +76,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "py-laddu/pyproject.toml"
+          "path": "../py-laddu/pyproject.toml"
         }
       ]
     },
