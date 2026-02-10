@@ -237,7 +237,7 @@ def create_build_job(
                 sccache=~context.github.ref.startswith('refs/tags/'),
                 manylinux='musllinux_1_2'
                 if name == 'musllinux'
-                else ('auto' if name == 'linux' else None),
+                else ('2_28' if name == 'linux' else None),
                 before_script_linux="""yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel
 export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
 MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"

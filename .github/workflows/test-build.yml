@@ -107,7 +107,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manylinux: auto
+          manylinux: 2_28
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
@@ -353,7 +353,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          manylinux: auto
+          manylinux: 2_28
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           before-script-linux: |-
