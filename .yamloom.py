@@ -189,10 +189,16 @@ def resolve_python_versions(skip: list[str] | None) -> list[str]:
 
 mpi_install_script = {
     'linux': """yum -y install openmpi openmpi-devel pkgconfig
-export MPICC=/usr/lib64/openmpi/bin/mpicc""",
+export MPICC=/usr/lib64/openmpi/bin/mpicc
+echo $MPICC
+ls /usr/lib64/openmpi/bin
+""",
     'musllinux': """apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev pkg-config
-export MPI_PKG_CONFIG=/usr/lib/aarch64-linux-gnu/pkgconfig""",
+export MPICC=/usr/bin/mpicc
+echo $MPICC
+ls /usr/bin
+""",
 }
 
 
