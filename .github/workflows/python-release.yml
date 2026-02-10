@@ -493,7 +493,7 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          ls $PKG_CONFIG_PATH
+          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -591,7 +591,7 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          ls $PKG_CONFIG_PATH
+          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -649,7 +649,7 @@ jobs:
           mpi: intelmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          ls $PKG_CONFIG_PATH
+          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -716,7 +716,7 @@ jobs:
           mpi: openmpi
       - run: |-
           echo $PKG_CONFIG_PATH
-          ls $PKG_CONFIG_PATH
+          find / -type f -name "ompi.ps"
           ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig
       - name: Build wheels
         uses: PyO3/maturin-action@v1

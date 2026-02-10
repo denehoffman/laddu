@@ -232,7 +232,7 @@ def create_build_job(
                 SetupMPI(mpi='intelmpi' if name == 'windows' else 'openmpi'),
                 script(
                     'echo $PKG_CONFIG_PATH',
-                    'ls $PKG_CONFIG_PATH',
+                    'find / -type f -name "ompi.ps"',
                     'ls /usr/lib/x86_64-linux-gnu/openmpi/lib/pkgconfig',
                 ),
             ]
