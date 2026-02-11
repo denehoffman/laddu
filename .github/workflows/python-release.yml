@@ -616,6 +616,8 @@ jobs:
     runs-on: ubuntu-22.04
     environment: pypi
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
       - name: Download Artifact
         uses: actions/download-artifact@v7
       - name: Setup uv

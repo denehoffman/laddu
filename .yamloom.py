@@ -381,6 +381,7 @@ python_release_workflow = Workflow(
         ),
         'release': Job(
             steps=[
+                Checkout(),
                 DownloadArtifact(),
                 SetupUV(),
                 script(
