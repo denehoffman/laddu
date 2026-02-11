@@ -14,7 +14,7 @@
   <a href="https://github.com/denehoffman/laddu/commits/main/" alt="Lastest Commits">
     <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/denehoffman/laddu?style=for-the-badge&logo=github"></a>
   <a href="https://github.com/denehoffman/laddu/actions" alt="Build Status">
-    <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/denehoffman/laddu/rust.yml?style=for-the-badge&logo=github"></a>
+    <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/denehoffman/laddu/python-release.yml?style=for-the-badge&logo=github"></a>
   <a href="LICENSE-APACHE" alt="License">
     <img alt="GitHub License" src="https://img.shields.io/github/license/denehoffman/laddu?style=for-the-badge"></a>
   <a href="https://crates.io/crates/laddu" alt="Laddu on crates.io">
@@ -371,9 +371,6 @@ This loads the ROOT tree, infers the particle names, and exposes the result thro
 The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`.
 
 To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable). These same methods exist in Python as `laddu.mpi.use_mpi(trigger=true)` and `laddu.mpi.finalize_mpi()`, and an additional context manager, `laddu.mpi.MPI(trigger=true)`, can be used to quickly wrap a `main()` function. See the [documentation](https://laddu.readthedocs.io/en/latest/) for more details.
-
-> [!WARNING]
-> The current ROOT backend always materializes the entire TTree on rank 0 before broadcasting partitions to other ranks. Large ROOT files therefore negate the MPI memory-savings you get with Parquet until upstream `oxyroot` gains range-aware reads.
 
 # Future Plans
 
