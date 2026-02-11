@@ -7,6 +7,7 @@ from yamloom import (
     Events,
     Job,
     Matrix,
+    Permissions,
     PullRequestEvent,
     PushEvent,
     Strategy,
@@ -384,13 +385,16 @@ python_release_workflow = Workflow(
                 SetupUV(),
                 script(
                     'uv publish --trusted-publishing always cpu-*/*',
+                    permissions=Permissions(id_token='write', contents='write'),
                 ),
                 script(
                     'uv publish --trusted-publishing always mpi-*/*',
+                    permissions=Permissions(id_token='write', contents='write'),
                 ),
                 script(
                     'uv build py-laddu --out-dir dist',
                     'uv publish --trusted-publishing always dist/*',
+                    permissions=Permissions(id_token='write', contents='write'),
                 ),
             ],
             name='Release',
@@ -427,6 +431,7 @@ release_please_workflow = Workflow(
                         'release'
                     ).from_json_to_bool()
                 ),
+                SetupMPI(mpi='openmpi'),
                 SetupRust(
                     condition=ReleasePlease.releases_created(
                         'release'

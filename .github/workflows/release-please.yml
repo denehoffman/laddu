@@ -18,6 +18,10 @@ jobs:
       - name: Checkout Repository
         if: ${{ fromJSON(steps.release.outputs.releases_created) }}
         uses: actions/checkout@v6
+      - name: Setup openmpi
+        uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: openmpi
       - name: Setup Rust
         if: ${{ fromJSON(steps.release.outputs.releases_created) }}
         uses: actions-rust-lang/setup-rust-toolchain@v1
