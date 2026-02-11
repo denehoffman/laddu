@@ -431,7 +431,12 @@ release_please_workflow = Workflow(
                         'release'
                     ).from_json_to_bool()
                 ),
-                SetupMPI(mpi='openmpi'),
+                SetupMPI(
+                    mpi='openmpi',
+                    condition=ReleasePlease.releases_created(
+                        'release'
+                    ).from_json_to_bool(),
+                ),
                 SetupRust(
                     condition=ReleasePlease.releases_created(
                         'release'

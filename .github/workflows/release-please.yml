@@ -19,6 +19,7 @@ jobs:
         if: ${{ fromJSON(steps.release.outputs.releases_created) }}
         uses: actions/checkout@v6
       - name: Setup openmpi
+        if: ${{ fromJSON(steps.release.outputs.releases_created) }}
         uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
