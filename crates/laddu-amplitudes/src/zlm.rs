@@ -19,7 +19,7 @@ use num::complex::Complex64;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// An [`Amplitude`] representing an extension of the [`Ylm`](crate::ylm::Ylm)
+/// An [`Amplitude`] representing an extension of the [`Ylm`]
 /// [`Amplitude`] assuming a linearly polarized beam as described in Equation (D13)
 /// [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
