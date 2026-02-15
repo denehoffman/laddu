@@ -1334,12 +1334,11 @@ fn read_parquet_mpi(
         events.truncate(expected_local);
     }
     if events.len() != expected_local {
-        return Err(LadduError::Custom(format!(
-            "Loaded {} rows on rank {} but expected {}",
-            events.len(),
-            rank,
-            expected_local
-        )));
+        return Err(LadduError::LengthMismatch {
+            context: format!("Loaded rows for MPI rank {rank}"),
+            expected: expected_local,
+            actual: events.len(),
+        });
     }
 
     Ok(Arc::new(Dataset::new_local(events, metadata)))
@@ -1500,11 +1499,11 @@ pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<A
     let weight_values = match read_branch_values_optional(&lookup, "weight")? {
         Some(values) => {
             if values.len() != n_events {
-                return Err(LadduError::Custom(format!(
-                    "Column 'weight' has {} entries but expected {}",
-                    values.len(),
-                    n_events
-                )));
+                return Err(LadduError::LengthMismatch {
+                    context: "Column 'weight'".to_string(),
+                    expected: n_events,
+                    actual: values.len(),
+                });
             }
             values
         }

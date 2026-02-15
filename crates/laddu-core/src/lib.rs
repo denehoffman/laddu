@@ -612,6 +612,16 @@ pub enum LadduError {
         /// Detected data type
         datatype: String,
     },
+    /// A value has an unexpected length.
+    #[error("{context} length mismatch: expected {expected}, received {actual}")]
+    LengthMismatch {
+        /// Description of what length was validated.
+        context: String,
+        /// Expected length.
+        expected: usize,
+        /// Actual length observed.
+        actual: usize,
+    },
     /// A duplicate name was provided for p4 or aux data
     #[error("Duplicate {category} name \"{name}\" provided")]
     DuplicateName {
@@ -663,6 +673,7 @@ impl From<LadduError> for PyErr {
                 PyKeyError::new_err(err_string)
             }
             LadduError::InvalidColumnType { .. }
+            | LadduError::LengthMismatch { .. }
             | LadduError::DuplicateName { .. }
             | LadduError::ParameterConflict { .. }
             | LadduError::UnregisteredParameter { .. } => PyValueError::new_err(err_string),

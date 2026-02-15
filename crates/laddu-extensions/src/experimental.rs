@@ -268,9 +268,11 @@ impl<const P: usize> Regularizer<P> {
             .map_or(vec![1.0; parameters.len()].as_ref(), AsRef::as_ref)
             .to_vec();
         if parameters.len() != weights.len() {
-            return Err(LadduError::Custom(
-                "The number of parameters and weights must be equal".into(),
-            ));
+            return Err(LadduError::LengthMismatch {
+                context: "Regularizer parameter/weight vector".to_string(),
+                expected: parameters.len(),
+                actual: weights.len(),
+            });
         }
         let parameter_manager = ParameterManager::new_from_names(&parameters);
         Ok(Self {
