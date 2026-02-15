@@ -10,7 +10,7 @@ use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
 use laddu_core::{
-    amplitudes::{central_difference, Evaluator, Expression},
+    amplitudes::{Evaluator, Expression},
     data::Dataset,
     parameter_manager::ParameterManager,
     resources::Parameters,
@@ -49,15 +49,44 @@ use rayon::prelude::*;
 #[cfg(all(feature = "python", feature = "rayon"))]
 use rayon::ThreadPoolBuilder;
 
+fn validate_free_parameter_len(
+    parameters_len: usize,
+    expected_len: usize,
+    context: &str,
+) -> LadduResult<()> {
+    if parameters_len != expected_len {
+        return Err(LadduError::LengthMismatch {
+            context: context.to_string(),
+            expected: expected_len,
+            actual: parameters_len,
+        });
+    }
+    Ok(())
+}
+
+fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduResult<()> {
+    if n_events == 0 {
+        return Err(LadduError::Custom(
+            "stochastic batch_size requires a non-empty dataset".to_string(),
+        ));
+    }
+    if batch_size == 0 || batch_size > n_events {
+        return Err(LadduError::LengthMismatch {
+            context: format!("stochastic batch_size (valid range: 1..={n_events})"),
+            expected: n_events,
+            actual: batch_size,
+        });
+    }
+    Ok(())
+}
+
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
     /// Evaluate the term given some input parameters.
-    fn evaluate(&self, parameters: &[f64]) -> f64;
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64>;
     /// Evaluate the gradient of the term given some input parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        central_difference(parameters, |parameters: &[f64]| self.evaluate(parameters))
-    }
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>>;
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
     /// Access the parameter manager describing free/fixed state.
@@ -185,7 +214,11 @@ impl NLL {
         .into())
     }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
-    pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
+    pub fn to_stochastic(
+        &self,
+        batch_size: usize,
+        seed: Option<usize>,
+    ) -> LadduResult<StochasticNLL> {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
@@ -1060,39 +1093,25 @@ impl LikelihoodTerm for NLL {
     fn parameter_manager(&self) -> &ParameterManager {
         &self.parameter_manager
     }
-
-    /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(parameters.len(), self.n_free(), "NLL free parameters")?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &world);
+                return Ok(self.evaluate_mpi(parameters, &world));
             }
         }
-        self.evaluate_local(parameters)
+        Ok(self.evaluate_local(parameters))
     }
-
-    /// Evaluate the gradient of the stored [`Model`] over the events in the [`Dataset`]
-    /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in
-    /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free(), "NLL free parameters")?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &world);
+                return Ok(self.evaluate_gradient_mpi(parameters, &world));
             }
         }
-        self.evaluate_gradient_local(parameters)
+        Ok(self.evaluate_gradient_local(parameters))
     }
 }
 
@@ -1118,12 +1137,17 @@ impl LikelihoodTerm for StochasticNLL {
     fn parameter_manager(&self) -> &ParameterManager {
         self.nll.parameter_manager()
     }
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(
+            parameters.len(),
+            self.nll.n_free(),
+            "StochasticNLL free parameters",
+        )?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &indices, &world);
+                return Ok(self.evaluate_mpi(parameters, &indices, &world));
             }
         }
         #[cfg(feature = "rayon")]
@@ -1136,15 +1160,19 @@ impl LikelihoodTerm for StochasticNLL {
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_local(parameters, &indices, n_data_batch_local)
+        Ok(self.evaluate_local(parameters, &indices, n_data_batch_local))
     }
-
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(
+            parameters.len(),
+            self.nll.n_free(),
+            "StochasticNLL free parameters",
+        )?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &indices, &world);
+                return Ok(self.evaluate_gradient_mpi(parameters, &indices, &world));
             }
         }
         #[cfg(feature = "rayon")]
@@ -1157,7 +1185,7 @@ impl LikelihoodTerm for StochasticNLL {
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_gradient_local(parameters, &indices, n_data_batch_local)
+        Ok(self.evaluate_gradient_local(parameters, &indices, n_data_batch_local))
     }
     fn update(&self) {
         self.resample();
@@ -1170,18 +1198,18 @@ impl StochasticNLL {
     /// # See Also
     ///
     /// [`NLL::to_stochastic`]
-    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> Self {
+    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> LadduResult<Self> {
         let mut rng = seed.map_or_else(Rng::new, |seed| Rng::with_seed(seed as u64));
         let n = nll.data_evaluator.dataset.n_events();
-        assert!(batch_size > 0 && batch_size <= n);
+        validate_stochastic_batch_size(batch_size, n)?;
         let batch_indices = rng.subset(batch_size, n);
-        Self {
+        Ok(Self {
             nll,
             n,
             batch_size,
             batch_indices: Arc::new(Mutex::new(batch_indices)),
             rng: Arc::new(Mutex::new(rng)),
-        }
+        })
     }
     /// Resample the batch indices used in evaluation
     pub fn resample(&self) {
@@ -1610,8 +1638,8 @@ impl PyNLL {
     /// StochasticNLL
     ///
     #[pyo3(signature = (batch_size, *, seed=None))]
-    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyStochasticNLL {
-        PyStochasticNLL(self.0.to_stochastic(batch_size, seed))
+    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyResult<PyStochasticNLL> {
+        Ok(PyStochasticNLL(self.0.to_stochastic(batch_size, seed)?))
     }
     /// Turn an ``NLL`` into a likelihood expression that can be combined with other terms.
     fn to_expression(&self) -> PyLikelihoodExpression {
@@ -1824,15 +1852,16 @@ impl PyNLL {
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(ThreadPoolBuilder::new()
+            ThreadPoolBuilder::new()
                 .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
-                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)))
+                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))
+                .map_err(Into::into)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))
+            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters).map_err(Into::into)
         }
     }
     /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
@@ -1865,22 +1894,18 @@ impl PyNLL {
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
-                    .as_slice(),
-            ))
+            let gradient = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters))
+                .map_err(PyErr::from)?;
+            Ok(PyArray1::from_slice(py, gradient.as_slice()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0.evaluate_gradient(&parameters).as_slice(),
-            ))
+            let gradient = LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters)?;
+            Ok(PyArray1::from_slice(py, gradient.as_slice()))
         }
     }
     /// Project the model over the Monte Carlo dataset with the given parameter values
@@ -3413,17 +3438,97 @@ impl LikelihoodEvaluator {
         self.parameter_manager.n_parameters()
     }
 
-    fn assemble_parameters(&self, parameters: &[f64]) -> Vec<f64> {
-        if parameters.len() != self.free_parameter_indices.len() {
-            panic!(
-                "mismatched parameter dimension: received {}, expected {} free",
-                parameters.len(),
-                self.free_parameter_indices.len()
-            );
+    fn assemble_parameters(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(
+            parameters.len(),
+            self.free_parameter_indices.len(),
+            "LikelihoodEvaluator free parameters",
+        )?;
+        self.parameter_manager.assemble_full(parameters)
+    }
+
+    /// Evaluate the sum/product of all terms.
+    pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        let parameters = self.assemble_parameters(parameters)?;
+        let mut param_buffers: Vec<Vec<f64>> = self
+            .likelihood_registry
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self
+            .likelihood_registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
         }
-        self.parameter_manager
-            .assemble_full(parameters)
-            .expect("slice length should match free parameter count")
+        let likelihood_values = LikelihoodValues(
+            self.likelihood_registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        Ok(self.likelihood_expression.evaluate(&likelihood_values))
+    }
+
+    /// Evaluate the gradient.
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        let parameters = self.assemble_parameters(parameters)?;
+        let mut param_buffers: Vec<Vec<f64>> = self
+            .likelihood_registry
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self
+            .likelihood_registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
+        }
+        let likelihood_values = LikelihoodValues(
+            self.likelihood_registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
+            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
+            .collect();
+        for (((term, param_buffer), gradient_buffer), layout) in self
+            .likelihood_registry
+            .terms
+            .iter()
+            .zip(param_buffers.iter())
+            .zip(gradient_buffers.iter_mut())
+            .zip(self.likelihood_registry.param_layouts.iter())
+        {
+            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
+            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
+                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
+            }
+        }
+        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
+        let full_gradient = self
+            .likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
+        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
+        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
+            reduced[out_idx] = full_gradient[global_idx];
+        }
+        Ok(reduced)
     }
 }
 
@@ -3443,88 +3548,14 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        let parameters = self.assemble_parameters(parameters);
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
-        );
-        self.likelihood_expression.evaluate(&likelihood_values)
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        LikelihoodEvaluator::evaluate(self, parameters)
     }
 
     /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        let parameters = self.assemble_parameters(parameters);
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
-        );
-        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
-            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
-            .collect();
-        for (((term, param_buffer), gradient_buffer), layout) in self
-            .likelihood_registry
-            .terms
-            .iter()
-            .zip(param_buffers.iter())
-            .zip(gradient_buffers.iter_mut())
-            .zip(self.likelihood_registry.param_layouts.iter())
-        {
-            let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
-            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
-                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
-            }
-        }
-        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        let full_gradient = self
-            .likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
-        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
-        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
-            reduced[out_idx] = full_gradient[global_idx];
-        }
-        reduced
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        LikelihoodEvaluator::evaluate_gradient(self, parameters)
     }
 }
 
@@ -3603,15 +3634,16 @@ impl PyLikelihoodEvaluator {
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(ThreadPoolBuilder::new()
+            ThreadPoolBuilder::new()
                 .num_threads(threads.unwrap_or(0))
                 .build()
                 .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters)))
+                .install(|| self.0.evaluate(&parameters))
+                .map_err(Into::into)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(self.0.evaluate(&parameters))
+            self.0.evaluate(&parameters).map_err(Into::into)
         }
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
@@ -3645,22 +3677,18 @@ impl PyLikelihoodEvaluator {
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
-                    .as_slice(),
-            ))
+            let gradient = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| self.0.evaluate_gradient(&parameters))
+                .map_err(PyErr::from)?;
+            Ok(PyArray1::from_slice(py, gradient.as_slice()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0.evaluate_gradient(&parameters).as_slice(),
-            ))
+            let gradient = self.0.evaluate_gradient(&parameters)?;
+            Ok(PyArray1::from_slice(py, gradient.as_slice()))
         }
     }
     #[cfg_attr(doctest, doc = "```ignore")]
@@ -3959,12 +3987,14 @@ impl LikelihoodScalar {
 }
 
 impl LikelihoodTerm for LikelihoodScalar {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        parameters[0]
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(parameters.len(), 1, "LikelihoodScalar parameters")?;
+        Ok(parameters[0])
     }
 
-    fn evaluate_gradient(&self, _parameters: &[f64]) -> DVector<f64> {
-        DVector::from_vec(vec![1.0])
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(parameters.len(), 1, "LikelihoodScalar parameters")?;
+        Ok(DVector::from_vec(vec![1.0]))
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -4014,7 +4044,7 @@ mod tests {
         data::{Dataset, DatasetMetadata, EventData},
         resources::{Cache, ParameterID, Parameters, Resources},
         utils::vectors::Vec4,
-        Expression, LadduResult,
+        Expression, LadduError, LadduResult,
     };
     use nalgebra::DVector;
     use num::complex::Complex64;
@@ -4101,8 +4131,8 @@ mod tests {
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
         let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params), 5.0);
-        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 5.0);
+        let grad = evaluator.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 1.0);
         assert_relative_eq!(grad[1], 1.0);
     }
@@ -4114,8 +4144,8 @@ mod tests {
         let expr = &alpha * &beta;
         let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params), 6.0);
-        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 6.0);
+        let grad = evaluator.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 3.0);
         assert_relative_eq!(grad[1], 2.0);
     }
@@ -4133,8 +4163,8 @@ mod tests {
         assert_eq!(evaluator.free_parameters(), vec!["beta"]);
         assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
         let params_free = vec![2.0];
-        assert_relative_eq!(evaluator.evaluate(&params_free), 3.5);
-        let grad_free = evaluator.evaluate_gradient(&params_free);
+        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
+        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
         assert_eq!(grad_free.len(), 1);
         assert_relative_eq!(grad_free[0], 1.0);
     }
@@ -4145,8 +4175,8 @@ mod tests {
         let intensity = params[0] * params[0];
         let weight_sum = 3.0;
         let expected = -2.0 * (weight_sum * intensity.ln() - intensity);
-        assert_relative_eq!(nll.evaluate(&params), expected, epsilon = 1e-12);
-        let grad = nll.evaluate_gradient(&params);
+        assert_relative_eq!(nll.evaluate(&params).unwrap(), expected, epsilon = 1e-12);
+        let grad = nll.evaluate_gradient(&params).unwrap();
         let expected_grad = -4.0 * (weight_sum / params[0] - params[0]);
         assert_relative_eq!(grad[0], expected_grad, epsilon = 1e-12);
     }
@@ -4157,5 +4187,69 @@ mod tests {
         let projection = nll.project_local(&params, None);
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn stochastic_nll_validates_batch_size() {
+        let (nll, _params) = make_constant_nll();
+        let err_zero = match nll.to_stochastic(0, Some(0)) {
+            Ok(_) => panic!("expected batch_size=0 to return an error"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err_zero,
+            LadduError::LengthMismatch {
+                expected: 2,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_large = match nll.to_stochastic(3, Some(0)) {
+            Ok(_) => panic!("expected oversized batch to return an error"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err_large,
+            LadduError::LengthMismatch {
+                expected: 2,
+                actual: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn stochastic_nll_accepts_full_dataset_batch() {
+        let (nll, params) = make_constant_nll();
+        let stochastic = nll.to_stochastic(2, Some(0)).unwrap();
+        let value = stochastic.evaluate(&params).unwrap();
+        assert!(value.is_finite());
+    }
+
+    #[test]
+    fn likelihood_evaluator_reports_length_mismatch() {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+
+        let err_short = evaluator.evaluate(&[]).unwrap_err();
+        assert!(matches!(
+            err_short,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_long = evaluator.evaluate_gradient(&[1.0, 2.0]).unwrap_err();
+        assert!(matches!(
+            err_long,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 2,
+                ..
+            }
+        ));
     }
 }

@@ -66,8 +66,13 @@ impl BinnedGuideTerm {
         range: (f64, f64),
         count_sets: &[U],
         error_sets: Option<&[E]>,
-    ) -> LikelihoodExpression {
-        let values = variable.value_on(&nll.accmc_evaluator.dataset).unwrap();
+    ) -> LadduResult<LikelihoodExpression> {
+        if bins == 0 {
+            return Err(LadduError::Custom(
+                "BinnedGuideTerm requires bins > 0".to_string(),
+            ));
+        }
+        let values = variable.value_on(&nll.accmc_evaluator.dataset)?;
         let amplitude_sets: Vec<Vec<String>> = amplitude_sets
             .iter()
             .map(|t| t.as_ref().iter().map(|s| s.as_ref().to_string()).collect())
@@ -81,9 +86,39 @@ impl BinnedGuideTerm {
                 .map(|v| v.iter().map(|f| f.sqrt()).collect())
                 .collect()
         };
-        assert_eq!(amplitude_sets.len(), count_sets.len());
-        assert_eq!(count_sets.len(), error_sets.len());
-        Self {
+        if amplitude_sets.len() != count_sets.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "BinnedGuideTerm amplitude_sets/count_sets".to_string(),
+                expected: amplitude_sets.len(),
+                actual: count_sets.len(),
+            });
+        }
+        if count_sets.len() != error_sets.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "BinnedGuideTerm count_sets/error_sets".to_string(),
+                expected: count_sets.len(),
+                actual: error_sets.len(),
+            });
+        }
+        for (set_idx, counts) in count_sets.iter().enumerate() {
+            if counts.len() != bins {
+                return Err(LadduError::LengthMismatch {
+                    context: format!("BinnedGuideTerm count_sets[{set_idx}]"),
+                    expected: bins,
+                    actual: counts.len(),
+                });
+            }
+        }
+        for (set_idx, errors) in error_sets.iter().enumerate() {
+            if errors.len() != bins {
+                return Err(LadduError::LengthMismatch {
+                    context: format!("BinnedGuideTerm error_sets[{set_idx}]"),
+                    expected: bins,
+                    actual: errors.len(),
+                });
+            }
+        }
+        Ok(Self {
             nll,
             amplitude_sets,
             values,
@@ -92,12 +127,12 @@ impl BinnedGuideTerm {
             count_sets,
             error_sets,
         }
-        .into_expression()
+        .into_expression())
     }
 }
 
 impl LikelihoodTerm for BinnedGuideTerm {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         let mut result = 0.0;
         for ((counts, errors), amplitudes) in self
             .count_sets
@@ -105,7 +140,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
             .zip(self.error_sets.iter())
             .zip(self.amplitude_sets.iter())
         {
-            let weights = self.nll.project_with(parameters, amplitudes, None).unwrap();
+            let weights = self.nll.project_with(parameters, amplitudes, None)?;
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
             // TODO: handle entries where e == 0
             let chisqr: f64 = eval_hist
@@ -117,7 +152,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
                 .sum();
             result += chisqr;
         }
-        result
+        Ok(result)
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -128,7 +163,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
         self.nll.parameter_manager()
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let mut gradient = DVector::zeros(parameters.len());
         let bin_width = (self.range.1 - self.range.0) / self.bins as f64;
         for ((counts, errors), amplitudes) in self
@@ -139,8 +174,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
         {
             let (weights, weights_gradient) = self
                 .nll
-                .project_gradient_with(parameters, amplitudes, None)
-                .unwrap();
+                .project_gradient_with(parameters, amplitudes, None)?;
             let mut eval_counts = vec![0.0; self.bins];
             let mut eval_count_gradient: Vec<DVector<f64>> =
                 vec![DVector::zeros(parameters.len()); self.bins];
@@ -166,7 +200,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
                 }
             }
         }
-        gradient
+        Ok(gradient)
     }
 }
 
@@ -217,7 +251,7 @@ pub fn py_binned_guide_term(
         range,
         &count_sets,
         error_sets.as_deref(),
-    )))
+    )?))
 }
 
 /// A weighted regularization term.
@@ -320,19 +354,19 @@ impl Regularizer<2> {
 }
 
 impl LikelihoodTerm for Regularizer<1> {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>()
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        Ok(self.lambda * parameters.iter().map(|p| p.abs()).sum::<f64>())
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        DVector::from_vec(
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        Ok(DVector::from_vec(
             parameters
                 .iter()
                 .zip(self.weights.iter())
                 .map(|(p, w)| w * p.signum())
                 .collect(),
         )
-        .scale(self.lambda)
+        .scale(self.lambda))
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -345,18 +379,18 @@ impl LikelihoodTerm for Regularizer<1> {
 }
 
 impl LikelihoodTerm for Regularizer<2> {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt()
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        Ok(self.lambda * parameters.iter().map(|p| p.powi(2)).sum::<f64>().sqrt())
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let denom = parameters
             .iter()
             .zip(self.weights.iter())
             .map(|(p, w)| w * p.powi(2))
             .sum::<f64>()
             .sqrt();
-        DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom)
+        Ok(DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom))
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -439,7 +473,6 @@ pub fn py_regularizer(
 #[cfg(test)]
 mod tests {
     use super::Regularizer;
-    use crate::likelihoods::LikelihoodTerm;
     use approx::assert_relative_eq;
 
     #[test]
@@ -447,8 +480,8 @@ mod tests {
         let expr = Regularizer::<1>::new(["alpha", "beta"], 2.0, Some([1.0, 0.5])).unwrap();
         let evaluator = expr.load();
         let values = vec![1.5, -2.0];
-        assert_relative_eq!(evaluator.evaluate(&values), 7.0);
-        let grad = evaluator.evaluate_gradient(&values);
+        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 7.0);
+        let grad = evaluator.evaluate_gradient(&values).unwrap();
         assert_relative_eq!(grad[0], 2.0);
         assert_relative_eq!(grad[1], -1.0);
     }
@@ -458,8 +491,8 @@ mod tests {
         let expr = Regularizer::<2>::new(["x", "y"], 3.0, Some([1.0, 2.0])).unwrap();
         let evaluator = expr.load();
         let values = vec![3.0_f64, 4.0_f64];
-        assert_relative_eq!(evaluator.evaluate(&values), 15.0);
-        let grad = evaluator.evaluate_gradient(&values);
+        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 15.0);
+        let grad = evaluator.evaluate_gradient(&values).unwrap();
         let denom = (1.0 * values[0].powi(2) + 2.0 * values[1].powi(2)).sqrt();
         assert_relative_eq!(grad[0], 3.0 * values[0] / denom);
         assert_relative_eq!(grad[1], 3.0 * values[1] / denom);
@@ -476,8 +509,8 @@ mod tests {
         let expr = Regularizer::<1>::new(["alpha", "beta"], 1.5, None::<Vec<f64>>).unwrap();
         let evaluator = expr.load();
         let values = vec![1.0, -2.0];
-        assert_relative_eq!(evaluator.evaluate(&values), 4.5);
-        let grad = evaluator.evaluate_gradient(&values);
+        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 4.5);
+        let grad = evaluator.evaluate_gradient(&values).unwrap();
         assert_relative_eq!(grad[0], 1.5);
         assert_relative_eq!(grad[1], -1.5);
     }

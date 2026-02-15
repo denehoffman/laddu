@@ -47,7 +47,12 @@ fn floyd_sample(m: usize, n: usize, rng: &mut Rng) -> RapidHashSet<usize> {
 
 impl RngSubsetExtension for Rng {
     fn subset(&mut self, m: usize, n: usize) -> Vec<usize> {
-        assert!(m < n);
+        if m == 0 || n == 0 {
+            return Vec::new();
+        }
+        if m >= n {
+            return (0..n).collect();
+        }
         if m > n / 2 {
             let k = n - m;
             let exclude = floyd_sample(k, n, self);

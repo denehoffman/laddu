@@ -196,13 +196,12 @@ impl CostFunction<MaybeThreadPool, LadduError> for NLL {
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -215,13 +214,12 @@ impl Gradient<MaybeThreadPool, LadduError> for NLL {
     ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
@@ -232,11 +230,11 @@ impl LogDensity<MaybeThreadPool, LadduError> for NLL {
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -337,13 +335,12 @@ impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -356,13 +353,12 @@ impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
     ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
@@ -373,11 +369,11 @@ impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -478,13 +474,12 @@ impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate(self, parameters.into()))
+            LikelihoodTerm::evaluate(self, parameters.into())
         }
     }
 }
@@ -497,13 +492,12 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
     ) -> LadduResult<DVector<f64>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into())))
+            args.thread_pool
+                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(LikelihoodTerm::evaluate_gradient(self, parameters.into()))
+            LikelihoodTerm::evaluate_gradient(self, parameters.into())
         }
     }
 }
@@ -514,11 +508,11 @@ impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
         {
             Ok(-args
                 .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into())))
+                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into()))
+            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
         }
     }
 }
@@ -1728,7 +1722,7 @@ pub mod py_ganesh {
             match self {
                 Self::GradientStatus(gradient_status) => gradient_status.lock().fx,
                 Self::GradientFreeStatus(gradient_free_status) => gradient_free_status.lock().fx,
-                Self::SwarmStatus(swarm_status) => swarm_status.lock().gbest.fx.unwrap(),
+                Self::SwarmStatus(swarm_status) => swarm_status.lock().gbest.fx.unwrap_or(f64::NAN),
             }
         }
         fn message(&self) -> String {
@@ -1853,7 +1847,7 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn fx(&self) -> f64 {
-            self.0.position.fx.unwrap()
+            self.0.position.fx.unwrap_or(f64::NAN)
         }
         /// The best position found by the particle.
         ///
@@ -1873,7 +1867,7 @@ pub mod py_ganesh {
         ///
         #[getter]
         fn fx_best(&self) -> f64 {
-            self.0.best.fx.unwrap()
+            self.0.best.fx.unwrap_or(f64::NAN)
         }
         /// The velocity vector of the particle.
         ///
@@ -2183,18 +2177,17 @@ pub mod py_ganesh {
             _config: &C,
         ) {
             Python::attach(|py| {
-                self.0
-                    .bind(py)
-                    .call_method1(
-                        "observe",
-                        (
-                            current_step,
-                            PyMinimizationStatus(MinimizationStatus::GradientStatus(Arc::new(
-                                Mutex::new(status.clone()),
-                            ))),
-                        ),
-                    )
-                    .expect("Error calling observe");
+                if let Err(err) = self.0.bind(py).call_method1(
+                    "observe",
+                    (
+                        current_step,
+                        PyMinimizationStatus(MinimizationStatus::GradientStatus(Arc::new(
+                            Mutex::new(status.clone()),
+                        ))),
+                    ),
+                ) {
+                    err.print(py);
+                }
             })
         }
     }
@@ -2213,18 +2206,17 @@ pub mod py_ganesh {
             _config: &C,
         ) {
             Python::attach(|py| {
-                self.0
-                    .bind(py)
-                    .call_method1(
-                        "observe",
-                        (
-                            current_step,
-                            PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(Arc::new(
-                                Mutex::new(status.clone()),
-                            ))),
-                        ),
-                    )
-                    .expect("Error calling observe");
+                if let Err(err) = self.0.bind(py).call_method1(
+                    "observe",
+                    (
+                        current_step,
+                        PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(Arc::new(
+                            Mutex::new(status.clone()),
+                        ))),
+                    ),
+                ) {
+                    err.print(py);
+                }
             })
         }
     }
@@ -2242,18 +2234,17 @@ pub mod py_ganesh {
             _config: &C,
         ) {
             Python::attach(|py| {
-                self.0
-                    .bind(py)
-                    .call_method1(
-                        "observe",
-                        (
-                            current_step,
-                            PyMinimizationStatus(MinimizationStatus::SwarmStatus(Arc::new(
-                                Mutex::new(status.clone()),
-                            ))),
-                        ),
-                    )
-                    .expect("Error calling observe");
+                if let Err(err) = self.0.bind(py).call_method1(
+                    "observe",
+                    (
+                        current_step,
+                        PyMinimizationStatus(MinimizationStatus::SwarmStatus(Arc::new(
+                            Mutex::new(status.clone()),
+                        ))),
+                    ),
+                ) {
+                    err.print(py);
+                }
             })
         }
     }
@@ -2295,15 +2286,15 @@ pub mod py_ganesh {
                         wrapped_status.clone(),
                     )),
                 )?;
-                let ret = self
+                let call_result = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status))
-                    .expect("Error calling check_for_termination");
+                    .call_method1("check_for_termination", (current_step, py_status));
                 {
                     let mut guard = wrapped_status.lock();
                     std::mem::swap(status, &mut *guard);
                 }
+                let ret = call_result?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
@@ -2332,15 +2323,15 @@ pub mod py_ganesh {
                         wrapped_status.clone(),
                     )),
                 )?;
-                let ret = self
+                let call_result = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status))
-                    .expect("Error calling check_for_termination");
+                    .call_method1("check_for_termination", (current_step, py_status));
                 {
                     let mut guard = wrapped_status.lock();
                     std::mem::swap(status, &mut *guard);
                 }
+                let ret = call_result?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
@@ -2367,15 +2358,15 @@ pub mod py_ganesh {
                     py,
                     PyMinimizationStatus(MinimizationStatus::SwarmStatus(wrapped_status.clone())),
                 )?;
-                let ret = self
+                let call_result = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status))
-                    .expect("Error calling check_for_termination");
+                    .call_method1("check_for_termination", (current_step, py_status));
                 {
                     let mut guard = wrapped_status.lock();
                     std::mem::swap(status, &mut *guard);
                 }
+                let ret = call_result?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
@@ -2712,16 +2703,15 @@ pub mod py_ganesh {
             _config: &C,
         ) {
             Python::attach(|py| {
-                self.0
-                    .bind(py)
-                    .call_method1(
-                        "observe",
-                        (
-                            current_step,
-                            PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
-                        ),
-                    )
-                    .expect("Error calling observe");
+                if let Err(err) = self.0.bind(py).call_method1(
+                    "observe",
+                    (
+                        current_step,
+                        PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
+                    ),
+                ) {
+                    err.print(py);
+                }
             })
         }
     }
@@ -2799,15 +2789,15 @@ pub mod py_ganesh {
             Python::attach(|py| -> PyResult<ControlFlow<()>> {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(py, PyEnsembleStatus(wrapped_status.clone()))?;
-                let ret = self
+                let call_result = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status))
-                    .expect("Error calling check_for_termination");
+                    .call_method1("check_for_termination", (current_step, py_status));
                 {
                     let mut guard = wrapped_status.lock();
                     std::mem::swap(status, &mut *guard);
                 }
+                let ret = call_result?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
