@@ -196,7 +196,8 @@ impl NLL {
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.activate_strict(&name)?;
-        self.accmc_evaluator.activate_strict(name)
+        self.accmc_evaluator.activate_strict(name)?;
+        Ok(())
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
@@ -206,7 +207,8 @@ impl NLL {
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.activate_many_strict(names)?;
-        self.accmc_evaluator.activate_many_strict(names)
+        self.accmc_evaluator.activate_many_strict(names)?;
+        Ok(())
     }
     /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
@@ -221,7 +223,8 @@ impl NLL {
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.deactivate_strict(&name)?;
-        self.accmc_evaluator.deactivate_strict(name)
+        self.accmc_evaluator.deactivate_strict(name)?;
+        Ok(())
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
@@ -231,7 +234,8 @@ impl NLL {
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.deactivate_many_strict(names)?;
-        self.accmc_evaluator.deactivate_many_strict(names)
+        self.accmc_evaluator.deactivate_many_strict(names)?;
+        Ok(())
     }
     /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
@@ -246,7 +250,8 @@ impl NLL {
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
         self.data_evaluator.isolate_strict(&name)?;
-        self.accmc_evaluator.isolate_strict(name)
+        self.accmc_evaluator.isolate_strict(name)?;
+        Ok(())
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
@@ -256,7 +261,8 @@ impl NLL {
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
         self.data_evaluator.isolate_many_strict(names)?;
-        self.accmc_evaluator.isolate_many_strict(names)
+        self.accmc_evaluator.isolate_many_strict(names)?;
+        Ok(())
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
