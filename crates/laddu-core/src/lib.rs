@@ -533,16 +533,16 @@ pub type LadduResult<T> = Result<T, LadduError>;
 #[derive(Error, Debug)]
 pub enum LadduError {
     /// An alias for [`std::io::Error`].
-    #[error("IO Error: {0}")]
+    #[error(transparent)]
     IOError(#[from] std::io::Error),
     /// An alias for [`parquet::errors::ParquetError`].
-    #[error("Parquet Error: {0}")]
+    #[error(transparent)]
     ParquetError(#[from] parquet::errors::ParquetError),
     /// An alias for [`arrow::error::ArrowError`].
-    #[error("Arrow Error: {0}")]
+    #[error(transparent)]
     ArrowError(#[from] arrow::error::ArrowError),
     /// An alias for [`shellexpand::LookupError`].
-    #[error("Failed to expand path: {0}")]
+    #[error(transparent)]
     LookupError(#[from] shellexpand::LookupError<std::env::VarError>),
     /// An error which occurs when the user tries to register two amplitudes by the same name.
     #[error("An amplitude by the name \"{name}\" is already registered!")]
@@ -566,13 +566,13 @@ pub enum LadduError {
         object: String,
     },
     /// An error returned by the Rust encoder
-    #[error("Encoder error: {0}")]
+    #[error(transparent)]
     EncodeError(#[from] bincode::error::EncodeError),
     /// An error returned by the Rust decoder
-    #[error("Decoder error: {0}")]
+    #[error(transparent)]
     DecodeError(#[from] bincode::error::DecodeError),
     /// An error returned by the Python pickle (de)serializer
-    #[error("Pickle conversion error: {0}")]
+    #[error(transparent)]
     PickleError(#[from] serde_pickle::Error),
     /// An error which occurs when parameter definitions conflict or clash.
     #[error("Parameter \"{name}\" conflict: {reason}")]
@@ -592,11 +592,11 @@ pub enum LadduError {
     },
     /// An error type for [`rayon`] thread pools
     #[cfg(feature = "rayon")]
-    #[error("Error building thread pool: {0}")]
+    #[error(transparent)]
     ThreadPoolError(#[from] rayon::ThreadPoolBuildError),
     /// An error type for [`numpy`]-related conversions
     #[cfg(feature = "numpy")]
-    #[error("Numpy error: {0}")]
+    #[error(transparent)]
     NumpyError(#[from] numpy::FromVecError),
     /// A required column was not found in the input
     #[error("Required column \"{name}\" was not found in the dataset")]
