@@ -32,9 +32,11 @@ impl<'a> Parameters<'a> {
     /// Obtain a parameter value or constant value from the given [`ParameterID`].
     pub fn get(&self, pid: ParameterID) -> f64 {
         match pid {
-            ParameterID::Parameter(index) => self.parameters[index],
-            ParameterID::Constant(index) => self.constants[index],
-            ParameterID::Uninit => panic!("Parameter has not been registered!"),
+            ParameterID::Parameter(index) => {
+                self.parameters.get(index).copied().unwrap_or(f64::NAN)
+            }
+            ParameterID::Constant(index) => self.constants.get(index).copied().unwrap_or(f64::NAN),
+            ParameterID::Uninit => f64::NAN,
         }
     }
 
@@ -769,12 +771,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Parameter has not been registered!")]
-    fn test_uninit_parameter() {
+    fn test_uninit_parameter_returns_nan() {
         let parameters = vec![1.0];
         let constants = vec![1.0];
         let params = Parameters::new(&parameters, &constants);
-        params.get(ParameterID::Uninit);
+        assert!(params.get(ParameterID::Uninit).is_nan());
+        assert!(params.get(ParameterID::Parameter(3)).is_nan());
+        assert!(params.get(ParameterID::Constant(3)).is_nan());
     }
 
     #[test]
