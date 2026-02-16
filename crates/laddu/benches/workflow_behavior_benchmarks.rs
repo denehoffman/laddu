@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+#[cfg(feature = "mpi")]
+use laddu::mpi::{finalize_mpi, get_world, use_mpi};
 use laddu::{
     amplitudes::{
         breit_wigner::BreitWigner,
@@ -21,6 +23,8 @@ use laddu::{
     },
     RngSubsetExtension,
 };
+#[cfg(feature = "mpi")]
+use mpi::traits::Communicator;
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 use rayon::ThreadPoolBuilder;
@@ -546,9 +550,59 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(feature = "mpi")]
+fn kmatrix_nll_mpi_rank_parameterized_benchmarks(c: &mut Criterion) {
+    // Dataset/setup notes:
+    // - Source parquet: benches/bench.parquet
+    // - Full benchmark parquet is used for data and accepted-MC.
+    // - Parameter vectors are deterministic.
+    // - Benchmark IDs include effective MPI rank count from world.size().
+    use_mpi(true);
+    let Some(world) = get_world() else {
+        finalize_mpi();
+        return;
+    };
+    let rank_count = world.size();
+
+    let nll = build_kmatrix_nll();
+    let params = deterministic_parameter_vector(nll.n_free(), -100.0);
+    let mut group = c.benchmark_group("kmatrix_nll_mpi_rank_parameterized");
+    group.bench_with_input(
+        BenchmarkId::new("value_only", rank_count),
+        &rank_count,
+        |b, &_rank_count| {
+            b.iter_batched(
+                || params.clone(),
+                |parameters| black_box(nll.evaluate(&parameters)),
+                BatchSize::SmallInput,
+            )
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("value_and_gradient", rank_count),
+        &rank_count,
+        |b, &_rank_count| {
+            b.iter_batched(
+                || params.clone(),
+                |parameters| {
+                    let value = nll.evaluate(&parameters);
+                    let gradient = nll.evaluate_gradient(&parameters);
+                    black_box((value, gradient))
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+    group.finish();
+    finalize_mpi();
+}
+
+#[cfg(not(feature = "mpi"))]
+fn kmatrix_nll_mpi_rank_parameterized_benchmarks(_c: &mut Criterion) {}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(120);
-    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks, kmatrix_nll_thread_scaling_benchmarks
+    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks, kmatrix_nll_thread_scaling_benchmarks, kmatrix_nll_mpi_rank_parameterized_benchmarks
 }
 criterion_main!(benches);
