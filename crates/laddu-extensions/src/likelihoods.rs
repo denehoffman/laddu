@@ -4048,6 +4048,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
 
+    const LENGTH_MISMATCH_MESSAGE_FRAGMENT: &str = "length mismatch";
+    const AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT: &str = "No registered amplitude";
+
     #[derive(Clone, Serialize, Deserialize)]
     struct ConstantAmplitude {
         name: String,
@@ -4195,6 +4198,11 @@ mod tests {
                 matches!(err, LadduError::LengthMismatch { .. }),
                 "expected LengthMismatch for {label}, got {err:?}"
             );
+            assert!(
+                err.to_string().contains(LENGTH_MISMATCH_MESSAGE_FRAGMENT),
+                "expected message containing \"{LENGTH_MISMATCH_MESSAGE_FRAGMENT}\" for {label}, got {}",
+                err
+            );
         }
     }
 
@@ -4226,6 +4234,12 @@ mod tests {
             assert!(
                 matches!(err, LadduError::AmplitudeNotFoundError { .. }),
                 "expected AmplitudeNotFoundError for {label}, got {err:?}"
+            );
+            assert!(
+                err.to_string()
+                    .contains(AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT),
+                "expected message containing \"{AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT}\" for {label}, got {}",
+                err
             );
         }
     }

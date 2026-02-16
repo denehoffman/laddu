@@ -17,6 +17,18 @@ from laddu import (
 )
 from laddu.experimental import Regularizer
 
+_ERROR_EXPECTATIONS: dict[str, tuple[type[Exception], str]] = {
+    'evaluate short': (ValueError, 'length mismatch'),
+    'evaluate_gradient long': (ValueError, 'length mismatch'),
+    'project_with unknown amplitude': (ValueError, 'No registered amplitude'),
+    'minimize settings wrong type': (TypeError, 'dict'),
+    'mcmc settings wrong type': (TypeError, 'dict'),
+    'minimize malformed line search method': (
+        TypeError,
+        r'Invalid line search method|not-a-valid-method',
+    ),
+}
+
 
 def _dataset_from_weights(weights: list[float]) -> Dataset:
     events = [
@@ -43,40 +55,19 @@ def _simple_scalar_nll() -> NLL:
 def test_python_regression_table_driven_error_paths() -> None:
     nll = _simple_scalar_nll()
     cases = [
-        (
-            'evaluate short',
-            ValueError,
-            'length mismatch',
-            lambda: nll.evaluate([]),
-        ),
-        (
-            'evaluate_gradient long',
-            ValueError,
-            'length mismatch',
-            lambda: nll.evaluate_gradient([1.0, 2.0]),
-        ),
+        ('evaluate short', lambda: nll.evaluate([])),
+        ('evaluate_gradient long', lambda: nll.evaluate_gradient([1.0, 2.0])),
         (
             'project_with unknown amplitude',
-            ValueError,
-            'No registered amplitude',
             lambda: nll.project_with([2.0], 'missing_amplitude'),
         ),
         (
             'minimize settings wrong type',
-            TypeError,
-            'dict',
             lambda: nll.minimize([2.0], settings=cast(Any, [])),
         ),
-        (
-            'mcmc settings wrong type',
-            TypeError,
-            'dict',
-            lambda: nll.mcmc([[2.0]], settings=cast(Any, [])),
-        ),
+        ('mcmc settings wrong type', lambda: nll.mcmc([[2.0]], settings=cast(Any, []))),
         (
             'minimize malformed line search method',
-            TypeError,
-            r'Invalid line search method|not-a-valid-method',
             lambda: nll.minimize(
                 [2.0],
                 settings={
@@ -88,7 +79,8 @@ def test_python_regression_table_driven_error_paths() -> None:
         ),
     ]
 
-    for _label, exc_type, match, fn in cases:
+    for label, fn in cases:
+        exc_type, match = _ERROR_EXPECTATIONS[label]
         with pytest.raises(exc_type, match=match):
             fn()
 
