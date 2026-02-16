@@ -28,12 +28,7 @@ nalgebra = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
 fastrand = { workspace = true }
-fastrand-contrib = { workspace = true }
 rayon = { workspace = true }
-
-[[bench]]
-name = "kmatrix_benchmark"
-harness = false
 
 [[bench]]
 name = "workflow_behavior_benchmarks"

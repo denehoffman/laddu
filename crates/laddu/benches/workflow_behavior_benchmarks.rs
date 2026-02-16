@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu::{
     amplitudes::{
-        breit_wigner::BreitWigner, common::ComplexScalar, common::Scalar, parameter, ylm::Ylm,
+        breit_wigner::BreitWigner,
+        common::ComplexScalar,
+        common::Scalar,
+        kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
+        parameter,
+        ylm::Ylm,
         zlm::Zlm,
     },
     data::{Dataset, DatasetReadOptions},
@@ -12,16 +17,29 @@ use laddu::{
     traits::{LikelihoodTerm, Variable},
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, PolAngle, PolMagnitude, Topology},
+        variables::{Angles, Mass, PolAngle, PolMagnitude, Polarization, Topology},
     },
     RngSubsetExtension,
 };
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
+use rayon::ThreadPoolBuilder;
 
 const BENCH_DATASET_PATH: &str = "benches/bench.parquet";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
+const PARTIAL_WAVE_DATA_SAMPLE_EVENTS: usize = 512;
+const PARTIAL_WAVE_ACCMC_SAMPLE_EVENTS: usize = 512;
+const PARTIAL_WAVE_GENMC_SAMPLE_EVENTS: usize = 512;
+const MOMENT_DATA_SAMPLE_EVENTS: usize = 256;
+const MOMENT_ACCMC_SAMPLE_EVENTS: usize = 256;
+const PARTIAL_WAVE_DATA_SEED: u64 = 11;
+const PARTIAL_WAVE_ACCMC_SEED: u64 = 17;
+const PARTIAL_WAVE_GENMC_SEED: u64 = 23;
+const MOMENT_DATA_SEED: u64 = 41;
+const MOMENT_ACCMC_SEED: u64 = 53;
+const PARTIAL_WAVE_BIN_COUNT: usize = 8;
+const MOMENT_COMPACT_BASIS_MAX_L: usize = 2;
 
 fn read_benchmark_dataset() -> Arc<Dataset> {
     let options = DatasetReadOptions::default()
@@ -45,6 +63,12 @@ fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<D
         })
         .collect();
     Arc::new(Dataset::new_with_metadata(events, dataset.metadata_arc()))
+}
+
+fn deterministic_parameter_vector(n_free: usize, offset: f64) -> Vec<f64> {
+    (0..n_free)
+        .map(|index| offset + (index as f64 + 1.0) * 0.25)
+        .collect()
 }
 
 fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
@@ -89,10 +113,26 @@ fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
 }
 
 fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
+    // Dataset/setup notes:
+    // - Source parquet: benches/bench.parquet
+    // - Subsampled events per dataset: 512 data, 512 accepted-MC, 512 generated-MC
+    // - Seeds are fixed by named constants for reproducible sampling.
     let dataset = read_benchmark_dataset();
-    let ds_data = sample_dataset(&dataset, 11, 512);
-    let ds_accmc = sample_dataset(&dataset, 17, 512);
-    let ds_genmc = sample_dataset(&dataset, 23, 512);
+    let ds_data = sample_dataset(
+        &dataset,
+        PARTIAL_WAVE_DATA_SEED,
+        PARTIAL_WAVE_DATA_SAMPLE_EVENTS,
+    );
+    let ds_accmc = sample_dataset(
+        &dataset,
+        PARTIAL_WAVE_ACCMC_SEED,
+        PARTIAL_WAVE_ACCMC_SAMPLE_EVENTS,
+    );
+    let ds_genmc = sample_dataset(
+        &dataset,
+        PARTIAL_WAVE_GENMC_SEED,
+        PARTIAL_WAVE_GENMC_SAMPLE_EVENTS,
+    );
     let model = build_breit_wigner_partial_wave_model();
     let nll = NLL::new(&model, &ds_data, &ds_accmc).expect("unbinned NLL should build");
     let gen_evaluator = model
@@ -122,10 +162,10 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
 
     let mass = Mass::new(["kshort1", "kshort2"]);
     let data_binned = ds_data
-        .bin_by(mass.clone(), 8, (1.0, 2.0))
+        .bin_by(mass.clone(), PARTIAL_WAVE_BIN_COUNT, (1.0, 2.0))
         .expect("binned data should build");
     let accmc_binned = ds_accmc
-        .bin_by(mass, 8, (1.0, 2.0))
+        .bin_by(mass, PARTIAL_WAVE_BIN_COUNT, (1.0, 2.0))
         .expect("binned accmc should build");
     let target_bin = (0..data_binned.n_bins())
         .find(|&index| {
@@ -159,9 +199,14 @@ fn unpolarized_moment_ilms(l_max: usize) -> Vec<(usize, isize)> {
 }
 
 fn moment_analysis_benchmarks(c: &mut Criterion) {
+    // Dataset/setup notes:
+    // - Source parquet: benches/bench.parquet
+    // - Subsampled events per dataset: 256 data, 256 accepted-MC
+    // - Compact unpolarized basis: l <= 2
+    // - Seeds are fixed by named constants for reproducible sampling.
     let dataset = read_benchmark_dataset();
-    let ds_data = sample_dataset(&dataset, 41, 256);
-    let ds_accmc = sample_dataset(&dataset, 53, 256);
+    let ds_data = sample_dataset(&dataset, MOMENT_DATA_SEED, MOMENT_DATA_SAMPLE_EVENTS);
+    let ds_accmc = sample_dataset(&dataset, MOMENT_ACCMC_SEED, MOMENT_ACCMC_SAMPLE_EVENTS);
     let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
     let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
     let pol_angle = PolAngle::new(topology, "pol_angle");
@@ -180,7 +225,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         .load(&ds_data)
         .expect("measured-moment evaluator should build");
     c.bench_function(
-        "polarization_weighted_ylm_measurement_l2_m1_small_sample",
+        "polarization_weighted_ylm_measurement_reference_mode_small_sample",
         |b| {
             b.iter(|| {
                 let values = measured_ylm.evaluate(&[]);
@@ -194,7 +239,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         },
     );
 
-    let l_max = 2usize;
+    let l_max = MOMENT_COMPACT_BASIS_MAX_L;
     let ilms = unpolarized_moment_ilms(l_max);
     let dim = ilms.len();
     let acc_weights = ds_accmc.weights();
@@ -212,7 +257,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
     }
 
     c.bench_function(
-        "normalization_integral_matrix_assembly_unpolarized_lmax2_small_sample",
+        "normalization_integral_matrix_assembly_unpolarized_compact_basis_small_sample",
         |b| {
             b.iter_batched(
                 || DMatrix::<Complex64>::zeros(dim, dim),
@@ -243,20 +288,166 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         }
         matrix[(row, row)] += Complex64::new(dim as f64, 0.0);
     }
-    c.bench_function("moment_linear_system_solve_unpolarized_lmax2", |b| {
-        b.iter(|| {
-            let lu = matrix.clone().lu();
-            black_box(
-                lu.solve(&rhs)
-                    .expect("benchmark matrix should remain invertible"),
-            )
-        })
-    });
+    c.bench_function(
+        "moment_linear_system_solve_unpolarized_compact_basis",
+        |b| {
+            b.iter(|| {
+                let lu = matrix.clone().lu();
+                black_box(
+                    lu.solve(&rhs)
+                        .expect("benchmark matrix should remain invertible"),
+                )
+            })
+        },
+    );
+}
+
+fn build_kmatrix_nll() -> Box<NLL> {
+    let dataset = read_benchmark_dataset();
+    let ds_data = dataset.clone();
+    let ds_mc = dataset;
+    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
+    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
+    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
+    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
+        .expect("z00+ should construct");
+    let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)
+        .expect("z00- should construct");
+    let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization)
+        .expect("z22+ should construct");
+    let f0p = KopfKMatrixF0::new(
+        "f0+",
+        [
+            [
+                laddu::constant("f0+ c00 re", 0.0),
+                laddu::constant("f0+ c00 im", 0.0),
+            ],
+            [
+                parameter("f0(980)+ re"),
+                laddu::constant("f0(980)+ im_fix", 0.0),
+            ],
+            [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
+            [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
+            [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
+        ],
+        0,
+        &resonance_mass,
+        None,
+    )
+    .expect("f0+ should construct");
+    let a0p = KopfKMatrixA0::new(
+        "a0+",
+        [
+            [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
+            [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
+        ],
+        0,
+        &resonance_mass,
+        None,
+    )
+    .expect("a0+ should construct");
+    let f0n = KopfKMatrixF0::new(
+        "f0-",
+        [
+            [
+                laddu::constant("f0- c00 re", 0.0),
+                laddu::constant("f0- c00 im", 0.0),
+            ],
+            [
+                parameter("f0(980)- re"),
+                laddu::constant("f0(980)- im_fix", 0.0),
+            ],
+            [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
+            [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
+            [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
+        ],
+        0,
+        &resonance_mass,
+        None,
+    )
+    .expect("f0- should construct");
+    let a0n = KopfKMatrixA0::new(
+        "a0-",
+        [
+            [parameter("a0(980)- re"), parameter("a0(980)- im")],
+            [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
+        ],
+        0,
+        &resonance_mass,
+        None,
+    )
+    .expect("a0- should construct");
+    let f2 = KopfKMatrixF2::new(
+        "f2",
+        [
+            [parameter("f2(1270) re"), parameter("f2(1270) im")],
+            [parameter("f2(1525) re"), parameter("f2(1525) im")],
+            [parameter("f2(1850) re"), parameter("f2(1850) im")],
+            [parameter("f2(1910) re"), parameter("f2(1910) im")],
+        ],
+        2,
+        &resonance_mass,
+        None,
+    )
+    .expect("f2 should construct");
+    let a2 = KopfKMatrixA2::new(
+        "a2",
+        [
+            [parameter("a2(1320) re"), parameter("a2(1320) im")],
+            [parameter("a2(1700) re"), parameter("a2(1700) im")],
+        ],
+        2,
+        &resonance_mass,
+        None,
+    )
+    .expect("a2 should construct");
+    let s0p = f0p + a0p;
+    let s0n = f0n + a0n;
+    let d2p = f2 + a2;
+    let pos_re = (&s0p * z00p.real() + &d2p * z22p.real()).norm_sqr();
+    let pos_im = (&s0p * z00p.imag() + &d2p * z22p.imag()).norm_sqr();
+    let neg_re = (&s0n * z00n.real()).norm_sqr();
+    let neg_im = (&s0n * z00n.imag()).norm_sqr();
+    let expr = pos_re + pos_im + neg_re + neg_im;
+    NLL::new(&expr, &ds_data, &ds_mc).expect("k-matrix NLL should build")
+}
+
+fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
+    // Dataset/setup notes:
+    // - Source parquet: benches/bench.parquet
+    // - Full benchmark parquet is used for data and accepted-MC.
+    // - Parameter vectors are deterministic.
+    let nll = build_kmatrix_nll();
+    let params = deterministic_parameter_vector(nll.n_free(), -100.0);
+    let mut group = c.benchmark_group("kmatrix_nll_thread_scaling");
+    let thread_counts: Vec<usize> = (0..)
+        .map(|i| 1usize << i)
+        .take_while(|threads| *threads <= num_cpus::get())
+        .collect();
+    for threads in thread_counts {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("rayon pool should build");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threads),
+            &threads,
+            |b, &_threads| {
+                b.iter_batched(
+                    || params.clone(),
+                    |parameters| pool.install(|| black_box(nll.evaluate(&parameters))),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+    }
+    group.finish();
 }
 
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(120);
-    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks
+    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks, kmatrix_nll_thread_scaling_benchmarks
 }
 criterion_main!(benches);
