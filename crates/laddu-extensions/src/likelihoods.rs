@@ -1847,6 +1847,7 @@ impl PyNLL {
     #[pyo3(signature = (parameters, *, threads=None))]
     #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         #[cfg(feature = "rayon")]
         {
             ThreadPoolBuilder::new()
@@ -1889,6 +1890,7 @@ impl PyNLL {
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         #[cfg(feature = "rayon")]
         {
             let gradient = ThreadPoolBuilder::new()
@@ -1940,6 +1942,7 @@ impl PyNLL {
         mc_evaluator: Option<PyEvaluator>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         #[cfg(feature = "rayon")]
         {
             let projection = ThreadPoolBuilder::new()
@@ -2009,6 +2012,7 @@ impl PyNLL {
         mc_evaluator: Option<PyEvaluator>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         let names = if let Ok(string_arg) = arg.extract::<String>() {
             vec![string_arg]
         } else if let Ok(list_arg) = arg.cast::<PyList>() {
@@ -3625,6 +3629,7 @@ impl PyLikelihoodEvaluator {
     #[pyo3(signature = (parameters, *, threads=None))]
     #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         #[cfg(feature = "rayon")]
         {
             ThreadPoolBuilder::new()
@@ -3668,6 +3673,7 @@ impl PyLikelihoodEvaluator {
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         #[cfg(feature = "rayon")]
         {
             let gradient = ThreadPoolBuilder::new()
@@ -4182,6 +4188,38 @@ mod tests {
         let projection = nll.project_local(&params, None).unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_project_with_validates_length_before_isolation() {
+        let (nll, _) = make_constant_nll();
+        let err = nll
+            .project_with_local::<&str>(&[], &["missing_amplitude"], None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn nll_project_gradient_with_validates_length_before_isolation() {
+        let (nll, _) = make_constant_nll();
+        let err = nll
+            .project_gradient_with_local::<&str>(&[1.0, 2.0], &["missing_amplitude"], None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
