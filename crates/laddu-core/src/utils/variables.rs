@@ -1309,7 +1309,8 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new("proton");
         mass.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(mass.value(&dataset[0]), 1.007);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(mass.value(&event), 1.007);
     }
 
     #[test]
@@ -1317,7 +1318,8 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new(["kshort1", "kshort2"]);
         mass.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(mass.value(&dataset[0]), 1.3743786309153077);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(mass.value(&event), 1.3743786309153077);
     }
 
     #[test]
@@ -1331,11 +1333,8 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            -0.4611175068834238,
-            epsilon = 1e-12
-        );
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(costheta.value(&event), -0.4611175068834238, epsilon = 1e-12);
     }
 
     #[test]
@@ -1352,7 +1351,8 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066, epsilon = 1e-12);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(phi.value(&event), -2.657462587335066, epsilon = 1e-12);
     }
 
     #[test]
@@ -1369,11 +1369,8 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            0.09198832278031577,
-            epsilon = 1e-12
-        );
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(costheta.value(&event), 0.09198832278031577, epsilon = 1e-12);
     }
 
     #[test]
@@ -1381,7 +1378,8 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907, epsilon = 1e-12);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(phi.value(&event), -2.713913199133907, epsilon = 1e-12);
     }
 
     #[test]
@@ -1390,13 +1388,14 @@ mod tests {
         let mut angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         angles.costheta.bind(dataset.metadata()).unwrap();
         angles.phi.bind(dataset.metadata()).unwrap();
+        let event = dataset.event(0).expect("event should exist");
         assert_relative_eq!(
-            angles.costheta.value(&dataset[0]),
+            angles.costheta.value(&event),
             -0.4611175068834238,
             epsilon = 1e-12
         );
         assert_relative_eq!(
-            angles.phi.value(&dataset[0]),
+            angles.phi.value(&event),
             -2.657462587335066,
             epsilon = 1e-12
         );
@@ -1416,7 +1415,8 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
         pol_angle.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.935929887818673);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(pol_angle.value(&event), 1.935929887818673);
     }
 
     #[test]
@@ -1433,7 +1433,8 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
         pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(pol_magnitude.value(&dataset[0]), 0.38562805);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(pol_magnitude.value(&event), 0.38562805);
     }
 
     #[test]
@@ -1451,8 +1452,9 @@ mod tests {
         let mut polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         polarization.pol_angle.bind(dataset.metadata()).unwrap();
         polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.935929887818673);
-        assert_relative_eq!(polarization.pol_magnitude.value(&dataset[0]), 0.38562805);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(polarization.pol_angle.value(&event), 1.935929887818673);
+        assert_relative_eq!(polarization.pol_magnitude.value(&event), 0.38562805);
     }
 
     #[test]
@@ -1474,23 +1476,23 @@ mod tests {
         for variable in [&mut s, &mut t, &mut u] {
             variable.bind(metadata).unwrap();
         }
-        let event = &dataset[0];
-        assert_relative_eq!(s.value(event), 18.504011052120063);
-        assert_relative_eq!(t.value(event), -0.19222859969898076);
-        assert_relative_eq!(u.value(event), -14.404198931464428);
+        let event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(s.value(&event), 18.504011052120063);
+        assert_relative_eq!(t.value(&event), -0.19222859969898076);
+        assert_relative_eq!(u.value(&event), -14.404198931464428);
         let mut direct_topology = reaction_topology();
         direct_topology.bind(metadata).unwrap();
-        let k2 = direct_topology.k2(event);
-        let k3 = direct_topology.k3(event);
-        let k4 = direct_topology.k4(event);
-        assert_relative_eq!(s.value(event), (k3 + k4).mag2());
-        assert_relative_eq!(t.value(event), (k2 - k4).mag2());
-        assert_relative_eq!(u.value(event), (k3 - k2).mag2());
+        let k2 = direct_topology.k2(&event);
+        let k3 = direct_topology.k3(&event);
+        let k4 = direct_topology.k4(&event);
+        assert_relative_eq!(s.value(&event), (k3 + k4).mag2());
+        assert_relative_eq!(t.value(&event), (k2 - k4).mag2());
+        assert_relative_eq!(u.value(&event), (k3 - k2).mag2());
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
         let m2_res = test_event().get_p4_sum([2, 3]).m2();
         assert_relative_eq!(
-            s.value(event) + t.value(event) + u.value(event) - m2_beam - m2_recoil - m2_res,
+            s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
             1.00,
             epsilon = 1e-2
         );

@@ -490,24 +490,46 @@ impl Dataset {
     }
 
     /// Borrow event data together with metadata-based helpers as an [`Event`] view.
-    pub fn named_event(&self, index: usize) -> Event {
-        self.events[index].clone()
+    pub fn named_event(&self, index: usize) -> LadduResult<Event> {
+        self.event(index)
+    }
+
+    /// Retrieve a single event by index, returning `None` when out of range.
+    pub fn get_event(&self, index: usize) -> Option<Event> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                let total = self.n_events();
+                if index >= total {
+                    return None;
+                }
+                return Some(fetch_event_mpi(self, index, &world, total));
+            }
+        }
+
+        self.events.get(index).cloned()
+    }
+
+    /// Retrieve a single event by index.
+    pub fn event(&self, index: usize) -> LadduResult<Event> {
+        self.get_event(index).ok_or_else(|| {
+            LadduError::Custom(format!(
+                "Dataset index out of bounds: index {index}, length {}",
+                self.n_events()
+            ))
+        })
     }
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
     pub fn p4_by_name(&self, event_index: usize, name: &str) -> Option<Vec4> {
-        self.events
-            .get(event_index)
-            .and_then(|event| event.p4(name))
+        self.get_event(event_index).and_then(|event| event.p4(name))
     }
 
     /// Retrieve an auxiliary scalar by name for the event at `event_index`.
     pub fn aux_by_name(&self, event_index: usize, name: &str) -> Option<f64> {
         let idx = self.aux_index(name)?;
-        self.events
-            .get(event_index)
-            .and_then(|event| event.aux.get(idx))
-            .copied()
+        self.get_event(event_index)
+            .and_then(|event| event.aux.get(idx).copied())
     }
 
     /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
@@ -516,12 +538,11 @@ impl Dataset {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
-    /// as if it were any other [`Vec`]:
+    /// that have `mpi`-feature-gated versions. Most users should use [`Dataset::event`] instead:
     ///
     /// ```ignore
     /// let ds: Dataset = Dataset::new(events);
-    /// let event_0 = ds[0];
+    /// let event_0 = ds.event(0)?;
     /// ```
     pub fn index_local(&self, index: usize) -> &Event {
         &self.events[index]
@@ -539,44 +560,6 @@ impl Dataset {
                 events[range.clone()].iter().cloned().collect()
             })
             .collect()
-    }
-
-    /// Get a reference to the [`EventData`] at the given index in the [`Dataset`]
-    /// (MPI-compatible version).
-    ///
-    /// # Notes
-    ///
-    /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
-    /// as if it were any other [`Vec`]:
-    ///
-    /// ```ignore
-    /// let ds: Dataset = Dataset::new(events);
-    /// let event_0 = ds[0];
-    /// ```
-    #[cfg(feature = "mpi")]
-    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
-        let total = self.n_events();
-        // `fetch_event_mpi` must return an owned `Event` because the event may be reconstructed
-        // from bytes received from another rank. This method, however, must return `&Event` to
-        // satisfy `Index<usize>`, so the owned value is leaked to extend its lifetime.
-        // A.O004.02 replaces this leaked ownership path with a lifetime-safe alternative.
-        let event = fetch_event_mpi(self, index, world, total);
-        Box::leak(Box::new(event))
-    }
-}
-
-impl Index<usize> for Dataset {
-    type Output = Event;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                return self.index_mpi(index, &world);
-            }
-        }
-        self.index_local(index)
     }
 }
 
@@ -2482,8 +2465,6 @@ mod tests {
     use approx::{assert_relative_eq, assert_relative_ne};
     use fastrand;
     use serde::{Deserialize, Serialize};
-    #[cfg(feature = "mpi")]
-    use std::collections::HashSet;
     use std::{
         env, fs,
         path::{Path, PathBuf},
@@ -2554,9 +2535,13 @@ mod tests {
     ) {
         assert_eq!(left.n_events(), right.n_events());
         for idx in 0..left.n_events() {
-            let levent = &left[idx];
-            let revent = &right[idx];
-            assert_events_close(levent, revent, p4_names, aux_names);
+            let Ok(levent) = left.event(idx) else {
+                panic!("left dataset missing event at index {idx}");
+            };
+            let Ok(revent) = right.event(idx) else {
+                panic!("right dataset missing event at index {idx}");
+            };
+            assert_events_close(&levent, &revent, p4_names, aux_names);
         }
     }
 
@@ -2587,7 +2572,7 @@ mod tests {
             "data_f32.parquet",
             DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
         );
-        let event = dataset.named_event(0);
+        let event = dataset.named_event(0).expect("event should exist");
         let alias_vec = event.p4("resonance").expect("alias vector");
         let expected = event.get_p4_sum(["kshort1", "kshort2"]);
         assert_relative_eq!(alias_vec.px(), expected.px(), epsilon = 1e-9);
@@ -2696,8 +2681,14 @@ mod tests {
             metadata.clone(),
         );
         let dataset_sum = &dataset + &dataset2;
-        assert_eq!(dataset_sum[0].weight, dataset[0].weight);
-        assert_eq!(dataset_sum[1].weight, dataset2[0].weight);
+        assert_eq!(
+            dataset_sum.event(0).expect("event should exist").weight,
+            dataset.event(0).expect("event should exist").weight
+        );
+        assert_eq!(
+            dataset_sum.event(1).expect("event should exist").weight,
+            dataset2.event(0).expect("event should exist").weight
+        );
     }
 
     #[test]
@@ -2751,14 +2742,20 @@ mod tests {
 
         let filtered = dataset.filter(&expression).unwrap();
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(mass.value(&filtered[0]), 0.5);
+        assert_relative_eq!(
+            mass.value(&filtered.event(0).expect("event should exist")),
+            0.5
+        );
     }
 
     #[test]
     fn test_dataset_boost() {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of(&["proton", "kshort1", "kshort2"]);
-        let p4_sum = dataset_boosted[0].get_p4_sum(["proton", "kshort1", "kshort2"]);
+        let p4_sum = dataset_boosted
+            .event(0)
+            .expect("event should exist")
+            .get_p4_sum(["proton", "kshort1", "kshort2"]);
         assert_relative_eq!(p4_sum.px(), 0.0);
         assert_relative_eq!(p4_sum.py(), 0.0);
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
@@ -2767,18 +2764,21 @@ mod tests {
     #[test]
     fn test_named_event_view() {
         let dataset = test_dataset();
-        let view = dataset.named_event(0);
-
-        assert_relative_eq!(view.weight(), dataset[0].weight);
+        let view = dataset.named_event(0).expect("event should exist");
+        let dataset_event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(view.weight(), dataset_event.weight);
         let beam = view.p4("beam").expect("beam p4");
-        assert_relative_eq!(beam.px(), dataset[0].p4s[0].px());
-        assert_relative_eq!(beam.e(), dataset[0].p4s[0].e());
+        assert_relative_eq!(beam.px(), dataset_event.p4s[0].px());
+        assert_relative_eq!(beam.e(), dataset_event.p4s[0].e());
 
         let summed = view.get_p4_sum(["kshort1", "kshort2"]);
-        assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
+        assert_relative_eq!(
+            summed.e(),
+            dataset_event.p4s[2].e() + dataset_event.p4s[3].e()
+        );
 
         let aux_angle = view.aux().get("pol_angle").copied().expect("pol angle");
-        assert_relative_eq!(aux_angle, dataset[0].aux[1]);
+        assert_relative_eq!(aux_angle, dataset_event.aux[1]);
 
         let metadata = dataset.metadata_arc();
         let boosted = view.boost_to_rest_frame_of(["proton", "kshort1", "kshort2"]);
@@ -2816,10 +2816,13 @@ mod tests {
         let dataset = test_dataset();
         let proton = dataset.p4_by_name(0, "proton").expect("proton p4");
         let proton_idx = dataset.metadata().p4_index("proton").unwrap();
-        assert_relative_eq!(proton.e(), dataset[0].p4s[proton_idx].e());
+        assert_relative_eq!(
+            proton.e(),
+            dataset.event(0).expect("event should exist").p4s[proton_idx].e()
+        );
         assert!(dataset.p4_by_name(0, "unknown").is_none());
         let angle = dataset.aux_by_name(0, "pol_angle").expect("pol_angle");
-        assert_relative_eq!(angle, dataset[0].aux[1]);
+        assert_relative_eq!(angle, dataset.event(0).expect("event should exist").aux[1]);
         assert!(dataset.aux_by_name(0, "missing").is_none());
     }
 
@@ -2880,11 +2883,17 @@ mod tests {
             ],
             metadata,
         );
-        assert_relative_ne!(dataset[0].weight, dataset[1].weight);
+        assert_relative_ne!(
+            dataset.event(0).expect("event should exist").weight,
+            dataset.event(1).expect("event should exist").weight
+        );
 
         let bootstrapped = dataset.bootstrap(43);
         assert_eq!(bootstrapped.n_events(), dataset.n_events());
-        assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
+        assert_relative_eq!(
+            bootstrapped.event(0).expect("event should exist").weight,
+            bootstrapped.event(1).expect("event should exist").weight
+        );
 
         // Test empty dataset bootstrap
         let empty_dataset = Dataset::new(Vec::new());
@@ -2900,7 +2909,10 @@ mod tests {
             weights.push(event.weight());
         }
         assert_eq!(weights.len(), dataset.n_events());
-        assert_relative_eq!(weights[0], dataset[0].weight);
+        assert_relative_eq!(
+            weights[0],
+            dataset.event(0).expect("event should exist").weight
+        );
     }
 
     #[test]
@@ -2912,33 +2924,36 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_index_local_reuses_event_reference() {
+    fn test_dataset_get_event_local_reuses_underlying_data() {
         let dataset = test_dataset();
-        let first = dataset.index_local(0) as *const Event;
-        let second = dataset.index_local(0) as *const Event;
-        assert_eq!(first, second);
+        let first = dataset.get_event(0).expect("event should exist");
+        let second = dataset.get_event(0).expect("event should exist");
+        assert!(Arc::ptr_eq(&first.data_arc(), &second.data_arc()));
+    }
+
+    #[test]
+    fn test_dataset_event_out_of_bounds_is_error() {
+        let dataset = test_dataset();
+        assert!(dataset.event(99).is_err());
+        assert!(dataset.get_event(99).is_none());
     }
 
     #[cfg(feature = "mpi")]
     #[test]
-    fn test_dataset_index_mpi_repeated_access_allocates_new_event_refs() {
+    fn test_dataset_event_mpi_repeated_access_is_stable() {
         use_mpi(true);
-        let Some(world) = get_world() else {
+        if get_world().is_none() {
             finalize_mpi();
             return;
-        };
+        }
 
         let dataset = test_dataset();
-        let mut refs = HashSet::new();
         for _ in 0..32 {
-            refs.insert(dataset.index_mpi(0, &world) as *const Event as usize);
+            let first = dataset.event(0).expect("event should exist");
+            let second = dataset.event(0).expect("event should exist");
+            assert_relative_eq!(first.weight(), second.weight());
         }
         finalize_mpi();
-
-        assert!(
-            refs.len() > 1,
-            "MPI indexing should materialize owned events rather than borrowing local storage"
-        );
     }
 
     #[test]

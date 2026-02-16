@@ -343,7 +343,7 @@ impl PyDatasetIter {
         if self.index >= self.total {
             return None;
         }
-        let event = self.dataset[self.index].clone();
+        let event = self.dataset.get_event(self.index)?;
         self.index += 1;
         Some(PyEvent {
             event,
@@ -544,8 +544,12 @@ impl PyDataset {
         if let Ok(value) = self.evaluate(py, index.clone()) {
             value.into_bound_py_any(py)
         } else if let Ok(index) = index.extract::<usize>() {
+            let event = self
+                .0
+                .get_event(index)
+                .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
             PyEvent {
-                event: self.0[index].clone(),
+                event,
                 has_metadata: true,
             }
             .into_bound_py_any(py)
