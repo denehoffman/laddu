@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any, cast
 
 import pytest
 from laddu import (
@@ -29,6 +30,67 @@ def _dataset_from_weights(weights: list[float]) -> Dataset:
         for weight in weights
     ]
     return Dataset(events, p4_names=['beam'], aux_names=[])
+
+
+def _simple_scalar_nll() -> NLL:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    return NLL(expr, data, mc)
+
+
+def test_python_regression_table_driven_error_paths() -> None:
+    nll = _simple_scalar_nll()
+    cases = [
+        (
+            'evaluate short',
+            ValueError,
+            'length mismatch',
+            lambda: nll.evaluate([]),
+        ),
+        (
+            'evaluate_gradient long',
+            ValueError,
+            'length mismatch',
+            lambda: nll.evaluate_gradient([1.0, 2.0]),
+        ),
+        (
+            'project_with unknown amplitude',
+            ValueError,
+            'No registered amplitude',
+            lambda: nll.project_with([2.0], 'missing_amplitude'),
+        ),
+        (
+            'minimize settings wrong type',
+            TypeError,
+            'dict',
+            lambda: nll.minimize([2.0], settings=cast(Any, [])),
+        ),
+        (
+            'mcmc settings wrong type',
+            TypeError,
+            'dict',
+            lambda: nll.mcmc([[2.0]], settings=cast(Any, [])),
+        ),
+        (
+            'minimize malformed line search method',
+            TypeError,
+            r'Invalid line search method|not-a-valid-method',
+            lambda: nll.minimize(
+                [2.0],
+                settings={
+                    'line_search': {
+                        'method': 'not-a-valid-method',
+                    },
+                },
+            ),
+        ),
+    ]
+
+    for _label, exc_type, match, fn in cases:
+        with pytest.raises(exc_type, match=match):
+            fn()
 
 
 def test_regularizer_l1_matches_rust_implementation() -> None:

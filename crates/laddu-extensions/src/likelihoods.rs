@@ -4229,13 +4229,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "A.O003.01 follow-up: malformed settings cases require python-feature parser harness"]
-    fn table_driven_malformed_settings_errors_todo() {
-        // Placeholder to anchor A.O003.01 malformed-settings coverage.
-        // Implement with `#[cfg(feature = \"python\")]` parser-entry tests.
-    }
-
-    #[test]
     fn likelihood_expression_evaluates_scalar_sum() {
         let alpha = LikelihoodScalar::new("alpha");
         let beta = LikelihoodScalar::new("beta");
