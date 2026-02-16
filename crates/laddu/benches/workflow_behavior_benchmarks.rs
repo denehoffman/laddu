@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 #[cfg(feature = "mpi")]
 use laddu::mpi::{finalize_mpi, get_world, use_mpi};
 use laddu::{
@@ -143,14 +145,19 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
         .load(&ds_genmc)
         .expect("generated-mc evaluator should build");
     let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
+    let n_data_events = ds_data.n_events() as u64;
+    let n_gen_events = ds_genmc.n_events() as u64;
 
     let mut group = c.benchmark_group("breit_wigner_partial_wave_unbinned");
+    group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("nll_value_small_sample", |b| {
         b.iter(|| black_box(nll.evaluate(black_box(&params))))
     });
+    group.throughput(Throughput::Elements(1));
     group.bench_function("nll_gradient_small_sample", |b| {
         b.iter(|| black_box(nll.evaluate_gradient(black_box(&params))))
     });
+    group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("nll_value_and_gradient_small_sample", |b| {
         b.iter(|| {
             let value = nll.evaluate(black_box(&params));
@@ -158,17 +165,21 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
             black_box((value, gradient))
         })
     });
+    group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("projection_total_small_sample", |b| {
         b.iter(|| black_box(nll.project(black_box(&params), None)))
     });
+    group.throughput(Throughput::Elements(1));
     group.bench_function("projection_total_with_gradient_small_sample", |b| {
         b.iter(|| black_box(nll.project_gradient(black_box(&params), None)))
     });
+    group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("projection_component_s_wave_small_sample", |b| {
         b.iter(|| {
             black_box(nll.project_with(black_box(&params), &["S0+", "Z00+", "f0(1500)"], None))
         })
     });
+    group.throughput(Throughput::Elements(1));
     group.bench_function(
         "projection_component_s_wave_with_gradient_small_sample",
         |b| {
@@ -181,9 +192,11 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
             })
         },
     );
+    group.throughput(Throughput::Elements(n_gen_events));
     group.bench_function("projection_total_generated_mc_small_sample", |b| {
         b.iter(|| black_box(nll.project(black_box(&params), Some(gen_evaluator.clone()))))
     });
+    group.throughput(Throughput::Elements(1));
     group.bench_function(
         "projection_total_generated_mc_with_gradient_small_sample",
         |b| {
@@ -217,16 +230,24 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     )
     .expect("single-bin NLL should build");
 
-    c.bench_function("single_bin_nll_value_small_sample", |b| {
+    let mut single_bin_group = c.benchmark_group("breit_wigner_partial_wave_single_bin");
+    let n_bin_events = data_binned
+        .get(target_bin)
+        .expect("bin should exist")
+        .n_events() as u64;
+    single_bin_group.throughput(Throughput::Elements(n_bin_events));
+    single_bin_group.bench_function("single_bin_nll_value_small_sample", |b| {
         b.iter(|| black_box(bin_nll.evaluate(black_box(&params))))
     });
-    c.bench_function("single_bin_nll_value_and_gradient_small_sample", |b| {
+    single_bin_group.throughput(Throughput::Elements(n_bin_events));
+    single_bin_group.bench_function("single_bin_nll_value_and_gradient_small_sample", |b| {
         b.iter(|| {
             let value = bin_nll.evaluate(black_box(&params));
             let gradient = bin_nll.evaluate_gradient(black_box(&params));
             black_box((value, gradient))
         })
     });
+    single_bin_group.finish();
 }
 
 fn unpolarized_moment_ilms(l_max: usize) -> Vec<(usize, isize)> {
@@ -265,7 +286,10 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         .conj()
         .load(&ds_data)
         .expect("measured-moment evaluator should build");
-    c.bench_function(
+    let mut group = c.benchmark_group("moment_analysis_unpolarized_compact_basis");
+    let n_moment_events = ds_data.n_events() as u64;
+    group.throughput(Throughput::Elements(n_moment_events));
+    group.bench_function(
         "polarization_weighted_ylm_measurement_reference_mode_small_sample",
         |b| {
             b.iter(|| {
@@ -279,7 +303,8 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
             })
         },
     );
-    c.bench_function(
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
         "polarization_weighted_ylm_measurement_value_and_gradient_small_sample",
         |b| {
             b.iter(|| {
@@ -317,7 +342,9 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         }
     }
 
-    c.bench_function(
+    let normalization_elements = (dim * dim) as u64;
+    group.throughput(Throughput::Elements(normalization_elements));
+    group.bench_function(
         "normalization_integral_matrix_assembly_unpolarized_compact_basis_small_sample",
         |b| {
             b.iter_batched(
@@ -339,7 +366,8 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
             )
         },
     );
-    c.bench_function(
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
         "normalization_integral_matrix_value_and_gradient_assembly_unpolarized_compact_basis_small_sample",
         |b| {
             b.iter_batched(
@@ -376,7 +404,8 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         }
         matrix[(row, row)] += Complex64::new(dim as f64, 0.0);
     }
-    c.bench_function(
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
         "moment_linear_system_solve_unpolarized_compact_basis",
         |b| {
             b.iter(|| {
@@ -388,6 +417,7 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
             })
         },
     );
+    group.finish();
 }
 
 fn build_kmatrix_nll() -> Box<NLL> {
@@ -508,6 +538,7 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
     // - Parameter vectors are deterministic.
     let nll = build_kmatrix_nll();
     let params = deterministic_parameter_vector(nll.n_free(), -100.0);
+    let n_events = nll.data_evaluator.dataset.n_events() as u64;
     let mut group = c.benchmark_group("kmatrix_nll_thread_scaling");
     let thread_counts: Vec<usize> = (0..)
         .map(|i| 1usize << i)
@@ -518,6 +549,7 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
             .num_threads(threads)
             .build()
             .expect("rayon pool should build");
+        group.throughput(Throughput::Elements(n_events));
         group.bench_with_input(
             BenchmarkId::new("value_only", threads),
             &threads,
@@ -529,6 +561,7 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
                 )
             },
         );
+        group.throughput(Throughput::Elements(n_events));
         group.bench_with_input(
             BenchmarkId::new("value_and_gradient", threads),
             &threads,
@@ -566,7 +599,9 @@ fn kmatrix_nll_mpi_rank_parameterized_benchmarks(c: &mut Criterion) {
 
     let nll = build_kmatrix_nll();
     let params = deterministic_parameter_vector(nll.n_free(), -100.0);
+    let n_events = nll.data_evaluator.dataset.n_events() as u64;
     let mut group = c.benchmark_group("kmatrix_nll_mpi_rank_parameterized");
+    group.throughput(Throughput::Elements(n_events));
     group.bench_with_input(
         BenchmarkId::new("value_only", rank_count),
         &rank_count,
@@ -578,6 +613,7 @@ fn kmatrix_nll_mpi_rank_parameterized_benchmarks(c: &mut Criterion) {
             )
         },
     );
+    group.throughput(Throughput::Elements(n_events));
     group.bench_with_input(
         BenchmarkId::new("value_and_gradient", rank_count),
         &rank_count,
