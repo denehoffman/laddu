@@ -65,6 +65,14 @@ fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduRe
     Ok(())
 }
 
+#[cfg(feature = "python")]
+fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> LadduResult<()> {
+    for walker in walkers {
+        validate_free_parameter_len(walker.len(), expected_len)?;
+    }
+    Ok(())
+}
+
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
@@ -291,7 +299,12 @@ impl NLL {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
-    pub fn project_local(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
+    pub fn project_local(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
@@ -317,7 +330,7 @@ impl NLL {
             .zip(mc_dataset.events.iter())
             .map(|(l, e)| e.weight * l.re / n_mc)
             .collect();
-        output
+        Ok(output)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -334,20 +347,20 @@ impl NLL {
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Vec<f64> {
+    ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projection = self.project_local(parameters, mc_evaluator);
+        let local_projection = self.project_local(parameters, mc_evaluator)?;
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
-        buffer
+        Ok(buffer)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -363,7 +376,11 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
+    pub fn project(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
@@ -385,7 +402,8 @@ impl NLL {
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         let (mc_dataset, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
@@ -402,7 +420,7 @@ impl NLL {
         let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         {
-            (
+            Ok((
                 result
                     .par_iter()
                     .zip(mc_dataset.events.par_iter())
@@ -413,11 +431,11 @@ impl NLL {
                     .zip(mc_dataset.events.par_iter())
                     .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
-            )
+            ))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            (
+            Ok((
                 result
                     .iter()
                     .zip(mc_dataset.events.iter())
@@ -428,7 +446,7 @@ impl NLL {
                     .zip(mc_dataset.events.iter())
                     .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
-            )
+            ))
         }
     }
 
@@ -446,14 +464,14 @@ impl NLL {
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
         let (local_projection, local_gradient_projection) =
-            self.project_gradient_local(parameters, mc_evaluator);
+            self.project_gradient_local(parameters, mc_evaluator)?;
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
@@ -477,7 +495,7 @@ impl NLL {
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect();
-        (projection_result, gradient_projection_result)
+        Ok((projection_result, gradient_projection_result))
     }
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
@@ -496,7 +514,7 @@ impl NLL {
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
@@ -521,6 +539,7 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many_strict(names)?;
@@ -645,6 +664,7 @@ impl NLL {
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = &mc_evaluator {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many_strict(names)?;
@@ -1922,27 +1942,23 @@ impl PyNLL {
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    })
-                    .as_slice(),
-            ))
+            let projection = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| {
+                    self.0
+                        .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
+                })
+                .map_err(PyErr::from)?;
+            Ok(PyArray1::from_slice(py, projection.as_slice()))
         }
         #[cfg(not(feature = "rayon"))]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0
-                    .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    .as_slice(),
-            ))
+            let projection = self
+                .0
+                .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))?;
+            Ok(PyArray1::from_slice(py, projection.as_slice()))
         }
     }
 
@@ -2222,6 +2238,7 @@ impl PyNLL {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
+        validate_free_parameter_len(p0.len(), self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -2348,6 +2365,7 @@ impl PyNLL {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
+        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -2587,6 +2605,7 @@ impl PyStochasticNLL {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
+        validate_free_parameter_len(p0.len(), self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -2713,6 +2732,7 @@ impl PyStochasticNLL {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
+        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -3783,6 +3803,7 @@ impl PyLikelihoodEvaluator {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
+        validate_free_parameter_len(p0.len(), self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -3905,6 +3926,7 @@ impl PyLikelihoodEvaluator {
         debug: bool,
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
+        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
         let full_settings = PyDict::new(py);
         if let Some(bounds) = bounds {
             full_settings.set_item("bounds", bounds)?;
@@ -4157,7 +4179,7 @@ mod tests {
     #[test]
     fn nll_project_returns_weighted_intensity() {
         let (nll, params) = make_constant_nll();
-        let projection = nll.project_local(&params, None);
+        let projection = nll.project_local(&params, None).unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
     }
