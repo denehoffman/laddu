@@ -1855,11 +1855,11 @@ impl PyNLL {
                 .build()
                 .map_err(LadduError::from)?
                 .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))
-                .map_err(Into::into)
+                .map_err(PyErr::from)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters).map_err(Into::into)
+            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters).map_err(PyErr::from)
         }
     }
     /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
@@ -2025,34 +2025,28 @@ impl PyNLL {
         };
         #[cfg(feature = "rayon")]
         {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0.project_with(
-                            &parameters,
-                            &names,
-                            mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                        )
-                    })?
-                    .as_slice(),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0
-                    .project_with(
+            let projection = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| {
+                    self.0.project_with(
                         &parameters,
                         &names,
                         mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                    )?
-                    .as_slice(),
-            ))
+                    )
+                })
+                .map_err(PyErr::from)?;
+            Ok(PyArray1::from_slice(py, projection.as_slice()))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let projection = self.0.project_with(
+                &parameters,
+                &names,
+                mc_evaluator.map(|pyeval| pyeval.0.clone()),
+            )?;
+            Ok(PyArray1::from_slice(py, projection.as_slice()))
         }
     }
 
@@ -3637,11 +3631,11 @@ impl PyLikelihoodEvaluator {
                 .build()
                 .map_err(LadduError::from)?
                 .install(|| self.0.evaluate(&parameters))
-                .map_err(Into::into)
+                .map_err(PyErr::from)
         }
         #[cfg(not(feature = "rayon"))]
         {
-            self.0.evaluate(&parameters).map_err(Into::into)
+            self.0.evaluate(&parameters).map_err(PyErr::from)
         }
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
@@ -4188,6 +4182,29 @@ mod tests {
         let projection = nll.project_local(&params, None).unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_project_reports_structured_length_error() {
+        let (nll, _) = make_constant_nll();
+        let err = nll.project(&[], None).unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn nll_project_with_reports_structured_missing_amplitude_error() {
+        let (nll, params) = make_constant_nll();
+        let err = nll
+            .project_with_local::<&str>(&params, &["missing_amplitude"], None)
+            .unwrap_err();
+        assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
     }
 
     #[test]

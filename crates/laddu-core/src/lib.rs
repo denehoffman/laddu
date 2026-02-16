@@ -689,11 +689,11 @@ impl From<LadduError> for PyErr {
             | LadduError::DuplicateName { .. }
             | LadduError::ParameterConflict { .. }
             | LadduError::UnregisteredParameter { .. } => PyValueError::new_err(err_string),
-            LadduError::Custom(_) => PyException::new_err(err_string),
+            LadduError::Custom(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "rayon")]
-            LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
+            LadduError::ThreadPoolError(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "numpy")]
-            LadduError::NumpyError(_) => PyException::new_err(err_string),
+            LadduError::NumpyError(_) => PyValueError::new_err(err_string),
         }
     }
 }
