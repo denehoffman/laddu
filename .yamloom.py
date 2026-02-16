@@ -488,7 +488,8 @@ benchmark_workflow = Workflow(
                 script(
                     'mkdir -p target/criterion/summary',
                     'cargo criterion --bench workflow_behavior_benchmarks --message-format=json > target/criterion/messages.jsonl',
-                    'python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages.jsonl --json-out target/criterion/summary/benchmark_summary.json --md-out target/criterion/summary/benchmark_summary.md',
+                    'if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then POLICY=warn; else POLICY=fail; fi',
+                    'python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages.jsonl --json-out target/criterion/summary/benchmark_summary.json --md-out target/criterion/summary/benchmark_summary.md --policy "$POLICY" --regression-threshold-pct 3.0 --improvement-threshold-pct 3.0',
                 ),
                 UploadArtifact(
                     path='target/criterion/messages.jsonl',
