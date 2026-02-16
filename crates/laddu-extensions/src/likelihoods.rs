@@ -14,7 +14,7 @@ use laddu_core::{
     data::Dataset,
     parameter_manager::ParameterManager,
     resources::Parameters,
-    LadduError, LadduResult,
+    validate_free_parameter_len, LadduError, LadduResult,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -48,21 +48,6 @@ use pyo3::{
 use rayon::prelude::*;
 #[cfg(all(feature = "python", feature = "rayon"))]
 use rayon::ThreadPoolBuilder;
-
-fn validate_free_parameter_len(
-    parameters_len: usize,
-    expected_len: usize,
-    context: &str,
-) -> LadduResult<()> {
-    if parameters_len != expected_len {
-        return Err(LadduError::LengthMismatch {
-            context: context.to_string(),
-            expected: expected_len,
-            actual: parameters_len,
-        });
-    }
-    Ok(())
-}
 
 fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduResult<()> {
     if n_events == 0 {
@@ -1094,7 +1079,7 @@ impl LikelihoodTerm for NLL {
         &self.parameter_manager
     }
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        validate_free_parameter_len(parameters.len(), self.n_free(), "NLL free parameters")?;
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
@@ -1104,7 +1089,7 @@ impl LikelihoodTerm for NLL {
         Ok(self.evaluate_local(parameters))
     }
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        validate_free_parameter_len(parameters.len(), self.n_free(), "NLL free parameters")?;
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
@@ -1138,11 +1123,7 @@ impl LikelihoodTerm for StochasticNLL {
         self.nll.parameter_manager()
     }
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        validate_free_parameter_len(
-            parameters.len(),
-            self.nll.n_free(),
-            "StochasticNLL free parameters",
-        )?;
+        validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
@@ -1163,11 +1144,7 @@ impl LikelihoodTerm for StochasticNLL {
         Ok(self.evaluate_local(parameters, &indices, n_data_batch_local))
     }
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        validate_free_parameter_len(
-            parameters.len(),
-            self.nll.n_free(),
-            "StochasticNLL free parameters",
-        )?;
+        validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
@@ -3439,11 +3416,7 @@ impl LikelihoodEvaluator {
     }
 
     fn assemble_parameters(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
-        validate_free_parameter_len(
-            parameters.len(),
-            self.free_parameter_indices.len(),
-            "LikelihoodEvaluator free parameters",
-        )?;
+        validate_free_parameter_len(parameters.len(), self.free_parameter_indices.len())?;
         self.parameter_manager.assemble_full(parameters)
     }
 
@@ -3988,12 +3961,12 @@ impl LikelihoodScalar {
 
 impl LikelihoodTerm for LikelihoodScalar {
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        validate_free_parameter_len(parameters.len(), 1, "LikelihoodScalar parameters")?;
+        validate_free_parameter_len(parameters.len(), 1)?;
         Ok(parameters[0])
     }
 
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        validate_free_parameter_len(parameters.len(), 1, "LikelihoodScalar parameters")?;
+        validate_free_parameter_len(parameters.len(), 1)?;
         Ok(DVector::from_vec(vec![1.0]))
     }
 

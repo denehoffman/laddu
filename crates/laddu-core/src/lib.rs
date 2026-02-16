@@ -644,6 +644,18 @@ pub enum LadduError {
     Custom(String),
 }
 
+/// Validate the number of free parameters supplied to a public entrypoint.
+pub fn validate_free_parameter_len(input_len: usize, expected_len: usize) -> LadduResult<()> {
+    if input_len != expected_len {
+        return Err(LadduError::LengthMismatch {
+            context: "free parameter vector".to_string(),
+            expected: expected_len,
+            actual: input_len,
+        });
+    }
+    Ok(())
+}
+
 impl Clone for LadduError {
     // This is a little hack because error types are rarely cloneable, but I need to store them in a
     // cloneable box for minimizers and MCMC methods
