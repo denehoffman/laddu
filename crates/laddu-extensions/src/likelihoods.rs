@@ -4118,6 +4118,123 @@ mod tests {
         (nll, vec![2.0])
     }
 
+    fn case_nll_evaluate_short(nll: &NLL) -> LadduResult<()> {
+        nll.evaluate(&[]).map(|_| ())
+    }
+
+    fn case_nll_evaluate_gradient_long(nll: &NLL) -> LadduResult<()> {
+        nll.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
+    }
+
+    fn case_nll_project_short(nll: &NLL) -> LadduResult<()> {
+        nll.project(&[], None).map(|_| ())
+    }
+
+    fn case_nll_project_gradient_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_gradient(&[1.0, 2.0], None).map(|_| ())
+    }
+
+    fn case_nll_project_with_short(nll: &NLL) -> LadduResult<()> {
+        nll.project_with_local::<&str>(&[], &["missing_amplitude"], None)
+            .map(|_| ())
+    }
+
+    fn case_nll_project_gradient_with_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_gradient_with_local::<&str>(&[1.0, 2.0], &["missing_amplitude"], None)
+            .map(|_| ())
+    }
+
+    fn case_likelihood_evaluate_short() -> LadduResult<()> {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+        evaluator.evaluate(&[]).map(|_| ())
+    }
+
+    fn case_likelihood_gradient_long() -> LadduResult<()> {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+        evaluator.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
+    }
+
+    #[test]
+    fn table_driven_length_mismatch_errors() {
+        let (nll, _) = make_constant_nll();
+        let cases: [(&str, LadduResult<()>); 8] = [
+            ("nll.evaluate short", case_nll_evaluate_short(nll.as_ref())),
+            (
+                "nll.evaluate_gradient long",
+                case_nll_evaluate_gradient_long(nll.as_ref()),
+            ),
+            ("nll.project short", case_nll_project_short(nll.as_ref())),
+            (
+                "nll.project_gradient long",
+                case_nll_project_gradient_long(nll.as_ref()),
+            ),
+            (
+                "nll.project_with short",
+                case_nll_project_with_short(nll.as_ref()),
+            ),
+            (
+                "nll.project_gradient_with long",
+                case_nll_project_gradient_with_long(nll.as_ref()),
+            ),
+            (
+                "likelihood.evaluate short",
+                case_likelihood_evaluate_short(),
+            ),
+            (
+                "likelihood.evaluate_gradient long",
+                case_likelihood_gradient_long(),
+            ),
+        ];
+        for (label, result) in cases {
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, LadduError::LengthMismatch { .. }),
+                "expected LengthMismatch for {label}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn table_driven_unknown_amplitude_errors() {
+        let (nll, params) = make_constant_nll();
+        let cases: [(&str, LadduResult<()>); 4] = [
+            (
+                "activate_strict unknown",
+                nll.activate_strict("missing_amplitude"),
+            ),
+            (
+                "isolate_strict unknown",
+                nll.isolate_strict("missing_amplitude"),
+            ),
+            (
+                "project_with unknown",
+                nll.project_with_local::<&str>(&params, &["missing_amplitude"], None)
+                    .map(|_| ()),
+            ),
+            (
+                "project_gradient_with unknown",
+                nll.project_gradient_with_local::<&str>(&params, &["missing_amplitude"], None)
+                    .map(|_| ()),
+            ),
+        ];
+        for (label, result) in cases {
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, LadduError::AmplitudeNotFoundError { .. }),
+                "expected AmplitudeNotFoundError for {label}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "A.O003.01 follow-up: malformed settings cases require python-feature parser harness"]
+    fn table_driven_malformed_settings_errors_todo() {
+        // Placeholder to anchor A.O003.01 malformed-settings coverage.
+        // Implement with `#[cfg(feature = \"python\")]` parser-entry tests.
+    }
+
     #[test]
     fn likelihood_expression_evaluates_scalar_sum() {
         let alpha = LikelihoodScalar::new("alpha");
