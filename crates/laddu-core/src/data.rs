@@ -557,6 +557,10 @@ impl Dataset {
     #[cfg(feature = "mpi")]
     pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
         let total = self.n_events();
+        // `fetch_event_mpi` must return an owned `Event` because the event may be reconstructed
+        // from bytes received from another rank. This method, however, must return `&Event` to
+        // satisfy `Index<usize>`, so the owned value is leaked to extend its lifetime.
+        // A.O004.02 replaces this leaked ownership path with a lifetime-safe alternative.
         let event = fetch_event_mpi(self, index, world, total);
         Box::leak(Box::new(event))
     }
@@ -2472,10 +2476,14 @@ mod tests {
     use crate::Mass;
 
     use super::*;
+    #[cfg(feature = "mpi")]
+    use crate::mpi::{finalize_mpi, get_world, use_mpi};
     use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
     use fastrand;
     use serde::{Deserialize, Serialize};
+    #[cfg(feature = "mpi")]
+    use std::collections::HashSet;
     use std::{
         env, fs,
         path::{Path, PathBuf},
@@ -2902,6 +2910,37 @@ mod tests {
         assert_eq!(weights.len(), 1);
         assert_relative_eq!(weights[0], test_event().weight);
     }
+
+    #[test]
+    fn test_dataset_index_local_reuses_event_reference() {
+        let dataset = test_dataset();
+        let first = dataset.index_local(0) as *const Event;
+        let second = dataset.index_local(0) as *const Event;
+        assert_eq!(first, second);
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_dataset_index_mpi_repeated_access_allocates_new_event_refs() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = test_dataset();
+        let mut refs = HashSet::new();
+        for _ in 0..32 {
+            refs.insert(dataset.index_mpi(0, &world) as *const Event as usize);
+        }
+        finalize_mpi();
+
+        assert!(
+            refs.len() > 1,
+            "MPI indexing should materialize owned events rather than borrowing local storage"
+        );
+    }
+
     #[test]
     fn test_event_display() {
         let event = test_event();
