@@ -24,7 +24,7 @@ jobs:
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-codspeed
+          tool: "cargo-codspeed,cargo-criterion"
       - run: cargo codspeed build
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
@@ -32,3 +32,22 @@ jobs:
           mode: simulation
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
+      - run: |-
+          mkdir -p target/criterion/summary
+          cargo criterion --bench workflow_behavior_benchmarks --message-format=json > target/criterion/messages.jsonl
+          python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages.jsonl --json-out target/criterion/summary/benchmark_summary.json --md-out target/criterion/summary/benchmark_summary.md
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: target/criterion/messages.jsonl
+          name: criterion-jsonl
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: target/criterion/summary/benchmark_summary.json
+          name: criterion-summary-json
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: target/criterion/summary/benchmark_summary.md
+          name: criterion-summary-markdown

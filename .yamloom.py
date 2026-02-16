@@ -473,7 +473,7 @@ benchmark_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(),
-                InstallRustTool(tool=['cargo-codspeed']),
+                InstallRustTool(tool=['cargo-codspeed', 'cargo-criterion']),
                 script('cargo codspeed build'),
                 action(
                     'CodSpeed Action',
@@ -484,6 +484,23 @@ benchmark_workflow = Workflow(
                         'run': 'cargo codspeed run',
                         'token': context.secrets.CODSPEED_TOKEN,
                     },
+                ),
+                script(
+                    'mkdir -p target/criterion/summary',
+                    'cargo criterion --bench workflow_behavior_benchmarks --message-format=json > target/criterion/messages.jsonl',
+                    'python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages.jsonl --json-out target/criterion/summary/benchmark_summary.json --md-out target/criterion/summary/benchmark_summary.md',
+                ),
+                UploadArtifact(
+                    path='target/criterion/messages.jsonl',
+                    artifact_name='criterion-jsonl',
+                ),
+                UploadArtifact(
+                    path='target/criterion/summary/benchmark_summary.json',
+                    artifact_name='criterion-summary-json',
+                ),
+                UploadArtifact(
+                    path='target/criterion/summary/benchmark_summary.md',
+                    artifact_name='criterion-summary-markdown',
                 ),
             ],
             name='Run Benchmarks',
