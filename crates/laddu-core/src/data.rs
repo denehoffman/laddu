@@ -2938,6 +2938,31 @@ mod tests {
         assert!(dataset.get_event(99).is_none());
     }
 
+    #[test]
+    fn test_dataset_event_stress_local_repeated_access() {
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+        let baseline: Vec<f64> = (0..dataset.n_events())
+            .map(|index| dataset.event(index).expect("event should exist").weight())
+            .collect();
+
+        for _ in 0..250 {
+            for (index, expected_weight) in baseline.iter().enumerate() {
+                let event = dataset.event(index).expect("event should exist");
+                assert_relative_eq!(event.weight(), *expected_weight);
+            }
+        }
+    }
+
     #[cfg(feature = "mpi")]
     #[test]
     fn test_dataset_event_mpi_repeated_access_is_stable() {
@@ -2952,6 +2977,72 @@ mod tests {
             let first = dataset.event(0).expect("event should exist");
             let second = dataset.event(0).expect("event should exist");
             assert_relative_eq!(first.weight(), second.weight());
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_dataset_event_stress_mpi_repeated_access() {
+        use_mpi(true);
+        if get_world().is_none() {
+            finalize_mpi();
+            return;
+        }
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+
+        let baseline: Vec<f64> = (0..dataset.n_events())
+            .map(|index| dataset.event(index).expect("event should exist").weight())
+            .collect();
+
+        for _ in 0..120 {
+            for (index, expected_weight) in baseline.iter().enumerate() {
+                let event = dataset.event(index).expect("event should exist");
+                assert_relative_eq!(event.weight(), *expected_weight);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_dataset_iter_stress_mpi_repeated_passes() {
+        use_mpi(true);
+        if get_world().is_none() {
+            finalize_mpi();
+            return;
+        }
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+        let baseline: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+
+        for _ in 0..80 {
+            let current: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+            assert_eq!(current.len(), baseline.len());
+            for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
+                assert_relative_eq!(*current_weight, *expected_weight);
+            }
         }
         finalize_mpi();
     }
