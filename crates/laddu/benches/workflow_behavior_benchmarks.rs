@@ -147,17 +147,47 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     group.bench_function("nll_gradient_small_sample", |b| {
         b.iter(|| black_box(nll.evaluate_gradient(black_box(&params))))
     });
+    group.bench_function("nll_value_and_gradient_small_sample", |b| {
+        b.iter(|| {
+            let value = nll.evaluate(black_box(&params));
+            let gradient = nll.evaluate_gradient(black_box(&params));
+            black_box((value, gradient))
+        })
+    });
     group.bench_function("projection_total_small_sample", |b| {
         b.iter(|| black_box(nll.project(black_box(&params), None)))
+    });
+    group.bench_function("projection_total_with_gradient_small_sample", |b| {
+        b.iter(|| black_box(nll.project_gradient(black_box(&params), None)))
     });
     group.bench_function("projection_component_s_wave_small_sample", |b| {
         b.iter(|| {
             black_box(nll.project_with(black_box(&params), &["S0+", "Z00+", "f0(1500)"], None))
         })
     });
+    group.bench_function(
+        "projection_component_s_wave_with_gradient_small_sample",
+        |b| {
+            b.iter(|| {
+                black_box(nll.project_gradient_with(
+                    black_box(&params),
+                    &["S0+", "Z00+", "f0(1500)"],
+                    None,
+                ))
+            })
+        },
+    );
     group.bench_function("projection_total_generated_mc_small_sample", |b| {
         b.iter(|| black_box(nll.project(black_box(&params), Some(gen_evaluator.clone()))))
     });
+    group.bench_function(
+        "projection_total_generated_mc_with_gradient_small_sample",
+        |b| {
+            b.iter(|| {
+                black_box(nll.project_gradient(black_box(&params), Some(gen_evaluator.clone())))
+            })
+        },
+    );
     group.finish();
 
     let mass = Mass::new(["kshort1", "kshort2"]);
@@ -185,6 +215,13 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
 
     c.bench_function("single_bin_nll_value_small_sample", |b| {
         b.iter(|| black_box(bin_nll.evaluate(black_box(&params))))
+    });
+    c.bench_function("single_bin_nll_value_and_gradient_small_sample", |b| {
+        b.iter(|| {
+            let value = bin_nll.evaluate(black_box(&params));
+            let gradient = bin_nll.evaluate_gradient(black_box(&params));
+            black_box((value, gradient))
+        })
     });
 }
 
@@ -238,6 +275,26 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
             })
         },
     );
+    c.bench_function(
+        "polarization_weighted_ylm_measurement_value_and_gradient_small_sample",
+        |b| {
+            b.iter(|| {
+                let values = measured_ylm.evaluate(&[]);
+                let gradients = measured_ylm.evaluate_gradient(&[]);
+                let mut value_sum = Complex64::new(0.0, 0.0);
+                let mut gradient_sum = Complex64::new(0.0, 0.0);
+                for index in 0..values.len() {
+                    let pol_term = (2.0 * big_phi[index]).cos() / p_gamma[index];
+                    let weighted = weights[index] * pol_term;
+                    value_sum += values[index] * weighted;
+                    if let Some(first) = gradients[index].get(0) {
+                        gradient_sum += *first * weighted;
+                    }
+                }
+                black_box((value_sum, gradient_sum))
+            })
+        },
+    );
 
     let l_max = MOMENT_COMPACT_BASIS_MAX_L;
     let ilms = unpolarized_moment_ilms(l_max);
@@ -273,6 +330,33 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
                         matrix[(row, col)] = term;
                     }
                     black_box(matrix)
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+    c.bench_function(
+        "normalization_integral_matrix_value_and_gradient_assembly_unpolarized_compact_basis_small_sample",
+        |b| {
+            b.iter_batched(
+                || DMatrix::<Complex64>::zeros(dim, dim),
+                |mut matrix| {
+                    let mut gradient_trace = Complex64::new(0.0, 0.0);
+                    for (slot, evaluator) in norm_evaluators.iter().enumerate() {
+                        let row = slot / dim;
+                        let col = slot % dim;
+                        let values = evaluator.evaluate(&[]);
+                        let gradients = evaluator.evaluate_gradient(&[]);
+                        let mut term = Complex64::new(0.0, 0.0);
+                        for index in 0..values.len() {
+                            term += values[index] * acc_weights[index];
+                            if let Some(first) = gradients[index].get(0) {
+                                gradient_trace += *first * acc_weights[index];
+                            }
+                        }
+                        matrix[(row, col)] = term;
+                    }
+                    black_box((matrix, gradient_trace))
                 },
                 BatchSize::SmallInput,
             )
@@ -431,12 +515,29 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
             .build()
             .expect("rayon pool should build");
         group.bench_with_input(
-            BenchmarkId::from_parameter(threads),
+            BenchmarkId::new("value_only", threads),
             &threads,
             |b, &_threads| {
                 b.iter_batched(
                     || params.clone(),
                     |parameters| pool.install(|| black_box(nll.evaluate(&parameters))),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("value_and_gradient", threads),
+            &threads,
+            |b, &_threads| {
+                b.iter_batched(
+                    || params.clone(),
+                    |parameters| {
+                        pool.install(|| {
+                            let value = nll.evaluate(&parameters);
+                            let gradient = nll.evaluate_gradient(&parameters);
+                            black_box((value, gradient))
+                        })
+                    },
                     BatchSize::SmallInput,
                 )
             },
