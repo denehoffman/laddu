@@ -4034,6 +4034,8 @@ pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
 mod tests {
     use super::{LikelihoodScalar, LikelihoodTerm, NLL};
     use approx::assert_relative_eq;
+    #[cfg(feature = "mpi")]
+    use laddu_core::mpi::{finalize_mpi, get_world, use_mpi};
     use laddu_core::{
         amplitudes::{parameter, Amplitude, AmplitudeID, ParameterLike},
         data::{Dataset, DatasetMetadata, EventData},
@@ -4411,5 +4413,32 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_negative_paths_report_structured_errors() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+        let (nll, params) = make_constant_nll();
+
+        let err_len = nll.project_mpi(&[], None, &world).unwrap_err();
+        assert!(matches!(
+            err_len,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_amp = nll
+            .project_with_mpi::<&str>(&params, &["missing_amplitude"], None, &world)
+            .unwrap_err();
+        assert!(matches!(err_amp, LadduError::AmplitudeNotFoundError { .. }));
+        finalize_mpi();
     }
 }

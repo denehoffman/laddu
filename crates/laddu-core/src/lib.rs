@@ -165,10 +165,13 @@ pub mod mpi {
     ///
     /// </div>
     pub fn finalize_mpi() {
-        if using_mpi() {
-            let mut universe = MPI_UNIVERSE.get().unwrap().write();
-            *universe = None;
+        if get_world().is_some() {
+            if let Some(universe_lock) = MPI_UNIVERSE.get() {
+                let mut universe = universe_lock.write();
+                *universe = None;
+            }
         }
+        USE_MPI.store(false, Ordering::SeqCst);
     }
 
     /// Check if MPI backend is enabled
