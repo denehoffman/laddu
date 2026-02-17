@@ -104,6 +104,10 @@ impl Amplitude for Zlm {
         cache.get_complex_scalar(self.csid)
     }
 
+    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+        Ok(cache.get_complex_scalar(self.csid))
+    }
+
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
@@ -218,6 +222,10 @@ impl Amplitude for PolPhase {
 
     fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
+    }
+
+    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+        Ok(cache.get_complex_scalar(self.csid))
     }
 
     fn compute_gradient(

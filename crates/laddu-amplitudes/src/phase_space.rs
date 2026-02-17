@@ -101,6 +101,10 @@ impl Amplitude for PhaseSpaceFactor {
         cache.get_scalar(self.sid).into()
     }
 
+    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+        Ok(cache.get_scalar(self.sid).into())
+    }
+
     fn compute_gradient(
         &self,
         _parameters: &Parameters,

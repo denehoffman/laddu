@@ -163,6 +163,22 @@ impl Amplitude for KopfKMatrixA2 {
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
 
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+        let betas = SVector::from_fn(|i, _| {
+            Complex64::new(
+                parameters.get(self.couplings_indices_real[i]),
+                parameters.get(self.couplings_indices_imag[i]),
+            )
+        });
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        Ok(FixedKMatrix::compute(
+            &betas,
+            &ikc_inv_vec,
+            &p_vec_constants,
+        ))
+    }
+
     fn compute_gradient(
         &self,
         _parameters: &Parameters,

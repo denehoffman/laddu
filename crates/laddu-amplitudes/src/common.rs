@@ -43,6 +43,10 @@ impl Amplitude for Scalar {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
 
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
+        Ok(Complex64::new(parameters.get(self.pid), 0.0))
+    }
+
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
@@ -111,6 +115,13 @@ impl Amplitude for ComplexScalar {
 
     fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+    }
+
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
+        Ok(Complex64::new(
+            parameters.get(self.pid_re),
+            parameters.get(self.pid_im),
+        ))
     }
 
     fn compute_gradient(
@@ -190,6 +201,13 @@ impl Amplitude for PolarComplexScalar {
 
     fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
+    }
+
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
+        Ok(Complex64::from_polar(
+            parameters.get(self.pid_r),
+            parameters.get(self.pid_theta),
+        ))
     }
 
     fn compute_gradient(
