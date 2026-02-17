@@ -38,6 +38,7 @@ const PARTIAL_WAVE_ACCMC_SEED: u64 = 17;
 const PARTIAL_WAVE_GENMC_SEED: u64 = 23;
 const MOMENT_DATA_SEED: u64 = 41;
 const MOMENT_ACCMC_SEED: u64 = 53;
+const KMATRIX_DATASET_SEED: u64 = 71;
 const PARTIAL_WAVE_BIN_COUNT: usize = 8;
 const MOMENT_COMPACT_BASIS_MAX_L: usize = 2;
 
@@ -73,6 +74,13 @@ fn deterministic_parameter_vector(n_free: usize, offset: f64) -> Vec<f64> {
     (0..n_free)
         .map(|index| offset + (index as f64 + 1.0) * 0.25)
         .collect()
+}
+
+fn kmatrix_max_events_from_env() -> Option<usize> {
+    std::env::var("LADDU_BENCH_MAX_EVENTS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|value| *value > 0)
 }
 
 fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
@@ -420,8 +428,12 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
 
 fn build_kmatrix_nll() -> Box<NLL> {
     let dataset = read_benchmark_dataset();
-    let ds_data = dataset.clone();
-    let ds_mc = dataset;
+    let (ds_data, ds_mc) = if let Some(max_events) = kmatrix_max_events_from_env() {
+        let sampled = sample_dataset(&dataset, KMATRIX_DATASET_SEED, max_events);
+        (sampled.clone(), sampled)
+    } else {
+        (dataset.clone(), dataset)
+    };
     let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
     let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
     let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");

@@ -58,3 +58,11 @@ metrics-mpi rank_counts="2,4":
       --rank-counts {{rank_counts}} \
       --json-out ../../../target/criterion/summary/mpi_rank_metrics.json \
       --md-out ../../../target/criterion/summary/mpi_rank_metrics.md
+
+# Capture local-vs-distributed scaling across representative dataset sizes
+scaling-mpi size_tiers="small:2000,medium:5000,large:10000" rank_counts="2,4":
+    cd {{justfile_directory()}} && python3 scripts/mpi_local_vs_distributed_scaling.py \
+      --size-tiers {{size_tiers}} \
+      --rank-counts {{rank_counts}} \
+      --json-out ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.json \
+      --md-out ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.md

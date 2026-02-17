@@ -100,3 +100,30 @@ Implementation details:
 
 - Each rank executes the MPI benchmark command via `scripts/mpi_rank_probe.py`, which records child-process max RSS (kB) and elapsed time.
 - Total wall-clock is measured around each `mpirun -n <ranks> ...` invocation.
+
+## MPI Local-vs-Distributed Scaling
+
+Capture local (single-process) and distributed scaling over representative dataset-size tiers:
+
+```bash
+just --justfile crates/laddu/benches/Justfile scaling-mpi
+```
+
+Custom tiers and ranks:
+
+```bash
+just --justfile crates/laddu/benches/Justfile scaling-mpi \
+  size_tiers=small:2000,medium:5000,large:10000 \
+  rank_counts=2,4
+```
+
+Outputs:
+
+- `target/criterion/summary/mpi_local_vs_distributed_scaling.json`
+- `target/criterion/summary/mpi_local_vs_distributed_scaling.md`
+
+Implementation details:
+
+- Size tiers are applied through `LADDU_BENCH_MAX_EVENTS` for both CPU and MPI k-matrix benchmark runs.
+- Local baseline uses `workflow_behavior_cpu_benchmarks` case `kmatrix_nll_thread_scaling/value_only/1`.
+- Distributed runs use `workflow_behavior_mpi_benchmarks` case `kmatrix_nll_mpi_rank_parameterized/value_only`.

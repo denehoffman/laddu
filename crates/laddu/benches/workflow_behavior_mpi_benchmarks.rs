@@ -21,12 +21,14 @@ mod mpi_benches {
             enums::{Frame, Sign},
             variables::{Angles, Mass, Polarization, Topology},
         },
+        RngSubsetExtension,
     };
     use mpi::traits::{Communicator, CommunicatorCollectives};
 
     const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
     const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
     const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
+    const KMATRIX_DATASET_SEED: u64 = 71;
 
     fn read_benchmark_dataset() -> Arc<Dataset> {
         let options = DatasetReadOptions::default()
@@ -45,10 +47,38 @@ mod mpi_benches {
             .collect()
     }
 
+    fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<Dataset> {
+        let mut rng = fastrand::Rng::with_seed(seed);
+        let n_total = dataset.n_events();
+        let n_take = max_events.min(n_total);
+        let indices = rng.subset(n_total, n_take);
+        let events = indices
+            .into_iter()
+            .map(|index| {
+                dataset
+                    .event(index)
+                    .expect("subset index should be valid")
+                    .data_arc()
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, dataset.metadata_arc()))
+    }
+
+    fn kmatrix_max_events_from_env() -> Option<usize> {
+        std::env::var("LADDU_BENCH_MAX_EVENTS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+    }
+
     fn build_kmatrix_nll() -> Box<NLL> {
         let dataset = read_benchmark_dataset();
-        let ds_data = dataset.clone();
-        let ds_mc = dataset;
+        let (ds_data, ds_mc) = if let Some(max_events) = kmatrix_max_events_from_env() {
+            let sampled = sample_dataset(&dataset, KMATRIX_DATASET_SEED, max_events);
+            (sampled.clone(), sampled)
+        } else {
+            (dataset.clone(), dataset)
+        };
         let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
         let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
         let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
