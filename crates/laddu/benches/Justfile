@@ -1,0 +1,53 @@
+# Build workflow behavior benchmarks without running them (CPU)
+build:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks --no-run
+
+# Run workflow behavior benchmarks (CPU)
+run:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- --noplot
+
+# Build workflow behavior benchmarks without running them (MPI feature)
+build-mpi:
+    cd {{justfile_directory()}} && cargo bench -p laddu --features mpi --bench workflow_behavior_mpi_benchmarks --no-run
+
+# Run workflow behavior benchmarks under MPI with configurable rank count
+run-mpi ranks="4":
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo bench -p laddu --features mpi --bench workflow_behavior_mpi_benchmarks -- --noplot
+
+# Emit Criterion JSON messages for workflow behavior benchmarks (CPU)
+json:
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
+
+# Emit Criterion JSON messages for workflow behavior benchmarks (MPI)
+json-mpi ranks="4":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --features mpi --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
+
+# Generate benchmark summary artifacts from Criterion JSON message stream
+report-cpu policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
+    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
+      --input ../../../target/criterion/messages_cpu.jsonl \
+      --json-out ../../../target/criterion/summary/benchmark_summary_cpu.json \
+      --md-out ../../../target/criterion/summary/benchmark_summary_cpu.md \
+      --policy {{policy}} \
+      --regression-threshold-pct {{regression_threshold_pct}} \
+      --improvement-threshold-pct {{improvement_threshold_pct}}
+
+# Generate MPI benchmark summary artifacts from Criterion JSON message stream
+report-mpi policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
+    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
+      --input ../../../target/criterion/messages_mpi.jsonl \
+      --json-out ../../../target/criterion/summary/benchmark_summary_mpi.json \
+      --md-out ../../../target/criterion/summary/benchmark_summary_mpi.md \
+      --policy {{policy}} \
+      --regression-threshold-pct {{regression_threshold_pct}} \
+      --improvement-threshold-pct {{improvement_threshold_pct}}
+
+# Run CPU Criterion JSON benchmark and generate summary artifacts
+json-report: json report-cpu
+
+# Run MPI Criterion JSON benchmark and generate summary artifacts
+json-report-mpi ranks="4": (json-mpi ranks) report-mpi

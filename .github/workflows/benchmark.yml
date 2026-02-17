@@ -30,25 +30,25 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: cargo codspeed run
+          run: cargo codspeed run --bench workflow_behavior_cpu_benchmarks
           token: ${{ secrets.CODSPEED_TOKEN }}
       - run: |-
           mkdir -p target/criterion/summary
-          cargo criterion --bench workflow_behavior_benchmarks --message-format=json > target/criterion/messages.jsonl
+          cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > target/criterion/messages_cpu.jsonl
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then POLICY=warn; else POLICY=fail; fi
-          python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages.jsonl --json-out target/criterion/summary/benchmark_summary.json --md-out target/criterion/summary/benchmark_summary.md --policy "$POLICY" --regression-threshold-pct 3.0 --improvement-threshold-pct 3.0
+          python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages_cpu.jsonl --json-out target/criterion/summary/benchmark_summary_cpu.json --md-out target/criterion/summary/benchmark_summary_cpu.md --policy "$POLICY" --regression-threshold-pct 3.0 --improvement-threshold-pct 3.0
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          path: target/criterion/messages.jsonl
-          name: criterion-jsonl
+          path: target/criterion/messages_cpu.jsonl
+          name: criterion-cpu-jsonl
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          path: target/criterion/summary/benchmark_summary.json
-          name: criterion-summary-json
+          path: target/criterion/summary/benchmark_summary_cpu.json
+          name: criterion-cpu-summary-json
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          path: target/criterion/summary/benchmark_summary.md
-          name: criterion-summary-markdown
+          path: target/criterion/summary/benchmark_summary_cpu.md
+          name: criterion-cpu-summary-markdown

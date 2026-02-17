@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
-};
-#[cfg(feature = "mpi")]
-use laddu::mpi::{finalize_mpi, get_world, use_mpi};
+use criterion::{black_box, BatchSize, BenchmarkId, Criterion, Throughput};
 use laddu::{
     amplitudes::{
         breit_wigner::BreitWigner,
@@ -25,13 +21,11 @@ use laddu::{
     },
     RngSubsetExtension,
 };
-#[cfg(feature = "mpi")]
-use mpi::traits::Communicator;
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 use rayon::ThreadPoolBuilder;
 
-const BENCH_DATASET_PATH: &str = "benches/bench.parquet";
+const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
 const PARTIAL_WAVE_DATA_SAMPLE_EVENTS: usize = 512;
@@ -51,7 +45,11 @@ fn read_benchmark_dataset() -> Arc<Dataset> {
     let options = DatasetReadOptions::default()
         .p4_names(P4_NAMES)
         .aux_names(AUX_NAMES);
-    io::read_parquet(BENCH_DATASET_PATH, &options).expect("benchmark dataset should open")
+    let dataset_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(BENCH_DATASET_RELATIVE_PATH)
+        .to_string_lossy()
+        .into_owned();
+    io::read_parquet(&dataset_path, &options).expect("benchmark dataset should open")
 }
 
 fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<Dataset> {
@@ -583,62 +581,10 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "mpi")]
-fn kmatrix_nll_mpi_rank_parameterized_benchmarks(c: &mut Criterion) {
-    // Dataset/setup notes:
-    // - Source parquet: benches/bench.parquet
-    // - Full benchmark parquet is used for data and accepted-MC.
-    // - Parameter vectors are deterministic.
-    // - Benchmark IDs include effective MPI rank count from world.size().
-    use_mpi(true);
-    let Some(world) = get_world() else {
-        finalize_mpi();
-        return;
-    };
-    let rank_count = world.size();
-
-    let nll = build_kmatrix_nll();
-    let params = deterministic_parameter_vector(nll.n_free(), -100.0);
-    let n_events = nll.data_evaluator.dataset.n_events() as u64;
-    let mut group = c.benchmark_group("kmatrix_nll_mpi_rank_parameterized");
-    group.throughput(Throughput::Elements(n_events));
-    group.bench_with_input(
-        BenchmarkId::new("value_only", rank_count),
-        &rank_count,
-        |b, &_rank_count| {
-            b.iter_batched(
-                || params.clone(),
-                |parameters| black_box(nll.evaluate(&parameters)),
-                BatchSize::SmallInput,
-            )
-        },
-    );
-    group.throughput(Throughput::Elements(n_events));
-    group.bench_with_input(
-        BenchmarkId::new("value_and_gradient", rank_count),
-        &rank_count,
-        |b, &_rank_count| {
-            b.iter_batched(
-                || params.clone(),
-                |parameters| {
-                    let value = nll.evaluate(&parameters);
-                    let gradient = nll.evaluate_gradient(&parameters);
-                    black_box((value, gradient))
-                },
-                BatchSize::SmallInput,
-            )
-        },
-    );
-    group.finish();
-    finalize_mpi();
+fn main() {
+    let mut criterion = Criterion::default().sample_size(120).configure_from_args();
+    breit_wigner_partial_wave_benchmarks(&mut criterion);
+    moment_analysis_benchmarks(&mut criterion);
+    kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
+    criterion.final_summary();
 }
-
-#[cfg(not(feature = "mpi"))]
-fn kmatrix_nll_mpi_rank_parameterized_benchmarks(_c: &mut Criterion) {}
-
-criterion_group! {
-    name = benches;
-    config = Criterion::default().sample_size(120);
-    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks, kmatrix_nll_thread_scaling_benchmarks, kmatrix_nll_mpi_rank_parameterized_benchmarks
-}
-criterion_main!(benches);

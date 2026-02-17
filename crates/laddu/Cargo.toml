@@ -31,7 +31,11 @@ fastrand = { workspace = true }
 rayon = { workspace = true }
 
 [[bench]]
-name = "workflow_behavior_benchmarks"
+name = "workflow_behavior_cpu_benchmarks"
+harness = false
+
+[[bench]]
+name = "workflow_behavior_mpi_benchmarks"
 harness = false
 
 [features]
