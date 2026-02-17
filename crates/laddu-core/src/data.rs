@@ -251,6 +251,149 @@ impl DatasetSoA {
             weight: self.weight(event_index)?,
         })
     }
+
+    fn event_view(&self, event_index: usize) -> Option<SoaEventView<'_>> {
+        if event_index >= self.n_events() {
+            return None;
+        }
+        Some(SoaEventView {
+            storage: self,
+            event_index,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct DatasetSoAWithMetadata {
+    storage: DatasetSoA,
+    metadata: Arc<DatasetMetadata>,
+}
+
+#[allow(dead_code)]
+impl DatasetSoAWithMetadata {
+    fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
+        Ok(Self {
+            storage: DatasetSoA::from_dataset(dataset)?,
+            metadata: dataset.metadata.clone(),
+        })
+    }
+
+    fn n_events(&self) -> usize {
+        self.storage.n_events()
+    }
+
+    fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
+        self.storage.p4(event_index, p4_index)
+    }
+
+    fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
+        self.storage.aux(event_index, aux_index)
+    }
+
+    fn weight(&self, event_index: usize) -> Option<f64> {
+        self.storage.weight(event_index)
+    }
+
+    fn event_data(&self, event_index: usize) -> Option<EventData> {
+        self.storage.event_data(event_index)
+    }
+
+    fn event_view(&self, event_index: usize) -> Option<SoaNamedEventView<'_>> {
+        let row = self.storage.event_view(event_index)?;
+        Some(SoaNamedEventView {
+            row,
+            metadata: &self.metadata,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+struct SoaEventView<'a> {
+    storage: &'a DatasetSoA,
+    event_index: usize,
+}
+
+#[allow(dead_code)]
+impl SoaEventView<'_> {
+    fn p4(&self, p4_index: usize) -> Option<Vec4> {
+        self.storage.p4(self.event_index, p4_index)
+    }
+
+    fn aux(&self, aux_index: usize) -> Option<f64> {
+        self.storage.aux(self.event_index, aux_index)
+    }
+
+    fn weight(&self) -> Option<f64> {
+        self.storage.weight(self.event_index)
+    }
+
+    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4> {
+        indices
+            .as_ref()
+            .iter()
+            .map(|index| self.p4(*index))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+
+    fn event_data(&self) -> Option<EventData> {
+        self.storage.event_data(self.event_index)
+    }
+
+    fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
+        Some(variable.value(&self.event_data()?))
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+struct SoaNamedEventView<'a> {
+    row: SoaEventView<'a>,
+    metadata: &'a DatasetMetadata,
+}
+
+#[allow(dead_code)]
+impl SoaNamedEventView<'_> {
+    fn p4(&self, name: &str) -> Option<Vec4> {
+        let selection = self.metadata.p4_selection(name)?;
+        selection
+            .indices()
+            .iter()
+            .map(|index| self.row.p4(*index))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+
+    fn aux(&self, name: &str) -> Option<f64> {
+        let index = self.metadata.aux_index(name)?;
+        self.row.aux(index)
+    }
+
+    fn weight(&self) -> Option<f64> {
+        self.row.weight()
+    }
+
+    fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
+    where
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        names
+            .into_iter()
+            .map(|name| self.p4(name.as_ref()))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+
+    fn event_data(&self) -> Option<EventData> {
+        self.row.event_data()
+    }
+
+    fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
+        self.row.evaluate(variable)
+    }
 }
 
 /// A collection of [`EventData`].
@@ -907,8 +1050,8 @@ impl Dataset {
     }
 
     #[allow(dead_code)]
-    fn as_soa_local(&self) -> LadduResult<DatasetSoA> {
-        DatasetSoA::from_dataset(self)
+    fn as_soa_local(&self) -> LadduResult<DatasetSoAWithMetadata> {
+        DatasetSoAWithMetadata::from_dataset(self)
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
@@ -2898,6 +3041,58 @@ mod tests {
         assert!(
             matches!(err, LadduError::Custom(message) if message.contains("Ragged dataset shape"))
         );
+    }
+
+    #[test]
+    fn test_dataset_soa_named_row_view_matches_event_accessors() {
+        let dataset = test_dataset();
+        let soa = dataset
+            .as_soa_local()
+            .expect("soa conversion should succeed");
+        let row = soa.event_view(0).expect("soa event view should exist");
+        let named = dataset.named_event(0).expect("named event should exist");
+
+        let beam = row.p4("beam").expect("beam p4 should be present");
+        let named_beam = named.p4("beam").expect("named beam p4 should be present");
+        assert_relative_eq!(beam.px(), named_beam.px(), epsilon = 1e-12);
+        assert_relative_eq!(beam.py(), named_beam.py(), epsilon = 1e-12);
+        assert_relative_eq!(beam.pz(), named_beam.pz(), epsilon = 1e-12);
+        assert_relative_eq!(beam.e(), named_beam.e(), epsilon = 1e-12);
+
+        assert_relative_eq!(
+            row.aux("pol_angle").expect("pol angle should be present"),
+            named.aux().get("pol_angle").copied().expect("named aux"),
+            epsilon = 1e-12
+        );
+        assert_relative_eq!(
+            row.weight().expect("weight should be present"),
+            named.weight(),
+            epsilon = 1e-12
+        );
+
+        let summed = row
+            .get_p4_sum(["kshort1", "kshort2"])
+            .expect("named p4 sum should be present");
+        let named_sum = named.get_p4_sum(["kshort1", "kshort2"]);
+        assert_relative_eq!(summed.e(), named_sum.e(), epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_dataset_soa_row_view_variable_evaluation_matches_event_data() {
+        let dataset = test_dataset();
+        let soa = dataset
+            .as_soa_local()
+            .expect("soa conversion should succeed");
+        let row = soa.event_view(0).expect("soa event view should exist");
+        let mut mass = Mass::new(["proton"]);
+        mass.bind(dataset.metadata())
+            .expect("mass should bind to metadata");
+        let from_view = row.evaluate(&mass).expect("soa evaluation should succeed");
+        let from_event = dataset
+            .event(0)
+            .expect("event should exist")
+            .evaluate(&mass);
+        assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
     }
 
     #[test]
