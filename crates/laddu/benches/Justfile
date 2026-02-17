@@ -51,3 +51,10 @@ json-report: json report-cpu
 
 # Run MPI Criterion JSON benchmark and generate summary artifacts
 json-report-mpi ranks="4": (json-mpi ranks) report-mpi
+
+# Capture MPI rank-count wall-clock and per-rank RSS metrics
+metrics-mpi rank_counts="2,4":
+    cd {{justfile_directory()}} && python3 scripts/mpi_rank_metrics.py \
+      --rank-counts {{rank_counts}} \
+      --json-out ../../../target/criterion/summary/mpi_rank_metrics.json \
+      --md-out ../../../target/criterion/summary/mpi_rank_metrics.md

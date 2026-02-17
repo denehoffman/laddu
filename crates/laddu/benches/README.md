@@ -82,3 +82,21 @@ mpirun -n 4 cargo criterion --features mpi --bench workflow_behavior_mpi_benchma
 ```
 
 When multiple ranks write to stdout, post-processing should filter to rank 0 or otherwise normalize per-rank output streams before parsing.
+
+## MPI Wall-Clock + Per-Rank RSS Metrics
+
+Capture rank-count wall-clock and per-rank max RSS in one command:
+
+```bash
+just --justfile crates/laddu/benches/Justfile metrics-mpi rank_counts=2,4
+```
+
+Outputs:
+
+- `target/criterion/summary/mpi_rank_metrics.json`
+- `target/criterion/summary/mpi_rank_metrics.md`
+
+Implementation details:
+
+- Each rank executes the MPI benchmark command via `scripts/mpi_rank_probe.py`, which records child-process max RSS (kB) and elapsed time.
+- Total wall-clock is measured around each `mpirun -n <ranks> ...` invocation.
