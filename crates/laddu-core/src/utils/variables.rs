@@ -21,6 +21,14 @@ use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
+/// Event-access interface marker for future SoA-native variable paths.
+///
+/// This separates storage-agnostic variable access from the current `EventData`-based APIs,
+/// allowing a staged migration while keeping AoS behavior for reference benchmarks.
+pub trait VariableEventAccess: crate::data::NamedEventAccess {}
+
+impl<T> VariableEventAccess for T where T: crate::data::NamedEventAccess + ?Sized {}
+
 /// Standard methods for extracting some value out of an [`EventData`].
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {

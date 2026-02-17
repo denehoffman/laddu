@@ -113,6 +113,14 @@ macro_rules! parameter {
     };
 }
 
+/// Event-access interface marker for future SoA-native amplitude paths.
+///
+/// This intentionally stays separate from [`Amplitude`] so the SoA migration can introduce
+/// dedicated compute entry points while retaining the existing AoS implementation for parity.
+pub trait AmplitudeEventAccess: crate::data::EventAccess {}
+
+impl<T> AmplitudeEventAccess for T where T: crate::data::EventAccess + ?Sized {}
+
 /// This is the only required trait for writing new amplitude-like structures for this
 /// crate. Users need only implement the [`register`](Amplitude::register)
 /// method to register parameters, cached values, and the amplitude itself with an input

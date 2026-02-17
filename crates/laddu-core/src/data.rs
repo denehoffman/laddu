@@ -136,6 +136,62 @@ impl EventData {
     }
 }
 
+/// Read-only event access interface for storage-agnostic compute paths.
+///
+/// This supports both row-backed (`EventData`) and SoA-backed row views.
+pub trait EventAccess {
+    /// Get four-momentum by positional index.
+    fn p4_at(&self, p4_index: usize) -> Option<Vec4>;
+    /// Get auxiliary scalar by positional index.
+    fn aux_at(&self, aux_index: usize) -> Option<f64>;
+    /// Get event weight.
+    fn weight(&self) -> f64;
+    /// Number of four-momentum entries available in this event.
+    fn n_p4(&self) -> usize;
+    /// Number of auxiliary scalar entries available in this event.
+    fn n_aux(&self) -> usize;
+
+    /// Sum selected four-momenta by positional indices.
+    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4> {
+        indices
+            .as_ref()
+            .iter()
+            .map(|index| self.p4_at(*index))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+}
+
+/// Read-only named event access for metadata-aware compute paths.
+pub trait NamedEventAccess: EventAccess {
+    /// Get four-momentum (or alias sum) by registered name.
+    fn p4_by_name(&self, name: &str) -> Option<Vec4>;
+    /// Get auxiliary scalar by registered name.
+    fn aux_by_name(&self, name: &str) -> Option<f64>;
+}
+
+impl EventAccess for EventData {
+    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
+        self.p4s.get(p4_index).copied()
+    }
+
+    fn aux_at(&self, aux_index: usize) -> Option<f64> {
+        self.aux.get(aux_index).copied()
+    }
+
+    fn weight(&self) -> f64 {
+        self.weight
+    }
+
+    fn n_p4(&self) -> usize {
+        self.p4s.len()
+    }
+
+    fn n_aux(&self) -> usize {
+        self.aux.len()
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 struct SoaP4Column {
@@ -347,6 +403,29 @@ impl SoaEventView<'_> {
     }
 }
 
+impl EventAccess for SoaEventView<'_> {
+    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
+        self.p4(p4_index)
+    }
+
+    fn aux_at(&self, aux_index: usize) -> Option<f64> {
+        self.aux(aux_index)
+    }
+
+    fn weight(&self) -> f64 {
+        SoaEventView::weight(self)
+            .expect("SoA row view should always expose weight for valid event index")
+    }
+
+    fn n_p4(&self) -> usize {
+        self.storage.p4.len()
+    }
+
+    fn n_aux(&self) -> usize {
+        self.storage.aux.len()
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 struct SoaNamedEventView<'a> {
@@ -393,6 +472,40 @@ impl SoaNamedEventView<'_> {
 
     fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
         self.row.evaluate(variable)
+    }
+}
+
+impl EventAccess for SoaNamedEventView<'_> {
+    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
+        self.row.p4(p4_index)
+    }
+
+    fn aux_at(&self, aux_index: usize) -> Option<f64> {
+        self.row.aux(aux_index)
+    }
+
+    fn weight(&self) -> f64 {
+        self.row
+            .weight()
+            .expect("SoA named row view should always expose weight for valid event index")
+    }
+
+    fn n_p4(&self) -> usize {
+        self.row.storage.p4.len()
+    }
+
+    fn n_aux(&self) -> usize {
+        self.row.storage.aux.len()
+    }
+}
+
+impl NamedEventAccess for SoaNamedEventView<'_> {
+    fn p4_by_name(&self, name: &str) -> Option<Vec4> {
+        self.p4(name)
+    }
+
+    fn aux_by_name(&self, name: &str) -> Option<f64> {
+        self.aux(name)
     }
 }
 
@@ -660,6 +773,40 @@ impl Event {
     /// Evaluate a [`Variable`] over this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         self.event.evaluate(variable)
+    }
+}
+
+impl EventAccess for Event {
+    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
+        self.event.p4s.get(p4_index).copied()
+    }
+
+    fn aux_at(&self, aux_index: usize) -> Option<f64> {
+        self.event.aux.get(aux_index).copied()
+    }
+
+    fn weight(&self) -> f64 {
+        self.event.weight
+    }
+
+    fn n_p4(&self) -> usize {
+        self.event.p4s.len()
+    }
+
+    fn n_aux(&self) -> usize {
+        self.event.aux.len()
+    }
+}
+
+impl NamedEventAccess for Event {
+    fn p4_by_name(&self, name: &str) -> Option<Vec4> {
+        self.p4(name)
+    }
+
+    fn aux_by_name(&self, name: &str) -> Option<f64> {
+        self.metadata
+            .aux_index(name)
+            .and_then(|index| self.event.aux.get(index).copied())
     }
 }
 
@@ -3093,6 +3240,51 @@ mod tests {
             .expect("event should exist")
             .evaluate(&mass);
         assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_event_access_trait_on_event_data() {
+        let event = test_event();
+        assert_eq!(EventAccess::n_p4(&event), event.p4s.len());
+        assert_eq!(EventAccess::n_aux(&event), event.aux.len());
+        let proton = EventAccess::p4_at(&event, 1).expect("p4 at index should be available");
+        assert_relative_eq!(proton.e(), event.p4s[1].e(), epsilon = 1e-12);
+        let angle = EventAccess::aux_at(&event, 1).expect("aux at index should be available");
+        assert_relative_eq!(angle, event.aux[1], epsilon = 1e-12);
+        assert_relative_eq!(EventAccess::weight(&event), event.weight, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_named_event_access_trait_matches_aos_and_soa_views() {
+        let dataset = test_dataset();
+        let aos = dataset.named_event(0).expect("event should exist");
+        let soa_storage = dataset
+            .as_soa_local()
+            .expect("soa conversion should succeed");
+        let soa = soa_storage
+            .event_view(0)
+            .expect("soa named view should exist");
+
+        let aos_beam =
+            NamedEventAccess::p4_by_name(&aos, "beam").expect("aos beam should be present");
+        let soa_beam =
+            NamedEventAccess::p4_by_name(&soa, "beam").expect("soa beam should be present");
+        assert_relative_eq!(aos_beam.px(), soa_beam.px(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.py(), soa_beam.py(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.pz(), soa_beam.pz(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.e(), soa_beam.e(), epsilon = 1e-12);
+
+        let aos_aux =
+            NamedEventAccess::aux_by_name(&aos, "pol_angle").expect("aos aux should be present");
+        let soa_aux =
+            NamedEventAccess::aux_by_name(&soa, "pol_angle").expect("soa aux should be present");
+        assert_relative_eq!(aos_aux, soa_aux, epsilon = 1e-12);
+
+        assert_relative_eq!(
+            EventAccess::weight(&aos),
+            EventAccess::weight(&soa),
+            epsilon = 1e-12
+        );
     }
 
     #[test]
