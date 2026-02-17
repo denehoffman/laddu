@@ -52,6 +52,7 @@ harness = false
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
+execution-context-prototype = []
 python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]

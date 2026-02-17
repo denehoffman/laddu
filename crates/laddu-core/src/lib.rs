@@ -499,6 +499,9 @@ use thiserror::Error;
 pub mod amplitudes;
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data;
+/// Prototype execution context API for thread-policy and scratch reuse.
+#[cfg(feature = "execution-context-prototype")]
+pub mod execution_context;
 /// Utilities for tracking parameter state across expressions and likelihoods.
 pub mod parameter_manager;
 /// Structures for manipulating the cache and free parameters.
@@ -515,6 +518,8 @@ pub mod traits {
 pub use crate::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
 };
+#[cfg(feature = "execution-context-prototype")]
+pub use crate::execution_context::{ExecutionContext, ScratchAllocator, ThreadPolicy};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,
@@ -591,6 +596,12 @@ pub enum LadduError {
         /// Name of parameter
         name: String,
         /// Reason for failure
+        reason: String,
+    },
+    /// An error which occurs during execution-context setup.
+    #[error("Execution context setup failed: {reason}")]
+    ExecutionContextError {
+        /// Description of setup failure
         reason: String,
     },
     /// An error type for [`rayon`] thread pools
@@ -692,6 +703,7 @@ impl From<LadduError> for PyErr {
             | LadduError::DuplicateName { .. }
             | LadduError::ParameterConflict { .. }
             | LadduError::UnregisteredParameter { .. } => PyValueError::new_err(err_string),
+            LadduError::ExecutionContextError { .. } => PyRuntimeError::new_err(err_string),
             LadduError::Custom(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "rayon")]
             LadduError::ThreadPoolError(_) => PyRuntimeError::new_err(err_string),
