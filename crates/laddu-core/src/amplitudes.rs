@@ -113,13 +113,36 @@ macro_rules! parameter {
     };
 }
 
-/// Event-access interface marker for future SoA-native amplitude paths.
-///
-/// This intentionally stays separate from [`Amplitude`] so the SoA migration can introduce
-/// dedicated compute entry points while retaining the existing AoS implementation for parity.
+/// Event-access interface marker for storage-agnostic amplitude paths.
 pub trait AmplitudeEventAccess: crate::data::EventAccess {}
 
 impl<T> AmplitudeEventAccess for T where T: crate::data::EventAccess + ?Sized {}
+
+/// SoA-native amplitude extension trait.
+///
+/// The default implementation uses AoS data when available and returns an error otherwise.
+/// SoA-native amplitudes can override this to consume storage-agnostic event access directly.
+pub trait SoaAmplitude: Amplitude {
+    /// Compute the amplitude value from storage-agnostic event access.
+    fn compute_with_access(
+        &self,
+        parameters: &Parameters,
+        event: &dyn AmplitudeEventAccess,
+        cache: &Cache,
+    ) -> LadduResult<Complex64> {
+        event
+            .as_event_data()
+            .map(|event_data| self.compute(parameters, event_data, cache))
+            .ok_or_else(|| {
+                LadduError::Custom(
+                    "Amplitude does not implement storage-agnostic compute for SoA events"
+                        .to_string(),
+                )
+            })
+    }
+}
+
+impl<T> SoaAmplitude for T where T: Amplitude + ?Sized {}
 
 /// This is the only required trait for writing new amplitude-like structures for this
 /// crate. Users need only implement the [`register`](Amplitude::register)
@@ -1230,6 +1253,22 @@ impl Evaluator {
         }
     }
 
+    #[cfg(test)]
+    fn fill_amplitude_values_with_access(
+        &self,
+        amplitude_values: &mut [Complex64],
+        active_indices: &[usize],
+        parameters: &Parameters,
+        event: &dyn AmplitudeEventAccess,
+        cache: &Cache,
+    ) -> LadduResult<()> {
+        for &amp_idx in active_indices {
+            amplitude_values[amp_idx] =
+                self.amplitudes[amp_idx].compute_with_access(parameters, event, cache)?;
+        }
+        Ok(())
+    }
+
     fn fill_amplitude_gradients(
         &self,
         gradient_values: &mut [DVector<Complex64>],
@@ -1276,6 +1315,32 @@ impl Evaluator {
             value_scratch,
             gradient_scratch,
         )
+    }
+
+    #[cfg(test)]
+    fn evaluate_local_via_event_access(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        self.dataset
+            .events
+            .iter()
+            .zip(resources.caches.iter())
+            .map(|(event, cache)| {
+                self.fill_amplitude_values_with_access(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    event,
+                    cache,
+                )?;
+                Ok(self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots))
+            })
+            .collect()
     }
 
     pub fn evaluate_expression_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
@@ -2269,6 +2334,34 @@ mod tests {
         assert_eq!(result_grad[0][1], Complex64::new(0.0, 10.0));
         assert_eq!(result_grad[1][0], Complex64::new(12.0, 0.0));
         assert_eq!(result_grad[1][1], Complex64::new(0.0, 12.0));
+    }
+
+    #[test]
+    fn test_evaluate_local_via_event_access_matches_aos_path() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = [1.25, -0.75];
+        let aos = evaluator.evaluate_local(&params);
+        let access = evaluator
+            .evaluate_local_via_event_access(&params)
+            .expect("event-access path should evaluate");
+        assert_eq!(aos.len(), access.len());
+        for (lhs, rhs) in aos.iter().zip(access.iter()) {
+            assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
+            assert_relative_eq!(lhs.im, rhs.im, epsilon = 1e-12);
+        }
     }
 
     #[test]

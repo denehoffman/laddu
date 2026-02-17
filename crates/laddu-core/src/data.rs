@@ -150,9 +150,18 @@ pub trait EventAccess {
     fn n_p4(&self) -> usize;
     /// Number of auxiliary scalar entries available in this event.
     fn n_aux(&self) -> usize;
+    /// Borrow row-backed event data when available.
+    ///
+    /// AoS-backed views return `Some(&EventData)`, while SoA-backed views return `None`.
+    fn as_event_data(&self) -> Option<&EventData> {
+        None
+    }
 
     /// Sum selected four-momenta by positional indices.
-    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4> {
+    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4>
+    where
+        Self: Sized,
+    {
         indices
             .as_ref()
             .iter()
@@ -189,6 +198,10 @@ impl EventAccess for EventData {
 
     fn n_aux(&self) -> usize {
         self.aux.len()
+    }
+
+    fn as_event_data(&self) -> Option<&EventData> {
+        Some(self)
     }
 }
 
@@ -795,6 +808,10 @@ impl EventAccess for Event {
 
     fn n_aux(&self) -> usize {
         self.event.aux.len()
+    }
+
+    fn as_event_data(&self) -> Option<&EventData> {
+        Some(self.event.as_ref())
     }
 }
 
@@ -3231,15 +3248,24 @@ mod tests {
             .as_soa_local()
             .expect("soa conversion should succeed");
         let row = soa.event_view(0).expect("soa event view should exist");
+        let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
         mass.bind(dataset.metadata())
             .expect("mass should bind to metadata");
         let from_view = row.evaluate(&mass).expect("soa evaluation should succeed");
+        let from_access_aos =
+            crate::utils::variables::SoaVariable::value_with_access(&mass, &named)
+                .expect("aos value-with-access should succeed");
+        let from_access_soa = crate::utils::variables::SoaVariable::value_with_access(&mass, &row);
         let from_event = dataset
             .event(0)
             .expect("event should exist")
             .evaluate(&mass);
         assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
+        assert_relative_eq!(from_access_aos, from_event, epsilon = 1e-12);
+        assert!(
+            matches!(from_access_soa, Err(LadduError::Custom(message)) if message.contains("does not implement storage-agnostic evaluation"))
+        );
     }
 
     #[test]

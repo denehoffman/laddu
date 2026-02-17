@@ -29,6 +29,27 @@ pub trait VariableEventAccess: crate::data::NamedEventAccess {}
 
 impl<T> VariableEventAccess for T where T: crate::data::NamedEventAccess + ?Sized {}
 
+/// SoA-native variable extension trait.
+///
+/// The default implementation uses AoS data when available and returns an error otherwise.
+/// SoA-native variable implementations can override this for direct access-based evaluation.
+pub trait SoaVariable: Variable {
+    /// Evaluate this variable from storage-agnostic event access.
+    fn value_with_access(&self, event: &dyn VariableEventAccess) -> LadduResult<f64> {
+        event
+            .as_event_data()
+            .map(|event_data| self.value(event_data))
+            .ok_or_else(|| {
+                LadduError::Custom(
+                    "Variable does not implement storage-agnostic evaluation for SoA events"
+                        .to_string(),
+                )
+            })
+    }
+}
+
+impl<T> SoaVariable for T where T: Variable + ?Sized {}
+
 /// Standard methods for extracting some value out of an [`EventData`].
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {
