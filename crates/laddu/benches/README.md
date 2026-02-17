@@ -127,3 +127,21 @@ Implementation details:
 - Size tiers are applied through `LADDU_BENCH_MAX_EVENTS` for both CPU and MPI k-matrix benchmark runs.
 - Local baseline uses `workflow_behavior_cpu_benchmarks` case `kmatrix_nll_thread_scaling/value_only/1`.
 - Distributed runs use `workflow_behavior_mpi_benchmarks` case `kmatrix_nll_mpi_rank_parameterized/value_only`.
+
+## MPI Rank-Scaling Report
+
+Generate consolidated rank-scaling bottleneck report from existing MPI artifacts:
+
+```bash
+just --justfile crates/laddu/benches/Justfile report-mpi-scaling
+```
+
+Inputs:
+
+- `target/criterion/summary/mpi_rank_metrics.json`
+- `target/criterion/summary/mpi_local_vs_distributed_scaling.json`
+
+Outputs:
+
+- `target/criterion/summary/mpi_rank_scaling_report.json`
+- `target/criterion/summary/mpi_rank_scaling_report.md`
