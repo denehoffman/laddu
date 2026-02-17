@@ -29,6 +29,8 @@ use crate::{
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
 };
+#[cfg(feature = "execution-context-prototype")]
+use crate::{ExecutionContext, ThreadPolicy};
 
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
@@ -1484,6 +1486,72 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate the stored expression over local events using a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_local_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
+                return execution_context.install(|| {
+                    self.dataset
+                        .events
+                        .par_iter()
+                        .zip(resources.caches.par_iter())
+                        .map_init(
+                            || {
+                                (
+                                    vec![Complex64::ZERO; amplitude_len],
+                                    vec![Complex64::ZERO; slot_count],
+                                )
+                            },
+                            |(amplitude_values, expr_slots), (event, cache)| {
+                                self.fill_amplitude_values(
+                                    amplitude_values,
+                                    &active_indices,
+                                    &parameters,
+                                    event,
+                                    cache,
+                                );
+                                self.evaluate_expression_value_with_scratch(
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            },
+                        )
+                        .collect()
+                });
+            }
+        }
+        execution_context.with_scratch(|scratch| {
+            let (amplitude_values, expr_slots) =
+                scratch.reserve_value_workspaces(amplitude_len, slot_count);
+            self.dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .map(|(event, cache)| {
+                    self.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                })
+                .collect()
+        })
+    }
+
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
     ///
@@ -1504,6 +1572,24 @@ impl Evaluator {
         buffer
     }
 
+    #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
+    fn evaluate_mpi_with_ctx(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        let local_evaluation = self.evaluate_local_with_ctx(parameters, execution_context);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
@@ -1514,6 +1600,22 @@ impl Evaluator {
             }
         }
         self.evaluate_local(parameters)
+    }
+
+    /// Evaluate the stored expression with a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_mpi_with_ctx(parameters, &world, execution_context);
+            }
+        }
+        self.evaluate_local_with_ctx(parameters, execution_context)
     }
 
     /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
@@ -1690,6 +1792,97 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate the gradient over local events using a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_gradient_local_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
+                return execution_context.install(|| {
+                    self.dataset
+                        .events
+                        .par_iter()
+                        .zip(resources.caches.par_iter())
+                        .map_init(
+                            || {
+                                (
+                                    vec![Complex64::ZERO; amplitude_len],
+                                    vec![DVector::zeros(grad_dim); amplitude_len],
+                                    vec![Complex64::ZERO; slot_count],
+                                    vec![DVector::zeros(grad_dim); slot_count],
+                                )
+                            },
+                            |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                             (event, cache)| {
+                                self.fill_amplitude_values(
+                                    amplitude_values,
+                                    &active_indices,
+                                    &parameters,
+                                    event,
+                                    cache,
+                                );
+                                self.fill_amplitude_gradients(
+                                    gradient_values,
+                                    &resources.active,
+                                    &parameters,
+                                    event,
+                                    cache,
+                                );
+                                self.evaluate_expression_gradient_with_scratch(
+                                    amplitude_values,
+                                    gradient_values,
+                                    value_slots,
+                                    gradient_slots,
+                                )
+                            },
+                        )
+                        .collect()
+                });
+            }
+        }
+        execution_context.with_scratch(|scratch| {
+            let (amplitude_values, value_slots, gradient_values, gradient_slots) =
+                scratch.reserve_gradient_workspaces(amplitude_len, slot_count, grad_dim);
+            self.dataset
+                .events
+                .iter()
+                .zip(resources.caches.iter())
+                .map(|(event, cache)| {
+                    self.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.fill_amplitude_gradients(
+                        gradient_values,
+                        &resources.active,
+                        &parameters,
+                        event,
+                        cache,
+                    );
+                    self.evaluate_expression_gradient_with_scratch(
+                        amplitude_values,
+                        gradient_values,
+                        value_slots,
+                        gradient_slots,
+                    )
+                })
+                .collect()
+        })
+    }
+
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters (MPI-compatible version).
     ///
@@ -1724,6 +1917,34 @@ impl Evaluator {
             .collect()
     }
 
+    #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
+    fn evaluate_gradient_mpi_with_ctx(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        let local_evaluation = self.evaluate_gradient_local_with_ctx(parameters, execution_context);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(
+                &local_evaluation
+                    .iter()
+                    .flat_map(|v| v.data.as_vec())
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &mut partitioned_buffer,
+            );
+        }
+        buffer
+            .chunks(parameters.len())
+            .map(|chunk| DVector::from_row_slice(chunk))
+            .collect()
+    }
+
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
@@ -1734,6 +1955,22 @@ impl Evaluator {
             }
         }
         self.evaluate_gradient_local(parameters)
+    }
+
+    /// Evaluate the gradient with a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_gradient_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_gradient_mpi_with_ctx(parameters, &world, execution_context);
+            }
+        }
+        self.evaluate_gradient_local_with_ctx(parameters, execution_context)
     }
 
     /// See [`Evaluator::evaluate_gradient_local`]. This method evaluates over a subset
