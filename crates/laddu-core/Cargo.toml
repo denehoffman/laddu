@@ -49,6 +49,10 @@ sysinfo = { workspace = true }
 name = "open_benchmark"
 harness = false
 
+[[bench]]
+name = "execution_context_benchmark"
+harness = false
+
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
