@@ -136,6 +136,123 @@ impl EventData {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+struct SoaP4Column {
+    px: Vec<f64>,
+    py: Vec<f64>,
+    pz: Vec<f64>,
+    e: Vec<f64>,
+}
+
+#[allow(dead_code)]
+impl SoaP4Column {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            px: Vec::with_capacity(capacity),
+            py: Vec::with_capacity(capacity),
+            pz: Vec::with_capacity(capacity),
+            e: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn push(&mut self, p4: Vec4) {
+        self.px.push(p4.x);
+        self.py.push(p4.y);
+        self.pz.push(p4.z);
+        self.e.push(p4.t);
+    }
+
+    fn get(&self, event_index: usize) -> Option<Vec4> {
+        Some(Vec4::new(
+            *self.px.get(event_index)?,
+            *self.py.get(event_index)?,
+            *self.pz.get(event_index)?,
+            *self.e.get(event_index)?,
+        ))
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+struct DatasetSoA {
+    p4: Vec<SoaP4Column>,
+    aux: Vec<Vec<f64>>,
+    weights: Vec<f64>,
+}
+
+#[allow(dead_code)]
+impl DatasetSoA {
+    fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
+        let n_events = dataset.events.len();
+        let (n_p4, n_aux) = match dataset.events.first() {
+            Some(first) => (first.p4s.len(), first.aux.len()),
+            None => (
+                dataset.metadata.p4_names.len(),
+                dataset.metadata.aux_names.len(),
+            ),
+        };
+        let mut p4 = (0..n_p4)
+            .map(|_| SoaP4Column::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut aux = (0..n_aux)
+            .map(|_| Vec::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut weights = Vec::with_capacity(n_events);
+        for (event_index, event) in dataset.events.iter().enumerate() {
+            if event.p4s.len() != n_p4 || event.aux.len() != n_aux {
+                return Err(LadduError::Custom(format!(
+                    "Ragged dataset shape at event {event_index}: expected ({n_p4} p4, {n_aux} aux), got ({} p4, {} aux)",
+                    event.p4s.len(),
+                    event.aux.len()
+                )));
+            }
+            for (column, value) in p4.iter_mut().zip(event.p4s.iter()) {
+                column.push(*value);
+            }
+            for (column, value) in aux.iter_mut().zip(event.aux.iter()) {
+                column.push(*value);
+            }
+            weights.push(event.weight);
+        }
+        Ok(Self { p4, aux, weights })
+    }
+
+    fn n_events(&self) -> usize {
+        self.weights.len()
+    }
+
+    fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
+        self.p4.get(p4_index)?.get(event_index)
+    }
+
+    fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
+        self.aux
+            .get(aux_index)
+            .and_then(|column| column.get(event_index).copied())
+    }
+
+    fn weight(&self, event_index: usize) -> Option<f64> {
+        self.weights.get(event_index).copied()
+    }
+
+    fn event_data(&self, event_index: usize) -> Option<EventData> {
+        let mut p4s = Vec::with_capacity(self.p4.len());
+        for p4_index in 0..self.p4.len() {
+            p4s.push(self.p4(event_index, p4_index)?);
+        }
+        let mut aux = Vec::with_capacity(self.aux.len());
+        for aux_index in 0..self.aux.len() {
+            aux.push(self.aux(event_index, aux_index)?);
+        }
+        Some(EventData {
+            p4s,
+            aux,
+            weight: self.weight(event_index)?,
+        })
+    }
+}
+
 /// A collection of [`EventData`].
 #[derive(Debug, Clone)]
 pub struct DatasetMetadata {
@@ -787,6 +904,11 @@ impl Dataset {
             }
         }
         Dataset::new_local(events, metadata)
+    }
+
+    #[allow(dead_code)]
+    fn as_soa_local(&self) -> LadduResult<DatasetSoA> {
+        DatasetSoA::from_dataset(self)
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
@@ -2706,6 +2828,76 @@ mod tests {
         assert_relative_eq!(weights[0], 0.48);
         assert_relative_eq!(weights[1], 0.52);
         assert_relative_eq!(dataset.n_events_weighted(), 1.0);
+    }
+
+    #[test]
+    fn test_dataset_soa_matches_row_storage() {
+        let dataset = Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(EventData {
+                p4s: test_event().p4s,
+                aux: test_event().aux,
+                weight: 0.52,
+            }),
+        ]);
+        let soa = dataset
+            .as_soa_local()
+            .expect("soa conversion should succeed");
+        assert_eq!(soa.n_events(), dataset.n_events_local());
+        for event_index in 0..dataset.n_events_local() {
+            let row = dataset.event(event_index).expect("event should exist");
+            for p4_index in 0..row.p4s.len() {
+                let p4 = soa
+                    .p4(event_index, p4_index)
+                    .expect("soa p4 should be present");
+                assert_relative_eq!(p4.px(), row.p4s[p4_index].px(), epsilon = 1e-12);
+                assert_relative_eq!(p4.py(), row.p4s[p4_index].py(), epsilon = 1e-12);
+                assert_relative_eq!(p4.pz(), row.p4s[p4_index].pz(), epsilon = 1e-12);
+                assert_relative_eq!(p4.e(), row.p4s[p4_index].e(), epsilon = 1e-12);
+            }
+            for aux_index in 0..row.aux.len() {
+                assert_relative_eq!(
+                    soa.aux(event_index, aux_index)
+                        .expect("soa aux should be present"),
+                    row.aux[aux_index],
+                    epsilon = 1e-12
+                );
+            }
+            assert_relative_eq!(
+                soa.weight(event_index)
+                    .expect("soa weight should be present"),
+                row.weight,
+                epsilon = 1e-12
+            );
+            let rebuilt = soa
+                .event_data(event_index)
+                .expect("soa event reconstruction should succeed");
+            assert_eq!(rebuilt.p4s.len(), row.p4s.len());
+            assert_eq!(rebuilt.aux.len(), row.aux.len());
+            assert_relative_eq!(rebuilt.weight, row.weight, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_dataset_soa_rejects_ragged_rows() {
+        let dataset = Dataset::new(vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 1.0, 1.0)],
+                aux: vec![0.1],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![],
+                aux: vec![0.2, 0.3],
+                weight: 2.0,
+            }),
+        ]);
+        let err = dataset
+            .as_soa_local()
+            .expect_err("ragged rows should error");
+        assert!(
+            matches!(err, LadduError::Custom(message) if message.contains("Ragged dataset shape"))
+        );
     }
 
     #[test]
