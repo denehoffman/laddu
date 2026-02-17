@@ -1603,6 +1603,10 @@ impl Evaluator {
     }
 
     /// Evaluate the stored expression with a reusable execution context.
+    ///
+    /// This is intended for repeated calls with the same context instance.
+    /// Thread behavior follows [`ThreadPolicy`](crate::ThreadPolicy) configured on
+    /// [`ExecutionContext`](crate::ExecutionContext).
     #[cfg(feature = "execution-context-prototype")]
     pub fn evaluate_with_ctx(
         &self,
@@ -1958,6 +1962,10 @@ impl Evaluator {
     }
 
     /// Evaluate the gradient with a reusable execution context.
+    ///
+    /// This is intended for repeated calls with the same context instance.
+    /// Thread behavior follows [`ThreadPolicy`](crate::ThreadPolicy) configured on
+    /// [`ExecutionContext`](crate::ExecutionContext).
     #[cfg(feature = "execution-context-prototype")]
     pub fn evaluate_gradient_with_ctx(
         &self,

@@ -1,4 +1,22 @@
 //! Execution context prototype for reusing thread policy and scratch allocations.
+//!
+//! `ExecutionContext` is intended to be created once and reused across many evaluator calls.
+//! Reusing a context avoids repeated setup and enables scratch-buffer reuse for
+//! `ThreadPolicy::Single`.
+//!
+//! Lifecycle:
+//! - Create once with [`ExecutionContext::new`].
+//! - Reuse in repeated calls to
+//!   [`Evaluator::evaluate_with_ctx`](crate::amplitudes::Evaluator::evaluate_with_ctx)
+//!   and
+//!   [`Evaluator::evaluate_gradient_with_ctx`](crate::amplitudes::Evaluator::evaluate_gradient_with_ctx).
+//! - Drop when analysis work is complete; thread-pool and scratch resources are released.
+//!
+//! Thread policy guidance:
+//! - [`ThreadPolicy::Single`]: runs on the caller thread and reuses shared scratch buffers.
+//! - [`ThreadPolicy::GlobalPool`]: uses Rayon global parallelism when available.
+//! - [`ThreadPolicy::Dedicated`]: creates a private Rayon pool; setup is higher-cost, so it
+//!   should be reused across many calls.
 
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -7,6 +25,8 @@ use parking_lot::Mutex;
 use crate::{LadduError, LadduResult};
 
 /// Thread-policy options for [`ExecutionContext`].
+///
+/// These control where evaluator work executes when using context-aware evaluator methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPolicy {
     /// Run work on the current thread.
@@ -119,8 +139,8 @@ impl ScratchAllocator {
 
 /// Prototype execution context owning thread policy and scratch allocators.
 ///
-/// This type is intended for repeated evaluator calls where setup overhead should
-/// be amortized by reusing a single context instance.
+/// This type should usually be long-lived relative to evaluator calls.
+/// Creating one context and reusing it across repeated calls provides the intended behavior.
 #[derive(Debug)]
 pub struct ExecutionContext {
     thread_policy: ThreadPolicy,
@@ -131,6 +151,9 @@ pub struct ExecutionContext {
 
 impl ExecutionContext {
     /// Create a new context with the requested thread policy.
+    ///
+    /// Returns an error when the requested policy is incompatible with the current feature set
+    /// (for example, non-single policy without `rayon`) or when a dedicated pool size is invalid.
     pub fn new(thread_policy: ThreadPolicy) -> LadduResult<Self> {
         #[cfg(not(feature = "rayon"))]
         {
@@ -172,6 +195,8 @@ impl ExecutionContext {
     }
 
     /// Execute work under this context's thread policy.
+    ///
+    /// `Dedicated` runs inside the dedicated pool. Other policies run the closure directly.
     #[cfg(feature = "rayon")]
     pub fn install<R: Send>(&self, op: impl FnOnce() -> R + Send) -> R {
         match &self.dedicated_pool {
@@ -187,6 +212,8 @@ impl ExecutionContext {
     }
 
     /// Access reusable scratch buffers.
+    ///
+    /// Scratch memory capacity is retained across calls to support repeated evaluations.
     pub fn with_scratch<R>(&self, op: impl FnOnce(&mut ScratchAllocator) -> R) -> R {
         let mut scratch = self.scratch.lock();
         op(&mut scratch)
