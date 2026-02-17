@@ -18,6 +18,8 @@ use parquet::file::metadata::ParquetMetaData;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
     fmt::Display,
     fs::File,
@@ -248,6 +250,8 @@ struct DatasetSoA {
     p4: Vec<SoaP4Column>,
     aux: Vec<Vec<f64>>,
     weights: Vec<f64>,
+    #[cfg(test)]
+    materialization_count: Cell<usize>,
 }
 
 #[allow(dead_code)]
@@ -284,7 +288,13 @@ impl DatasetSoA {
             }
             weights.push(event.weight);
         }
-        Ok(Self { p4, aux, weights })
+        Ok(Self {
+            p4,
+            aux,
+            weights,
+            #[cfg(test)]
+            materialization_count: Cell::new(0),
+        })
     }
 
     fn n_events(&self) -> usize {
@@ -306,6 +316,9 @@ impl DatasetSoA {
     }
 
     fn event_data(&self, event_index: usize) -> Option<EventData> {
+        #[cfg(test)]
+        self.materialization_count
+            .set(self.materialization_count.get() + 1);
         let mut p4s = Vec::with_capacity(self.p4.len());
         for p4_index in 0..self.p4.len() {
             p4s.push(self.p4(event_index, p4_index)?);
@@ -319,6 +332,11 @@ impl DatasetSoA {
             aux,
             weight: self.weight(event_index)?,
         })
+    }
+
+    #[cfg(test)]
+    fn materialization_count(&self) -> usize {
+        self.materialization_count.get()
     }
 
     fn event_view(&self, event_index: usize) -> Option<SoaEventView<'_>> {
@@ -1216,6 +1234,23 @@ impl Dataset {
     #[allow(dead_code)]
     fn as_soa_local(&self) -> LadduResult<DatasetSoAWithMetadata> {
         DatasetSoAWithMetadata::from_dataset(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_each_named_event_soa_local<F>(&self, mut op: F) -> LadduResult<usize>
+    where
+        F: FnMut(usize, &dyn NamedEventAccess) -> LadduResult<()>,
+    {
+        let soa = self.as_soa_local()?;
+        for event_index in 0..soa.n_events() {
+            let view = soa.event_view(event_index).ok_or_else(|| {
+                LadduError::Custom(format!(
+                    "Failed to create SoA named event view at index {event_index}"
+                ))
+            })?;
+            op(event_index, &view)?;
+        }
+        Ok(soa.storage.materialization_count())
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
