@@ -244,9 +244,9 @@ impl SoaP4Column {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
-struct DatasetSoA {
+pub struct DatasetSoA {
+    metadata: Arc<DatasetMetadata>,
     p4: Vec<SoaP4Column>,
     aux: Vec<Vec<f64>>,
     weights: Vec<f64>,
@@ -254,9 +254,9 @@ struct DatasetSoA {
     materialization_count: Cell<usize>,
 }
 
-#[allow(dead_code)]
 impl DatasetSoA {
-    fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
+    /// Build a SoA dataset from an event-row dataset.
+    pub fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
         let n_events = dataset.events.len();
         let (n_p4, n_aux) = match dataset.events.first() {
             Some(first) => (first.p4s.len(), first.aux.len()),
@@ -289,6 +289,7 @@ impl DatasetSoA {
             weights.push(event.weight);
         }
         Ok(Self {
+            metadata: dataset.metadata.clone(),
             p4,
             aux,
             weights,
@@ -297,21 +298,44 @@ impl DatasetSoA {
         })
     }
 
-    fn n_events(&self) -> usize {
+    /// Convert this SoA dataset back to a row-event dataset.
+    pub fn to_dataset(&self) -> LadduResult<Dataset> {
+        let events = (0..self.n_events())
+            .map(|event_index| {
+                self.event_data(event_index).map(Arc::new).ok_or_else(|| {
+                    LadduError::Custom(format!(
+                        "Failed to materialize SoA event data at index {event_index}"
+                    ))
+                })
+            })
+            .collect::<LadduResult<Vec<_>>>()?;
+        Ok(Dataset::new_local(events, self.metadata.clone()))
+    }
+
+    /// Access metadata.
+    pub fn metadata(&self) -> &DatasetMetadata {
+        &self.metadata
+    }
+
+    /// Number of local events.
+    pub fn n_events(&self) -> usize {
         self.weights.len()
     }
 
-    fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
+    /// Retrieve a p4 value by row and p4 index.
+    pub fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
         self.p4.get(p4_index)?.get(event_index)
     }
 
-    fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
+    /// Retrieve an aux value by row and aux index.
+    pub fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
         self.aux
             .get(aux_index)
             .and_then(|column| column.get(event_index).copied())
     }
 
-    fn weight(&self, event_index: usize) -> Option<f64> {
+    /// Retrieve event weight by row index.
+    pub fn weight(&self, event_index: usize) -> Option<f64> {
         self.weights.get(event_index).copied()
     }
 
@@ -339,7 +363,7 @@ impl DatasetSoA {
         self.materialization_count.get()
     }
 
-    fn event_view(&self, event_index: usize) -> Option<SoaEventView<'_>> {
+    fn row_view(&self, event_index: usize) -> Option<SoaEventView<'_>> {
         if event_index >= self.n_events() {
             return None;
         }
@@ -348,49 +372,38 @@ impl DatasetSoA {
             event_index,
         })
     }
-}
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct DatasetSoAWithMetadata {
-    storage: DatasetSoA,
-    metadata: Arc<DatasetMetadata>,
-}
-
-#[allow(dead_code)]
-impl DatasetSoAWithMetadata {
-    fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
-        Ok(Self {
-            storage: DatasetSoA::from_dataset(dataset)?,
-            metadata: dataset.metadata.clone(),
-        })
+    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F) -> LadduResult<usize>
+    where
+        F: FnMut(usize, SoaNamedEventView<'_>) -> LadduResult<()>,
+    {
+        for event_index in 0..self.n_events() {
+            let row = self.row_view(event_index).ok_or_else(|| {
+                LadduError::Custom(format!(
+                    "Failed to create SoA named event view at index {event_index}"
+                ))
+            })?;
+            let view = SoaNamedEventView {
+                row,
+                metadata: &self.metadata,
+            };
+            op(event_index, view)?;
+        }
+        #[cfg(test)]
+        {
+            Ok(self.materialization_count())
+        }
+        #[cfg(not(test))]
+        {
+            Ok(0)
+        }
     }
 
-    fn n_events(&self) -> usize {
-        self.storage.n_events()
-    }
-
-    fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
-        self.storage.p4(event_index, p4_index)
-    }
-
-    fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
-        self.storage.aux(event_index, aux_index)
-    }
-
-    fn weight(&self, event_index: usize) -> Option<f64> {
-        self.storage.weight(event_index)
-    }
-
-    fn event_data(&self, event_index: usize) -> Option<EventData> {
-        self.storage.event_data(event_index)
-    }
-
-    fn event_view(&self, event_index: usize) -> Option<SoaNamedEventView<'_>> {
-        let row = self.storage.event_view(event_index)?;
+    pub(crate) fn event_view(&self, event_index: usize) -> Option<SoaNamedEventView<'_>> {
+        let row = self.row_view(event_index)?;
         Some(SoaNamedEventView {
             row,
-            metadata: &self.metadata,
+            metadata: self.metadata(),
         })
     }
 }
@@ -457,16 +470,16 @@ impl EventAccess for SoaEventView<'_> {
     }
 }
 
-#[allow(dead_code)]
+/// A name-aware SoA event view over a single row in a dataset.
 #[derive(Debug, Clone, Copy)]
-struct SoaNamedEventView<'a> {
+pub struct SoaNamedEventView<'a> {
     row: SoaEventView<'a>,
     metadata: &'a DatasetMetadata,
 }
 
-#[allow(dead_code)]
 impl SoaNamedEventView<'_> {
-    fn p4(&self, name: &str) -> Option<Vec4> {
+    /// Retrieve a four-momentum by metadata name.
+    pub fn p4(&self, name: &str) -> Option<Vec4> {
         let selection = self.metadata.p4_selection(name)?;
         selection
             .indices()
@@ -476,16 +489,19 @@ impl SoaNamedEventView<'_> {
             .map(|momenta| momenta.into_iter().sum())
     }
 
-    fn aux(&self, name: &str) -> Option<f64> {
+    /// Retrieve an auxiliary scalar by metadata name.
+    pub fn aux(&self, name: &str) -> Option<f64> {
         let index = self.metadata.aux_index(name)?;
         self.row.aux(index)
     }
 
-    fn weight(&self) -> Option<f64> {
+    /// Retrieve event weight.
+    pub fn weight(&self) -> Option<f64> {
         self.row.weight()
     }
 
-    fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
+    /// Retrieve the sum of multiple four-momenta selected by name.
+    pub fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
     where
         N: IntoIterator,
         N::Item: AsRef<str>,
@@ -497,11 +513,13 @@ impl SoaNamedEventView<'_> {
             .map(|momenta| momenta.into_iter().sum())
     }
 
-    fn event_data(&self) -> Option<EventData> {
+    /// Materialize this SoA row into an [`EventData`] value.
+    pub fn event_data(&self) -> Option<EventData> {
         self.row.event_data()
     }
 
-    fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
+    /// Evaluate a [`Variable`] against this event.
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
         self.row.evaluate(variable)
     }
 }
@@ -1231,26 +1249,9 @@ impl Dataset {
         Dataset::new_local(events, metadata)
     }
 
-    #[allow(dead_code)]
-    fn as_soa_local(&self) -> LadduResult<DatasetSoAWithMetadata> {
-        DatasetSoAWithMetadata::from_dataset(self)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_each_named_event_soa_local<F>(&self, mut op: F) -> LadduResult<usize>
-    where
-        F: FnMut(usize, &dyn NamedEventAccess) -> LadduResult<()>,
-    {
-        let soa = self.as_soa_local()?;
-        for event_index in 0..soa.n_events() {
-            let view = soa.event_view(event_index).ok_or_else(|| {
-                LadduError::Custom(format!(
-                    "Failed to create SoA named event view at index {event_index}"
-                ))
-            })?;
-            op(event_index, &view)?;
-        }
-        Ok(soa.storage.materialization_count())
+    /// Convert this row-event dataset to SoA layout.
+    pub fn to_soa(&self) -> LadduResult<DatasetSoA> {
+        DatasetSoA::from_dataset(self)
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
@@ -3182,9 +3183,7 @@ mod tests {
                 weight: 0.52,
             }),
         ]);
-        let soa = dataset
-            .as_soa_local()
-            .expect("soa conversion should succeed");
+        let soa = dataset.to_soa().expect("soa conversion should succeed");
         assert_eq!(soa.n_events(), dataset.n_events_local());
         for event_index in 0..dataset.n_events_local() {
             let row = dataset.event(event_index).expect("event should exist");
@@ -3234,9 +3233,7 @@ mod tests {
                 weight: 2.0,
             }),
         ]);
-        let err = dataset
-            .as_soa_local()
-            .expect_err("ragged rows should error");
+        let err = dataset.to_soa().expect_err("ragged rows should error");
         assert!(
             matches!(err, LadduError::Custom(message) if message.contains("Ragged dataset shape"))
         );
@@ -3245,9 +3242,7 @@ mod tests {
     #[test]
     fn test_dataset_soa_named_row_view_matches_event_accessors() {
         let dataset = test_dataset();
-        let soa = dataset
-            .as_soa_local()
-            .expect("soa conversion should succeed");
+        let soa = dataset.to_soa().expect("soa conversion should succeed");
         let row = soa.event_view(0).expect("soa event view should exist");
         let named = dataset.named_event(0).expect("named event should exist");
 
@@ -3279,9 +3274,7 @@ mod tests {
     #[test]
     fn test_dataset_soa_row_view_variable_evaluation_matches_event_data() {
         let dataset = test_dataset();
-        let soa = dataset
-            .as_soa_local()
-            .expect("soa conversion should succeed");
+        let soa = dataset.to_soa().expect("soa conversion should succeed");
         let row = soa.event_view(0).expect("soa event view should exist");
         let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
@@ -3319,9 +3312,7 @@ mod tests {
     fn test_named_event_access_trait_matches_aos_and_soa_views() {
         let dataset = test_dataset();
         let aos = dataset.named_event(0).expect("event should exist");
-        let soa_storage = dataset
-            .as_soa_local()
-            .expect("soa conversion should succeed");
+        let soa_storage = dataset.to_soa().expect("soa conversion should succeed");
         let soa = soa_storage
             .event_view(0)
             .expect("soa named view should exist");

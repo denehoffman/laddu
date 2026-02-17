@@ -24,7 +24,7 @@ fn next_amplitude_id() -> u64 {
 }
 
 use crate::{
-    data::{Dataset, DatasetMetadata, EventData},
+    data::{Dataset, DatasetMetadata, DatasetSoA, EventData, SoaNamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
@@ -145,6 +145,22 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// to make a functioning [`Amplitude`].
     #[allow(unused_variables)]
     fn precompute(&self, event: &EventData, cache: &mut Cache) {}
+
+    /// SoA-native precompute hook.
+    ///
+    /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and SoA
+    /// precompute performance can be benchmarked independently.
+    #[allow(unused_variables)]
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) -> LadduResult<()> {
+        if let Some(event_data) = event.event_data() {
+            self.precompute(&event_data, cache);
+            Ok(())
+        } else {
+            Err(LadduError::Custom(
+                "Failed to materialize SoA event view for precompute_soa fallback".to_string(),
+            ))
+        }
+    }
     /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
@@ -164,6 +180,18 @@ pub trait Amplitude: DynClone + Send + Sync {
             .iter()
             .zip(resources.caches.iter_mut())
             .for_each(|(event, cache)| self.precompute(event, cache))
+    }
+
+    /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
+    fn precompute_all_soa(
+        &self,
+        dataset: &DatasetSoA,
+        resources: &mut Resources,
+    ) -> LadduResult<usize> {
+        dataset.for_each_named_event_local(|event_index, event| {
+            let cache = &mut resources.caches[event_index];
+            self.precompute_soa(&event, cache)
+        })
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
     /// calculated value for a particular [`EventData`] and set of [`Parameters`]. See those
@@ -1091,6 +1119,24 @@ impl Expression {
 
     /// Load an [`Expression`] against a dataset, binding amplitudes and reserving caches.
     pub fn load(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
+        self.load_with_aos_precompute(dataset)
+    }
+
+    fn load_with_aos_precompute(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
+        self.load_with_precompute(dataset, |amplitude, ds, resources| {
+            amplitude.precompute_all(ds, resources);
+            Ok(())
+        })
+    }
+
+    fn load_with_precompute<F>(
+        &self,
+        dataset: &Arc<Dataset>,
+        mut precompute: F,
+    ) -> LadduResult<Evaluator>
+    where
+        F: FnMut(&mut Box<dyn Amplitude>, &Arc<Dataset>, &mut Resources) -> LadduResult<()>,
+    {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events());
@@ -1108,13 +1154,45 @@ impl Expression {
         {
             for amplitude in amplitudes.iter_mut() {
                 amplitude.bind(metadata)?;
-                amplitude.precompute_all(dataset, &mut resources);
+                precompute(amplitude, dataset, &mut resources)?;
             }
         }
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
+            expression: self.tree.clone(),
+            expression_program: ExpressionProgram::from_node(&self.tree),
+            registry: self.registry.clone(),
+            parameter_manager,
+        })
+    }
+
+    /// Load an [`Expression`] using a [`DatasetSoA`] precompute path.
+    pub fn load_soa(&self, dataset: &Arc<DatasetSoA>) -> LadduResult<Evaluator> {
+        let mut resources = self.registry.resources.clone();
+        let metadata = dataset.metadata();
+        resources.reserve_cache(dataset.n_events());
+        resources.refresh_active_indices();
+        let parameter_manager = ParameterManager::with_fixed_values(
+            &resources.parameter_names(),
+            &resources.fixed_parameter_values(),
+        );
+        let mut amplitudes: Vec<Box<dyn Amplitude>> = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| dyn_clone::clone_box(&**amp))
+            .collect();
+        for amplitude in amplitudes.iter_mut() {
+            amplitude.bind(metadata)?;
+            amplitude.precompute_all_soa(dataset, &mut resources)?;
+        }
+        let aos_dataset = Arc::new(dataset.to_dataset()?);
+        Ok(Evaluator {
+            amplitudes,
+            resources: Arc::new(RwLock::new(resources)),
+            dataset: aos_dataset,
             expression: self.tree.clone(),
             expression_program: ExpressionProgram::from_node(&self.tree),
             registry: self.registry.clone(),
@@ -2456,6 +2534,14 @@ impl Amplitude for TestAmplitude {
         cache.store_scalar(self.beam_energy, event.p4s[0].e());
     }
 
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) -> LadduResult<()> {
+        let beam = crate::data::EventAccess::p4_at(event, 0).ok_or_else(|| {
+            LadduError::Custom("TestAmplitude expected p4 index 0 in SoA precompute".to_string())
+        })?;
+        cache.store_scalar(self.beam_energy, beam.e());
+        Ok(())
+    }
+
     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
     }
@@ -2649,6 +2735,69 @@ mod tests {
                 assert_relative_eq!(lhs_entry.re, rhs_entry.re, epsilon = 1e-12);
                 assert_relative_eq!(lhs_entry.im, rhs_entry.im, epsilon = 1e-12);
             }
+        }
+    }
+
+    #[test]
+    fn test_load_soa_precompute_backend_matches_aos_results() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator_aos = expr.load(&dataset).unwrap();
+        let dataset_soa = Arc::new(dataset.to_soa().unwrap());
+        let evaluator_soa = expr.load_soa(&dataset_soa).unwrap();
+        let params = [1.25, -0.75];
+        let aos = evaluator_aos.evaluate(&params);
+        let soa = evaluator_soa.evaluate(&params);
+        assert_eq!(aos.len(), soa.len());
+        for (lhs, rhs) in aos.iter().zip(soa.iter()) {
+            assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
+            assert_relative_eq!(lhs.im, rhs.im, epsilon = 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_precompute_all_soa_avoids_row_materialization() {
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        );
+        let dataset_soa = dataset.to_soa().expect("SoA conversion should succeed");
+        let mut amplitude = TestAmplitude {
+            name: "test".to_string(),
+            re: parameter("real"),
+            pid_re: ParameterID::default(),
+            im: parameter("imag"),
+            pid_im: ParameterID::default(),
+            beam_energy: Default::default(),
+        };
+        let mut resources = Resources::default();
+        amplitude
+            .register(&mut resources)
+            .expect("test amplitude should register");
+        resources.reserve_cache(dataset.n_events());
+        let materialization_count = amplitude
+            .precompute_all_soa(&dataset_soa, &mut resources)
+            .expect("SoA precompute should succeed");
+        assert_eq!(materialization_count, 0);
+        for cache in &resources.caches {
+            assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
         }
     }
 
