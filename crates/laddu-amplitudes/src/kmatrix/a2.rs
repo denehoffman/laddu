@@ -198,6 +198,26 @@ impl Amplitude for KopfKMatrixA2 {
             }
         }
     }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
+        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
+        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
+        for i in 0..2 {
+            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
+                gradient[index] = internal_gradient[i];
+            }
+            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
+                gradient[index] = Complex64::I * internal_gradient[i];
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A fixed K-Matrix Amplitude for :math:`a_2` mesons

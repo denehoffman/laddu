@@ -83,6 +83,15 @@ impl Amplitude for Ylm {
     ) {
         // This amplitude is independent of free parameters
     }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        Ok(())
+    }
 }
 
 /// An spherical harmonic Amplitude

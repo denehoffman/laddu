@@ -112,6 +112,19 @@ impl Amplitude for PiecewiseScalar {
             gradient[bin_index] = Complex64::ONE;
         }
     }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
+        if bin_index < self.bins + 1 {
+            gradient[bin_index] = Complex64::ONE;
+        }
+        Ok(())
+    }
 }
 
 /// An Amplitude which represents a piecewise function of single scalar values
@@ -277,6 +290,25 @@ impl Amplitude for PiecewiseComplexScalar {
                 gradient[ind] = Complex64::I;
             }
         }
+    }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
+        if bin_index < self.bins + 1 {
+            let pid_re_im = self.pids_re_im[bin_index];
+            if let ParameterID::Parameter(ind) = pid_re_im.0 {
+                gradient[ind] = Complex64::ONE;
+            }
+            if let ParameterID::Parameter(ind) = pid_re_im.1 {
+                gradient[ind] = Complex64::I;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -450,6 +482,28 @@ impl Amplitude for PiecewisePolarComplexScalar {
                 gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
             }
         }
+    }
+
+    fn compute_gradient_cached(
+        &self,
+        parameters: &Parameters,
+        cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
+        if bin_index < self.bins + 1 {
+            let pid_r_theta = self.pids_r_theta[bin_index];
+            let r = parameters.get(pid_r_theta.0);
+            let theta = parameters.get(pid_r_theta.1);
+            let exp_i_theta = Complex64::cis(theta);
+            if let ParameterID::Parameter(ind) = pid_r_theta.0 {
+                gradient[ind] = exp_i_theta;
+            }
+            if let ParameterID::Parameter(ind) = pid_r_theta.1 {
+                gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
+            }
+        }
+        Ok(())
     }
 }
 

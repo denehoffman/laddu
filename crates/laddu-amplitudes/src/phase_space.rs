@@ -114,6 +114,15 @@ impl Amplitude for PhaseSpaceFactor {
     ) {
         // This amplitude is independent of free parameters
     }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        Ok(())
+    }
 }
 
 /// An phase-space factor for t-channel produced particles which decay into two particles

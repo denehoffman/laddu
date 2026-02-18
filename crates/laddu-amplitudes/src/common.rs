@@ -58,6 +58,18 @@ impl Amplitude for Scalar {
             gradient[ind] = Complex64::ONE;
         }
     }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        if let ParameterID::Parameter(ind) = self.pid {
+            gradient[ind] = Complex64::ONE;
+        }
+        Ok(())
+    }
 }
 
 /// An Amplitude which represents a single scalar value
@@ -137,6 +149,21 @@ impl Amplitude for ComplexScalar {
         if let ParameterID::Parameter(ind) = self.pid_im {
             gradient[ind] = Complex64::I;
         }
+    }
+
+    fn compute_gradient_cached(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        if let ParameterID::Parameter(ind) = self.pid_re {
+            gradient[ind] = Complex64::ONE;
+        }
+        if let ParameterID::Parameter(ind) = self.pid_im {
+            gradient[ind] = Complex64::I;
+        }
+        Ok(())
     }
 }
 
@@ -225,6 +252,23 @@ impl Amplitude for PolarComplexScalar {
             gradient[ind] = Complex64::I
                 * Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
         }
+    }
+
+    fn compute_gradient_cached(
+        &self,
+        parameters: &Parameters,
+        _cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) -> LadduResult<()> {
+        let exp_i_theta = Complex64::cis(parameters.get(self.pid_theta));
+        if let ParameterID::Parameter(ind) = self.pid_r {
+            gradient[ind] = exp_i_theta;
+        }
+        if let ParameterID::Parameter(ind) = self.pid_theta {
+            gradient[ind] = Complex64::I
+                * Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
+        }
+        Ok(())
     }
 }
 
