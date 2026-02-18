@@ -58,6 +58,32 @@ python3 crates/laddu/benches/scripts/criterion_json_report.py \
   --improvement-threshold-pct 3.0
 ```
 
+### Current CPU Thresholds And Deltas (2026-02-18)
+
+Most recent run command:
+
+```bash
+just --justfile crates/laddu/benches/Justfile json-report
+```
+
+Configured report thresholds:
+
+- regression threshold: `>= +3.0%`
+- improvement threshold: `<= -3.0%`
+- policy in this run: `off` (records status, does not fail)
+
+Observed AoS-vs-cached and AoS-vs-SoA deltas from
+`target/criterion/summary/benchmark_summary_cpu.json` (typical estimate):
+
+- `evaluator_cached_vs_aos/evaluate_cached_local` vs `evaluate_aos_local`: `-0.266%` (cached faster)
+- `evaluator_cached_vs_aos/evaluate_gradient_cached_local` vs `evaluate_gradient_aos_local`: `-0.277%` (cached faster)
+- `precompute_backend_aos_vs_soa/load_soa_precompute` vs `load_aos_precompute`: `+79.129%` (SoA slower)
+
+Notes:
+
+- These are pairwise deltas within the same run, not change-vs-previous-run deltas.
+- For these benchmark IDs, Criterion change fields may be `unknown` when no prior baseline exists.
+
 ## MPI Benchmark Execution
 
 MPI benchmark cases in `workflow_behavior_mpi_benchmarks` require launching under `mpirun`.
