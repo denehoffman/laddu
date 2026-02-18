@@ -1489,6 +1489,10 @@ impl EvaluatorSoA {
         self.evaluate_cached_local(parameters)
     }
 
+    /// Evaluate over local events using the canonical cache-centric execution path.
+    ///
+    /// O081 migration note: `evaluate_cached_local` is transitional naming; this
+    /// behavior is the canonical `evaluate_local` behavior moving forward.
     pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
         self.evaluate_local(parameters)
     }
@@ -1551,6 +1555,10 @@ impl EvaluatorSoA {
         self.evaluate_gradient_cached_local(parameters)
     }
 
+    /// Evaluate gradients over local events using the canonical cache-centric execution path.
+    ///
+    /// O081 migration note: `evaluate_gradient_cached_local` is transitional naming; this
+    /// behavior is the canonical `evaluate_gradient_local` behavior moving forward.
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         self.evaluate_gradient_local(parameters)
     }
@@ -2052,6 +2060,9 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
+    ///
+    /// O081 migration note: this remains the canonical public method name, but the target
+    /// implementation is cache-only evaluation semantics.
     pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
@@ -2490,6 +2501,9 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
+    ///
+    /// O081 migration note: this remains the canonical public method name, but the target
+    /// implementation is cache-only gradient semantics.
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         #[cfg(feature = "mpi")]
         {

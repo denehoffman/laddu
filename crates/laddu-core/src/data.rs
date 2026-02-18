@@ -231,6 +231,10 @@ impl SoaP4Column {
     }
 }
 
+/// Columnar dataset storage used by SoA execution paths.
+///
+/// O081 migration note: this storage model is the canonical target for the public
+/// [`Dataset`] API. Row-backed storage remains transitional during migration.
 #[derive(Debug, Default)]
 pub struct DatasetSoA {
     metadata: Arc<DatasetMetadata>,
@@ -293,11 +297,11 @@ impl DatasetSoA {
     }
 
     /// Convert this SoA dataset back to a row-event dataset.
-    pub fn to_dataset(&self) -> LadduResult<Dataset> {
+    pub fn to_dataset(&self) -> Dataset {
         let events = (0..self.n_events())
             .map(|event_index| Arc::new(self.event_data(event_index)))
             .collect::<Vec<_>>();
-        Ok(Dataset::new_local(events, self.metadata.clone()))
+        Dataset::new_local(events, self.metadata.clone())
     }
 
     /// Access metadata.
@@ -311,43 +315,41 @@ impl DatasetSoA {
     }
 
     /// Retrieve a p4 value by row and p4 index.
-    pub fn p4(&self, event_index: usize, p4_index: usize) -> Option<Vec4> {
-        self.p4.get(p4_index)?.get(event_index)
+    ///
+    /// Panics when either index is out of bounds.
+    pub fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
+        self.p4[p4_index]
+            .get(event_index)
+            .expect("DatasetSoA p4 index out of bounds")
     }
 
     /// Retrieve an aux value by row and aux index.
-    pub fn aux(&self, event_index: usize, aux_index: usize) -> Option<f64> {
-        self.aux
-            .get(aux_index)
-            .and_then(|column| column.get(event_index).copied())
+    ///
+    /// Panics when either index is out of bounds.
+    pub fn aux(&self, event_index: usize, aux_index: usize) -> f64 {
+        self.aux[aux_index][event_index]
     }
 
     /// Retrieve event weight by row index.
-    pub fn weight(&self, event_index: usize) -> Option<f64> {
-        self.weights.get(event_index).copied()
+    ///
+    /// Panics when the row index is out of bounds.
+    pub fn weight(&self, event_index: usize) -> f64 {
+        self.weights[event_index]
     }
 
     pub(crate) fn event_data(&self, event_index: usize) -> EventData {
         let mut p4s = Vec::with_capacity(self.p4.len());
         for p4_index in 0..self.p4.len() {
-            p4s.push(
-                self.p4(event_index, p4_index)
-                    .expect("DatasetSoA p4 index should be valid during row conversion"),
-            );
+            p4s.push(self.p4(event_index, p4_index));
         }
         let mut aux = Vec::with_capacity(self.aux.len());
         for aux_index in 0..self.aux.len() {
-            aux.push(
-                self.aux(event_index, aux_index)
-                    .expect("DatasetSoA aux index should be valid during row conversion"),
-            );
+            aux.push(self.aux(event_index, aux_index));
         }
         EventData {
             p4s,
             aux,
-            weight: self
-                .weight(event_index)
-                .expect("DatasetSoA weight should be valid during row conversion"),
+            weight: self.weight(event_index),
         }
     }
 
@@ -448,21 +450,15 @@ struct SoaEventView<'a> {
 #[allow(dead_code)]
 impl SoaEventView<'_> {
     fn p4(&self, p4_index: usize) -> Vec4 {
-        self.storage
-            .p4(self.event_index, p4_index)
-            .expect("SoA row view p4 index out of bounds")
+        self.storage.p4(self.event_index, p4_index)
     }
 
     fn aux(&self, aux_index: usize) -> f64 {
-        self.storage
-            .aux(self.event_index, aux_index)
-            .expect("SoA row view aux index out of bounds")
+        self.storage.aux(self.event_index, aux_index)
     }
 
     fn weight(&self) -> f64 {
-        self.storage
-            .weight(self.event_index)
-            .expect("SoA row view weight index out of bounds")
+        self.storage.weight(self.event_index)
     }
 
     fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
@@ -723,11 +719,15 @@ impl Default for DatasetMetadata {
     }
 }
 
-/// A collection of [`EventData`] with optional metadata for name-based lookups.
+/// A collection of events with optional metadata for name-based lookups.
+///
+/// O081 migration note: the public `Dataset` name is planned to become SoA-backed.
+/// The current row-backed representation is transitional until full adoption is complete.
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
     pub events: Vec<Event>,
+    pub(crate) soa: DatasetSoA,
     pub(crate) metadata: Arc<DatasetMetadata>,
 }
 
@@ -1199,6 +1199,46 @@ where
 }
 
 impl Dataset {
+    fn soa_from_wrapped_events(
+        events: &[Event],
+        metadata: Arc<DatasetMetadata>,
+    ) -> LadduResult<DatasetSoA> {
+        let n_events = events.len();
+        let (n_p4, n_aux) = match events.first() {
+            Some(first) => (first.p4s.len(), first.aux.len()),
+            None => (metadata.p4_names.len(), metadata.aux_names.len()),
+        };
+        let mut p4 = (0..n_p4)
+            .map(|_| SoaP4Column::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut aux = (0..n_aux)
+            .map(|_| Vec::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut weights = Vec::with_capacity(n_events);
+        for (event_index, event) in events.iter().enumerate() {
+            if event.p4s.len() != n_p4 || event.aux.len() != n_aux {
+                return Err(LadduError::Custom(format!(
+                    "Ragged dataset shape at event {event_index}: expected ({n_p4} p4, {n_aux} aux), got ({} p4, {} aux)",
+                    event.p4s.len(),
+                    event.aux.len()
+                )));
+            }
+            for (column, value) in p4.iter_mut().zip(event.p4s.iter()) {
+                column.push(*value);
+            }
+            for (column, value) in aux.iter_mut().zip(event.aux.iter()) {
+                column.push(*value);
+            }
+            weights.push(event.weight);
+        }
+        Ok(DatasetSoA {
+            metadata,
+            p4,
+            aux,
+            weights,
+        })
+    }
+
     /// Create a new [`Dataset`] from a list of [`EventData`] (non-MPI version).
     ///
     /// # Notes
@@ -1209,9 +1249,12 @@ impl Dataset {
         let wrapped_events = events
             .into_iter()
             .map(|event| Event::new(event, metadata.clone()))
-            .collect();
+            .collect::<Vec<_>>();
+        let soa = Self::soa_from_wrapped_events(&wrapped_events, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical SoA storage");
         Dataset {
             events: wrapped_events,
+            soa,
             metadata,
         }
     }
@@ -1234,8 +1277,11 @@ impl Dataset {
             .cloned()
             .map(|event| Event::new(event, metadata.clone()))
             .collect();
+        let soa = Self::soa_from_wrapped_events(&local, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical SoA storage");
         Dataset {
             events: local,
+            soa,
             metadata,
         }
     }
@@ -1263,7 +1309,7 @@ impl Dataset {
 
     /// Convert this row-event dataset to SoA layout.
     pub fn to_soa(&self) -> LadduResult<DatasetSoA> {
-        DatasetSoA::from_dataset(self)
+        Ok(self.soa.clone())
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
@@ -1273,7 +1319,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     pub fn n_events_local(&self) -> usize {
-        self.events.len()
+        self.soa.n_events()
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (MPI-compatible version).
@@ -1310,10 +1356,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     pub fn weights_local(&self) -> Vec<f64> {
-        #[cfg(feature = "rayon")]
-        return self.events.par_iter().map(|e| e.weight).collect();
-        #[cfg(not(feature = "rayon"))]
-        return self.events.iter().map(|e| e.weight).collect();
+        self.soa.weights.clone()
     }
 
     /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (MPI-compatible version).
@@ -1355,12 +1398,13 @@ impl Dataset {
     pub fn n_events_weighted_local(&self) -> f64 {
         #[cfg(feature = "rayon")]
         return self
-            .events
+            .soa
+            .weights
             .par_iter()
-            .map(|e| e.weight)
+            .copied()
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
-        return self.events.iter().map(|e| e.weight).sum();
+        return self.soa.weights.iter().sum();
     }
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
@@ -2305,15 +2349,13 @@ pub fn write_root(
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
     debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
     debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
-    Dataset {
-        events: a
-            .events
-            .iter()
-            .chain(b.events.iter())
-            .cloned()
-            .collect(),
-        metadata: a.metadata.clone(),
-    }
+    let events = a
+        .events
+        .iter()
+        .chain(b.events.iter())
+        .map(Event::data_arc)
+        .collect::<Vec<_>>();
+    Dataset::new_with_metadata(events, a.metadata.clone())
 });
 
 /// Options for reading a [`Dataset`] from a file.
@@ -3377,32 +3419,20 @@ mod tests {
         assert_eq!(left.metadata().aux_names(), right.metadata().aux_names());
         for event_index in 0..left.n_events() {
             for p4_index in 0..left.metadata().p4_names().len() {
-                let lp4 = left
-                    .p4(event_index, p4_index)
-                    .expect("left SoA p4 should exist");
-                let rp4 = right
-                    .p4(event_index, p4_index)
-                    .expect("right SoA p4 should exist");
+                let lp4 = left.p4(event_index, p4_index);
+                let rp4 = right.p4(event_index, p4_index);
                 assert_relative_eq!(lp4.px(), rp4.px(), epsilon = 1e-12);
                 assert_relative_eq!(lp4.py(), rp4.py(), epsilon = 1e-12);
                 assert_relative_eq!(lp4.pz(), rp4.pz(), epsilon = 1e-12);
                 assert_relative_eq!(lp4.e(), rp4.e(), epsilon = 1e-12);
             }
             for aux_index in 0..left.metadata().aux_names().len() {
-                let l = left
-                    .aux(event_index, aux_index)
-                    .expect("left SoA aux should exist");
-                let r = right
-                    .aux(event_index, aux_index)
-                    .expect("right SoA aux should exist");
+                let l = left.aux(event_index, aux_index);
+                let r = right.aux(event_index, aux_index);
                 assert_relative_eq!(l, r, epsilon = 1e-12);
             }
-            let lw = left
-                .weight(event_index)
-                .expect("left SoA weight should exist");
-            let rw = right
-                .weight(event_index)
-                .expect("right SoA weight should exist");
+            let lw = left.weight(event_index);
+            let rw = right.weight(event_index);
             assert_relative_eq!(lw, rw, epsilon = 1e-12);
         }
     }
@@ -3585,9 +3615,7 @@ mod tests {
         for event_index in 0..dataset.n_events_local() {
             let row = dataset.event(event_index).expect("event should exist");
             for p4_index in 0..row.p4s.len() {
-                let p4 = soa
-                    .p4(event_index, p4_index)
-                    .expect("soa p4 should be present");
+                let p4 = soa.p4(event_index, p4_index);
                 assert_relative_eq!(p4.px(), row.p4s[p4_index].px(), epsilon = 1e-12);
                 assert_relative_eq!(p4.py(), row.p4s[p4_index].py(), epsilon = 1e-12);
                 assert_relative_eq!(p4.pz(), row.p4s[p4_index].pz(), epsilon = 1e-12);
@@ -3595,18 +3623,12 @@ mod tests {
             }
             for aux_index in 0..row.aux.len() {
                 assert_relative_eq!(
-                    soa.aux(event_index, aux_index)
-                        .expect("soa aux should be present"),
+                    soa.aux(event_index, aux_index),
                     row.aux[aux_index],
                     epsilon = 1e-12
                 );
             }
-            assert_relative_eq!(
-                soa.weight(event_index)
-                    .expect("soa weight should be present"),
-                row.weight,
-                epsilon = 1e-12
-            );
+            assert_relative_eq!(soa.weight(event_index), row.weight, epsilon = 1e-12);
             let rebuilt = soa.event_data(event_index);
             assert_eq!(rebuilt.p4s.len(), row.p4s.len());
             assert_eq!(rebuilt.aux.len(), row.aux.len());
@@ -3615,8 +3637,11 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_soa_rejects_ragged_rows() {
-        let dataset = Dataset::new(vec![
+    #[should_panic(
+        expected = "Dataset requires rectangular p4/aux columns for canonical SoA storage"
+    )]
+    fn test_dataset_rejects_ragged_rows_at_construction() {
+        let _ = Dataset::new(vec![
             Arc::new(EventData {
                 p4s: vec![Vec4::new(0.0, 0.0, 1.0, 1.0)],
                 aux: vec![0.1],
@@ -3628,10 +3653,6 @@ mod tests {
                 weight: 2.0,
             }),
         ]);
-        let err = dataset.to_soa().expect_err("ragged rows should error");
-        assert!(
-            matches!(err, LadduError::Custom(message) if message.contains("Ragged dataset shape"))
-        );
     }
 
     #[test]
