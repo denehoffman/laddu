@@ -221,13 +221,13 @@ impl SoaP4Column {
         self.e.push(p4.t);
     }
 
-    fn get(&self, event_index: usize) -> Option<Vec4> {
-        Some(Vec4::new(
-            *self.px.get(event_index)?,
-            *self.py.get(event_index)?,
-            *self.pz.get(event_index)?,
-            *self.e.get(event_index)?,
-        ))
+    fn get(&self, event_index: usize) -> Vec4 {
+        Vec4::new(
+            self.px[event_index],
+            self.py[event_index],
+            self.pz[event_index],
+            self.e[event_index],
+        )
     }
 }
 
@@ -318,9 +318,7 @@ impl DatasetSoA {
     ///
     /// Panics when either index is out of bounds.
     pub fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
-        self.p4[p4_index]
-            .get(event_index)
-            .expect("DatasetSoA p4 index out of bounds")
+        self.p4[p4_index].get(event_index)
     }
 
     /// Retrieve an aux value by row and aux index.
@@ -354,11 +352,6 @@ impl DatasetSoA {
     }
 
     fn row_view(&self, event_index: usize) -> SoaEventView<'_> {
-        assert!(
-            event_index < self.n_events(),
-            "DatasetSoA row index out of bounds: index {event_index}, length {}",
-            self.n_events()
-        );
         SoaEventView {
             storage: self,
             event_index,
