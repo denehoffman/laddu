@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, EventData, SoaNamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
@@ -83,6 +83,32 @@ impl Amplitude for Zlm {
         );
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
+        let phase = Complex64::new(f64::cos(-pol_angle), f64::sin(-pol_angle));
+        let zlm = ylm * phase;
+        cache.store_complex_scalar(
+            self.csid,
+            match self.r {
+                Sign::Positive => Complex64::new(
+                    f64::sqrt(1.0 + pgamma) * zlm.re,
+                    f64::sqrt(1.0 - pgamma) * zlm.im,
+                ),
+                Sign::Negative => Complex64::new(
+                    f64::sqrt(1.0 - pgamma) * zlm.re,
+                    f64::sqrt(1.0 + pgamma) * zlm.im,
+                ),
+            },
+        );
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let ylm = spherical_harmonic(
+            self.l,
+            self.m,
+            event.evaluate(&self.angles.costheta),
+            event.evaluate(&self.angles.phi),
+        );
+        let pol_angle = event.evaluate(&self.polarization.pol_angle);
+        let pgamma = event.evaluate(&self.polarization.pol_magnitude);
         let phase = Complex64::new(f64::cos(-pol_angle), f64::sin(-pol_angle));
         let zlm = ylm * phase;
         cache.store_complex_scalar(
@@ -224,6 +250,13 @@ impl Amplitude for PolPhase {
     fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let pol_angle = self.polarization.pol_angle.value(event);
         let pgamma = self.polarization.pol_magnitude.value(event);
+        let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));
+        cache.store_complex_scalar(self.csid, pgamma * phase);
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let pol_angle = event.evaluate(&self.polarization.pol_angle);
+        let pgamma = event.evaluate(&self.polarization.pol_magnitude);
         let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));
         cache.store_complex_scalar(self.csid, pgamma * phase);
     }

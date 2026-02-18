@@ -151,9 +151,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and SoA
     /// precompute performance can be benchmarked independently.
     #[allow(unused_variables)]
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
-        self.precompute(&event.event_data(), cache);
-    }
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {}
     /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
@@ -176,11 +174,25 @@ pub trait Amplitude: DynClone + Send + Sync {
     }
 
     /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
-    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) -> usize {
+    #[cfg(feature = "rayon")]
+    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) {
+        resources
+            .caches
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(event_index, cache)| {
+                let event = dataset.event_view(event_index);
+                self.precompute_soa(&event, cache);
+            });
+    }
+
+    /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
+    #[cfg(not(feature = "rayon"))]
+    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) {
         dataset.for_each_named_event_local(|event_index, event| {
             let cache = &mut resources.caches[event_index];
             self.precompute_soa(&event, cache);
-        })
+        });
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
     /// calculated value for a particular [`EventData`] and set of [`Parameters`]. See those
@@ -1474,59 +1486,7 @@ impl EvaluatorSoA {
     }
 
     pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_len = self.amplitudes.len();
-        let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
-        #[cfg(feature = "rayon")]
-        {
-            resources
-                .caches
-                .par_iter()
-                .enumerate()
-                .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; amplitude_len],
-                            vec![Complex64::ZERO; slot_count],
-                        )
-                    },
-                    |(amplitude_values, expr_slots), (idx, cache)| {
-                        let event = self.dataset.event_data(idx);
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            &event,
-                            cache,
-                        );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
-                    },
-                )
-                .collect()
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-            let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            resources
-                .caches
-                .iter()
-                .enumerate()
-                .map(|(idx, cache)| {
-                    let event = self.dataset.event_data(idx);
-                    self.fill_amplitude_values(
-                        &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        &event,
-                        cache,
-                    );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
-                })
-                .collect()
-        }
+        self.evaluate_cached_local(parameters)
     }
 
     pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
@@ -1588,89 +1548,7 @@ impl EvaluatorSoA {
     }
 
     pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_len = self.amplitudes.len();
-        let grad_dim = parameters.len();
-        let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
-        #[cfg(feature = "rayon")]
-        {
-            resources
-                .caches
-                .par_iter()
-                .enumerate()
-                .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; amplitude_len],
-                            vec![DVector::zeros(grad_dim); amplitude_len],
-                            vec![Complex64::ZERO; slot_count],
-                            vec![DVector::zeros(grad_dim); slot_count],
-                        )
-                    },
-                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
-                     (idx, cache)| {
-                        let event = self.dataset.event_data(idx);
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            &event,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            &event,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
-                            amplitude_values,
-                            gradient_values,
-                            value_slots,
-                            gradient_slots,
-                        )
-                    },
-                )
-                .collect()
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
-            let mut value_slots = vec![Complex64::ZERO; slot_count];
-            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            resources
-                .caches
-                .iter()
-                .enumerate()
-                .map(|(idx, cache)| {
-                    let event = self.dataset.event_data(idx);
-                    self.fill_amplitude_values(
-                        &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        &event,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
-                        &mut gradient_values,
-                        &resources.active,
-                        &parameters,
-                        &event,
-                        cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                    )
-                })
-                .collect()
-        }
+        self.evaluate_gradient_cached_local(parameters)
     }
 
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
@@ -3212,7 +3090,7 @@ mod tests {
     }
 
     #[test]
-    fn test_precompute_all_soa_avoids_row_materialization() {
+    fn test_precompute_all_soa_populates_cache() {
         let mut event1 = test_event();
         event1.p4s[0].t = 7.5;
         let mut event2 = test_event();
@@ -3237,8 +3115,7 @@ mod tests {
             .register(&mut resources)
             .expect("test amplitude should register");
         resources.reserve_cache(dataset.n_events());
-        let materialization_count = amplitude.precompute_all_soa(&dataset_soa, &mut resources);
-        assert_eq!(materialization_count, 0);
+        amplitude.precompute_all_soa(&dataset_soa, &mut resources);
         for cache in &resources.caches {
             assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
         }

@@ -1,7 +1,7 @@
 use super::FixedKMatrix;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, EventData, SoaNamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
     LadduResult,
@@ -144,6 +144,15 @@ impl Amplitude for KopfKMatrixA2 {
 
     fn precompute(&self, event: &EventData, cache: &mut Cache) {
         let s = self.mass.value(event).powi(2);
+        cache.store_complex_vector(
+            self.ikc_cache_index,
+            self.constants.ikc_inv_vec(s, self.channel),
+        );
+        cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let s = self.mass.value_soa(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
             self.constants.ikc_inv_vec(s, self.channel),

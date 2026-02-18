@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, EventData, SoaNamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
         functions::{blatt_weisskopf, breakup_momentum},
@@ -100,6 +100,18 @@ impl Amplitude for BreitWigner {
         cache.store_scalar(self.daughter_1_mass_id, self.daughter_1_mass.value(event));
         cache.store_scalar(self.daughter_2_mass_id, self.daughter_2_mass.value(event));
         cache.store_scalar(self.resonance_mass_id, self.resonance_mass.value(event));
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        cache.store_scalar(
+            self.daughter_1_mass_id,
+            event.evaluate(&self.daughter_1_mass),
+        );
+        cache.store_scalar(
+            self.daughter_2_mass_id,
+            event.evaluate(&self.daughter_2_mass),
+        );
+        cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
     }
 
     fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {

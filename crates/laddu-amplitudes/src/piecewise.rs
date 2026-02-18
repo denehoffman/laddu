@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, EventData, SoaNamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
@@ -79,6 +79,15 @@ impl Amplitude for PiecewiseScalar {
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
+        }
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+        if let Some(bin_index) = maybe_bin_index {
+            cache.store_scalar(self.bin_index, bin_index as f64);
+        } else {
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
 
@@ -249,6 +258,15 @@ impl Amplitude for PiecewiseComplexScalar {
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
+        }
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+        if let Some(bin_index) = maybe_bin_index {
+            cache.store_scalar(self.bin_index, bin_index as f64);
+        } else {
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
 
@@ -437,6 +455,15 @@ impl Amplitude for PiecewisePolarComplexScalar {
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
             // store ibin = nbins + 1 if outside range
+        }
+    }
+
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+        if let Some(bin_index) = maybe_bin_index {
+            cache.store_scalar(self.bin_index, bin_index as f64);
+        } else {
+            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
 

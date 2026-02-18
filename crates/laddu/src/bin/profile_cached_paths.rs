@@ -34,8 +34,13 @@ enum Mode {
     GradCached,
     LoadAos,
     LoadSoa,
+    LoadAosOnce,
+    LoadSoaOnce,
     PrecomputeAos,
     PrecomputeSoa,
+    PrecomputeAosOnce,
+    PrecomputeSoaOnce,
+    PrecomputeCompare,
     NllAos,
 }
 
@@ -48,8 +53,13 @@ impl Mode {
             "grad_cached" => Some(Self::GradCached),
             "load_aos" => Some(Self::LoadAos),
             "load_soa" => Some(Self::LoadSoa),
+            "load_aos_once" => Some(Self::LoadAosOnce),
+            "load_soa_once" => Some(Self::LoadSoaOnce),
             "precompute_aos" => Some(Self::PrecomputeAos),
             "precompute_soa" => Some(Self::PrecomputeSoa),
+            "precompute_aos_once" => Some(Self::PrecomputeAosOnce),
+            "precompute_soa_once" => Some(Self::PrecomputeSoaOnce),
+            "precompute_compare" => Some(Self::PrecomputeCompare),
             "nll_aos" => Some(Self::NllAos),
             _ => None,
         }
@@ -59,8 +69,22 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | precompute_aos | precompute_soa | nll_aos"
+         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos"
     );
+}
+
+fn print_precompute_breakdown_header(mode: &str, iters: usize) {
+    eprintln!("mode={mode} breakdown iters={iters}");
+    eprintln!("rank amp_index total_ns avg_ns_per_iter");
+}
+
+fn print_precompute_breakdown_rows(totals_ns: &[u128], iters: usize) {
+    let mut indexed: Vec<(usize, u128)> = totals_ns.iter().copied().enumerate().collect();
+    indexed.sort_by(|a, b| b.1.cmp(&a.1));
+    for (rank, (amp_index, total_ns)) in indexed.into_iter().enumerate() {
+        let avg_ns = total_ns as f64 / iters as f64;
+        eprintln!("{} {} {} {:.3}", rank + 1, amp_index, total_ns, avg_ns);
+    }
 }
 
 fn read_benchmark_dataset() -> Arc<Dataset> {
@@ -367,6 +391,25 @@ fn run_mode(mode: Mode, iters: usize) {
                 t0.elapsed()
             );
         }
+        Mode::LoadAosOnce => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let model = build_breit_wigner_partial_wave_model();
+            let t0 = Instant::now();
+            let ev = model.load(&ds).expect("aos load should succeed");
+            let sink = ev.n_parameters() as f64;
+            eprintln!("mode=load_aos_once sink={sink} elapsed={:?}", t0.elapsed());
+        }
+        Mode::LoadSoaOnce => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let model = build_breit_wigner_partial_wave_model();
+            let t0 = Instant::now();
+            let ev = model.load_soa(&ds_soa).expect("soa load should succeed");
+            let sink = ev.n_parameters() as f64;
+            eprintln!("mode=load_soa_once sink={sink} elapsed={:?}", t0.elapsed());
+        }
         Mode::PrecomputeAos => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
@@ -421,6 +464,95 @@ fn run_mode(mode: Mode, iters: usize) {
                 "mode=precompute_soa iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
+        }
+        Mode::PrecomputeAosOnce => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let model = build_breit_wigner_partial_wave_model();
+            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let mut resources = evaluator.resources.read().clone();
+            let t0 = Instant::now();
+            for amplitude in &evaluator.amplitudes {
+                amplitude.precompute_all(&ds, &mut resources);
+            }
+            let sink = resources.caches.len() as f64;
+            eprintln!(
+                "mode=precompute_aos_once sink={sink} elapsed={:?}",
+                t0.elapsed()
+            );
+        }
+        Mode::PrecomputeSoaOnce => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let model = build_breit_wigner_partial_wave_model();
+            let evaluator = model.load_soa(&ds_soa).expect("soa evaluator should build");
+            let mut resources = evaluator.resources.read().clone();
+            let t0 = Instant::now();
+            for amplitude in &evaluator.amplitudes {
+                amplitude.precompute_all_soa(&ds_soa, &mut resources);
+            }
+            let sink = resources.caches.len() as f64;
+            eprintln!(
+                "mode=precompute_soa_once sink={sink} elapsed={:?}",
+                t0.elapsed()
+            );
+        }
+        Mode::PrecomputeCompare => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let model = build_breit_wigner_partial_wave_model();
+            let evaluator_aos = model.load(&ds).expect("aos evaluator should build");
+            let evaluator_soa = model.load_soa(&ds_soa).expect("soa evaluator should build");
+
+            let amp_len = evaluator_aos.amplitudes.len();
+            let mut totals_aos_ns = vec![0u128; amp_len];
+            let mut totals_soa_ns = vec![0u128; amp_len];
+            let mut sink = 0.0;
+
+            for _ in 0..iters {
+                let mut resources_aos = evaluator_aos.resources.read().clone();
+                for (amp_index, amplitude) in evaluator_aos.amplitudes.iter().enumerate() {
+                    let t0 = Instant::now();
+                    amplitude.precompute_all(&ds, &mut resources_aos);
+                    totals_aos_ns[amp_index] += t0.elapsed().as_nanos();
+                }
+                sink += resources_aos.caches.len() as f64;
+
+                let mut resources_soa = evaluator_soa.resources.read().clone();
+                for (amp_index, amplitude) in evaluator_soa.amplitudes.iter().enumerate() {
+                    let t0 = Instant::now();
+                    amplitude.precompute_all_soa(&ds_soa, &mut resources_soa);
+                    totals_soa_ns[amp_index] += t0.elapsed().as_nanos();
+                }
+                sink += resources_soa.caches.len() as f64;
+            }
+
+            print_precompute_breakdown_header("precompute_compare_aos", iters);
+            print_precompute_breakdown_rows(&totals_aos_ns, iters);
+
+            print_precompute_breakdown_header("precompute_compare_soa", iters);
+            print_precompute_breakdown_rows(&totals_soa_ns, iters);
+
+            let mut compare_rows: Vec<(usize, u128, u128, f64)> = (0..amp_len)
+                .map(|amp_index| {
+                    let aos = totals_aos_ns[amp_index];
+                    let soa = totals_soa_ns[amp_index];
+                    let ratio = if aos == 0 {
+                        f64::INFINITY
+                    } else {
+                        soa as f64 / aos as f64
+                    };
+                    (amp_index, aos, soa, ratio)
+                })
+                .collect();
+            compare_rows.sort_by(|a, b| b.3.total_cmp(&a.3));
+            eprintln!("mode=precompute_compare slowdown_rank iters={iters} sink={sink}");
+            eprintln!("rank amp_index aos_total_ns soa_total_ns soa_over_aos");
+            for (rank, (amp_index, aos, soa, ratio)) in compare_rows.iter().enumerate() {
+                eprintln!("{} {} {} {} {:.6}", rank + 1, amp_index, aos, soa, ratio);
+            }
         }
         Mode::NllAos => {
             let (nll, params) = build_kmatrix_nll();

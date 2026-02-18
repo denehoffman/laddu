@@ -23,10 +23,7 @@ use std::{
     fs::File,
     ops::{Deref, DerefMut, Index, IndexMut},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 #[cfg(feature = "mpi")]
@@ -153,13 +150,6 @@ pub trait EventAccess {
     fn n_p4(&self) -> usize;
     /// Number of auxiliary scalar entries available in this event.
     fn n_aux(&self) -> usize;
-    /// Borrow row-backed event data when available.
-    ///
-    /// AoS-backed views return `Some(&EventData)`, while SoA-backed views return `None`.
-    fn as_event_data(&self) -> Option<&EventData> {
-        None
-    }
-
     /// Sum selected four-momenta by positional indices.
     fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4>
     where
@@ -201,10 +191,6 @@ impl EventAccess for EventData {
 
     fn n_aux(&self) -> usize {
         self.aux.len()
-    }
-
-    fn as_event_data(&self) -> Option<&EventData> {
-        Some(self)
     }
 }
 
@@ -251,7 +237,6 @@ pub struct DatasetSoA {
     p4: Vec<SoaP4Column>,
     aux: Vec<Vec<f64>>,
     weights: Vec<f64>,
-    materialization_count: AtomicUsize,
 }
 
 impl Clone for DatasetSoA {
@@ -261,13 +246,8 @@ impl Clone for DatasetSoA {
             p4: self.p4.clone(),
             aux: self.aux.clone(),
             weights: self.weights.clone(),
-            materialization_count: AtomicUsize::new(self.materialization_count()),
         }
     }
-}
-
-fn default_materialization_count() -> AtomicUsize {
-    AtomicUsize::new(0)
 }
 
 impl DatasetSoA {
@@ -309,7 +289,6 @@ impl DatasetSoA {
             p4,
             aux,
             weights,
-            materialization_count: default_materialization_count(),
         })
     }
 
@@ -349,19 +328,18 @@ impl DatasetSoA {
     }
 
     pub(crate) fn event_data(&self, event_index: usize) -> EventData {
-        self.materialization_count.fetch_add(1, Ordering::Relaxed);
         let mut p4s = Vec::with_capacity(self.p4.len());
         for p4_index in 0..self.p4.len() {
             p4s.push(
                 self.p4(event_index, p4_index)
-                    .expect("DatasetSoA p4 index should be valid for row view materialization"),
+                    .expect("DatasetSoA p4 index should be valid during row conversion"),
             );
         }
         let mut aux = Vec::with_capacity(self.aux.len());
         for aux_index in 0..self.aux.len() {
             aux.push(
                 self.aux(event_index, aux_index)
-                    .expect("DatasetSoA aux index should be valid for row view materialization"),
+                    .expect("DatasetSoA aux index should be valid during row conversion"),
             );
         }
         EventData {
@@ -369,12 +347,8 @@ impl DatasetSoA {
             aux,
             weight: self
                 .weight(event_index)
-                .expect("DatasetSoA weight should be valid for row view materialization"),
+                .expect("DatasetSoA weight should be valid during row conversion"),
         }
-    }
-
-    fn materialization_count(&self) -> usize {
-        self.materialization_count.load(Ordering::Relaxed)
     }
 
     fn row_view(&self, event_index: usize) -> SoaEventView<'_> {
@@ -389,7 +363,8 @@ impl DatasetSoA {
         }
     }
 
-    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F) -> usize
+    #[allow(dead_code)]
+    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F)
     where
         F: FnMut(usize, SoaNamedEventView<'_>),
     {
@@ -401,14 +376,6 @@ impl DatasetSoA {
             };
             op(event_index, view);
         }
-        #[cfg(test)]
-        {
-            self.materialization_count()
-        }
-        #[cfg(not(test))]
-        {
-            0
-        }
     }
 
     pub(crate) fn event_view(&self, event_index: usize) -> SoaNamedEventView<'_> {
@@ -418,10 +385,61 @@ impl DatasetSoA {
             metadata: self.metadata(),
         }
     }
+
+    fn write_parquet_impl(
+        &self,
+        file_path: PathBuf,
+        options: &DatasetWriteOptions,
+    ) -> LadduResult<()> {
+        let batch_size = options.batch_size.max(1);
+        let precision = options.precision;
+        let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
+
+        #[cfg(feature = "mpi")]
+        let is_root = crate::mpi::get_world()
+            .as_ref()
+            .map_or(true, |world| world.rank() == 0);
+        #[cfg(not(feature = "mpi"))]
+        let is_root = true;
+
+        let mut writer: Option<ArrowWriter<File>> = None;
+        if is_root {
+            let file = File::create(&file_path)?;
+            writer = Some(
+                ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
+                    LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
+                })?,
+            );
+        }
+
+        let n_rows = self.n_events();
+        let mut start = 0usize;
+        while start < n_rows {
+            let end = (start + batch_size).min(n_rows);
+            if let Some(writer) = writer.as_mut() {
+                let batch = soa_range_to_record_batch(self, start, end, schema.clone(), precision)
+                    .map_err(|err| {
+                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
+                    })?;
+                writer.write(&batch).map_err(|err| {
+                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
+                })?;
+            }
+            start = end;
+        }
+
+        if let Some(writer) = writer {
+            writer.close().map_err(|err| {
+                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
+            })?;
+        }
+
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 struct SoaEventView<'a> {
     storage: &'a DatasetSoA,
     event_index: usize,
@@ -450,14 +468,6 @@ impl SoaEventView<'_> {
     fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
         indices.as_ref().iter().map(|index| self.p4(*index)).sum()
     }
-
-    fn event_data(&self) -> EventData {
-        self.storage.event_data(self.event_index)
-    }
-
-    fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        variable.value(&self.event_data())
-    }
 }
 
 impl EventAccess for SoaEventView<'_> {
@@ -483,7 +493,7 @@ impl EventAccess for SoaEventView<'_> {
 }
 
 /// A name-aware SoA event view over a single row in a dataset.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct SoaNamedEventView<'a> {
     row: SoaEventView<'a>,
     metadata: &'a DatasetMetadata,
@@ -526,14 +536,9 @@ impl SoaNamedEventView<'_> {
             .map(|momenta| momenta.into_iter().sum())
     }
 
-    /// Materialize this SoA row into an [`EventData`] value.
-    pub fn event_data(&self) -> EventData {
-        self.row.event_data()
-    }
-
     /// Evaluate a [`Variable`] against this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        self.row.evaluate(variable)
+        variable.value_soa(self)
     }
 }
 
@@ -855,10 +860,6 @@ impl EventAccess for Event {
 
     fn n_aux(&self) -> usize {
         self.event.aux.len()
-    }
-
-    fn as_event_data(&self) -> Option<&EventData> {
-        Some(self.event.as_ref())
     }
 }
 
@@ -1747,6 +1748,27 @@ pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResul
     read_parquet_local(builder, metadata)
 }
 
+/// Load a [`DatasetSoA`] from a Parquet file without materializing row-event storage.
+pub fn read_parquet_soa(
+    file_path: &str,
+    options: &DatasetReadOptions,
+) -> LadduResult<Arc<DatasetSoA>> {
+    let path = canonicalize_dataset_path(file_path)?;
+    let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
+    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            return read_parquet_soa_mpi(builder, metadata, &world);
+        }
+    }
+
+    read_parquet_soa_local(builder, metadata)
+}
+
 fn read_parquet_local(
     builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
@@ -1755,6 +1777,16 @@ fn read_parquet_local(
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
     let events = batches_to_events(batches, metadata.as_ref())?;
     Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+}
+
+fn read_parquet_soa_local(
+    builder: ParquetRecordBatchReaderBuilder<File>,
+    metadata: Arc<DatasetMetadata>,
+) -> LadduResult<Arc<DatasetSoA>> {
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let soa = batches_to_soa(batches, metadata)?;
+    Ok(Arc::new(soa))
 }
 
 #[cfg(feature = "mpi")]
@@ -1805,6 +1837,51 @@ fn read_parquet_mpi(
     }
 
     Ok(Arc::new(Dataset::new_local(events, metadata)))
+}
+
+#[cfg(feature = "mpi")]
+fn read_parquet_soa_mpi(
+    mut builder: ParquetRecordBatchReaderBuilder<File>,
+    metadata: Arc<DatasetMetadata>,
+    world: &SimpleCommunicator,
+) -> LadduResult<Arc<DatasetSoA>> {
+    let parquet_metadata = builder.metadata().clone();
+    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
+    if total_rows == 0 {
+        return Ok(Arc::new(empty_dataset_soa(metadata)));
+    }
+
+    let partition = world.partition(total_rows);
+    let rank = world.rank() as usize;
+    let local_range = partition.range_for_rank(rank);
+    let local_start = local_range.start;
+    let local_end = local_range.end;
+    if local_start == local_end {
+        return Ok(Arc::new(empty_dataset_soa(metadata)));
+    }
+
+    let (row_groups, first_row_start) =
+        row_groups_for_range(&parquet_metadata, local_start, local_end);
+    if !row_groups.is_empty() {
+        builder = builder.with_row_groups(row_groups);
+    }
+
+    let reader = builder.build()?;
+    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
+    let mut soa = batches_to_soa(batches, metadata)?;
+
+    let drop_front = local_start.saturating_sub(first_row_start);
+    let expected_local = local_end - local_start;
+    trim_soa_rows(&mut soa, drop_front, expected_local);
+    if soa.n_events() != expected_local {
+        return Err(LadduError::LengthMismatch {
+            context: format!("Loaded rows for MPI rank {rank}"),
+            expected: expected_local,
+            actual: soa.n_events(),
+        });
+    }
+
+    Ok(Arc::new(soa))
 }
 
 #[cfg(feature = "mpi")]
@@ -1868,6 +1945,114 @@ fn batches_to_events(
             .into_iter()
             .flatten()
             .collect())
+    }
+}
+
+#[cfg(feature = "mpi")]
+fn empty_dataset_soa(metadata: Arc<DatasetMetadata>) -> DatasetSoA {
+    DatasetSoA {
+        p4: (0..metadata.p4_names.len())
+            .map(|_| SoaP4Column::with_capacity(0))
+            .collect(),
+        aux: (0..metadata.aux_names.len())
+            .map(|_| Vec::with_capacity(0))
+            .collect(),
+        weights: Vec::new(),
+        metadata,
+    }
+}
+
+fn append_record_batch_to_soa(
+    batch: &RecordBatch,
+    metadata: &DatasetMetadata,
+    p4_columns_out: &mut [SoaP4Column],
+    aux_columns_out: &mut [Vec<f64>],
+    weights_out: &mut Vec<f64>,
+) -> LadduResult<()> {
+    let p4_columns: Vec<P4Columns<'_>> = metadata
+        .p4_names
+        .iter()
+        .map(|name| prepare_p4_columns(batch, name))
+        .collect::<Result<_, _>>()?;
+    let aux_columns: Vec<FloatColumn<'_>> = metadata
+        .aux_names
+        .iter()
+        .map(|name| prepare_float_column(batch, name))
+        .collect::<Result<_, _>>()?;
+    let weight_column = find_float_column_from_candidates(batch, &["weight".to_string()])?;
+
+    for row in 0..batch.num_rows() {
+        for (target, source) in p4_columns_out.iter_mut().zip(&p4_columns) {
+            target.px.push(source.px.value(row));
+            target.py.push(source.py.value(row));
+            target.pz.push(source.pz.value(row));
+            target.e.push(source.e.value(row));
+        }
+        for (target, source) in aux_columns_out.iter_mut().zip(&aux_columns) {
+            target.push(source.value(row));
+        }
+        weights_out.push(
+            weight_column
+                .as_ref()
+                .map(|column| column.value(row))
+                .unwrap_or(1.0),
+        );
+    }
+
+    Ok(())
+}
+
+fn batches_to_soa(
+    batches: Vec<RecordBatch>,
+    metadata: Arc<DatasetMetadata>,
+) -> LadduResult<DatasetSoA> {
+    let n_rows = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
+    let mut p4 = (0..metadata.p4_names.len())
+        .map(|_| SoaP4Column::with_capacity(n_rows))
+        .collect::<Vec<_>>();
+    let mut aux = (0..metadata.aux_names.len())
+        .map(|_| Vec::with_capacity(n_rows))
+        .collect::<Vec<_>>();
+    let mut weights = Vec::with_capacity(n_rows);
+
+    for batch in &batches {
+        append_record_batch_to_soa(batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
+    }
+
+    Ok(DatasetSoA {
+        metadata,
+        p4,
+        aux,
+        weights,
+    })
+}
+
+#[cfg(feature = "mpi")]
+fn trim_soa_rows(soa: &mut DatasetSoA, drop_front: usize, expected_len: usize) {
+    if drop_front > 0 {
+        for column in &mut soa.p4 {
+            column.px.drain(0..drop_front);
+            column.py.drain(0..drop_front);
+            column.pz.drain(0..drop_front);
+            column.e.drain(0..drop_front);
+        }
+        for column in &mut soa.aux {
+            column.drain(0..drop_front);
+        }
+        soa.weights.drain(0..drop_front);
+    }
+
+    if soa.n_events() > expected_len {
+        for column in &mut soa.p4 {
+            column.px.truncate(expected_len);
+            column.py.truncate(expected_len);
+            column.pz.truncate(expected_len);
+            column.e.truncate(expected_len);
+        }
+        for column in &mut soa.aux {
+            column.truncate(expected_len);
+        }
+        soa.weights.truncate(expected_len);
     }
 }
 
@@ -2004,6 +2189,16 @@ pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<A
 /// Persist a [`Dataset`] to a Parquet file.
 pub fn write_parquet(
     dataset: &Dataset,
+    file_path: &str,
+    options: &DatasetWriteOptions,
+) -> LadduResult<()> {
+    let path = expand_output_path(file_path)?;
+    dataset.write_parquet_impl(path, options)
+}
+
+/// Persist a [`DatasetSoA`] to a Parquet file.
+pub fn write_parquet_soa(
+    dataset: &DatasetSoA,
     file_path: &str,
     options: &DatasetWriteOptions,
 ) -> LadduResult<()> {
@@ -2509,6 +2704,75 @@ struct ColumnBuffers {
     p4: Vec<P4Buffer>,
     aux: Vec<Vec<f64>>,
     weight: Vec<f64>,
+}
+
+fn soa_range_to_record_batch(
+    dataset: &DatasetSoA,
+    start: usize,
+    end: usize,
+    schema: Arc<Schema>,
+    precision: FloatPrecision,
+) -> arrow::error::Result<RecordBatch> {
+    let mut columns: Vec<arrow::array::ArrayRef> = Vec::new();
+    match precision {
+        FloatPrecision::F64 => {
+            for p4 in &dataset.p4 {
+                columns.push(Arc::new(Float64Array::from(p4.px[start..end].to_vec())));
+                columns.push(Arc::new(Float64Array::from(p4.py[start..end].to_vec())));
+                columns.push(Arc::new(Float64Array::from(p4.pz[start..end].to_vec())));
+                columns.push(Arc::new(Float64Array::from(p4.e[start..end].to_vec())));
+            }
+            for aux in &dataset.aux {
+                columns.push(Arc::new(Float64Array::from(aux[start..end].to_vec())));
+            }
+            columns.push(Arc::new(Float64Array::from(
+                dataset.weights[start..end].to_vec(),
+            )));
+        }
+        FloatPrecision::F32 => {
+            for p4 in &dataset.p4 {
+                columns.push(Arc::new(Float32Array::from(
+                    p4.px[start..end]
+                        .iter()
+                        .map(|v| *v as f32)
+                        .collect::<Vec<_>>(),
+                )));
+                columns.push(Arc::new(Float32Array::from(
+                    p4.py[start..end]
+                        .iter()
+                        .map(|v| *v as f32)
+                        .collect::<Vec<_>>(),
+                )));
+                columns.push(Arc::new(Float32Array::from(
+                    p4.pz[start..end]
+                        .iter()
+                        .map(|v| *v as f32)
+                        .collect::<Vec<_>>(),
+                )));
+                columns.push(Arc::new(Float32Array::from(
+                    p4.e[start..end]
+                        .iter()
+                        .map(|v| *v as f32)
+                        .collect::<Vec<_>>(),
+                )));
+            }
+            for aux in &dataset.aux {
+                columns.push(Arc::new(Float32Array::from(
+                    aux[start..end]
+                        .iter()
+                        .map(|v| *v as f32)
+                        .collect::<Vec<_>>(),
+                )));
+            }
+            columns.push(Arc::new(Float32Array::from(
+                dataset.weights[start..end]
+                    .iter()
+                    .map(|v| *v as f32)
+                    .collect::<Vec<_>>(),
+            )));
+        }
+    }
+    RecordBatch::try_new(schema, columns)
 }
 
 impl ColumnBuffers {
@@ -3021,6 +3285,42 @@ mod tests {
         }
     }
 
+    fn assert_dataset_soa_close(left: &DatasetSoA, right: &DatasetSoA) {
+        assert_eq!(left.n_events(), right.n_events());
+        assert_eq!(left.metadata().p4_names(), right.metadata().p4_names());
+        assert_eq!(left.metadata().aux_names(), right.metadata().aux_names());
+        for event_index in 0..left.n_events() {
+            for p4_index in 0..left.metadata().p4_names().len() {
+                let lp4 = left
+                    .p4(event_index, p4_index)
+                    .expect("left SoA p4 should exist");
+                let rp4 = right
+                    .p4(event_index, p4_index)
+                    .expect("right SoA p4 should exist");
+                assert_relative_eq!(lp4.px(), rp4.px(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.py(), rp4.py(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.pz(), rp4.pz(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.e(), rp4.e(), epsilon = 1e-12);
+            }
+            for aux_index in 0..left.metadata().aux_names().len() {
+                let l = left
+                    .aux(event_index, aux_index)
+                    .expect("left SoA aux should exist");
+                let r = right
+                    .aux(event_index, aux_index)
+                    .expect("right SoA aux should exist");
+                assert_relative_eq!(l, r, epsilon = 1e-12);
+            }
+            let lw = left
+                .weight(event_index)
+                .expect("left SoA weight should exist");
+            let rw = right
+                .weight(event_index)
+                .expect("right SoA weight should exist");
+            assert_relative_eq!(lw, rw, epsilon = 1e-12);
+        }
+    }
+
     #[test]
     fn test_from_parquet_auto_matches_explicit_names() {
         let auto = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
@@ -3286,19 +3586,15 @@ mod tests {
         mass.bind(dataset.metadata())
             .expect("mass should bind to metadata");
         let from_view = row.evaluate(&mass);
-        let from_access_aos =
-            crate::utils::variables::SoaVariable::value_with_access(&mass, &named)
-                .expect("aos value-with-access should succeed");
-        let from_access_soa = crate::utils::variables::SoaVariable::value_with_access(&mass, &row);
+        let from_access_soa = mass.value_soa(&row);
         let from_event = dataset
             .event(0)
             .expect("event should exist")
             .evaluate(&mass);
         assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
-        assert_relative_eq!(from_access_aos, from_event, epsilon = 1e-12);
-        assert!(
-            matches!(from_access_soa, Err(LadduError::Custom(message)) if message.contains("does not implement storage-agnostic evaluation"))
-        );
+        assert_relative_eq!(from_access_soa, from_event, epsilon = 1e-12);
+        let from_named = named.evaluate(&mass);
+        assert_relative_eq!(from_named, from_event, epsilon = 1e-12);
     }
 
     #[test]
@@ -3726,6 +4022,36 @@ mod tests {
             .expect("parquet roundtrip should reopen");
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_read_parquet_soa_matches_aos_to_soa() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let aos = read_parquet(path_str, &DatasetReadOptions::new()).expect("aos load should work");
+        let soa_from_aos = aos.to_soa().expect("aos->soa should work");
+        let soa_direct =
+            read_parquet_soa(path_str, &DatasetReadOptions::new()).expect("soa load should work");
+        assert_dataset_soa_close(&soa_from_aos, &soa_direct);
+    }
+
+    #[test]
+    fn test_parquet_soa_roundtrip_to_tempfile() {
+        let source_path = test_data_path("data_f32.parquet");
+        let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
+        let dataset_soa =
+            read_parquet_soa(source_path_str, &DatasetReadOptions::new()).expect("soa load");
+        let dir = make_temp_dir();
+        let path = dir.join("roundtrip_soa.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        write_parquet_soa(&dataset_soa, path_str, &DatasetWriteOptions::default())
+            .expect("writing soa parquet should succeed");
+        let reopened =
+            read_parquet_soa(path_str, &DatasetReadOptions::new()).expect("soa roundtrip reopen");
+
+        assert_dataset_soa_close(&dataset_soa, &reopened);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
     }
 
