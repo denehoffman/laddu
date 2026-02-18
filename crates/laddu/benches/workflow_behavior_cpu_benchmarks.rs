@@ -14,6 +14,7 @@ use laddu::{
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
     io,
+    resources::Parameters,
     traits::{LikelihoodTerm, Variable},
     utils::{
         enums::{Frame, Sign},
@@ -650,6 +651,140 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         })
     });
     precompute_group.finish();
+
+    let evaluator_soa = model
+        .load_soa(&dataset_soa)
+        .expect("soa evaluator should build for stage isolation");
+
+    let resources = evaluator.resources.read();
+    let params_obj = Parameters::new(&params, &resources.constants);
+    let active_indices = resources.active_indices().to_vec();
+    let active_mask = resources.active.clone();
+    let first_cache = resources.caches[0].clone();
+    let amplitude_len = evaluator.amplitudes.len();
+    let grad_dim = params_obj.len();
+    let slot_count = evaluator.expression_slot_count();
+
+    let mut value_stage_group = c.benchmark_group("stage_isolated_cached_value_and_expression");
+    value_stage_group.throughput(Throughput::Elements(1));
+    value_stage_group.bench_function("cached_value_fill_only", |b| {
+        b.iter_batched(
+            || vec![Complex64::ZERO; amplitude_len],
+            |mut amplitude_values| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute_cached(&params_obj, &first_cache);
+                }
+                black_box(amplitude_values)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    let mut prefetched_values = vec![Complex64::ZERO; amplitude_len];
+    for &amp_idx in &active_indices {
+        prefetched_values[amp_idx] =
+            evaluator.amplitudes[amp_idx].compute_cached(&params_obj, &first_cache);
+    }
+    value_stage_group.bench_function("expression_value_eval_only", |b| {
+        b.iter_batched(
+            || vec![Complex64::ZERO; slot_count],
+            |mut slots| {
+                black_box(
+                    evaluator
+                        .evaluate_expression_value_with_scratch(&prefetched_values, &mut slots),
+                )
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    value_stage_group.finish();
+
+    let mut gradient_stage_group =
+        c.benchmark_group("stage_isolated_cached_gradient_and_expression");
+    gradient_stage_group.throughput(Throughput::Elements(1));
+    gradient_stage_group.bench_function("cached_gradient_fill_only", |b| {
+        b.iter_batched(
+            || vec![DVector::zeros(grad_dim); amplitude_len],
+            |mut gradient_values| {
+                for ((amp, active), grad) in evaluator
+                    .amplitudes
+                    .iter()
+                    .zip(active_mask.iter())
+                    .zip(gradient_values.iter_mut())
+                {
+                    grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
+                    if *active {
+                        amp.compute_gradient_cached(&params_obj, &first_cache, grad);
+                    }
+                }
+                black_box(gradient_values)
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    let mut prefetched_gradients = vec![DVector::zeros(grad_dim); amplitude_len];
+    for ((amp, active), grad) in evaluator
+        .amplitudes
+        .iter()
+        .zip(active_mask.iter())
+        .zip(prefetched_gradients.iter_mut())
+    {
+        grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
+        if *active {
+            amp.compute_gradient_cached(&params_obj, &first_cache, grad);
+        }
+    }
+    gradient_stage_group.bench_function("expression_gradient_eval_only", |b| {
+        b.iter_batched(
+            || {
+                (
+                    vec![Complex64::ZERO; slot_count],
+                    vec![DVector::zeros(grad_dim); slot_count],
+                )
+            },
+            |(mut value_slots, mut gradient_slots)| {
+                black_box(evaluator.evaluate_expression_gradient_with_scratch(
+                    &prefetched_values,
+                    &prefetched_gradients,
+                    &mut value_slots,
+                    &mut gradient_slots,
+                ))
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    gradient_stage_group.finish();
+
+    let mut precompute_only_group = c.benchmark_group("precompute_stage_only_aos_vs_soa");
+    precompute_only_group.throughput(Throughput::Elements(n_events));
+    precompute_only_group.bench_function("aos_precompute_only", |b| {
+        b.iter_batched(
+            || resources.clone(),
+            |mut stage_resources| {
+                for amp in &evaluator.amplitudes {
+                    amp.precompute_all(&ds_data, &mut stage_resources);
+                }
+                black_box(stage_resources.caches.len())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    precompute_only_group.throughput(Throughput::Elements(n_events));
+    precompute_only_group.bench_function("soa_precompute_only", |b| {
+        b.iter_batched(
+            || evaluator_soa.resources.read().clone(),
+            |mut stage_resources| {
+                for amp in &evaluator_soa.amplitudes {
+                    amp.precompute_all_soa(&dataset_soa, &mut stage_resources);
+                }
+                black_box(stage_resources.caches.len())
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    precompute_only_group.finish();
 }
 
 fn main() {
