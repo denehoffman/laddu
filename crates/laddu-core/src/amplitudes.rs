@@ -1763,10 +1763,9 @@ impl Evaluator {
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
-            self.dataset
-                .events
+            resources
+                .caches
                 .par_iter()
-                .zip(resources.caches.par_iter())
                 .map_init(
                     || {
                         (
@@ -1774,7 +1773,7 @@ impl Evaluator {
                             vec![Complex64::ZERO; slot_count],
                         )
                     },
-                    |(amplitude_values, expr_slots), (_event, cache)| {
+                    |(amplitude_values, expr_slots), cache| {
                         self.fill_amplitude_values_cached(
                             amplitude_values,
                             &active_indices,
@@ -1791,11 +1790,10 @@ impl Evaluator {
         {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            self.dataset
-                .events
+            resources
+                .caches
                 .iter()
-                .zip(resources.caches.iter())
-                .map(|(_event, cache)| {
+                .map(|cache| {
                     self.fill_amplitude_values_cached(
                         &mut amplitude_values,
                         &active_indices,
@@ -2218,10 +2216,9 @@ impl Evaluator {
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
-            self.dataset
-                .events
+            resources
+                .caches
                 .par_iter()
-                .zip(resources.caches.par_iter())
                 .map_init(
                     || {
                         (
@@ -2231,8 +2228,7 @@ impl Evaluator {
                             vec![DVector::zeros(grad_dim); slot_count],
                         )
                     },
-                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
-                     (_event, cache)| {
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
                         self.fill_amplitude_values_cached(
                             amplitude_values,
                             &active_indices,
@@ -2261,11 +2257,10 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            self.dataset
-                .events
+            resources
+                .caches
                 .iter()
-                .zip(resources.caches.iter())
-                .map(|(_event, cache)| {
+                .map(|cache| {
                     self.fill_amplitude_values_cached(
                         &mut amplitude_values,
                         &active_indices,
@@ -2736,6 +2731,62 @@ mod tests {
                 assert_relative_eq!(lhs_entry.im, rhs_entry.im, epsilon = 1e-12);
             }
         }
+    }
+
+    #[test]
+    fn test_evaluate_cached_local_does_not_depend_on_dataset_rows() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let expected_len = evaluator.resources.read().caches.len();
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .events
+            .clear();
+        let cached = evaluator
+            .evaluate_cached_local(&[1.25, -0.75])
+            .expect("cached path should evaluate from caches");
+        assert_eq!(cached.len(), expected_len);
+    }
+
+    #[test]
+    fn test_evaluate_gradient_cached_local_does_not_depend_on_dataset_rows() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let expected_len = evaluator.resources.read().caches.len();
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .events
+            .clear();
+        let cached = evaluator
+            .evaluate_gradient_cached_local(&[1.25, -0.75])
+            .expect("cached gradient path should evaluate from caches");
+        assert_eq!(cached.len(), expected_len);
     }
 
     #[test]
