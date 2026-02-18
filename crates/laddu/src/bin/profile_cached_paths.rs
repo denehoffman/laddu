@@ -34,6 +34,8 @@ enum Mode {
     GradCached,
     LoadAos,
     LoadSoa,
+    PrecomputeAos,
+    PrecomputeSoa,
     NllAos,
 }
 
@@ -46,6 +48,8 @@ impl Mode {
             "grad_cached" => Some(Self::GradCached),
             "load_aos" => Some(Self::LoadAos),
             "load_soa" => Some(Self::LoadSoa),
+            "precompute_aos" => Some(Self::PrecomputeAos),
+            "precompute_soa" => Some(Self::PrecomputeSoa),
             "nll_aos" => Some(Self::NllAos),
             _ => None,
         }
@@ -55,7 +59,7 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | nll_aos"
+         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | precompute_aos | precompute_soa | nll_aos"
     );
 }
 
@@ -360,6 +364,61 @@ fn run_mode(mode: Mode, iters: usize) {
             }
             eprintln!(
                 "mode=load_soa iters={iters} sink={sink} elapsed={:?}",
+                t0.elapsed()
+            );
+        }
+        Mode::PrecomputeAos => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let model = build_breit_wigner_partial_wave_model();
+            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let base_resources = evaluator.resources.read().clone();
+            let mut sink = 0.0;
+            for _ in 0..WARMUP_ITERS {
+                let mut resources = base_resources.clone();
+                for amplitude in &evaluator.amplitudes {
+                    amplitude.precompute_all(&ds, &mut resources);
+                }
+                sink += resources.caches.len() as f64;
+            }
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut resources = base_resources.clone();
+                for amplitude in &evaluator.amplitudes {
+                    amplitude.precompute_all(&ds, &mut resources);
+                }
+                sink += resources.caches.len() as f64;
+            }
+            eprintln!(
+                "mode=precompute_aos iters={iters} sink={sink} elapsed={:?}",
+                t0.elapsed()
+            );
+        }
+        Mode::PrecomputeSoa => {
+            let dataset = read_benchmark_dataset();
+            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
+            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let model = build_breit_wigner_partial_wave_model();
+            let evaluator = model.load_soa(&ds_soa).expect("soa evaluator should build");
+            let base_resources = evaluator.resources.read().clone();
+            let mut sink = 0.0;
+            for _ in 0..WARMUP_ITERS {
+                let mut resources = base_resources.clone();
+                for amplitude in &evaluator.amplitudes {
+                    amplitude.precompute_all_soa(&ds_soa, &mut resources);
+                }
+                sink += resources.caches.len() as f64;
+            }
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut resources = base_resources.clone();
+                for amplitude in &evaluator.amplitudes {
+                    amplitude.precompute_all_soa(&ds_soa, &mut resources);
+                }
+                sink += resources.caches.len() as f64;
+            }
+            eprintln!(
+                "mode=precompute_soa iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
