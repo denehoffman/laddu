@@ -1783,10 +1783,31 @@ fn read_parquet_soa_local(
     builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
 ) -> LadduResult<Arc<DatasetSoA>> {
+    let total_rows = builder.metadata().file_metadata().num_rows() as usize;
+    if total_rows == 0 {
+        return Ok(Arc::new(empty_dataset_soa(metadata)));
+    }
+
     let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let soa = batches_to_soa(batches, metadata)?;
-    Ok(Arc::new(soa))
+    let mut p4 = (0..metadata.p4_names.len())
+        .map(|_| SoaP4Column::with_capacity(total_rows))
+        .collect::<Vec<_>>();
+    let mut aux = (0..metadata.aux_names.len())
+        .map(|_| Vec::with_capacity(total_rows))
+        .collect::<Vec<_>>();
+    let mut weights = Vec::with_capacity(total_rows);
+
+    for batch in reader {
+        let batch = batch?;
+        append_record_batch_to_soa(&batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
+    }
+
+    Ok(Arc::new(DatasetSoA {
+        metadata,
+        p4,
+        aux,
+        weights,
+    }))
 }
 
 #[cfg(feature = "mpi")]
@@ -1867,8 +1888,23 @@ fn read_parquet_soa_mpi(
     }
 
     let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let mut soa = batches_to_soa(batches, metadata)?;
+    let mut p4 = (0..metadata.p4_names.len())
+        .map(|_| SoaP4Column::with_capacity(local_end - first_row_start))
+        .collect::<Vec<_>>();
+    let mut aux = (0..metadata.aux_names.len())
+        .map(|_| Vec::with_capacity(local_end - first_row_start))
+        .collect::<Vec<_>>();
+    let mut weights = Vec::with_capacity(local_end - first_row_start);
+    for batch in reader {
+        let batch = batch?;
+        append_record_batch_to_soa(&batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
+    }
+    let mut soa = DatasetSoA {
+        metadata,
+        p4,
+        aux,
+        weights,
+    };
 
     let drop_front = local_start.saturating_sub(first_row_start);
     let expected_local = local_end - local_start;
@@ -1948,7 +1984,6 @@ fn batches_to_events(
     }
 }
 
-#[cfg(feature = "mpi")]
 fn empty_dataset_soa(metadata: Arc<DatasetMetadata>) -> DatasetSoA {
     DatasetSoA {
         p4: (0..metadata.p4_names.len())
@@ -2000,31 +2035,6 @@ fn append_record_batch_to_soa(
     }
 
     Ok(())
-}
-
-fn batches_to_soa(
-    batches: Vec<RecordBatch>,
-    metadata: Arc<DatasetMetadata>,
-) -> LadduResult<DatasetSoA> {
-    let n_rows = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
-    let mut p4 = (0..metadata.p4_names.len())
-        .map(|_| SoaP4Column::with_capacity(n_rows))
-        .collect::<Vec<_>>();
-    let mut aux = (0..metadata.aux_names.len())
-        .map(|_| Vec::with_capacity(n_rows))
-        .collect::<Vec<_>>();
-    let mut weights = Vec::with_capacity(n_rows);
-
-    for batch in &batches {
-        append_record_batch_to_soa(batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
-    }
-
-    Ok(DatasetSoA {
-        metadata,
-        p4,
-        aux,
-        weights,
-    })
 }
 
 #[cfg(feature = "mpi")]
