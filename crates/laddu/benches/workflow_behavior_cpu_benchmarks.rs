@@ -593,10 +593,70 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
+fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
+    // Dataset/setup notes:
+    // - Source parquet: benches/bench.parquet
+    // - Subsampled events: 512
+    // - Compares AoS evaluate vs cache-centric evaluate on a shared evaluator.
+    // - Compares AoS load precompute vs SoA load precompute on the same model.
+    let dataset = read_benchmark_dataset();
+    let ds_data = sample_dataset(
+        &dataset,
+        PARTIAL_WAVE_DATA_SEED,
+        PARTIAL_WAVE_DATA_SAMPLE_EVENTS,
+    );
+    let model = build_breit_wigner_partial_wave_model();
+    let evaluator = model
+        .load(&ds_data)
+        .expect("aos evaluator should build for cached comparison");
+    let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
+    let n_events = ds_data.n_events() as u64;
+
+    let mut eval_group = c.benchmark_group("evaluator_cached_vs_aos");
+    eval_group.throughput(Throughput::Elements(n_events));
+    eval_group.bench_function("evaluate_aos_local", |b| {
+        b.iter(|| black_box(evaluator.evaluate_local(black_box(&params))))
+    });
+    eval_group.throughput(Throughput::Elements(n_events));
+    eval_group.bench_function("evaluate_cached_local", |b| {
+        b.iter(|| {
+            let _ = black_box(evaluator.evaluate_cached_local(black_box(&params)));
+        })
+    });
+    eval_group.throughput(Throughput::Elements(n_events));
+    eval_group.bench_function("evaluate_gradient_aos_local", |b| {
+        b.iter(|| black_box(evaluator.evaluate_gradient_local(black_box(&params))))
+    });
+    eval_group.throughput(Throughput::Elements(n_events));
+    eval_group.bench_function("evaluate_gradient_cached_local", |b| {
+        b.iter(|| {
+            let _ = black_box(evaluator.evaluate_gradient_cached_local(black_box(&params)));
+        })
+    });
+    eval_group.finish();
+
+    let dataset_soa = Arc::new(ds_data.to_soa().expect("SoA conversion should succeed"));
+    let mut precompute_group = c.benchmark_group("precompute_backend_aos_vs_soa");
+    precompute_group.throughput(Throughput::Elements(n_events));
+    precompute_group.bench_function("load_aos_precompute", |b| {
+        b.iter(|| {
+            let _ = black_box(model.load(black_box(&ds_data)));
+        })
+    });
+    precompute_group.throughput(Throughput::Elements(n_events));
+    precompute_group.bench_function("load_soa_precompute", |b| {
+        b.iter(|| {
+            let _ = black_box(model.load_soa(black_box(&dataset_soa)));
+        })
+    });
+    precompute_group.finish();
+}
+
 fn main() {
     let mut criterion = Criterion::default().sample_size(120).configure_from_args();
     breit_wigner_partial_wave_benchmarks(&mut criterion);
     moment_analysis_benchmarks(&mut criterion);
     kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
+    cached_evaluator_and_precompute_backend_benchmarks(&mut criterion);
     criterion.final_summary();
 }
