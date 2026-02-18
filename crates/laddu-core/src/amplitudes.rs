@@ -151,15 +151,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and SoA
     /// precompute performance can be benchmarked independently.
     #[allow(unused_variables)]
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) -> LadduResult<()> {
-        if let Some(event_data) = event.event_data() {
-            self.precompute(&event_data, cache);
-            Ok(())
-        } else {
-            Err(LadduError::Custom(
-                "Failed to materialize SoA event view for precompute_soa fallback".to_string(),
-            ))
-        }
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        self.precompute(&event.event_data(), cache);
     }
     /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(feature = "rayon")]
@@ -183,15 +176,14 @@ pub trait Amplitude: DynClone + Send + Sync {
     }
 
     /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
-    fn precompute_all_soa(
-        &self,
-        dataset: &DatasetSoA,
-        resources: &mut Resources,
-    ) -> LadduResult<usize> {
-        dataset.for_each_named_event_local(|event_index, event| {
-            let cache = &mut resources.caches[event_index];
-            self.precompute_soa(&event, cache)
-        })
+    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) -> usize {
+        dataset
+            .for_each_named_event_local(|event_index, event| {
+                let cache = &mut resources.caches[event_index];
+                self.precompute_soa(&event, cache);
+                Ok(())
+            })
+            .expect("SoA precompute should be infallible once bound")
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
     /// calculated value for a particular [`EventData`] and set of [`Parameters`]. See those
@@ -207,10 +199,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     ///
     /// The default implementation returns an error, and amplitudes should override this
     /// when event dependence has been moved to precompute/cache.
-    fn compute_cached(&self, _parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
-        Err(LadduError::Custom(
-            "Amplitude does not implement cache-centric compute".to_string(),
-        ))
+    fn compute_cached(&self, _parameters: &Parameters, _cache: &Cache) -> Complex64 {
+        panic!("Amplitude does not implement cache-centric compute")
     }
 
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
@@ -253,7 +243,7 @@ pub trait Amplitude: DynClone + Send + Sync {
         parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let x = parameters.parameters.to_owned();
         let constants = parameters.constants.to_owned();
         let h: DVector<f64> = x
@@ -266,11 +256,10 @@ pub trait Amplitude: DynClone + Send + Sync {
             let mut x_minus = x.clone();
             x_plus[i] += h[i];
             x_minus[i] -= h[i];
-            let f_plus = self.compute_cached(&Parameters::new(&x_plus, &constants), cache)?;
-            let f_minus = self.compute_cached(&Parameters::new(&x_minus, &constants), cache)?;
+            let f_plus = self.compute_cached(&Parameters::new(&x_plus, &constants), cache);
+            let f_minus = self.compute_cached(&Parameters::new(&x_minus, &constants), cache);
             gradient[i] = (f_plus - f_minus) / (2.0 * h[i]);
         }
-        Ok(())
     }
 
     /// A helper function to implement a central difference only on indices which correspond to
@@ -1186,7 +1175,7 @@ impl Expression {
             .collect();
         for amplitude in amplitudes.iter_mut() {
             amplitude.bind(metadata)?;
-            amplitude.precompute_all_soa(dataset, &mut resources)?;
+            amplitude.precompute_all_soa(dataset, &mut resources);
         }
         let aos_dataset = Arc::new(dataset.to_dataset()?);
         Ok(Evaluator {
@@ -1345,12 +1334,10 @@ impl Evaluator {
         active_indices: &[usize],
         parameters: &Parameters,
         cache: &Cache,
-    ) -> LadduResult<()> {
+    ) {
         for &amp_idx in active_indices {
-            amplitude_values[amp_idx] =
-                self.amplitudes[amp_idx].compute_cached(parameters, cache)?;
+            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute_cached(parameters, cache);
         }
-        Ok(())
     }
 
     fn fill_amplitude_gradients(
@@ -1379,7 +1366,7 @@ impl Evaluator {
         active_mask: &[bool],
         parameters: &Parameters,
         cache: &Cache,
-    ) -> LadduResult<()> {
+    ) {
         for ((amp, active), grad) in self
             .amplitudes
             .iter()
@@ -1388,10 +1375,9 @@ impl Evaluator {
         {
             grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
             if *active {
-                amp.compute_gradient_cached(parameters, cache, grad)?;
+                amp.compute_gradient_cached(parameters, cache, grad);
             }
         }
-        Ok(())
     }
 
     pub fn expression_slot_count(&self) -> usize {
@@ -1755,11 +1741,11 @@ impl Evaluator {
     }
 
     /// Cache-centric expression evaluation over local events.
-    pub fn evaluate_cached_local(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
+    pub fn evaluate_cached_local(&self, parameters: &[f64]) -> Vec<Complex64> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
-        let active_indices = resources.active_indices().to_vec();
+        let active_indices = resources.active_indices();
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -1776,12 +1762,11 @@ impl Evaluator {
                     |(amplitude_values, expr_slots), cache| {
                         self.fill_amplitude_values_cached(
                             amplitude_values,
-                            &active_indices,
+                            active_indices,
                             &parameters,
                             cache,
-                        )?;
-                        Ok(self
-                            .evaluate_expression_value_with_scratch(amplitude_values, expr_slots))
+                        );
+                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
                     },
                 )
                 .collect()
@@ -1790,20 +1775,19 @@ impl Evaluator {
         {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            resources
-                .caches
-                .iter()
-                .map(|cache| {
-                    self.fill_amplitude_values_cached(
-                        &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        cache,
-                    )?;
-                    Ok(self
-                        .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots))
-                })
-                .collect()
+            let mut result = Vec::with_capacity(resources.caches.len());
+            for cache in &resources.caches {
+                self.fill_amplitude_values_cached(
+                    &mut amplitude_values,
+                    active_indices,
+                    &parameters,
+                    cache,
+                );
+                result.push(
+                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots),
+                );
+            }
+            result
         }
     }
 
@@ -1812,17 +1796,8 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> LadduResult<Vec<Complex64>> {
-        let local_result = self.evaluate_cached_local(parameters);
-        let local_error = i32::from(local_result.is_err());
-        let mut error_flags = vec![0_i32; world.size() as usize];
-        world.all_gather_into(&local_error, &mut error_flags);
-        if error_flags.iter().any(|&flag| flag != 0) {
-            return local_result.and(Err(LadduError::Custom(
-                "Cache-centric evaluate failed on at least one MPI rank".to_string(),
-            )));
-        }
-        let local_evaluation = local_result?;
+    ) -> Vec<Complex64> {
+        let local_evaluation = self.evaluate_cached_local(parameters);
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
@@ -1830,11 +1805,11 @@ impl Evaluator {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
-        Ok(buffer)
+        buffer
     }
 
     /// Cache-centric expression evaluation over all events.
-    pub fn evaluate_cached(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
+    pub fn evaluate_cached(&self, parameters: &[f64]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -2204,15 +2179,12 @@ impl Evaluator {
     }
 
     /// Cache-centric gradient evaluation over local events.
-    pub fn evaluate_gradient_cached_local(
-        &self,
-        parameters: &[f64],
-    ) -> LadduResult<Vec<DVector<Complex64>>> {
+    pub fn evaluate_gradient_cached_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
-        let active_indices = resources.active_indices().to_vec();
+        let active_indices = resources.active_indices();
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -2231,22 +2203,22 @@ impl Evaluator {
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
                         self.fill_amplitude_values_cached(
                             amplitude_values,
-                            &active_indices,
+                            active_indices,
                             &parameters,
                             cache,
-                        )?;
+                        );
                         self.fill_amplitude_gradients_cached(
                             gradient_values,
                             &resources.active,
                             &parameters,
                             cache,
-                        )?;
-                        Ok(self.evaluate_expression_gradient_with_scratch(
+                        );
+                        self.evaluate_expression_gradient_with_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
-                        ))
+                        )
                     },
                 )
                 .collect()
@@ -2257,30 +2229,28 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            resources
-                .caches
-                .iter()
-                .map(|cache| {
-                    self.fill_amplitude_values_cached(
-                        &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        cache,
-                    )?;
-                    self.fill_amplitude_gradients_cached(
-                        &mut gradient_values,
-                        &resources.active,
-                        &parameters,
-                        cache,
-                    )?;
-                    Ok(self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                    ))
-                })
-                .collect()
+            let mut result = Vec::with_capacity(resources.caches.len());
+            for cache in &resources.caches {
+                self.fill_amplitude_values_cached(
+                    &mut amplitude_values,
+                    active_indices,
+                    &parameters,
+                    cache,
+                );
+                self.fill_amplitude_gradients_cached(
+                    &mut gradient_values,
+                    &resources.active,
+                    &parameters,
+                    cache,
+                );
+                result.push(self.evaluate_expression_gradient_with_scratch(
+                    &amplitude_values,
+                    &gradient_values,
+                    &mut value_slots,
+                    &mut gradient_slots,
+                ));
+            }
+            result
         }
     }
 
@@ -2289,17 +2259,8 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> LadduResult<Vec<DVector<Complex64>>> {
-        let local_result = self.evaluate_gradient_cached_local(parameters);
-        let local_error = i32::from(local_result.is_err());
-        let mut error_flags = vec![0_i32; world.size() as usize];
-        world.all_gather_into(&local_error, &mut error_flags);
-        if error_flags.iter().any(|&flag| flag != 0) {
-            return local_result.and(Err(LadduError::Custom(
-                "Cache-centric gradient evaluate failed on at least one MPI rank".to_string(),
-            )));
-        }
-        let local_evaluation = local_result?;
+    ) -> Vec<DVector<Complex64>> {
+        let local_evaluation = self.evaluate_gradient_cached_local(parameters);
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
         let (counts, displs) = world.get_counts_displs(n_events);
@@ -2314,17 +2275,14 @@ impl Evaluator {
                 &mut partitioned_buffer,
             );
         }
-        Ok(buffer
+        buffer
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
-            .collect())
+            .collect()
     }
 
     /// Cache-centric gradient evaluation over all events.
-    pub fn evaluate_gradient_cached(
-        &self,
-        parameters: &[f64],
-    ) -> LadduResult<Vec<DVector<Complex64>>> {
+    pub fn evaluate_gradient_cached(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -2529,23 +2487,24 @@ impl Amplitude for TestAmplitude {
         cache.store_scalar(self.beam_energy, event.p4s[0].e());
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) -> LadduResult<()> {
-        let beam = crate::data::EventAccess::p4_at(event, 0).ok_or_else(|| {
-            LadduError::Custom("TestAmplitude expected p4 index 0 in SoA precompute".to_string())
-        })?;
+    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+        let beam = crate::data::EventAccess::p4_at(event, 0)
+            .ok_or_else(|| {
+                LadduError::Custom(
+                    "TestAmplitude expected p4 index 0 in SoA precompute".to_string(),
+                )
+            })
+            .expect("TestAmplitude expected p4 index 0 in SoA precompute");
         cache.store_scalar(self.beam_energy, beam.e());
-        Ok(())
     }
 
     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
-        Ok(
-            Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
-                * cache.get_scalar(self.beam_energy),
-        )
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+            * cache.get_scalar(self.beam_energy)
     }
 
     fn compute_gradient(
@@ -2568,7 +2527,7 @@ impl Amplitude for TestAmplitude {
         _parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let beam_energy = cache.get_scalar(self.beam_energy);
         if let ParameterID::Parameter(ind) = self.pid_re {
             gradient[ind] = Complex64::ONE * beam_energy;
@@ -2576,7 +2535,6 @@ impl Amplitude for TestAmplitude {
         if let ParameterID::Parameter(ind) = self.pid_im {
             gradient[ind] = Complex64::I * beam_energy;
         }
-        Ok(())
     }
 }
 
@@ -2692,9 +2650,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let params = [1.25, -0.75];
         let aos = evaluator.evaluate_local(&params);
-        let cached = evaluator
-            .evaluate_cached_local(&params)
-            .expect("cached path should evaluate");
+        let cached = evaluator.evaluate_cached_local(&params);
         assert_eq!(aos.len(), cached.len());
         for (lhs, rhs) in aos.iter().zip(cached.iter()) {
             assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
@@ -2720,9 +2676,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let params = [1.25, -0.75];
         let aos = evaluator.evaluate_gradient_local(&params);
-        let cached = evaluator
-            .evaluate_gradient_cached_local(&params)
-            .expect("cached gradient path should evaluate");
+        let cached = evaluator.evaluate_gradient_cached_local(&params);
         assert_eq!(aos.len(), cached.len());
         for (lhs, rhs) in aos.iter().zip(cached.iter()) {
             assert_eq!(lhs.len(), rhs.len());
@@ -2755,9 +2709,7 @@ mod tests {
             .expect("evaluator should own dataset Arc in this test")
             .events
             .clear();
-        let cached = evaluator
-            .evaluate_cached_local(&[1.25, -0.75])
-            .expect("cached path should evaluate from caches");
+        let cached = evaluator.evaluate_cached_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
     }
 
@@ -2783,9 +2735,7 @@ mod tests {
             .expect("evaluator should own dataset Arc in this test")
             .events
             .clear();
-        let cached = evaluator
-            .evaluate_gradient_cached_local(&[1.25, -0.75])
-            .expect("cached gradient path should evaluate from caches");
+        let cached = evaluator.evaluate_gradient_cached_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
     }
 
@@ -2843,9 +2793,7 @@ mod tests {
             .register(&mut resources)
             .expect("test amplitude should register");
         resources.reserve_cache(dataset.n_events());
-        let materialization_count = amplitude
-            .precompute_all_soa(&dataset_soa, &mut resources)
-            .expect("SoA precompute should succeed");
+        let materialization_count = amplitude.precompute_all_soa(&dataset_soa, &mut resources);
         assert_eq!(materialization_count, 0);
         for cache in &resources.caches {
             assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
@@ -2853,7 +2801,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_cached_errors_for_non_cached_amplitude() {
+    fn test_evaluate_cached_panics_for_non_cached_amplitude() {
         let expr = ComplexScalar::new(
             "constant",
             constant("const_re", 2.0),
@@ -2865,8 +2813,14 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator = expr.load(&dataset).unwrap();
-        assert!(evaluator.evaluate_cached_local(&[]).is_err());
-        assert!(evaluator.evaluate_gradient_cached_local(&[]).is_err());
+        let cached_eval = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = evaluator.evaluate_cached_local(&[]);
+        }));
+        assert!(cached_eval.is_err());
+        let cached_grad = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = evaluator.evaluate_gradient_cached_local(&[]);
+        }));
+        assert!(cached_grad.is_err());
     }
 
     #[test]

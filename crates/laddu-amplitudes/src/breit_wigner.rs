@@ -118,7 +118,7 @@ impl Amplitude for BreitWigner {
         Complex64::from(f * n) / d
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let mass = cache.get_scalar(self.resonance_mass_id);
         let mass0 = parameters.get(self.pid_mass).abs();
         let width0 = parameters.get(self.pid_width).abs();
@@ -131,7 +131,7 @@ impl Amplitude for BreitWigner {
         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
         let n = f64::sqrt(mass0 * width0 / PI);
         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Ok(Complex64::from(f * n) / d)
+        Complex64::from(f * n) / d
     }
 
     fn compute_gradient(
@@ -141,14 +141,27 @@ impl Amplitude for BreitWigner {
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
-        let mut indices = Vec::with_capacity(2);
         if let ParameterID::Parameter(index) = self.pid_mass {
-            indices.push(index)
+            self.central_difference_with_indices(&[index], parameters, event, cache, gradient);
         }
         if let ParameterID::Parameter(index) = self.pid_width {
-            indices.push(index)
+            self.central_difference_with_indices(&[index], parameters, event, cache, gradient);
         }
-        self.central_difference_with_indices(&indices, parameters, event, cache, gradient)
+    }
+
+    fn compute_gradient_cached(
+        &self,
+        parameters: &Parameters,
+        cache: &Cache,
+        gradient: &mut DVector<Complex64>,
+    ) {
+        let event = EventData::default();
+        if let ParameterID::Parameter(index) = self.pid_mass {
+            self.central_difference_with_indices(&[index], parameters, &event, cache, gradient);
+        }
+        if let ParameterID::Parameter(index) = self.pid_width {
+            self.central_difference_with_indices(&[index], parameters, &event, cache, gradient);
+        }
     }
 }
 

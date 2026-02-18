@@ -136,7 +136,7 @@ impl Amplitude for KopfKMatrixRho {
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
             Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
@@ -145,11 +145,7 @@ impl Amplitude for KopfKMatrixRho {
         });
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
-        Ok(FixedKMatrix::compute(
-            &betas,
-            &ikc_inv_vec,
-            &p_vec_constants,
-        ))
+        FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
 
     fn compute_gradient(
@@ -177,7 +173,7 @@ impl Amplitude for KopfKMatrixRho {
         _parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
@@ -189,7 +185,6 @@ impl Amplitude for KopfKMatrixRho {
                 gradient[index] = Complex64::I * internal_gradient[i];
             }
         }
-        Ok(())
     }
 }
 

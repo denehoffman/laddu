@@ -91,13 +91,13 @@ impl Amplitude for PiecewiseScalar {
         }
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        Ok(if bin_index == self.bins + 1 {
+        if bin_index == self.bins + 1 {
             Complex64::ZERO
         } else {
             Complex64::from(parameters.get(self.pids[bin_index]))
-        })
+        }
     }
 
     fn compute_gradient(
@@ -118,12 +118,11 @@ impl Amplitude for PiecewiseScalar {
         _parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
             gradient[bin_index] = Complex64::ONE;
         }
-        Ok(())
     }
 }
 
@@ -263,14 +262,14 @@ impl Amplitude for PiecewiseComplexScalar {
         }
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        Ok(if bin_index == self.bins + 1 {
+        if bin_index == self.bins + 1 {
             Complex64::ZERO
         } else {
             let pid_re_im = self.pids_re_im[bin_index];
             Complex64::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
-        })
+        }
     }
 
     fn compute_gradient(
@@ -297,7 +296,7 @@ impl Amplitude for PiecewiseComplexScalar {
         _parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
             let pid_re_im = self.pids_re_im[bin_index];
@@ -308,7 +307,6 @@ impl Amplitude for PiecewiseComplexScalar {
                 gradient[ind] = Complex64::I;
             }
         }
-        Ok(())
     }
 }
 
@@ -452,14 +450,14 @@ impl Amplitude for PiecewisePolarComplexScalar {
         }
     }
 
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
+    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        Ok(if bin_index == self.bins + 1 {
+        if bin_index == self.bins + 1 {
             Complex64::ZERO
         } else {
             let pid_r_theta = self.pids_r_theta[bin_index];
             Complex64::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
-        })
+        }
     }
 
     fn compute_gradient(
@@ -489,7 +487,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
         parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index < self.bins + 1 {
             let pid_r_theta = self.pids_r_theta[bin_index];
@@ -503,7 +501,6 @@ impl Amplitude for PiecewisePolarComplexScalar {
                 gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
             }
         }
-        Ok(())
     }
 }
 

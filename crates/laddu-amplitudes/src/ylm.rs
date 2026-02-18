@@ -70,8 +70,8 @@ impl Amplitude for Ylm {
         cache.get_complex_scalar(self.csid)
     }
 
-    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> LadduResult<Complex64> {
-        Ok(cache.get_complex_scalar(self.csid))
+    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+        cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
@@ -89,8 +89,7 @@ impl Amplitude for Ylm {
         _parameters: &Parameters,
         _cache: &Cache,
         _gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
-        Ok(())
+    ) {
     }
 }
 

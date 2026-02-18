@@ -317,7 +317,8 @@
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data {
     pub use laddu_core::data::{
-        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, EventData,
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetSoA,
+        DatasetWriteOptions, EventData,
     };
 }
 /// Format-specific IO helpers for [`Dataset`]s.
@@ -366,8 +367,8 @@ pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike,
 };
 pub use laddu_core::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
-    EventData,
+    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetSoA, DatasetWriteOptions,
+    Event, EventData,
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{

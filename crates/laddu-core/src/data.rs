@@ -301,14 +301,8 @@ impl DatasetSoA {
     /// Convert this SoA dataset back to a row-event dataset.
     pub fn to_dataset(&self) -> LadduResult<Dataset> {
         let events = (0..self.n_events())
-            .map(|event_index| {
-                self.event_data(event_index).map(Arc::new).ok_or_else(|| {
-                    LadduError::Custom(format!(
-                        "Failed to materialize SoA event data at index {event_index}"
-                    ))
-                })
-            })
-            .collect::<LadduResult<Vec<_>>>()?;
+            .map(|event_index| Arc::new(self.event_data(event_index)))
+            .collect::<Vec<_>>();
         Ok(Dataset::new_local(events, self.metadata.clone()))
     }
 
@@ -339,23 +333,31 @@ impl DatasetSoA {
         self.weights.get(event_index).copied()
     }
 
-    fn event_data(&self, event_index: usize) -> Option<EventData> {
+    fn event_data(&self, event_index: usize) -> EventData {
         #[cfg(test)]
         self.materialization_count
             .set(self.materialization_count.get() + 1);
         let mut p4s = Vec::with_capacity(self.p4.len());
         for p4_index in 0..self.p4.len() {
-            p4s.push(self.p4(event_index, p4_index)?);
+            p4s.push(
+                self.p4(event_index, p4_index)
+                    .expect("DatasetSoA p4 index should be valid for row view materialization"),
+            );
         }
         let mut aux = Vec::with_capacity(self.aux.len());
         for aux_index in 0..self.aux.len() {
-            aux.push(self.aux(event_index, aux_index)?);
+            aux.push(
+                self.aux(event_index, aux_index)
+                    .expect("DatasetSoA aux index should be valid for row view materialization"),
+            );
         }
-        Some(EventData {
+        EventData {
             p4s,
             aux,
-            weight: self.weight(event_index)?,
-        })
+            weight: self
+                .weight(event_index)
+                .expect("DatasetSoA weight should be valid for row view materialization"),
+        }
     }
 
     #[cfg(test)]
@@ -363,14 +365,16 @@ impl DatasetSoA {
         self.materialization_count.get()
     }
 
-    fn row_view(&self, event_index: usize) -> Option<SoaEventView<'_>> {
-        if event_index >= self.n_events() {
-            return None;
-        }
-        Some(SoaEventView {
+    fn row_view(&self, event_index: usize) -> SoaEventView<'_> {
+        assert!(
+            event_index < self.n_events(),
+            "DatasetSoA row index out of bounds: index {event_index}, length {}",
+            self.n_events()
+        );
+        SoaEventView {
             storage: self,
             event_index,
-        })
+        }
     }
 
     pub(crate) fn for_each_named_event_local<F>(&self, mut op: F) -> LadduResult<usize>
@@ -378,11 +382,7 @@ impl DatasetSoA {
         F: FnMut(usize, SoaNamedEventView<'_>) -> LadduResult<()>,
     {
         for event_index in 0..self.n_events() {
-            let row = self.row_view(event_index).ok_or_else(|| {
-                LadduError::Custom(format!(
-                    "Failed to create SoA named event view at index {event_index}"
-                ))
-            })?;
+            let row = self.row_view(event_index);
             let view = SoaNamedEventView {
                 row,
                 metadata: &self.metadata,
@@ -399,12 +399,12 @@ impl DatasetSoA {
         }
     }
 
-    pub(crate) fn event_view(&self, event_index: usize) -> Option<SoaNamedEventView<'_>> {
-        let row = self.row_view(event_index)?;
-        Some(SoaNamedEventView {
+    pub(crate) fn event_view(&self, event_index: usize) -> SoaNamedEventView<'_> {
+        let row = self.row_view(event_index);
+        SoaNamedEventView {
             row,
             metadata: self.metadata(),
-        })
+        }
     }
 }
 
@@ -417,48 +417,48 @@ struct SoaEventView<'a> {
 
 #[allow(dead_code)]
 impl SoaEventView<'_> {
-    fn p4(&self, p4_index: usize) -> Option<Vec4> {
-        self.storage.p4(self.event_index, p4_index)
+    fn p4(&self, p4_index: usize) -> Vec4 {
+        self.storage
+            .p4(self.event_index, p4_index)
+            .expect("SoA row view p4 index out of bounds")
     }
 
-    fn aux(&self, aux_index: usize) -> Option<f64> {
-        self.storage.aux(self.event_index, aux_index)
+    fn aux(&self, aux_index: usize) -> f64 {
+        self.storage
+            .aux(self.event_index, aux_index)
+            .expect("SoA row view aux index out of bounds")
     }
 
-    fn weight(&self) -> Option<f64> {
-        self.storage.weight(self.event_index)
+    fn weight(&self) -> f64 {
+        self.storage
+            .weight(self.event_index)
+            .expect("SoA row view weight index out of bounds")
     }
 
-    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4> {
-        indices
-            .as_ref()
-            .iter()
-            .map(|index| self.p4(*index))
-            .collect::<Option<Vec<_>>>()
-            .map(|momenta| momenta.into_iter().sum())
+    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
+        indices.as_ref().iter().map(|index| self.p4(*index)).sum()
     }
 
-    fn event_data(&self) -> Option<EventData> {
+    fn event_data(&self) -> EventData {
         self.storage.event_data(self.event_index)
     }
 
-    fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
-        Some(variable.value(&self.event_data()?))
+    fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
+        variable.value(&self.event_data())
     }
 }
 
 impl EventAccess for SoaEventView<'_> {
     fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        self.p4(p4_index)
+        Some(self.p4(p4_index))
     }
 
     fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        self.aux(aux_index)
+        Some(self.aux(aux_index))
     }
 
     fn weight(&self) -> f64 {
         SoaEventView::weight(self)
-            .expect("SoA row view should always expose weight for valid event index")
     }
 
     fn n_p4(&self) -> usize {
@@ -481,22 +481,23 @@ impl SoaNamedEventView<'_> {
     /// Retrieve a four-momentum by metadata name.
     pub fn p4(&self, name: &str) -> Option<Vec4> {
         let selection = self.metadata.p4_selection(name)?;
-        selection
-            .indices()
-            .iter()
-            .map(|index| self.row.p4(*index))
-            .collect::<Option<Vec<_>>>()
-            .map(|momenta| momenta.into_iter().sum())
+        Some(
+            selection
+                .indices()
+                .iter()
+                .map(|index| self.row.p4(*index))
+                .sum(),
+        )
     }
 
     /// Retrieve an auxiliary scalar by metadata name.
     pub fn aux(&self, name: &str) -> Option<f64> {
         let index = self.metadata.aux_index(name)?;
-        self.row.aux(index)
+        Some(self.row.aux(index))
     }
 
     /// Retrieve event weight.
-    pub fn weight(&self) -> Option<f64> {
+    pub fn weight(&self) -> f64 {
         self.row.weight()
     }
 
@@ -514,29 +515,27 @@ impl SoaNamedEventView<'_> {
     }
 
     /// Materialize this SoA row into an [`EventData`] value.
-    pub fn event_data(&self) -> Option<EventData> {
+    pub fn event_data(&self) -> EventData {
         self.row.event_data()
     }
 
     /// Evaluate a [`Variable`] against this event.
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> Option<f64> {
+    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         self.row.evaluate(variable)
     }
 }
 
 impl EventAccess for SoaNamedEventView<'_> {
     fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        self.row.p4(p4_index)
+        Some(self.row.p4(p4_index))
     }
 
     fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        self.row.aux(aux_index)
+        Some(self.row.aux(aux_index))
     }
 
     fn weight(&self) -> f64 {
-        self.row
-            .weight()
-            .expect("SoA named row view should always expose weight for valid event index")
+        self.row.weight()
     }
 
     fn n_p4(&self) -> usize {
@@ -3210,9 +3209,7 @@ mod tests {
                 row.weight,
                 epsilon = 1e-12
             );
-            let rebuilt = soa
-                .event_data(event_index)
-                .expect("soa event reconstruction should succeed");
+            let rebuilt = soa.event_data(event_index);
             assert_eq!(rebuilt.p4s.len(), row.p4s.len());
             assert_eq!(rebuilt.aux.len(), row.aux.len());
             assert_relative_eq!(rebuilt.weight, row.weight, epsilon = 1e-12);
@@ -3243,7 +3240,7 @@ mod tests {
     fn test_dataset_soa_named_row_view_matches_event_accessors() {
         let dataset = test_dataset();
         let soa = dataset.to_soa().expect("soa conversion should succeed");
-        let row = soa.event_view(0).expect("soa event view should exist");
+        let row = soa.event_view(0);
         let named = dataset.named_event(0).expect("named event should exist");
 
         let beam = row.p4("beam").expect("beam p4 should be present");
@@ -3258,11 +3255,7 @@ mod tests {
             named.aux().get("pol_angle").copied().expect("named aux"),
             epsilon = 1e-12
         );
-        assert_relative_eq!(
-            row.weight().expect("weight should be present"),
-            named.weight(),
-            epsilon = 1e-12
-        );
+        assert_relative_eq!(row.weight(), named.weight(), epsilon = 1e-12);
 
         let summed = row
             .get_p4_sum(["kshort1", "kshort2"])
@@ -3275,12 +3268,12 @@ mod tests {
     fn test_dataset_soa_row_view_variable_evaluation_matches_event_data() {
         let dataset = test_dataset();
         let soa = dataset.to_soa().expect("soa conversion should succeed");
-        let row = soa.event_view(0).expect("soa event view should exist");
+        let row = soa.event_view(0);
         let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
         mass.bind(dataset.metadata())
             .expect("mass should bind to metadata");
-        let from_view = row.evaluate(&mass).expect("soa evaluation should succeed");
+        let from_view = row.evaluate(&mass);
         let from_access_aos =
             crate::utils::variables::SoaVariable::value_with_access(&mass, &named)
                 .expect("aos value-with-access should succeed");
@@ -3313,9 +3306,7 @@ mod tests {
         let dataset = test_dataset();
         let aos = dataset.named_event(0).expect("event should exist");
         let soa_storage = dataset.to_soa().expect("soa conversion should succeed");
-        let soa = soa_storage
-            .event_view(0)
-            .expect("soa named view should exist");
+        let soa = soa_storage.event_view(0);
 
         let aos_beam =
             NamedEventAccess::p4_by_name(&aos, "beam").expect("aos beam should be present");

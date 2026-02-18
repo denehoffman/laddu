@@ -43,8 +43,8 @@ impl Amplitude for Scalar {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
 
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
-        Ok(Complex64::new(parameters.get(self.pid), 0.0))
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid), 0.0)
     }
 
     fn compute_gradient(
@@ -64,11 +64,10 @@ impl Amplitude for Scalar {
         _parameters: &Parameters,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         if let ParameterID::Parameter(ind) = self.pid {
             gradient[ind] = Complex64::ONE;
         }
-        Ok(())
     }
 }
 
@@ -129,11 +128,8 @@ impl Amplitude for ComplexScalar {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
 
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
-        Ok(Complex64::new(
-            parameters.get(self.pid_re),
-            parameters.get(self.pid_im),
-        ))
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
 
     fn compute_gradient(
@@ -156,14 +152,13 @@ impl Amplitude for ComplexScalar {
         _parameters: &Parameters,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         if let ParameterID::Parameter(ind) = self.pid_re {
             gradient[ind] = Complex64::ONE;
         }
         if let ParameterID::Parameter(ind) = self.pid_im {
             gradient[ind] = Complex64::I;
         }
-        Ok(())
     }
 }
 
@@ -230,11 +225,8 @@ impl Amplitude for PolarComplexScalar {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
 
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> LadduResult<Complex64> {
-        Ok(Complex64::from_polar(
-            parameters.get(self.pid_r),
-            parameters.get(self.pid_theta),
-        ))
+    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+        Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
 
     fn compute_gradient(
@@ -259,7 +251,7 @@ impl Amplitude for PolarComplexScalar {
         parameters: &Parameters,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
-    ) -> LadduResult<()> {
+    ) {
         let exp_i_theta = Complex64::cis(parameters.get(self.pid_theta));
         if let ParameterID::Parameter(ind) = self.pid_r {
             gradient[ind] = exp_i_theta;
@@ -268,7 +260,6 @@ impl Amplitude for PolarComplexScalar {
             gradient[ind] = Complex64::I
                 * Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
         }
-        Ok(())
     }
 }
 
