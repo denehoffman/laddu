@@ -1,4 +1,4 @@
-use std::{env, sync::Arc, time::Instant};
+use std::{env, fs, sync::Arc, time::Instant};
 
 use laddu::{
     amplitudes::{
@@ -17,6 +17,7 @@ use laddu::{
         variables::{Angles, Mass, Polarization, Topology},
     },
 };
+use laddu_core::data::read_parquet_soa;
 
 const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
@@ -42,6 +43,8 @@ enum Mode {
     PrecomputeSoaOnce,
     PrecomputeCompare,
     NllAos,
+    IoAosOnce,
+    IoSoaOnce,
 }
 
 impl Mode {
@@ -61,6 +64,8 @@ impl Mode {
             "precompute_soa_once" => Some(Self::PrecomputeSoaOnce),
             "precompute_compare" => Some(Self::PrecomputeCompare),
             "nll_aos" => Some(Self::NllAos),
+            "io_aos_once" => Some(Self::IoAosOnce),
+            "io_soa_once" => Some(Self::IoSoaOnce),
             _ => None,
         }
     }
@@ -69,8 +74,18 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos"
+         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos | io_aos_once | io_soa_once"
     );
+}
+
+fn read_peak_rss_kb() -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let vm_hwm = status
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))?
+        .split_whitespace()
+        .nth(1)?;
+    vm_hwm.parse::<u64>().ok()
 }
 
 fn print_precompute_breakdown_header(mode: &str, iters: usize) {
@@ -567,6 +582,52 @@ fn run_mode(mode: Mode, iters: usize) {
             eprintln!(
                 "mode=nll_aos iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
+            );
+        }
+        Mode::IoAosOnce => {
+            let options = DatasetReadOptions::default()
+                .p4_names(P4_NAMES)
+                .aux_names(AUX_NAMES);
+            let dataset_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(BENCH_DATASET_RELATIVE_PATH)
+                .to_string_lossy()
+                .into_owned();
+            let t0 = Instant::now();
+            let ds =
+                io::read_parquet(&dataset_path, &options).expect("aos parquet load should work");
+            let elapsed = t0.elapsed();
+            let n_events = ds.n_events() as u64;
+            let n_p4 = ds.p4_names().len() as u64;
+            let n_aux = ds.aux_names().len() as u64;
+            let scalar_copies = n_events * (4 * n_p4 + n_aux + 1);
+            let row_materializations = n_events;
+            let event_arc_allocations = n_events;
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=io_aos_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
+            );
+        }
+        Mode::IoSoaOnce => {
+            let options = DatasetReadOptions::default()
+                .p4_names(P4_NAMES)
+                .aux_names(AUX_NAMES);
+            let dataset_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(BENCH_DATASET_RELATIVE_PATH)
+                .to_string_lossy()
+                .into_owned();
+            let t0 = Instant::now();
+            let ds =
+                read_parquet_soa(&dataset_path, &options).expect("soa parquet load should work");
+            let elapsed = t0.elapsed();
+            let n_events = ds.n_events() as u64;
+            let n_p4 = ds.metadata().p4_names().len() as u64;
+            let n_aux = ds.metadata().aux_names().len() as u64;
+            let scalar_copies = n_events * (4 * n_p4 + n_aux + 1);
+            let row_materializations = 0u64;
+            let event_arc_allocations = 0u64;
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=io_soa_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
             );
         }
     }
