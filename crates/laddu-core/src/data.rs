@@ -1656,68 +1656,7 @@ impl Dataset {
         file_path: PathBuf,
         options: &DatasetWriteOptions,
     ) -> LadduResult<()> {
-        let batch_size = options.batch_size.max(1);
-        let precision = options.precision;
-        let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
-
-        #[cfg(feature = "mpi")]
-        let is_root = crate::mpi::get_world()
-            .as_ref()
-            .map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        let mut writer: Option<ArrowWriter<File>> = None;
-        if is_root {
-            let file = File::create(&file_path)?;
-            writer = Some(
-                ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
-                    LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
-                })?,
-            );
-        }
-
-        let mut iter = self.iter();
-        loop {
-            let mut buffers =
-                ColumnBuffers::new(self.metadata.p4_names.len(), self.metadata.aux_names.len());
-            let mut rows = 0usize;
-
-            while rows < batch_size {
-                match iter.next() {
-                    Some(event) => {
-                        if is_root {
-                            buffers.push_event(&event);
-                        }
-                        rows += 1;
-                    }
-                    None => break,
-                }
-            }
-
-            if rows == 0 {
-                break;
-            }
-
-            if let Some(writer) = writer.as_mut() {
-                let batch = buffers
-                    .into_record_batch(schema.clone(), precision)
-                    .map_err(|err| {
-                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
-                    })?;
-                writer.write(&batch).map_err(|err| {
-                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
-                })?;
-            }
-        }
-
-        if let Some(writer) = writer {
-            writer.close().map_err(|err| {
-                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
-            })?;
-        }
-
-        Ok(())
+        self.soa.write_parquet_impl(file_path, options)
     }
 
     fn write_root_impl(
@@ -2828,12 +2767,6 @@ fn record_batch_to_events(
     Ok(events)
 }
 
-struct ColumnBuffers {
-    p4: Vec<P4Buffer>,
-    aux: Vec<Vec<f64>>,
-    weight: Vec<f64>,
-}
-
 fn soa_range_to_record_batch(
     dataset: &DatasetSoA,
     start: usize,
@@ -2901,94 +2834,6 @@ fn soa_range_to_record_batch(
         }
     }
     RecordBatch::try_new(schema, columns)
-}
-
-impl ColumnBuffers {
-    fn new(n_p4: usize, n_aux: usize) -> Self {
-        let p4 = (0..n_p4).map(|_| P4Buffer::default()).collect();
-        let aux = vec![Vec::new(); n_aux];
-        Self {
-            p4,
-            aux,
-            weight: Vec::new(),
-        }
-    }
-
-    fn push_event(&mut self, event: &Event) {
-        for (buffer, p4) in self.p4.iter_mut().zip(event.p4s.iter()) {
-            buffer.px.push(p4.x);
-            buffer.py.push(p4.y);
-            buffer.pz.push(p4.z);
-            buffer.e.push(p4.t);
-        }
-
-        for (buffer, value) in self.aux.iter_mut().zip(event.aux.iter()) {
-            buffer.push(*value);
-        }
-
-        self.weight.push(event.weight);
-    }
-
-    fn into_record_batch(
-        self,
-        schema: Arc<Schema>,
-        precision: FloatPrecision,
-    ) -> arrow::error::Result<RecordBatch> {
-        let mut columns: Vec<arrow::array::ArrayRef> = Vec::new();
-
-        match precision {
-            FloatPrecision::F64 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float64Array::from(buffer.px.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.py.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.pz.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.e.clone())));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float64Array::from(buffer.clone())));
-                }
-
-                columns.push(Arc::new(Float64Array::from(self.weight)));
-            }
-            FloatPrecision::F32 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.px.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.py.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.pz.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.e.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                columns.push(Arc::new(Float32Array::from(
-                    self.weight.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                )));
-            }
-        }
-
-        RecordBatch::try_new(schema, columns)
-    }
-}
-
-#[derive(Default)]
-struct P4Buffer {
-    px: Vec<f64>,
-    py: Vec<f64>,
-    pz: Vec<f64>,
-    e: Vec<f64>,
 }
 
 fn build_parquet_schema(metadata: &DatasetMetadata, precision: FloatPrecision) -> Schema {
