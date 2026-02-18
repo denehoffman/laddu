@@ -18,14 +18,15 @@ use parquet::file::metadata::ParquetMetaData;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::cell::Cell;
 use std::{
     fmt::Display,
     fs::File,
     ops::{Deref, DerefMut, Index, IndexMut},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 #[cfg(feature = "mpi")]
@@ -244,14 +245,29 @@ impl SoaP4Column {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct DatasetSoA {
     metadata: Arc<DatasetMetadata>,
     p4: Vec<SoaP4Column>,
     aux: Vec<Vec<f64>>,
     weights: Vec<f64>,
-    #[cfg(test)]
-    materialization_count: Cell<usize>,
+    materialization_count: AtomicUsize,
+}
+
+impl Clone for DatasetSoA {
+    fn clone(&self) -> Self {
+        Self {
+            metadata: self.metadata.clone(),
+            p4: self.p4.clone(),
+            aux: self.aux.clone(),
+            weights: self.weights.clone(),
+            materialization_count: AtomicUsize::new(self.materialization_count()),
+        }
+    }
+}
+
+fn default_materialization_count() -> AtomicUsize {
+    AtomicUsize::new(0)
 }
 
 impl DatasetSoA {
@@ -293,8 +309,7 @@ impl DatasetSoA {
             p4,
             aux,
             weights,
-            #[cfg(test)]
-            materialization_count: Cell::new(0),
+            materialization_count: default_materialization_count(),
         })
     }
 
@@ -333,10 +348,8 @@ impl DatasetSoA {
         self.weights.get(event_index).copied()
     }
 
-    fn event_data(&self, event_index: usize) -> EventData {
-        #[cfg(test)]
-        self.materialization_count
-            .set(self.materialization_count.get() + 1);
+    pub(crate) fn event_data(&self, event_index: usize) -> EventData {
+        self.materialization_count.fetch_add(1, Ordering::Relaxed);
         let mut p4s = Vec::with_capacity(self.p4.len());
         for p4_index in 0..self.p4.len() {
             p4s.push(
@@ -360,9 +373,8 @@ impl DatasetSoA {
         }
     }
 
-    #[cfg(test)]
     fn materialization_count(&self) -> usize {
-        self.materialization_count.get()
+        self.materialization_count.load(Ordering::Relaxed)
     }
 
     fn row_view(&self, event_index: usize) -> SoaEventView<'_> {
@@ -377,9 +389,9 @@ impl DatasetSoA {
         }
     }
 
-    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F) -> LadduResult<usize>
+    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F) -> usize
     where
-        F: FnMut(usize, SoaNamedEventView<'_>) -> LadduResult<()>,
+        F: FnMut(usize, SoaNamedEventView<'_>),
     {
         for event_index in 0..self.n_events() {
             let row = self.row_view(event_index);
@@ -387,15 +399,15 @@ impl DatasetSoA {
                 row,
                 metadata: &self.metadata,
             };
-            op(event_index, view)?;
+            op(event_index, view);
         }
         #[cfg(test)]
         {
-            Ok(self.materialization_count())
+            self.materialization_count()
         }
         #[cfg(not(test))]
         {
-            Ok(0)
+            0
         }
     }
 
