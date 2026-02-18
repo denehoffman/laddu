@@ -22,11 +22,13 @@ use laddu::{
     },
     RngSubsetExtension,
 };
+use laddu_core::data::{read_parquet_soa, read_root_soa};
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 use rayon::ThreadPoolBuilder;
 
 const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
+const ROOT_BENCH_DATASET_RELATIVE_PATH: &str = "../laddu-core/test_data/data_f32.root";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
 const PARTIAL_WAVE_DATA_SAMPLE_EVENTS: usize = 512;
@@ -52,6 +54,20 @@ fn read_benchmark_dataset() -> Arc<Dataset> {
         .to_string_lossy()
         .into_owned();
     io::read_parquet(&dataset_path, &options).expect("benchmark dataset should open")
+}
+
+fn benchmark_parquet_path() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(BENCH_DATASET_RELATIVE_PATH)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn benchmark_root_path() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(ROOT_BENCH_DATASET_RELATIVE_PATH)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<Dataset> {
@@ -787,11 +803,63 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     precompute_only_group.finish();
 }
 
+fn io_open_aos_vs_soa_benchmarks(c: &mut Criterion) {
+    let parquet_options = DatasetReadOptions::default()
+        .p4_names(P4_NAMES)
+        .aux_names(AUX_NAMES);
+    let root_options = DatasetReadOptions::default();
+    let parquet_path = benchmark_parquet_path();
+    let root_path = benchmark_root_path();
+
+    let parquet_events = io::read_parquet(&parquet_path, &parquet_options)
+        .expect("parquet warmup should open")
+        .n_events() as u64;
+    let root_events = io::read_root(&root_path, &root_options)
+        .expect("root warmup should open")
+        .n_events() as u64;
+
+    let mut group = c.benchmark_group("file_open_aos_vs_soa");
+    group.throughput(Throughput::Elements(parquet_events));
+    group.bench_function("parquet_open_aos", |b| {
+        b.iter(|| {
+            let dataset = io::read_parquet(black_box(&parquet_path), black_box(&parquet_options))
+                .expect("parquet aos load should succeed");
+            black_box(dataset.n_events())
+        })
+    });
+    group.throughput(Throughput::Elements(parquet_events));
+    group.bench_function("parquet_open_soa", |b| {
+        b.iter(|| {
+            let dataset = read_parquet_soa(black_box(&parquet_path), black_box(&parquet_options))
+                .expect("parquet soa load should succeed");
+            black_box(dataset.n_events())
+        })
+    });
+    group.throughput(Throughput::Elements(root_events));
+    group.bench_function("root_open_aos", |b| {
+        b.iter(|| {
+            let dataset = io::read_root(black_box(&root_path), black_box(&root_options))
+                .expect("root aos load should succeed");
+            black_box(dataset.n_events())
+        })
+    });
+    group.throughput(Throughput::Elements(root_events));
+    group.bench_function("root_open_soa", |b| {
+        b.iter(|| {
+            let dataset = read_root_soa(black_box(&root_path), black_box(&root_options))
+                .expect("root soa load should succeed");
+            black_box(dataset.n_events())
+        })
+    });
+    group.finish();
+}
+
 fn main() {
     let mut criterion = Criterion::default().sample_size(120).configure_from_args();
     breit_wigner_partial_wave_benchmarks(&mut criterion);
     moment_analysis_benchmarks(&mut criterion);
     kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
     cached_evaluator_and_precompute_backend_benchmarks(&mut criterion);
+    io_open_aos_vs_soa_benchmarks(&mut criterion);
     criterion.final_summary();
 }

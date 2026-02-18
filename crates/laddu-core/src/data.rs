@@ -2068,6 +2068,82 @@ fn trim_soa_rows(soa: &mut DatasetSoA, drop_front: usize, expected_len: usize) {
 
 /// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
 pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
+    let root_data = read_root_columns(file_path, options)?;
+
+    let mut events = Vec::with_capacity(root_data.n_events);
+    for row in 0..root_data.n_events {
+        let mut p4s = Vec::with_capacity(root_data.p4_columns.len());
+        for columns in &root_data.p4_columns {
+            p4s.push(Vec4::new(
+                columns.px[row],
+                columns.py[row],
+                columns.pz[row],
+                columns.e[row],
+            ));
+        }
+
+        let mut aux = Vec::with_capacity(root_data.aux_columns.len());
+        for column in &root_data.aux_columns {
+            aux.push(column[row]);
+        }
+
+        let event = EventData {
+            p4s,
+            aux,
+            weight: root_data.weight_values[row],
+        };
+        events.push(Arc::new(event));
+    }
+
+    Ok(Arc::new(Dataset::new_with_metadata(
+        events,
+        root_data.metadata,
+    )))
+}
+
+/// Load a [`DatasetSoA`] from a ROOT TTree without materializing row-event storage.
+pub fn read_root_soa(
+    file_path: &str,
+    options: &DatasetReadOptions,
+) -> LadduResult<Arc<DatasetSoA>> {
+    let root_data = read_root_columns(file_path, options)?;
+    let p4 = root_data
+        .p4_columns
+        .into_iter()
+        .map(|columns| SoaP4Column {
+            px: columns.px,
+            py: columns.py,
+            pz: columns.pz,
+            e: columns.e,
+        })
+        .collect::<Vec<_>>();
+    Ok(Arc::new(DatasetSoA {
+        metadata: root_data.metadata,
+        p4,
+        aux: root_data.aux_columns,
+        weights: root_data.weight_values,
+    }))
+}
+
+struct RootP4Columns {
+    px: Vec<f64>,
+    py: Vec<f64>,
+    pz: Vec<f64>,
+    e: Vec<f64>,
+}
+
+struct RootReadColumns {
+    metadata: Arc<DatasetMetadata>,
+    p4_columns: Vec<RootP4Columns>,
+    aux_columns: Vec<Vec<f64>>,
+    weight_values: Vec<f64>,
+    n_events: usize,
+}
+
+fn read_root_columns(
+    file_path: &str,
+    options: &DatasetReadOptions,
+) -> LadduResult<RootReadColumns> {
     let path = canonicalize_dataset_path(file_path)?;
     let mut file = RootFile::open(&path).map_err(|err| {
         LadduError::Custom(format!(
@@ -2095,13 +2171,6 @@ pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<A
     let column_names: Vec<&str> = lookup.keys().copied().collect();
     let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-
-    struct RootP4Columns {
-        px: Vec<f64>,
-        py: Vec<f64>,
-        pz: Vec<f64>,
-        e: Vec<f64>,
-    }
 
     // TODO: do all reads in parallel if possible to match parquet impl
     let mut p4_columns = Vec::with_capacity(metadata.p4_names.len());
@@ -2168,32 +2237,39 @@ pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<A
         None => vec![1.0; n_events],
     };
 
-    let mut events = Vec::with_capacity(n_events);
-    for row in 0..n_events {
-        let mut p4s = Vec::with_capacity(p4_columns.len());
-        for columns in &p4_columns {
-            p4s.push(Vec4::new(
-                columns.px[row],
-                columns.py[row],
-                columns.pz[row],
-                columns.e[row],
-            ));
+    for columns in &p4_columns {
+        for (component_name, component) in [
+            ("px", &columns.px),
+            ("py", &columns.py),
+            ("pz", &columns.pz),
+            ("e", &columns.e),
+        ] {
+            if component.len() != n_events {
+                return Err(LadduError::LengthMismatch {
+                    context: format!("ROOT p4 component '{component_name}'"),
+                    expected: n_events,
+                    actual: component.len(),
+                });
+            }
         }
-
-        let mut aux = Vec::with_capacity(aux_columns.len());
-        for column in &aux_columns {
-            aux.push(column[row]);
+    }
+    for (aux_index, column) in aux_columns.iter().enumerate() {
+        if column.len() != n_events {
+            return Err(LadduError::LengthMismatch {
+                context: format!("ROOT aux column index {aux_index}"),
+                expected: n_events,
+                actual: column.len(),
+            });
         }
-
-        let event = EventData {
-            p4s,
-            aux,
-            weight: weight_values[row],
-        };
-        events.push(Arc::new(event));
     }
 
-    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
+    Ok(RootReadColumns {
+        metadata,
+        p4_columns,
+        aux_columns,
+        weight_values,
+        n_events,
+    })
 }
 
 /// Persist a [`Dataset`] to a Parquet file.
@@ -4063,6 +4139,32 @@ mod tests {
 
         assert_dataset_soa_close(&dataset_soa, &reopened);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_read_root_soa_matches_root_aos_to_soa() {
+        let path = test_data_path("data_f32.root");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let aos =
+            read_root(path_str, &DatasetReadOptions::new()).expect("root aos load should work");
+        let soa_from_aos = aos.to_soa().expect("aos->soa should work");
+        let soa_direct =
+            read_root_soa(path_str, &DatasetReadOptions::new()).expect("root soa load should work");
+        assert_dataset_soa_close(&soa_from_aos, &soa_direct);
+    }
+
+    #[test]
+    fn test_read_root_soa_matches_parquet_soa() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let parquet_path = test_data_path("data_f32.parquet");
+        let parquet_path_str = parquet_path.to_str().expect("path should be valid UTF-8");
+
+        let from_root = read_root_soa(root_path_str, &DatasetReadOptions::new())
+            .expect("root soa load should work");
+        let from_parquet = read_parquet_soa(parquet_path_str, &DatasetReadOptions::new())
+            .expect("parquet soa load should work");
+        assert_dataset_soa_close(&from_root, &from_parquet);
     }
 
     #[test]

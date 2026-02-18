@@ -171,3 +171,37 @@ Outputs:
 
 - `target/criterion/summary/mpi_rank_scaling_report.json`
 - `target/criterion/summary/mpi_rank_scaling_report.md`
+
+## File-Open Path Profiling (AoS vs SoA)
+
+These commands run direct file-open pathways (no evaluator/precompute):
+
+```bash
+just --justfile crates/laddu/benches/Justfile open-parquet-aos
+just --justfile crates/laddu/benches/Justfile open-parquet-soa
+just --justfile crates/laddu/benches/Justfile open-root-aos
+just --justfile crates/laddu/benches/Justfile open-root-soa
+```
+
+Each mode emits elapsed time, event dimensions, and process peak RSS (`VmHWM`).
+
+## Criterion File-Open Benchmarks
+
+Run the dedicated Criterion benchmark group for file-open pathways:
+
+```bash
+just --justfile crates/laddu/benches/Justfile bench-open
+```
+
+Emit JSON-line messages for only this benchmark group:
+
+```bash
+just --justfile crates/laddu/benches/Justfile json-open
+```
+
+The group is named `file_open_aos_vs_soa` and includes:
+
+- `parquet_open_aos`
+- `parquet_open_soa`
+- `root_open_aos`
+- `root_open_soa`

@@ -74,3 +74,25 @@ report-mpi-scaling:
       --scaling-json ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.json \
       --json-out ../../../target/criterion/summary/mpi_rank_scaling_report.json \
       --md-out ../../../target/criterion/summary/mpi_rank_scaling_report.md
+
+# Open-path profiling: parquet/root AoS vs SoA (single run per mode)
+open-parquet-aos:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open_aos
+
+open-parquet-soa:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open_soa
+
+open-root-aos:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open_aos
+
+open-root-soa:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open_soa
+
+# Run only file-open Criterion benchmarks (AoS vs SoA)
+bench-open:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- file_open_aos_vs_soa --noplot
+
+# Emit Criterion JSON messages for only file-open benchmark group
+json-open:
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json -- file_open_aos_vs_soa > ../../../target/criterion/messages_cpu_open.jsonl

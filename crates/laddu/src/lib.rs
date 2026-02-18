@@ -323,7 +323,9 @@ pub mod data {
 }
 /// Format-specific IO helpers for [`Dataset`]s.
 pub mod io {
-    pub use laddu_core::data::{read_parquet, read_root, write_parquet, write_root};
+    pub use laddu_core::data::{
+        read_parquet, read_parquet_soa, read_root, read_root_soa, write_parquet, write_root,
+    };
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {

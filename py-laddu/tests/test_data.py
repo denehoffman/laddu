@@ -246,6 +246,41 @@ def test_dataset_conversion() -> None:
     assert ds_from_polars[2].p4s['proton'].e == 100.0
 
 
+def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+    constructors = {
+        'numpy': ldio.from_numpy({k: np.array(v) for k, v in data.items()}),
+        'pandas': ldio.from_pandas(pd.DataFrame(data)),
+        'polars': ldio.from_polars(pl.DataFrame(data)),
+    }
+    baseline = ldio.from_dict(data)
+
+    for name, dataset in constructors.items():
+        _assert_datasets_close(dataset, baseline)
+
+        parquet_path = tmp_path / f'{name}.parquet'
+        ldio.write_parquet(dataset, parquet_path)
+        reopened_parquet = ldio.read_parquet(parquet_path)
+        _assert_datasets_close(reopened_parquet, baseline)
+
+        root_path = tmp_path / f'{name}.root'
+        ldio.write_root(dataset, root_path)
+        reopened_root = ldio.read_root(root_path)
+        _assert_datasets_close(reopened_root, baseline)
+
+
 def test_dataset_rejects_duplicate_p4_names() -> None:
     event = make_test_event()
     with pytest.raises(ValueError):

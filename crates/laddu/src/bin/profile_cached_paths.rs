@@ -17,9 +17,10 @@ use laddu::{
         variables::{Angles, Mass, Polarization, Topology},
     },
 };
-use laddu_core::data::read_parquet_soa;
+use laddu_core::data::{read_parquet_soa, read_root_soa};
 
 const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
+const ROOT_BENCH_DATASET_RELATIVE_PATH: &str = "../laddu-core/test_data/data_f32.root";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
 const SAMPLE_EVENTS: usize = 512;
@@ -45,6 +46,10 @@ enum Mode {
     NllAos,
     IoAosOnce,
     IoSoaOnce,
+    ParquetOpenAos,
+    ParquetOpenSoa,
+    RootOpenAos,
+    RootOpenSoa,
 }
 
 impl Mode {
@@ -66,6 +71,10 @@ impl Mode {
             "nll_aos" => Some(Self::NllAos),
             "io_aos_once" => Some(Self::IoAosOnce),
             "io_soa_once" => Some(Self::IoSoaOnce),
+            "parquet_open_aos" => Some(Self::ParquetOpenAos),
+            "parquet_open_soa" => Some(Self::ParquetOpenSoa),
+            "root_open_aos" => Some(Self::RootOpenAos),
+            "root_open_soa" => Some(Self::RootOpenSoa),
             _ => None,
         }
     }
@@ -74,7 +83,7 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos | io_aos_once | io_soa_once"
+         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos | io_aos_once | io_soa_once | parquet_open_aos | parquet_open_soa | root_open_aos | root_open_soa"
     );
 }
 
@@ -111,6 +120,20 @@ fn read_benchmark_dataset() -> Arc<Dataset> {
         .to_string_lossy()
         .into_owned();
     io::read_parquet(&dataset_path, &options).expect("benchmark dataset should open")
+}
+
+fn benchmark_parquet_path() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(BENCH_DATASET_RELATIVE_PATH)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn benchmark_root_path() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(ROOT_BENCH_DATASET_RELATIVE_PATH)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<Dataset> {
@@ -628,6 +651,68 @@ fn run_mode(mode: Mode, iters: usize) {
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
                 "mode=io_soa_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
+            );
+        }
+        Mode::ParquetOpenAos => {
+            let options = DatasetReadOptions::default()
+                .p4_names(P4_NAMES)
+                .aux_names(AUX_NAMES);
+            let dataset_path = benchmark_parquet_path();
+            let t0 = Instant::now();
+            let ds =
+                io::read_parquet(&dataset_path, &options).expect("parquet aos load should work");
+            let elapsed = t0.elapsed();
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=parquet_open_aos elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                ds.n_events(),
+                ds.p4_names().len(),
+                ds.aux_names().len()
+            );
+        }
+        Mode::ParquetOpenSoa => {
+            let options = DatasetReadOptions::default()
+                .p4_names(P4_NAMES)
+                .aux_names(AUX_NAMES);
+            let dataset_path = benchmark_parquet_path();
+            let t0 = Instant::now();
+            let ds =
+                read_parquet_soa(&dataset_path, &options).expect("parquet soa load should work");
+            let elapsed = t0.elapsed();
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=parquet_open_soa elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                ds.n_events(),
+                ds.metadata().p4_names().len(),
+                ds.metadata().aux_names().len()
+            );
+        }
+        Mode::RootOpenAos => {
+            let options = DatasetReadOptions::default();
+            let dataset_path = benchmark_root_path();
+            let t0 = Instant::now();
+            let ds = io::read_root(&dataset_path, &options).expect("root aos load should work");
+            let elapsed = t0.elapsed();
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=root_open_aos elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                ds.n_events(),
+                ds.p4_names().len(),
+                ds.aux_names().len()
+            );
+        }
+        Mode::RootOpenSoa => {
+            let options = DatasetReadOptions::default();
+            let dataset_path = benchmark_root_path();
+            let t0 = Instant::now();
+            let ds = read_root_soa(&dataset_path, &options).expect("root soa load should work");
+            let elapsed = t0.elapsed();
+            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
+            eprintln!(
+                "mode=root_open_soa elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                ds.n_events(),
+                ds.metadata().p4_names().len(),
+                ds.metadata().aux_names().len()
             );
         }
     }
