@@ -82,19 +82,6 @@ open-parquet:
 open-root:
     cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
 
-# Backward-compatible aliases
-open-parquet-aos:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
-
-open-parquet-columnar:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
-
-open-root-aos:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
-
-open-root-columnar:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
-
 # Run only file-open Criterion benchmarks
 bench-open:
     cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- file_open --noplot

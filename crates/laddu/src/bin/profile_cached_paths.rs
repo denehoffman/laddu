@@ -45,21 +45,17 @@ enum Mode {
 impl Mode {
     fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "evaluate" | "eval_aos" | "eval_cached" => Some(Self::Evaluate),
-            "evaluate_gradient" | "grad_aos" | "grad_cached" => Some(Self::Gradient),
-            "load" | "load_aos" | "load_columnar" | "load_storage" => Some(Self::Load),
-            "load_once" | "load_aos_once" | "load_columnar_once" => Some(Self::LoadOnce),
-            "precompute" | "precompute_aos" | "precompute_columnar" => Some(Self::Precompute),
-            "precompute_once" | "precompute_aos_once" | "precompute_columnar_once" => {
-                Some(Self::PrecomputeOnce)
-            }
+            "evaluate" => Some(Self::Evaluate),
+            "evaluate_gradient" => Some(Self::Gradient),
+            "load" => Some(Self::Load),
+            "load_once" => Some(Self::LoadOnce),
+            "precompute" => Some(Self::Precompute),
+            "precompute_once" => Some(Self::PrecomputeOnce),
             "precompute_compare" => Some(Self::PrecomputeCompare),
-            "nll" | "nll_aos" => Some(Self::Nll),
-            "io_once" | "io_aos_once" | "io_columnar_once" => Some(Self::IoOnce),
-            "parquet_open" | "parquet_open_aos" | "parquet_open_columnar" => {
-                Some(Self::ParquetOpen)
-            }
-            "root_open" | "root_open_aos" | "root_open_columnar" => Some(Self::RootOpen),
+            "nll" => Some(Self::Nll),
+            "io_once" => Some(Self::IoOnce),
+            "parquet_open" => Some(Self::ParquetOpen),
+            "root_open" => Some(Self::RootOpen),
             _ => None,
         }
     }
