@@ -271,15 +271,15 @@ fn run_iteration(nll: &NLL, iteration: usize, mode: Mode) {
     let params = generate_parameters(iteration, nll.n_free());
     match mode {
         Mode::Value => {
-            black_box(nll.evaluate(&params));
+            let _ = black_box(nll.evaluate(&params));
         }
         Mode::Gradient => {
-            black_box(nll.evaluate_gradient(&params));
+            let _ = black_box(nll.evaluate_gradient(&params));
         }
         Mode::ValueAndGradient => {
             let value = nll.evaluate(&params);
             let gradient = nll.evaluate_gradient(&params);
-            black_box((value, gradient));
+            let _ = black_box((value, gradient));
         }
     }
 }
