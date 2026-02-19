@@ -172,8 +172,8 @@ def test_dataset_constructor_metadata_precedence() -> None:
         [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.2, 0.1, 1.5).with_mass(0.3)],
         [],
         1.0,
-        p4_names=['legacy_beam', 'legacy_kshort'],
-        aliases={'pair': 'legacy_beam'},
+        p4_names=['event_beam', 'event_kshort'],
+        aliases={'pair': 'event_beam'},
     )
 
     dataset = Dataset(
@@ -186,7 +186,7 @@ def test_dataset_constructor_metadata_precedence() -> None:
     expected = dataset[0].get_p4_sum(['beam', 'kshort'])
     _assert_vec4_close(alias_vec, expected)
     with pytest.raises(KeyError):
-        _ = dataset[0].p4s['legacy_beam']
+        _ = dataset[0].p4s['event_beam']
 
 
 def test_dataset_alias_requires_metadata() -> None:
