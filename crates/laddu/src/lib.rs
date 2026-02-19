@@ -6,11 +6,6 @@
 //!
 //! </div>
 //!
-//! Current migration direction (Phase B O081):
-//! - Public `Dataset` APIs are being standardized onto columnar-backed storage semantics.
-//! - Public `evaluate`/`evaluate_gradient` APIs are being standardized onto cache-centric execution semantics.
-//! - Transitional AoS and non-cached pathways may still exist while migration commits are in progress.
-//!
 //! # Table of Contents
 //! - [Key Features](#key-features)
 //! - [Installation](#installation)

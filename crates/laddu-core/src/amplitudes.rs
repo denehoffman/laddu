@@ -1575,9 +1575,6 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    ///
-    /// O081 migration note: this remains the canonical public method name, but the target
-    /// implementation is cache-only evaluation semantics.
     pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
@@ -1920,9 +1917,6 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    ///
-    /// O081 migration note: this remains the canonical public method name, but the target
-    /// implementation is cache-only gradient semantics.
     pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
         #[cfg(feature = "mpi")]
         {

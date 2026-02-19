@@ -169,10 +169,7 @@ impl ColumnarP4Column {
     }
 }
 
-/// Columnar dataset storage used by columnar execution paths.
-///
-/// O081 migration note: this storage model is the canonical target for the public
-/// [`Dataset`] API. Row-backed storage remains transitional during migration.
+/// Columnar dataset storage used by [`Dataset`].
 #[derive(Debug, Default)]
 pub(crate) struct DatasetStorage {
     metadata: Arc<DatasetMetadata>,
@@ -571,9 +568,6 @@ impl Default for DatasetMetadata {
 }
 
 /// A collection of events with optional metadata for name-based lookups.
-///
-/// O081 migration note: the public `Dataset` name is planned to become columnar-backed.
-/// The current row-backed representation is transitional until full adoption is complete.
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
