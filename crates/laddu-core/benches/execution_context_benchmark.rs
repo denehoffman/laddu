@@ -26,11 +26,11 @@ fn load_bench_dataset() -> Arc<Dataset> {
 }
 
 fn dataset_tier(dataset: &Arc<Dataset>, max_events: usize) -> Arc<Dataset> {
-    if max_events >= dataset.events.len() {
+    if max_events >= dataset.events_local().len() {
         return dataset.clone();
     }
     let events = dataset
-        .events
+        .events_local()
         .iter()
         .take(max_events)
         .map(|event| event.data_arc())

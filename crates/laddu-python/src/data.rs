@@ -515,7 +515,7 @@ impl PyDataset {
     #[getter]
     fn events(&self) -> Vec<PyEvent> {
         self.0
-            .events
+            .events_local()
             .iter()
             .map(|rust_event| PyEvent {
                 event: rust_event.clone(),

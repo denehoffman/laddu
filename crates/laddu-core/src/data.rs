@@ -720,7 +720,7 @@ impl Default for DatasetMetadata {
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
-    pub events: Vec<Event>,
+    events: Vec<Event>,
     pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
 }
@@ -908,6 +908,16 @@ impl IntoIterator for Dataset {
 }
 
 impl Dataset {
+    /// Borrow locally stored events.
+    pub fn events_local(&self) -> &[Event] {
+        &self.events
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_events_local(&mut self) {
+        self.events.clear();
+    }
+
     /// Iterate over all events in the dataset. When MPI is enabled, this will visit
     /// every event across all ranks, fetching remote events on demand.
     pub fn iter(&self) -> DatasetIter<'_> {

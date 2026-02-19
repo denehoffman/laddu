@@ -51,12 +51,16 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
         let local_values: Vec<f64> = dataset
-            .events
+            .events_local()
             .par_iter()
             .map(|e| variable.value(e))
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<f64> = dataset.events.iter().map(|e| variable.value(e)).collect();
+        let local_values: Vec<f64> = dataset
+            .events_local()
+            .iter()
+            .map(|e| variable.value(e))
+            .collect();
         Ok(local_values)
     }
 

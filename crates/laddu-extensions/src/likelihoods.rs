@@ -320,14 +320,14 @@ impl NLL {
         #[cfg(feature = "rayon")]
         let output: Vec<f64> = result
             .par_iter()
-            .zip(mc_dataset.events.par_iter())
+            .zip(mc_dataset.events_local().par_iter())
             .map(|(l, e)| e.weight * l.re / n_mc)
             .collect();
 
         #[cfg(not(feature = "rayon"))]
         let output: Vec<f64> = result
             .iter()
-            .zip(mc_dataset.events.iter())
+            .zip(mc_dataset.events_local().iter())
             .map(|(l, e)| e.weight * l.re / n_mc)
             .collect();
         Ok(output)
@@ -423,12 +423,12 @@ impl NLL {
             Ok((
                 result
                     .par_iter()
-                    .zip(mc_dataset.events.par_iter())
+                    .zip(mc_dataset.events_local().par_iter())
                     .map(|(l, e)| e.weight * l.re / n_mc)
                     .collect(),
                 result_gradient
                     .par_iter()
-                    .zip(mc_dataset.events.par_iter())
+                    .zip(mc_dataset.events_local().par_iter())
                     .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
             ))
@@ -438,12 +438,12 @@ impl NLL {
             Ok((
                 result
                     .iter()
-                    .zip(mc_dataset.events.iter())
+                    .zip(mc_dataset.events_local().iter())
                     .map(|(l, e)| e.weight * l.re / n_mc)
                     .collect(),
                 result_gradient
                     .iter()
-                    .zip(mc_dataset.events.iter())
+                    .zip(mc_dataset.events_local().iter())
                     .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
             ))
@@ -549,13 +549,13 @@ impl NLL {
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
-                .zip(mc_dataset.events.par_iter())
+                .zip(mc_dataset.events_local().par_iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
-                .zip(mc_dataset.events.iter())
+                .zip(mc_dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             mc_evaluator.resources.write().active = current_active_mc;
@@ -570,13 +570,13 @@ impl NLL {
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
-                .zip(mc_dataset.events.par_iter())
+                .zip(mc_dataset.events_local().par_iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
-                .zip(mc_dataset.events.iter())
+                .zip(mc_dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
             self.data_evaluator.resources.write().active = current_active_data;
@@ -677,12 +677,12 @@ impl NLL {
                 (
                     result
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
+                        .zip(mc_dataset.events_local().par_iter())
                         .map(|(l, e)| e.weight * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
+                        .zip(mc_dataset.events_local().par_iter())
                         .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
@@ -692,12 +692,12 @@ impl NLL {
                 (
                     result
                         .iter()
-                        .zip(mc_dataset.events.iter())
+                        .zip(mc_dataset.events_local().iter())
                         .map(|(l, e)| e.weight * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .iter()
-                        .zip(mc_dataset.events.iter())
+                        .zip(mc_dataset.events_local().iter())
                         .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
@@ -717,12 +717,12 @@ impl NLL {
                 (
                     result
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
+                        .zip(mc_dataset.events_local().par_iter())
                         .map(|(l, e)| e.weight * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .par_iter()
-                        .zip(mc_dataset.events.par_iter())
+                        .zip(mc_dataset.events_local().par_iter())
                         .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
@@ -732,12 +732,12 @@ impl NLL {
                 (
                     result
                         .iter()
-                        .zip(mc_dataset.events.iter())
+                        .zip(mc_dataset.events_local().iter())
                         .map(|(l, e)| e.weight * l.re / n_mc)
                         .collect(),
                     result_gradient
                         .iter()
-                        .zip(mc_dataset.events.iter())
+                        .zip(mc_dataset.events_local().iter())
                         .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
@@ -838,25 +838,25 @@ impl NLL {
         #[cfg(feature = "rayon")]
         let data_term: f64 = data_result
             .par_iter()
-            .zip(self.data_evaluator.dataset.events.par_iter())
+            .zip(self.data_evaluator.dataset.events_local().par_iter())
             .map(|(l, e)| e.weight * f64::ln(l.re))
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(feature = "rayon")]
         let mc_term: f64 = mc_result
             .par_iter()
-            .zip(self.accmc_evaluator.dataset.events.par_iter())
+            .zip(self.accmc_evaluator.dataset.events_local().par_iter())
             .map(|(l, e)| e.weight * l.re)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let data_term: f64 = data_result
             .iter()
-            .zip(self.data_evaluator.dataset.events.iter())
+            .zip(self.data_evaluator.dataset.events_local().iter())
             .map(|(l, e)| e.weight * f64::ln(l.re))
             .sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let mc_term: f64 = mc_result
             .iter()
-            .zip(self.accmc_evaluator.dataset.events.iter())
+            .zip(self.accmc_evaluator.dataset.events_local().iter())
             .map(|(l, e)| e.weight * l.re)
             .sum_with_accumulator::<Klein<f64>>();
         -2.0 * (data_term - mc_term / n_mc)
@@ -880,7 +880,7 @@ impl NLL {
         let data_term: DVector<f64> = self
             .data_evaluator
             .dataset
-            .events
+            .events_local()
             .par_iter()
             .zip(data_resources.caches.par_iter())
             .map(|(event, cache)| {
@@ -929,7 +929,7 @@ impl NLL {
         let mc_term: DVector<f64> = self
             .accmc_evaluator
             .dataset
-            .events
+            .events_local()
             .par_iter()
             .zip(mc_resources.caches.par_iter())
             .map(|(event, cache)| {
@@ -977,7 +977,7 @@ impl NLL {
         let data_term: DVector<f64> = self
             .data_evaluator
             .dataset
-            .events
+            .events_local()
             .iter()
             .zip(data_resources.caches.iter())
             .map(|(event, cache)| {
@@ -1024,7 +1024,7 @@ impl NLL {
         let mc_term: DVector<f64> = self
             .accmc_evaluator
             .dataset
-            .events
+            .events_local()
             .iter()
             .zip(mc_resources.caches.iter())
             .map(|(event, cache)| {
@@ -1154,12 +1154,12 @@ impl LikelihoodTerm for StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
         Ok(self.evaluate_local(parameters, &indices, n_data_batch_local))
     }
@@ -1175,12 +1175,12 @@ impl LikelihoodTerm for StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
         Ok(self.evaluate_gradient_local(parameters, &indices, n_data_batch_local))
     }
@@ -1257,13 +1257,13 @@ impl StochasticNLL {
                 .par_iter()
                 .zip(data_result.par_iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
                 .parallel_sum_with_accumulator::<Klein<f64>>();
             let mc_term: f64 = mc_result
                 .par_iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.par_iter())
+                .zip(self.nll.accmc_evaluator.dataset.events_local().par_iter())
                 .map(|(l, e)| e.weight * l.re)
                 .parallel_sum_with_accumulator::<Klein<f64>>();
             -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
@@ -1274,13 +1274,13 @@ impl StochasticNLL {
                 .iter()
                 .zip(data_result.iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
                 .sum_with_accumulator::<Klein<f64>>();
             let mc_term: f64 = mc_result
                 .iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.iter())
+                .zip(self.nll.accmc_evaluator.dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re)
                 .sum_with_accumulator::<Klein<f64>>();
             -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
@@ -1300,12 +1300,12 @@ impl StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
         world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
         #[cfg(feature = "rayon")]
@@ -1338,7 +1338,7 @@ impl StochasticNLL {
         let data_term: DVector<f64> = indices
             .par_iter()
             .map(|&idx| {
-                let event = &self.nll.data_evaluator.dataset.events[idx];
+                let event = &self.nll.data_evaluator.dataset.events_local()[idx];
                 let cache = &data_resources.caches[idx];
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
@@ -1386,7 +1386,7 @@ impl StochasticNLL {
             .nll
             .accmc_evaluator
             .dataset
-            .events
+            .events_local()
             .par_iter()
             .zip(mc_resources.caches.par_iter())
             .map(|(event, cache)| {
@@ -1439,7 +1439,7 @@ impl StochasticNLL {
         let data_term: DVector<f64> = indices
             .iter()
             .map(|&idx| {
-                let event = &self.nll.data_evaluator.dataset.events[idx];
+                let event = &self.nll.data_evaluator.dataset.events_local()[idx];
                 let cache = &data_resources.caches[idx];
                 let mut gradient_values = vec![
                     DVector::zeros(parameters.len());
@@ -1485,7 +1485,7 @@ impl StochasticNLL {
             .nll
             .accmc_evaluator
             .dataset
-            .events
+            .events_local()
             .iter()
             .zip(mc_resources.caches.iter())
             .map(|(event, cache)| {
@@ -1548,12 +1548,12 @@ impl StochasticNLL {
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
         world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
         #[cfg(feature = "rayon")]

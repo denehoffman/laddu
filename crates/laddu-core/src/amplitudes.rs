@@ -156,7 +156,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset
-            .events
+            .events_local()
             .par_iter()
             .zip(resources.caches.par_iter_mut())
             .for_each(|(event, cache)| {
@@ -167,7 +167,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     #[cfg(not(feature = "rayon"))]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset
-            .events
+            .events_local()
             .iter()
             .zip(resources.caches.iter_mut())
             .for_each(|(event, cache)| self.precompute(event, cache))
@@ -2341,8 +2341,7 @@ mod tests {
         let expected_len = evaluator.resources.read().caches.len();
         Arc::get_mut(&mut evaluator.dataset)
             .expect("evaluator should own dataset Arc in this test")
-            .events
-            .clear();
+            .clear_events_local();
         let cached = evaluator.evaluate_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
     }
@@ -2367,8 +2366,7 @@ mod tests {
         let expected_len = evaluator.resources.read().caches.len();
         Arc::get_mut(&mut evaluator.dataset)
             .expect("evaluator should own dataset Arc in this test")
-            .events
-            .clear();
+            .clear_events_local();
         let cached = evaluator.evaluate_gradient_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
     }
