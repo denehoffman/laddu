@@ -58,7 +58,7 @@ python3 crates/laddu/benches/scripts/criterion_json_report.py \
   --improvement-threshold-pct 3.0
 ```
 
-### Current CPU Thresholds And Deltas (2026-02-18)
+### Current CPU Thresholds And Deltas (2026-02-19)
 
 Most recent run command:
 
@@ -75,9 +75,11 @@ Configured report thresholds:
 Observed benchmark deltas from
 `target/criterion/summary/benchmark_summary_cpu.json` (typical estimate):
 
-- `stage_isolated_cached_value_and_expression/cached_value_fill_only`: use as value-fill baseline
-- `stage_isolated_cached_gradient_and_expression/cached_gradient_fill_only`: use as gradient-fill baseline
-- `precompute_stage_only/precompute_only`: use as precompute baseline
+- `stage_isolated_cached_value_and_expression/cached_value_fill_only`: `97.303 ns` (`NoChange`, `unchanged`)
+- `stage_isolated_cached_gradient_and_expression/cached_gradient_fill_only`: `358.293 ns` (`NoChange`, `unchanged`)
+- `precompute_stage_only/precompute_only`: `230626.265 ns` (`NoChange`, `unchanged`)
+- `file_open/parquet_open`: `2567097.217 ns` (`NoChange`, `unchanged`)
+- `file_open/root_open`: `318051.661 ns` (`NoChange`, `unchanged`)
 
 Notes:
 
