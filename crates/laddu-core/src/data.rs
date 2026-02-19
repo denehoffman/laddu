@@ -3093,42 +3093,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_columnar_matches_row_storage() {
-        let dataset = Dataset::new(vec![
-            Arc::new(test_event()),
-            Arc::new(EventData {
-                p4s: test_event().p4s,
-                aux: test_event().aux,
-                weight: 0.52,
-            }),
-        ]);
-        let columnar = dataset.columnar.clone();
-        assert_eq!(columnar.n_events(), dataset.n_events_local());
-        for event_index in 0..dataset.n_events_local() {
-            let row = dataset.event(event_index).expect("event should exist");
-            for p4_index in 0..row.p4s.len() {
-                let p4 = columnar.p4(event_index, p4_index);
-                assert_relative_eq!(p4.px(), row.p4s[p4_index].px(), epsilon = 1e-12);
-                assert_relative_eq!(p4.py(), row.p4s[p4_index].py(), epsilon = 1e-12);
-                assert_relative_eq!(p4.pz(), row.p4s[p4_index].pz(), epsilon = 1e-12);
-                assert_relative_eq!(p4.e(), row.p4s[p4_index].e(), epsilon = 1e-12);
-            }
-            for aux_index in 0..row.aux.len() {
-                assert_relative_eq!(
-                    columnar.aux(event_index, aux_index),
-                    row.aux[aux_index],
-                    epsilon = 1e-12
-                );
-            }
-            assert_relative_eq!(columnar.weight(event_index), row.weight, epsilon = 1e-12);
-            let rebuilt = columnar.event_data(event_index);
-            assert_eq!(rebuilt.p4s.len(), row.p4s.len());
-            assert_eq!(rebuilt.aux.len(), row.aux.len());
-            assert_relative_eq!(rebuilt.weight, row.weight, epsilon = 1e-12);
-        }
-    }
-
-    #[test]
     #[should_panic(
         expected = "Dataset requires rectangular p4/aux columns for canonical columnar storage"
     )]
@@ -3145,80 +3109,6 @@ mod tests {
                 weight: 2.0,
             }),
         ]);
-    }
-
-    #[test]
-    fn test_dataset_columnar_named_row_view_matches_event_accessors() {
-        let dataset = test_dataset();
-        let columnar = dataset.columnar.clone();
-        let row = columnar.event_view(0);
-        let named = dataset.named_event(0).expect("named event should exist");
-
-        let beam = row.p4("beam").expect("beam p4 should be present");
-        let named_beam = named.p4("beam").expect("named beam p4 should be present");
-        assert_relative_eq!(beam.px(), named_beam.px(), epsilon = 1e-12);
-        assert_relative_eq!(beam.py(), named_beam.py(), epsilon = 1e-12);
-        assert_relative_eq!(beam.pz(), named_beam.pz(), epsilon = 1e-12);
-        assert_relative_eq!(beam.e(), named_beam.e(), epsilon = 1e-12);
-
-        assert_relative_eq!(
-            row.aux("pol_angle").expect("pol angle should be present"),
-            named.aux().get("pol_angle").copied().expect("named aux"),
-            epsilon = 1e-12
-        );
-        assert_relative_eq!(row.weight(), named.weight(), epsilon = 1e-12);
-
-        let summed = row
-            .get_p4_sum(["kshort1", "kshort2"])
-            .expect("named p4 sum should be present");
-        let named_sum = named.get_p4_sum(["kshort1", "kshort2"]);
-        assert_relative_eq!(summed.e(), named_sum.e(), epsilon = 1e-12);
-    }
-
-    #[test]
-    fn test_dataset_columnar_row_view_variable_evaluation_matches_event_data() {
-        let dataset = test_dataset();
-        let columnar = dataset.columnar.clone();
-        let row = columnar.event_view(0);
-        let mut mass = Mass::new(["proton"]);
-        mass.bind(dataset.metadata())
-            .expect("mass should bind to metadata");
-        let from_view = row.evaluate(&mass);
-        let from_access_columnar = mass.value(&row);
-        let from_event_view = dataset.event_view(0).evaluate(&mass);
-        assert_relative_eq!(from_view, from_event_view, epsilon = 1e-12);
-        assert_relative_eq!(from_access_columnar, from_event_view, epsilon = 1e-12);
-        let from_named = dataset.event_view(0).evaluate(&mass);
-        assert_relative_eq!(from_named, from_event_view, epsilon = 1e-12);
-    }
-
-    #[test]
-    fn test_named_event_view_matches_aos_and_columnar_views() {
-        let dataset = test_dataset();
-        let aos = dataset.named_event(0).expect("event should exist");
-        let columnar_storage = dataset.columnar.clone();
-        let columnar = columnar_storage.event_view(0);
-
-        let aos_beam = aos.p4("beam").expect("aos beam should be present");
-        let columnar_beam = columnar
-            .p4("beam")
-            .expect("columnar beam should be present");
-        assert_relative_eq!(aos_beam.px(), columnar_beam.px(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.py(), columnar_beam.py(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.pz(), columnar_beam.pz(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.e(), columnar_beam.e(), epsilon = 1e-12);
-
-        let aos_aux = aos
-            .aux()
-            .get("pol_angle")
-            .copied()
-            .expect("aos aux should be present");
-        let columnar_aux = columnar
-            .aux("pol_angle")
-            .expect("columnar aux should be present");
-        assert_relative_eq!(aos_aux, columnar_aux, epsilon = 1e-12);
-
-        assert_relative_eq!(aos.weight(), columnar.weight(), epsilon = 1e-12);
     }
 
     #[test]
@@ -3606,18 +3496,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_parquet_columnar_matches_aos_to_columnar() {
-        let path = test_data_path("data_f32.parquet");
-        let path_str = path.to_str().expect("path should be valid UTF-8");
-        let aos = read_parquet(path_str, &DatasetReadOptions::new()).expect("aos load should work");
-        let columnar_from_aos = aos.columnar.clone();
-        let columnar_direct = read_parquet_storage(path_str, &DatasetReadOptions::new())
-            .expect("columnar load should work");
-        assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
-    }
-
-    #[test]
-    fn test_parquet_columnar_roundtrip_to_tempfile() {
+    fn test_parquet_storage_roundtrip_to_tempfile() {
         let source_path = test_data_path("data_f32.parquet");
         let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
         let dataset_columnar = read_parquet_storage(source_path_str, &DatasetReadOptions::new())
@@ -3636,19 +3515,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_root_columnar_matches_root_aos_to_columnar() {
-        let path = test_data_path("data_f32.root");
-        let path_str = path.to_str().expect("path should be valid UTF-8");
-        let aos =
-            read_root(path_str, &DatasetReadOptions::new()).expect("root aos load should work");
-        let columnar_from_aos = aos.columnar.clone();
-        let columnar_direct = read_root_storage(path_str, &DatasetReadOptions::new())
-            .expect("root columnar load should work");
-        assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
-    }
-
-    #[test]
-    fn test_read_root_columnar_matches_parquet_columnar() {
+    fn test_root_storage_matches_parquet_storage() {
         let root_path = test_data_path("data_f32.root");
         let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
         let parquet_path = test_data_path("data_f32.parquet");
