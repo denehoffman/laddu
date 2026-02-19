@@ -63,7 +63,7 @@ impl Mode {
             "load_aos_once" => Some(Self::LoadAosOnce),
             "load_columnar_once" => Some(Self::LoadColumnarOnce),
             "precompute_aos" => Some(Self::PrecomputeAos),
-            "precompute_columnar" | "precompute_view" => Some(Self::PrecomputeColumnar),
+            "precompute_columnar" | "precompute" => Some(Self::PrecomputeColumnar),
             "precompute_aos_once" => Some(Self::PrecomputeAosOnce),
             "precompute_columnar_once" => Some(Self::PrecomputeColumnarOnce),
             "precompute_compare" => Some(Self::PrecomputeCompare),

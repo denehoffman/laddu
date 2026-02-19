@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData, NamedEventView},
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
@@ -72,17 +72,7 @@ impl Amplitude for PiecewiseScalar {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
-        if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as f64);
-        } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
-        }
-    }
-
-    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
@@ -227,17 +217,7 @@ impl Amplitude for PiecewiseComplexScalar {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
-        if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as f64);
-        } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
-        }
-    }
-
-    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
@@ -393,17 +373,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
-        if let Some(bin_index) = maybe_bin_index {
-            cache.store_scalar(self.bin_index, bin_index as f64);
-        } else {
-            cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
-        }
-    }
-
-    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);

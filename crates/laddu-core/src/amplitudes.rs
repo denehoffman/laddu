@@ -24,7 +24,7 @@ fn next_amplitude_id() -> u64 {
 }
 
 use crate::{
-    data::{Dataset, DatasetMetadata, EventData, NamedEventView},
+    data::{Dataset, DatasetMetadata, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
@@ -140,58 +140,31 @@ pub trait Amplitude: DynClone + Send + Sync {
         Ok(())
     }
     /// This method can be used to do some critical calculations ahead of time and
-    /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
-    /// not on any free parameters in the fit. This method is opt-in since it is not required
-    /// to make a functioning [`Amplitude`].
+    /// store them in a [`Cache`]. These values can only depend on event data,
+    /// not on any free parameters in the fit. This method is opt-in since it is
+    /// not required to make a functioning [`Amplitude`].
     #[allow(unused_variables)]
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {}
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {}
 
-    /// columnar-native precompute hook.
-    ///
-    /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and columnar
-    /// precompute performance can be benchmarked independently.
-    #[allow(unused_variables)]
-    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {}
-    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
+    /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events_local()
-            .par_iter()
-            .zip(resources.caches.par_iter_mut())
-            .for_each(|(event, cache)| {
-                self.precompute(event, cache);
-            })
-    }
-    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
-    #[cfg(not(feature = "rayon"))]
-    fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events_local()
-            .iter()
-            .zip(resources.caches.iter_mut())
-            .for_each(|(event, cache)| self.precompute(event, cache))
-    }
-
-    /// Evaluate [`Amplitude::precompute_view`] over columnar event views in a [`Dataset`].
-    #[cfg(feature = "rayon")]
-    fn precompute_all_view(&self, dataset: &Dataset, resources: &mut Resources) {
         resources
             .caches
             .par_iter_mut()
             .enumerate()
             .for_each(|(event_index, cache)| {
                 let event = dataset.event_view(event_index);
-                self.precompute_view(&event, cache);
+                self.precompute(&event, cache);
             });
     }
 
-    /// Evaluate [`Amplitude::precompute_view`] over columnar event views in a [`Dataset`].
+    /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
-    fn precompute_all_view(&self, dataset: &Dataset, resources: &mut Resources) {
+    fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset.for_each_named_event_local(|event_index, event| {
             let cache = &mut resources.caches[event_index];
-            self.precompute_view(&event, cache);
+            self.precompute(&event, cache);
         });
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
@@ -1088,7 +1061,7 @@ impl Expression {
         {
             for amplitude in amplitudes.iter_mut() {
                 amplitude.bind(metadata)?;
-                amplitude.precompute_all_view(dataset, &mut resources);
+                amplitude.precompute_all(dataset, &mut resources);
             }
         }
         Ok(Evaluator {
@@ -2145,11 +2118,7 @@ impl Amplitude for TestAmplitude {
         resources.register_amplitude(&self.name)
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
-        cache.store_scalar(self.beam_energy, event.p4s[0].e());
-    }
-
-    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let beam = crate::data::EventAccess::p4_at(event, 0)
             .ok_or_else(|| {
                 LadduError::Custom(
@@ -2341,7 +2310,7 @@ mod tests {
             .register(&mut resources)
             .expect("test amplitude should register");
         resources.reserve_cache(dataset.n_events());
-        amplitude.precompute_all_view(&dataset, &mut resources);
+        amplitude.precompute_all(&dataset, &mut resources);
         for cache in &resources.caches {
             assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
         }

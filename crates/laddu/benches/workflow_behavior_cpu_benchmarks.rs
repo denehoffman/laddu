@@ -739,19 +739,6 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
-    precompute_only_group.throughput(Throughput::Elements(n_events));
-    precompute_only_group.bench_function("precompute_view_only", |b| {
-        b.iter_batched(
-            || resources.clone(),
-            |mut stage_resources| {
-                for amp in &evaluator.amplitudes {
-                    amp.precompute_all_view(&ds_data, &mut stage_resources);
-                }
-                black_box(stage_resources.caches.len())
-            },
-            BatchSize::SmallInput,
-        )
-    });
     precompute_only_group.finish();
 }
 
