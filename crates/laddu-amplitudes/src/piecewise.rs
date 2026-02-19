@@ -73,7 +73,7 @@ impl Amplitude for PiecewiseScalar {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
+        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
@@ -218,7 +218,7 @@ impl Amplitude for PiecewiseComplexScalar {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
+        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
@@ -374,7 +374,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
+        let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {

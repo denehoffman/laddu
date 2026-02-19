@@ -2119,13 +2119,7 @@ impl Amplitude for TestAmplitude {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let beam = crate::data::EventAccess::p4_at(event, 0)
-            .ok_or_else(|| {
-                LadduError::Custom(
-                    "TestAmplitude expected p4 index 0 in columnar precompute".to_string(),
-                )
-            })
-            .expect("TestAmplitude expected p4 index 0 in columnar precompute");
+        let beam = event.p4_at(0);
         cache.store_scalar(self.beam_energy, beam.e());
     }
 

@@ -8,7 +8,7 @@ use rayon::prelude::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
 use crate::{
-    data::{Dataset, DatasetMetadata, EventAccess, EventData, NamedEventView},
+    data::{Dataset, DatasetMetadata, EventData, NamedEventView},
     utils::{
         enums::{Channel, Frame},
         vectors::{Vec3, Vec4},
@@ -21,7 +21,7 @@ use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
-/// Standard methods for extracting some value out of an [`EventData`].
+/// Standard methods for extracting some value from an event view.
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// Bind the variable to dataset metadata so that any referenced names can be resolved to
@@ -31,16 +31,10 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         Ok(())
     }
 
-    /// This method takes an [`EventData`] and extracts a single value (like the mass of a particle).
-    fn value(&self, event: &EventData) -> f64;
+    /// This method extracts a single value (like a mass) from an event access view.
+    fn value(&self, event: &NamedEventView<'_>) -> f64;
 
-    /// columnar-native value evaluation for a single event view.
-    fn value_view(&self, _event: &NamedEventView<'_>) -> f64 {
-        panic!("Variable does not implement columnar evaluation")
-    }
-
-    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
-    /// [`Dataset`] (non-MPI version).
+    /// This method distributes [`Variable::value`] over each event in a [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
@@ -50,16 +44,19 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         let mut variable = dyn_clone::clone_box(self);
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
-        let local_values: Vec<f64> = dataset
-            .events_local()
-            .par_iter()
-            .map(|e| variable.value(e))
+        let local_values: Vec<f64> = (0..dataset.n_events())
+            .into_par_iter()
+            .map(|event_index| {
+                let event = dataset.event_view(event_index);
+                variable.value(&event)
+            })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<f64> = dataset
-            .events_local()
-            .iter()
-            .map(|e| variable.value(e))
+        let local_values: Vec<f64> = (0..dataset.n_events())
+            .map(|event_index| {
+                let event = dataset.event_view(event_index);
+                variable.value(&event)
+            })
             .collect();
         Ok(local_values)
     }
@@ -94,33 +91,6 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
             }
         }
         self.value_on_local(dataset)
-    }
-
-    /// This method distributes [`Variable::value_view`] over each event in a [`Dataset`].
-    fn value_on_view_local(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
-        let mut variable = dyn_clone::clone_box(self);
-        variable.bind(dataset.metadata())?;
-        #[cfg(feature = "rayon")]
-        let values: Vec<f64> = (0..dataset.n_events())
-            .into_par_iter()
-            .map(|event_index| {
-                let event = dataset.event_view(event_index);
-                variable.value_view(&event)
-            })
-            .collect();
-        #[cfg(not(feature = "rayon"))]
-        let values: Vec<f64> = (0..dataset.n_events())
-            .map(|event_index| {
-                let event = dataset.event_view(event_index);
-                variable.value_view(&event)
-            })
-            .collect();
-        Ok(values)
-    }
-
-    /// This method distributes [`Variable::value_view`] over each event in a [`Dataset`].
-    fn value_on_view(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
-        self.value_on_view_local(dataset)
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self == val`
@@ -261,8 +231,8 @@ impl CompiledExpression {
         Ok(())
     }
 
-    /// Evaluate the [`CompiledExpression`] on a given [`EventData`].
-    pub fn evaluate(&self, event: &EventData) -> bool {
+    /// Evaluate the [`CompiledExpression`] on a given named event view.
+    pub fn evaluate(&self, event: &NamedEventView<'_>) -> bool {
         let mut stack = Vec::with_capacity(self.bytecode.len());
 
         for op in &self.bytecode {
@@ -869,20 +839,11 @@ impl Variable for Mass {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.constituents.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        self.constituents.momentum(event).m()
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         self.constituents
             .indices()
             .iter()
-            .map(|index| {
-                event
-                    .p4_at(*index)
-                    .expect("columnar event view missing p4 index during Mass evaluation")
-            })
+            .map(|index| event.p4_at(*index))
             .sum::<Vec4>()
             .m()
     }
@@ -930,44 +891,11 @@ impl Variable for CosTheta {
         self.daughter.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let com_boost = self.topology.com_boost_vector(event);
-        let beam = self.topology.k1_com(event);
-        let resonance = self.topology.k3_com(event);
-        let daughter = self.daughter.momentum(event).boost(&com_boost);
-        let daughter_res = daughter.boost(&-resonance.beta());
-        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
-        let z = match self.frame {
-            Frame::Helicity => {
-                let recoil = self.topology.k4_com(event);
-                let recoil_res = recoil.boost(&-resonance.beta());
-                (-recoil_res.vec3()).unit()
-            }
-            Frame::GottfriedJackson => {
-                let beam_res = beam.boost(&-resonance.beta());
-                beam_res.vec3().unit()
-            }
-        };
-        let x = plane_normal.cross(&z).unit();
-        let y = z.cross(&x).unit();
-        let angles = Vec3::new(
-            daughter_res.vec3().dot(&x),
-            daughter_res.vec3().dot(&y),
-            daughter_res.vec3().dot(&z),
-        );
-        angles.costheta()
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
-                .map(|index| {
-                    event
-                        .p4_at(*index)
-                        .expect("columnar event view missing p4 index during CosTheta evaluation")
-                })
+                .map(|index| event.p4_at(*index))
                 .sum::<Vec4>()
         };
         let k1 = match &self.topology {
@@ -1071,44 +999,11 @@ impl Variable for Phi {
         self.daughter.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let com_boost = self.topology.com_boost_vector(event);
-        let beam = self.topology.k1_com(event);
-        let resonance = self.topology.k3_com(event);
-        let daughter = self.daughter.momentum(event).boost(&com_boost);
-        let daughter_res = daughter.boost(&-resonance.beta());
-        let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
-        let z = match self.frame {
-            Frame::Helicity => {
-                let recoil = self.topology.k4_com(event);
-                let recoil_res = recoil.boost(&-resonance.beta());
-                (-recoil_res.vec3()).unit()
-            }
-            Frame::GottfriedJackson => {
-                let beam_res = beam.boost(&-resonance.beta());
-                beam_res.vec3().unit()
-            }
-        };
-        let x = plane_normal.cross(&z).unit();
-        let y = z.cross(&x).unit();
-        let angles = Vec3::new(
-            daughter_res.vec3().dot(&x),
-            daughter_res.vec3().dot(&y),
-            daughter_res.vec3().dot(&z),
-        );
-        angles.phi()
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
-                .map(|index| {
-                    event
-                        .p4_at(*index)
-                        .expect("columnar event view missing p4 index during Phi evaluation")
-                })
+                .map(|index| event.p4_at(*index))
                 .sum::<Vec4>()
         };
         let k1 = match &self.topology {
@@ -1241,27 +1136,11 @@ impl Variable for PolAngle {
         self.angle_aux.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let beam = self.topology.k1(event);
-        let recoil = self.topology.k4(event);
-        let pol_angle = event.aux[self.angle_aux.index()];
-        let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
-        let y = beam.vec3().cross(&-recoil.vec3()).unit();
-        let numerator = y.dot(&polarization);
-        let denominator = beam.vec3().unit().dot(&polarization.cross(&y));
-        f64::atan2(numerator, denominator)
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
-                .map(|index| {
-                    event
-                        .p4_at(*index)
-                        .expect("columnar event view missing p4 index during PolAngle evaluation")
-                })
+                .map(|index| event.p4_at(*index))
                 .sum::<Vec4>()
         };
         let beam = match &self.topology {
@@ -1282,9 +1161,7 @@ impl Variable for PolAngle {
                 p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k3.indices())
             }
         };
-        let pol_angle = event
-            .aux_at(self.angle_aux.index())
-            .expect("columnar event view missing pol-angle aux during PolAngle evaluation");
+        let pol_angle = event.aux_at(self.angle_aux.index());
         let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
         let numerator = y.dot(&polarization);
@@ -1321,15 +1198,8 @@ impl Variable for PolMagnitude {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.magnitude_aux.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        event.aux[self.magnitude_aux.index()]
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
-        event
-            .aux_at(self.magnitude_aux.index())
-            .expect("columnar event view missing pol-magnitude aux during PolMagnitude evaluation")
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        event.aux_at(self.magnitude_aux.index())
     }
 }
 
@@ -1413,36 +1283,11 @@ impl Variable for Mandelstam {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.topology.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        match self.channel {
-            Channel::S => {
-                let k1 = self.topology.k1(event);
-                let k2 = self.topology.k2(event);
-                (k1 + k2).mag2()
-            }
-            Channel::T => {
-                let k1 = self.topology.k1(event);
-                let k3 = self.topology.k3(event);
-                (k1 - k3).mag2()
-            }
-            Channel::U => {
-                let k1 = self.topology.k1(event);
-                let k4 = self.topology.k4(event);
-                (k1 - k4).mag2()
-            }
-        }
-    }
-
-    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
-                .map(|index| {
-                    event
-                        .p4_at(*index)
-                        .expect("columnar event view missing p4 index during Mandelstam evaluation")
-                })
+                .map(|index| event.p4_at(*index))
                 .sum::<Vec4>()
         };
         let k1 = match &self.topology {
@@ -1603,7 +1448,7 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new("proton");
         mass.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(mass.value(&event), 1.007);
     }
 
@@ -1612,7 +1457,7 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new(["kshort1", "kshort2"]);
         mass.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(mass.value(&event), 1.3743786309153077);
     }
 
@@ -1627,7 +1472,7 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
         costheta.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(costheta.value(&event), -0.4611175068834238, epsilon = 1e-12);
     }
 
@@ -1645,7 +1490,7 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
         phi.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(phi.value(&event), -2.657462587335066, epsilon = 1e-12);
     }
 
@@ -1663,7 +1508,7 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         costheta.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(costheta.value(&event), 0.09198832278031577, epsilon = 1e-12);
     }
 
@@ -1672,7 +1517,7 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         phi.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(phi.value(&event), -2.713913199133907, epsilon = 1e-12);
     }
 
@@ -1682,7 +1527,7 @@ mod tests {
         let mut angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         angles.costheta.bind(dataset.metadata()).unwrap();
         angles.phi.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(
             angles.costheta.value(&event),
             -0.4611175068834238,
@@ -1709,7 +1554,7 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
         pol_angle.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(pol_angle.value(&event), 1.935929887818673);
     }
 
@@ -1727,7 +1572,7 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
         pol_magnitude.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(pol_magnitude.value(&event), 0.38562805);
     }
 
@@ -1746,7 +1591,7 @@ mod tests {
         let mut polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         polarization.pol_angle.bind(dataset.metadata()).unwrap();
         polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(polarization.pol_angle.value(&event), 1.935929887818673);
         assert_relative_eq!(polarization.pol_magnitude.value(&event), 0.38562805);
     }
@@ -1770,15 +1615,16 @@ mod tests {
         for variable in [&mut s, &mut t, &mut u] {
             variable.bind(metadata).unwrap();
         }
-        let event = dataset.event(0).expect("event should exist");
+        let event = dataset.event_view(0);
         assert_relative_eq!(s.value(&event), 18.504011052120063);
         assert_relative_eq!(t.value(&event), -0.19222859969898076);
         assert_relative_eq!(u.value(&event), -14.404198931464428);
         let mut direct_topology = reaction_topology();
         direct_topology.bind(metadata).unwrap();
-        let k2 = direct_topology.k2(&event);
-        let k3 = direct_topology.k3(&event);
-        let k4 = direct_topology.k4(&event);
+        let event_data = test_event();
+        let k2 = direct_topology.k2(&event_data);
+        let k3 = direct_topology.k3(&event_data);
+        let k4 = direct_topology.k4(&event_data);
         assert_relative_eq!(s.value(&event), (k3 + k4).mag2());
         assert_relative_eq!(t.value(&event), (k2 - k4).mag2());
         assert_relative_eq!(u.value(&event), (k3 - k2).mag2());

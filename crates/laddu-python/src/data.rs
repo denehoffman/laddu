@@ -260,8 +260,7 @@ impl PyEvent {
             ));
         }
         variable.bind_in_place(self.event.metadata())?;
-        let event_arc = self.event.data_arc();
-        variable.evaluate_event(&event_arc)
+        variable.evaluate_event(&self.event)
     }
 
     /// Retrieve a four-momentum by name (if present).

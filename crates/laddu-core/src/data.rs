@@ -130,68 +130,6 @@ impl EventData {
             weight: self.weight,
         }
     }
-    /// Evaluate a [`Variable`] on an [`EventData`].
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        variable.value(self)
-    }
-}
-
-/// Read-only event access interface for storage-agnostic compute paths.
-///
-/// This supports both row-backed (`EventData`) and columnar-backed row views.
-pub trait EventAccess {
-    /// Get four-momentum by positional index.
-    fn p4_at(&self, p4_index: usize) -> Option<Vec4>;
-    /// Get auxiliary scalar by positional index.
-    fn aux_at(&self, aux_index: usize) -> Option<f64>;
-    /// Get event weight.
-    fn weight(&self) -> f64;
-    /// Number of four-momentum entries available in this event.
-    fn n_p4(&self) -> usize;
-    /// Number of auxiliary scalar entries available in this event.
-    fn n_aux(&self) -> usize;
-    /// Sum selected four-momenta by positional indices.
-    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Option<Vec4>
-    where
-        Self: Sized,
-    {
-        indices
-            .as_ref()
-            .iter()
-            .map(|index| self.p4_at(*index))
-            .collect::<Option<Vec<_>>>()
-            .map(|momenta| momenta.into_iter().sum())
-    }
-}
-
-/// Read-only named event access for metadata-aware compute paths.
-pub trait NamedEventAccess: EventAccess {
-    /// Get four-momentum (or alias sum) by registered name.
-    fn p4_by_name(&self, name: &str) -> Option<Vec4>;
-    /// Get auxiliary scalar by registered name.
-    fn aux_by_name(&self, name: &str) -> Option<f64>;
-}
-
-impl EventAccess for EventData {
-    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        self.p4s.get(p4_index).copied()
-    }
-
-    fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        self.aux.get(aux_index).copied()
-    }
-
-    fn weight(&self) -> f64 {
-        self.weight
-    }
-
-    fn n_p4(&self) -> usize {
-        self.p4s.len()
-    }
-
-    fn n_aux(&self) -> usize {
-        self.aux.len()
-    }
 }
 
 #[allow(dead_code)]
@@ -274,22 +212,16 @@ impl DatasetStorage {
     }
 
     /// Retrieve a p4 value by row and p4 index.
-    ///
-    /// Panics when either index is out of bounds.
     pub(crate) fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
         self.p4[p4_index].get(event_index)
     }
 
     /// Retrieve an aux value by row and aux index.
-    ///
-    /// Panics when either index is out of bounds.
     pub(crate) fn aux(&self, event_index: usize, aux_index: usize) -> f64 {
         self.aux[aux_index][event_index]
     }
 
     /// Retrieve event weight by row index.
-    ///
-    /// Panics when the row index is out of bounds.
     pub(crate) fn weight(&self, event_index: usize) -> f64 {
         self.weights[event_index]
     }
@@ -419,28 +351,6 @@ impl ColumnarEventView<'_> {
     }
 }
 
-impl EventAccess for ColumnarEventView<'_> {
-    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        Some(self.p4(p4_index))
-    }
-
-    fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        Some(self.aux(aux_index))
-    }
-
-    fn weight(&self) -> f64 {
-        ColumnarEventView::weight(self)
-    }
-
-    fn n_p4(&self) -> usize {
-        self.storage.p4.len()
-    }
-
-    fn n_aux(&self) -> usize {
-        self.storage.aux.len()
-    }
-}
-
 /// A name-aware columnar event view over a single row in a dataset.
 #[derive(Debug)]
 pub struct NamedEventView<'a> {
@@ -449,6 +359,26 @@ pub struct NamedEventView<'a> {
 }
 
 impl NamedEventView<'_> {
+    /// Retrieve a four-momentum by positional index.
+    pub fn p4_at(&self, p4_index: usize) -> Vec4 {
+        self.row.p4(p4_index)
+    }
+
+    /// Retrieve an auxiliary scalar by positional index.
+    pub fn aux_at(&self, aux_index: usize) -> f64 {
+        self.row.aux(aux_index)
+    }
+
+    /// Number of four-momenta in this event.
+    pub fn n_p4(&self) -> usize {
+        self.row.storage.p4.len()
+    }
+
+    /// Number of auxiliary values in this event.
+    pub fn n_aux(&self) -> usize {
+        self.row.storage.aux.len()
+    }
+
     /// Retrieve a four-momentum by metadata name.
     pub fn p4(&self, name: &str) -> Option<Vec4> {
         let selection = self.metadata.p4_selection(name)?;
@@ -487,39 +417,7 @@ impl NamedEventView<'_> {
 
     /// Evaluate a [`Variable`] against this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        variable.value_view(self)
-    }
-}
-
-impl EventAccess for NamedEventView<'_> {
-    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        Some(self.row.p4(p4_index))
-    }
-
-    fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        Some(self.row.aux(aux_index))
-    }
-
-    fn weight(&self) -> f64 {
-        self.row.weight()
-    }
-
-    fn n_p4(&self) -> usize {
-        self.row.storage.p4.len()
-    }
-
-    fn n_aux(&self) -> usize {
-        self.row.storage.aux.len()
-    }
-}
-
-impl NamedEventAccess for NamedEventView<'_> {
-    fn p4_by_name(&self, name: &str) -> Option<Vec4> {
-        self.p4(name)
-    }
-
-    fn aux_by_name(&self, name: &str) -> Option<f64> {
-        self.aux(name)
+        variable.value(self)
     }
 }
 
@@ -786,45 +684,6 @@ impl Event {
     {
         let indices = self.resolve_p4_indices(names);
         self.event.boost_to_rest_frame_of(&indices)
-    }
-
-    /// Evaluate a [`Variable`] over this event.
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        self.event.evaluate(variable)
-    }
-}
-
-impl EventAccess for Event {
-    fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
-        self.event.p4s.get(p4_index).copied()
-    }
-
-    fn aux_at(&self, aux_index: usize) -> Option<f64> {
-        self.event.aux.get(aux_index).copied()
-    }
-
-    fn weight(&self) -> f64 {
-        self.event.weight
-    }
-
-    fn n_p4(&self) -> usize {
-        self.event.p4s.len()
-    }
-
-    fn n_aux(&self) -> usize {
-        self.event.aux.len()
-    }
-}
-
-impl NamedEventAccess for Event {
-    fn p4_by_name(&self, name: &str) -> Option<Vec4> {
-        self.p4(name)
-    }
-
-    fn aux_by_name(&self, name: &str) -> Option<f64> {
-        self.metadata
-            .aux_index(name)
-            .and_then(|index| self.event.aux.get(index).copied())
     }
 }
 
@@ -1501,18 +1360,24 @@ impl Dataset {
     pub fn filter(&self, expression: &VariableExpression) -> LadduResult<Arc<Dataset>> {
         let compiled = expression.compile(&self.metadata)?;
         #[cfg(feature = "rayon")]
-        let filtered_events: Vec<Arc<EventData>> = self
-            .events
-            .par_iter()
-            .filter(|event| compiled.evaluate(event.as_ref()))
-            .map(|event| event.data_arc())
+        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+            .into_par_iter()
+            .filter_map(|event_index| {
+                let event = self.event_view(event_index);
+                compiled
+                    .evaluate(&event)
+                    .then(|| self.events[event_index].data_arc())
+            })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let filtered_events: Vec<Arc<EventData>> = self
-            .events
-            .iter()
-            .filter(|event| compiled.evaluate(event.as_ref()))
-            .map(|event| event.data_arc())
+        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+            .into_iter()
+            .filter_map(|event_index| {
+                let event = self.event_view(event_index);
+                compiled
+                    .evaluate(&event)
+                    .then(|| self.events[event_index].data_arc())
+            })
             .collect();
         Ok(Arc::new(Dataset::new_with_metadata(
             filtered_events,
@@ -1536,30 +1401,28 @@ impl Dataset {
         let bin_edges = get_bin_edges(bins, range);
         let variable = variable;
         #[cfg(feature = "rayon")]
-        let evaluated: Vec<(usize, Arc<EventData>)> = self
-            .events
-            .par_iter()
+        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+            .into_par_iter()
             .filter_map(|event| {
-                let value = variable.value(event.as_ref());
+                let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event.data_arc()))
+                    Some((bin_index, self.events[event].data_arc()))
                 } else {
                     None
                 }
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let evaluated: Vec<(usize, Arc<EventData>)> = self
-            .events
-            .iter()
+        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+            .into_iter()
             .filter_map(|event| {
-                let value = variable.value(event.as_ref());
+                let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event.data_arc()))
+                    Some((bin_index, self.events[event].data_arc()))
                 } else {
                     None
                 }
@@ -3179,17 +3042,11 @@ mod tests {
     }
 
     #[test]
-    fn test_event_evaluate() {
-        let event = test_event();
+    fn test_named_event_view_evaluate() {
+        let dataset = test_dataset();
+        let event = dataset.event_view(0);
         let mut mass = Mass::new(["proton"]);
-        mass.bind(
-            &DatasetMetadata::new(
-                TEST_P4_NAMES.iter().map(|s| (*s).to_string()).collect(),
-                TEST_AUX_NAMES.iter().map(|s| (*s).to_string()).collect(),
-            )
-            .expect("metadata"),
-        )
-        .unwrap();
+        mass.bind(dataset.metadata()).unwrap();
         assert_relative_eq!(event.evaluate(&mass), 1.007);
     }
 
@@ -3329,61 +3186,45 @@ mod tests {
         let dataset = test_dataset();
         let columnar = dataset.columnar.clone();
         let row = columnar.event_view(0);
-        let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
         mass.bind(dataset.metadata())
             .expect("mass should bind to metadata");
         let from_view = row.evaluate(&mass);
-        let from_access_columnar = mass.value_view(&row);
-        let from_event = dataset
-            .event(0)
-            .expect("event should exist")
-            .evaluate(&mass);
-        assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
-        assert_relative_eq!(from_access_columnar, from_event, epsilon = 1e-12);
-        let from_named = named.evaluate(&mass);
-        assert_relative_eq!(from_named, from_event, epsilon = 1e-12);
+        let from_access_columnar = mass.value(&row);
+        let from_event_view = dataset.event_view(0).evaluate(&mass);
+        assert_relative_eq!(from_view, from_event_view, epsilon = 1e-12);
+        assert_relative_eq!(from_access_columnar, from_event_view, epsilon = 1e-12);
+        let from_named = dataset.event_view(0).evaluate(&mass);
+        assert_relative_eq!(from_named, from_event_view, epsilon = 1e-12);
     }
 
     #[test]
-    fn test_event_access_trait_on_event_data() {
-        let event = test_event();
-        assert_eq!(EventAccess::n_p4(&event), event.p4s.len());
-        assert_eq!(EventAccess::n_aux(&event), event.aux.len());
-        let proton = EventAccess::p4_at(&event, 1).expect("p4 at index should be available");
-        assert_relative_eq!(proton.e(), event.p4s[1].e(), epsilon = 1e-12);
-        let angle = EventAccess::aux_at(&event, 1).expect("aux at index should be available");
-        assert_relative_eq!(angle, event.aux[1], epsilon = 1e-12);
-        assert_relative_eq!(EventAccess::weight(&event), event.weight, epsilon = 1e-12);
-    }
-
-    #[test]
-    fn test_named_event_access_trait_matches_aos_and_columnar_views() {
+    fn test_named_event_view_matches_aos_and_columnar_views() {
         let dataset = test_dataset();
         let aos = dataset.named_event(0).expect("event should exist");
         let columnar_storage = dataset.columnar.clone();
         let columnar = columnar_storage.event_view(0);
 
-        let aos_beam =
-            NamedEventAccess::p4_by_name(&aos, "beam").expect("aos beam should be present");
-        let columnar_beam = NamedEventAccess::p4_by_name(&columnar, "beam")
+        let aos_beam = aos.p4("beam").expect("aos beam should be present");
+        let columnar_beam = columnar
+            .p4("beam")
             .expect("columnar beam should be present");
         assert_relative_eq!(aos_beam.px(), columnar_beam.px(), epsilon = 1e-12);
         assert_relative_eq!(aos_beam.py(), columnar_beam.py(), epsilon = 1e-12);
         assert_relative_eq!(aos_beam.pz(), columnar_beam.pz(), epsilon = 1e-12);
         assert_relative_eq!(aos_beam.e(), columnar_beam.e(), epsilon = 1e-12);
 
-        let aos_aux =
-            NamedEventAccess::aux_by_name(&aos, "pol_angle").expect("aos aux should be present");
-        let columnar_aux = NamedEventAccess::aux_by_name(&columnar, "pol_angle")
+        let aos_aux = aos
+            .aux()
+            .get("pol_angle")
+            .copied()
+            .expect("aos aux should be present");
+        let columnar_aux = columnar
+            .aux("pol_angle")
             .expect("columnar aux should be present");
         assert_relative_eq!(aos_aux, columnar_aux, epsilon = 1e-12);
 
-        assert_relative_eq!(
-            EventAccess::weight(&aos),
-            EventAccess::weight(&columnar),
-            epsilon = 1e-12
-        );
+        assert_relative_eq!(aos.weight(), columnar.weight(), epsilon = 1e-12);
     }
 
     #[test]
@@ -3420,10 +3261,7 @@ mod tests {
 
         let filtered = dataset.filter(&expression).unwrap();
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(
-            mass.value(&filtered.event(0).expect("event should exist")),
-            0.5
-        );
+        assert_relative_eq!(mass.value(&filtered.event_view(0)), 0.5);
     }
 
     #[test]
@@ -3528,8 +3366,8 @@ mod tests {
         }
         #[typetag::serde]
         impl Variable for BeamEnergy {
-            fn value(&self, event: &EventData) -> f64 {
-                event.p4s[0].e()
+            fn value(&self, event: &NamedEventView<'_>) -> f64 {
+                event.p4_at(0).e()
             }
         }
         assert_eq!(BeamEnergy.to_string(), "BeamEnergy");

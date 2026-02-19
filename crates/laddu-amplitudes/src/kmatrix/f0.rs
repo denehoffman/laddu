@@ -197,7 +197,7 @@ impl Amplitude for KopfKMatrixF0 {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let s = self.mass.value_view(event).powi(2);
+        let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
             self.constants.ikc_inv_vec(s, self.channel),
