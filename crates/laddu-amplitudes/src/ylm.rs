@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression},
-    data::{DatasetMetadata, EventData, SoaNamedEventView},
+    data::{DatasetMetadata, EventData, NamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
@@ -66,7 +66,7 @@ impl Amplitude for Ylm {
         );
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         cache.store_complex_scalar(
             self.csid,
             spherical_harmonic(

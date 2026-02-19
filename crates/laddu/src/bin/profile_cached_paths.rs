@@ -17,7 +17,6 @@ use laddu::{
         variables::{Angles, Mass, Polarization, Topology},
     },
 };
-use laddu_core::data::{read_parquet_soa, read_root_soa};
 
 const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
 const ROOT_BENCH_DATASET_RELATIVE_PATH: &str = "../laddu-core/test_data/data_f32.root";
@@ -35,21 +34,21 @@ enum Mode {
     GradAos,
     GradCached,
     LoadAos,
-    LoadSoa,
+    LoadColumnar,
     LoadAosOnce,
-    LoadSoaOnce,
+    LoadColumnarOnce,
     PrecomputeAos,
-    PrecomputeSoa,
+    PrecomputeColumnar,
     PrecomputeAosOnce,
-    PrecomputeSoaOnce,
+    PrecomputeColumnarOnce,
     PrecomputeCompare,
     NllAos,
     IoAosOnce,
-    IoSoaOnce,
+    IoColumnarOnce,
     ParquetOpenAos,
-    ParquetOpenSoa,
+    ParquetOpenColumnar,
     RootOpenAos,
-    RootOpenSoa,
+    RootOpenColumnar,
 }
 
 impl Mode {
@@ -60,21 +59,21 @@ impl Mode {
             "grad_aos" => Some(Self::GradAos),
             "grad_cached" => Some(Self::GradCached),
             "load_aos" => Some(Self::LoadAos),
-            "load_soa" => Some(Self::LoadSoa),
+            "load_columnar" | "load_storage" => Some(Self::LoadColumnar),
             "load_aos_once" => Some(Self::LoadAosOnce),
-            "load_soa_once" => Some(Self::LoadSoaOnce),
+            "load_columnar_once" => Some(Self::LoadColumnarOnce),
             "precompute_aos" => Some(Self::PrecomputeAos),
-            "precompute_soa" => Some(Self::PrecomputeSoa),
+            "precompute_columnar" | "precompute_view" => Some(Self::PrecomputeColumnar),
             "precompute_aos_once" => Some(Self::PrecomputeAosOnce),
-            "precompute_soa_once" => Some(Self::PrecomputeSoaOnce),
+            "precompute_columnar_once" => Some(Self::PrecomputeColumnarOnce),
             "precompute_compare" => Some(Self::PrecomputeCompare),
             "nll_aos" => Some(Self::NllAos),
             "io_aos_once" => Some(Self::IoAosOnce),
-            "io_soa_once" => Some(Self::IoSoaOnce),
+            "io_columnar_once" => Some(Self::IoColumnarOnce),
             "parquet_open_aos" => Some(Self::ParquetOpenAos),
-            "parquet_open_soa" => Some(Self::ParquetOpenSoa),
+            "parquet_open_columnar" => Some(Self::ParquetOpenColumnar),
             "root_open_aos" => Some(Self::RootOpenAos),
-            "root_open_soa" => Some(Self::RootOpenSoa),
+            "root_open_columnar" => Some(Self::RootOpenColumnar),
             _ => None,
         }
     }
@@ -83,7 +82,7 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_soa | load_aos_once | load_soa_once | precompute_aos | precompute_soa | precompute_aos_once | precompute_soa_once | precompute_compare | nll_aos | io_aos_once | io_soa_once | parquet_open_aos | parquet_open_soa | root_open_aos | root_open_soa"
+         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_columnar | load_aos_once | load_columnar_once | precompute_aos | precompute_columnar | precompute_aos_once | precompute_columnar_once | precompute_compare | nll_aos | io_aos_once | io_columnar_once | parquet_open_aos | parquet_open_columnar | root_open_aos | root_open_columnar"
     );
 }
 
@@ -409,23 +408,27 @@ fn run_mode(mode: Mode, iters: usize) {
                 t0.elapsed()
             );
         }
-        Mode::LoadSoa => {
+        Mode::LoadColumnar => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let ds_columnar = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
-                let ev = model.load_soa(&ds_soa).expect("soa load should succeed");
+                let ev = model
+                    .load(&ds_columnar)
+                    .expect("columnar load should succeed");
                 sink += ev.n_parameters() as f64;
             }
             let t0 = Instant::now();
             for _ in 0..iters {
-                let ev = model.load_soa(&ds_soa).expect("soa load should succeed");
+                let ev = model
+                    .load(&ds_columnar)
+                    .expect("columnar load should succeed");
                 sink += ev.n_parameters() as f64;
             }
             eprintln!(
-                "mode=load_soa iters={iters} sink={sink} elapsed={:?}",
+                "mode=load_columnar iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
@@ -438,15 +441,20 @@ fn run_mode(mode: Mode, iters: usize) {
             let sink = ev.n_parameters() as f64;
             eprintln!("mode=load_aos_once sink={sink} elapsed={:?}", t0.elapsed());
         }
-        Mode::LoadSoaOnce => {
+        Mode::LoadColumnarOnce => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let ds_columnar = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
             let t0 = Instant::now();
-            let ev = model.load_soa(&ds_soa).expect("soa load should succeed");
+            let ev = model
+                .load(&ds_columnar)
+                .expect("columnar load should succeed");
             let sink = ev.n_parameters() as f64;
-            eprintln!("mode=load_soa_once sink={sink} elapsed={:?}", t0.elapsed());
+            eprintln!(
+                "mode=load_columnar_once sink={sink} elapsed={:?}",
+                t0.elapsed()
+            );
         }
         Mode::PrecomputeAos => {
             let dataset = read_benchmark_dataset();
@@ -475,18 +483,20 @@ fn run_mode(mode: Mode, iters: usize) {
                 t0.elapsed()
             );
         }
-        Mode::PrecomputeSoa => {
+        Mode::PrecomputeColumnar => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let ds_columnar = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load_soa(&ds_soa).expect("soa evaluator should build");
+            let evaluator = model
+                .load(&ds_columnar)
+                .expect("columnar evaluator should build");
             let base_resources = evaluator.resources.read().clone();
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
                 let mut resources = base_resources.clone();
                 for amplitude in &evaluator.amplitudes {
-                    amplitude.precompute_all_soa(&ds_soa, &mut resources);
+                    amplitude.precompute_all(&ds_columnar, &mut resources);
                 }
                 sink += resources.caches.len() as f64;
             }
@@ -494,12 +504,12 @@ fn run_mode(mode: Mode, iters: usize) {
             for _ in 0..iters {
                 let mut resources = base_resources.clone();
                 for amplitude in &evaluator.amplitudes {
-                    amplitude.precompute_all_soa(&ds_soa, &mut resources);
+                    amplitude.precompute_all(&ds_columnar, &mut resources);
                 }
                 sink += resources.caches.len() as f64;
             }
             eprintln!(
-                "mode=precompute_soa iters={iters} sink={sink} elapsed={:?}",
+                "mode=precompute_columnar iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
@@ -519,34 +529,38 @@ fn run_mode(mode: Mode, iters: usize) {
                 t0.elapsed()
             );
         }
-        Mode::PrecomputeSoaOnce => {
+        Mode::PrecomputeColumnarOnce => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let ds_columnar = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load_soa(&ds_soa).expect("soa evaluator should build");
+            let evaluator = model
+                .load(&ds_columnar)
+                .expect("columnar evaluator should build");
             let mut resources = evaluator.resources.read().clone();
             let t0 = Instant::now();
             for amplitude in &evaluator.amplitudes {
-                amplitude.precompute_all_soa(&ds_soa, &mut resources);
+                amplitude.precompute_all(&ds_columnar, &mut resources);
             }
             let sink = resources.caches.len() as f64;
             eprintln!(
-                "mode=precompute_soa_once sink={sink} elapsed={:?}",
+                "mode=precompute_columnar_once sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
         Mode::PrecomputeCompare => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_soa = Arc::new(ds.to_soa().expect("soa conversion should succeed"));
+            let ds_columnar = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
             let evaluator_aos = model.load(&ds).expect("aos evaluator should build");
-            let evaluator_soa = model.load_soa(&ds_soa).expect("soa evaluator should build");
+            let evaluator_columnar = model
+                .load(&ds_columnar)
+                .expect("columnar evaluator should build");
 
             let amp_len = evaluator_aos.amplitudes.len();
             let mut totals_aos_ns = vec![0u128; amp_len];
-            let mut totals_soa_ns = vec![0u128; amp_len];
+            let mut totals_columnar_ns = vec![0u128; amp_len];
             let mut sink = 0.0;
 
             for _ in 0..iters {
@@ -558,38 +572,45 @@ fn run_mode(mode: Mode, iters: usize) {
                 }
                 sink += resources_aos.caches.len() as f64;
 
-                let mut resources_soa = evaluator_soa.resources.read().clone();
-                for (amp_index, amplitude) in evaluator_soa.amplitudes.iter().enumerate() {
+                let mut resources_columnar = evaluator_columnar.resources.read().clone();
+                for (amp_index, amplitude) in evaluator_columnar.amplitudes.iter().enumerate() {
                     let t0 = Instant::now();
-                    amplitude.precompute_all_soa(&ds_soa, &mut resources_soa);
-                    totals_soa_ns[amp_index] += t0.elapsed().as_nanos();
+                    amplitude.precompute_all(&ds_columnar, &mut resources_columnar);
+                    totals_columnar_ns[amp_index] += t0.elapsed().as_nanos();
                 }
-                sink += resources_soa.caches.len() as f64;
+                sink += resources_columnar.caches.len() as f64;
             }
 
             print_precompute_breakdown_header("precompute_compare_aos", iters);
             print_precompute_breakdown_rows(&totals_aos_ns, iters);
 
-            print_precompute_breakdown_header("precompute_compare_soa", iters);
-            print_precompute_breakdown_rows(&totals_soa_ns, iters);
+            print_precompute_breakdown_header("precompute_compare_columnar", iters);
+            print_precompute_breakdown_rows(&totals_columnar_ns, iters);
 
             let mut compare_rows: Vec<(usize, u128, u128, f64)> = (0..amp_len)
                 .map(|amp_index| {
                     let aos = totals_aos_ns[amp_index];
-                    let soa = totals_soa_ns[amp_index];
+                    let columnar = totals_columnar_ns[amp_index];
                     let ratio = if aos == 0 {
                         f64::INFINITY
                     } else {
-                        soa as f64 / aos as f64
+                        columnar as f64 / aos as f64
                     };
-                    (amp_index, aos, soa, ratio)
+                    (amp_index, aos, columnar, ratio)
                 })
                 .collect();
             compare_rows.sort_by(|a, b| b.3.total_cmp(&a.3));
             eprintln!("mode=precompute_compare slowdown_rank iters={iters} sink={sink}");
-            eprintln!("rank amp_index aos_total_ns soa_total_ns soa_over_aos");
-            for (rank, (amp_index, aos, soa, ratio)) in compare_rows.iter().enumerate() {
-                eprintln!("{} {} {} {} {:.6}", rank + 1, amp_index, aos, soa, ratio);
+            eprintln!("rank amp_index aos_total_ns columnar_total_ns columnar_over_aos");
+            for (rank, (amp_index, aos, columnar, ratio)) in compare_rows.iter().enumerate() {
+                eprintln!(
+                    "{} {} {} {} {:.6}",
+                    rank + 1,
+                    amp_index,
+                    aos,
+                    columnar,
+                    ratio
+                );
             }
         }
         Mode::NllAos => {
@@ -630,7 +651,7 @@ fn run_mode(mode: Mode, iters: usize) {
                 "mode=io_aos_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
             );
         }
-        Mode::IoSoaOnce => {
+        Mode::IoColumnarOnce => {
             let options = DatasetReadOptions::default()
                 .p4_names(P4_NAMES)
                 .aux_names(AUX_NAMES);
@@ -639,18 +660,18 @@ fn run_mode(mode: Mode, iters: usize) {
                 .to_string_lossy()
                 .into_owned();
             let t0 = Instant::now();
-            let ds =
-                read_parquet_soa(&dataset_path, &options).expect("soa parquet load should work");
+            let ds = io::read_parquet(&dataset_path, &options)
+                .expect("columnar parquet load should work");
             let elapsed = t0.elapsed();
             let n_events = ds.n_events() as u64;
-            let n_p4 = ds.metadata().p4_names().len() as u64;
-            let n_aux = ds.metadata().aux_names().len() as u64;
+            let n_p4 = ds.p4_names().len() as u64;
+            let n_aux = ds.aux_names().len() as u64;
             let scalar_copies = n_events * (4 * n_p4 + n_aux + 1);
             let row_materializations = 0u64;
             let event_arc_allocations = 0u64;
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=io_soa_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
+                "mode=io_columnar_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
             );
         }
         Mode::ParquetOpenAos => {
@@ -670,21 +691,21 @@ fn run_mode(mode: Mode, iters: usize) {
                 ds.aux_names().len()
             );
         }
-        Mode::ParquetOpenSoa => {
+        Mode::ParquetOpenColumnar => {
             let options = DatasetReadOptions::default()
                 .p4_names(P4_NAMES)
                 .aux_names(AUX_NAMES);
             let dataset_path = benchmark_parquet_path();
             let t0 = Instant::now();
-            let ds =
-                read_parquet_soa(&dataset_path, &options).expect("parquet soa load should work");
+            let ds = io::read_parquet(&dataset_path, &options)
+                .expect("parquet columnar load should work");
             let elapsed = t0.elapsed();
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=parquet_open_soa elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                "mode=parquet_open_columnar elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
                 ds.n_events(),
-                ds.metadata().p4_names().len(),
-                ds.metadata().aux_names().len()
+                ds.p4_names().len(),
+                ds.aux_names().len()
             );
         }
         Mode::RootOpenAos => {
@@ -701,18 +722,19 @@ fn run_mode(mode: Mode, iters: usize) {
                 ds.aux_names().len()
             );
         }
-        Mode::RootOpenSoa => {
+        Mode::RootOpenColumnar => {
             let options = DatasetReadOptions::default();
             let dataset_path = benchmark_root_path();
             let t0 = Instant::now();
-            let ds = read_root_soa(&dataset_path, &options).expect("root soa load should work");
+            let ds =
+                io::read_root(&dataset_path, &options).expect("root columnar load should work");
             let elapsed = t0.elapsed();
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=root_open_soa elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                "mode=root_open_columnar elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
                 ds.n_events(),
-                ds.metadata().p4_names().len(),
-                ds.metadata().aux_names().len()
+                ds.p4_names().len(),
+                ds.aux_names().len()
             );
         }
     }

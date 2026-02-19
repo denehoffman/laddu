@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression},
-    data::{DatasetMetadata, EventData, SoaNamedEventView},
+    data::{DatasetMetadata, EventData, NamedEventView},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
     LadduResult, Mandelstam, Mass, ScalarID, PI,
@@ -97,7 +97,7 @@ impl Amplitude for PhaseSpaceFactor {
         cache.store_scalar(self.sid, term.sqrt());
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let m_recoil = event.evaluate(&self.recoil_mass);
         let m_1 = event.evaluate(&self.daughter_1_mass);
         let m_2 = event.evaluate(&self.daughter_2_mass);

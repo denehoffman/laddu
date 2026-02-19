@@ -8,7 +8,7 @@ use rayon::prelude::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
 use crate::{
-    data::{Dataset, DatasetMetadata, DatasetSoA, EventAccess, EventData, SoaNamedEventView},
+    data::{Dataset, DatasetMetadata, EventAccess, EventData, NamedEventView},
     utils::{
         enums::{Channel, Frame},
         vectors::{Vec3, Vec4},
@@ -34,9 +34,9 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// This method takes an [`EventData`] and extracts a single value (like the mass of a particle).
     fn value(&self, event: &EventData) -> f64;
 
-    /// SoA-native value evaluation for a single event view.
-    fn value_soa(&self, _event: &SoaNamedEventView<'_>) -> f64 {
-        panic!("Variable does not implement SoA evaluation")
+    /// columnar-native value evaluation for a single event view.
+    fn value_view(&self, _event: &NamedEventView<'_>) -> f64 {
+        panic!("Variable does not implement columnar evaluation")
     }
 
     /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
@@ -92,8 +92,8 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         self.value_on_local(dataset)
     }
 
-    /// This method distributes [`Variable::value_soa`] over each event in a [`DatasetSoA`].
-    fn value_on_soa_local(&self, dataset: &DatasetSoA) -> LadduResult<Vec<f64>> {
+    /// This method distributes [`Variable::value_view`] over each event in a [`Dataset`].
+    fn value_on_view_local(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
         let mut variable = dyn_clone::clone_box(self);
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
@@ -101,22 +101,22 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
             .into_par_iter()
             .map(|event_index| {
                 let event = dataset.event_view(event_index);
-                variable.value_soa(&event)
+                variable.value_view(&event)
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
         let values: Vec<f64> = (0..dataset.n_events())
             .map(|event_index| {
                 let event = dataset.event_view(event_index);
-                variable.value_soa(&event)
+                variable.value_view(&event)
             })
             .collect();
         Ok(values)
     }
 
-    /// This method distributes [`Variable::value_soa`] over each event in a [`DatasetSoA`].
-    fn value_on_soa(&self, dataset: &DatasetSoA) -> LadduResult<Vec<f64>> {
-        self.value_on_soa_local(dataset)
+    /// This method distributes [`Variable::value_view`] over each event in a [`Dataset`].
+    fn value_on_view(&self, dataset: &Dataset) -> LadduResult<Vec<f64>> {
+        self.value_on_view_local(dataset)
     }
 
     /// Create an [`VariableExpression`] that evaluates to `self == val`
@@ -870,14 +870,14 @@ impl Variable for Mass {
         self.constituents.momentum(event).m()
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         self.constituents
             .indices()
             .iter()
             .map(|index| {
                 event
                     .p4_at(*index)
-                    .expect("SoA event view missing p4 index during Mass evaluation")
+                    .expect("columnar event view missing p4 index during Mass evaluation")
             })
             .sum::<Vec4>()
             .m()
@@ -955,14 +955,14 @@ impl Variable for CosTheta {
         angles.costheta()
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
                 .map(|index| {
                     event
                         .p4_at(*index)
-                        .expect("SoA event view missing p4 index during CosTheta evaluation")
+                        .expect("columnar event view missing p4 index during CosTheta evaluation")
                 })
                 .sum::<Vec4>()
         };
@@ -1096,14 +1096,14 @@ impl Variable for Phi {
         angles.phi()
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
                 .map(|index| {
                     event
                         .p4_at(*index)
-                        .expect("SoA event view missing p4 index during Phi evaluation")
+                        .expect("columnar event view missing p4 index during Phi evaluation")
                 })
                 .sum::<Vec4>()
         };
@@ -1249,14 +1249,14 @@ impl Variable for PolAngle {
         f64::atan2(numerator, denominator)
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
                 .map(|index| {
                     event
                         .p4_at(*index)
-                        .expect("SoA event view missing p4 index during PolAngle evaluation")
+                        .expect("columnar event view missing p4 index during PolAngle evaluation")
                 })
                 .sum::<Vec4>()
         };
@@ -1280,7 +1280,7 @@ impl Variable for PolAngle {
         };
         let pol_angle = event
             .aux_at(self.angle_aux.index())
-            .expect("SoA event view missing pol-angle aux during PolAngle evaluation");
+            .expect("columnar event view missing pol-angle aux during PolAngle evaluation");
         let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
         let numerator = y.dot(&polarization);
@@ -1322,10 +1322,10 @@ impl Variable for PolMagnitude {
         event.aux[self.magnitude_aux.index()]
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         event
             .aux_at(self.magnitude_aux.index())
-            .expect("SoA event view missing pol-magnitude aux during PolMagnitude evaluation")
+            .expect("columnar event view missing pol-magnitude aux during PolMagnitude evaluation")
     }
 }
 
@@ -1430,14 +1430,14 @@ impl Variable for Mandelstam {
         }
     }
 
-    fn value_soa(&self, event: &SoaNamedEventView<'_>) -> f64 {
+    fn value_view(&self, event: &NamedEventView<'_>) -> f64 {
         let p4_sum = |indices: &[usize]| {
             indices
                 .iter()
                 .map(|index| {
                     event
                         .p4_at(*index)
-                        .expect("SoA event view missing p4 index during Mandelstam evaluation")
+                        .expect("columnar event view missing p4 index during Mandelstam evaluation")
                 })
                 .sum::<Vec4>()
         };

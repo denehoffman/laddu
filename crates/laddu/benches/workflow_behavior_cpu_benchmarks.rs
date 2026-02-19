@@ -22,7 +22,6 @@ use laddu::{
     },
     RngSubsetExtension,
 };
-use laddu_core::data::{read_parquet_soa, read_root_soa};
 use nalgebra::{DMatrix, DVector};
 use num::complex::Complex64;
 use rayon::ThreadPoolBuilder;
@@ -615,7 +614,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     // - Source parquet: benches/bench.parquet
     // - Subsampled events: 512
     // - Compares AoS evaluate vs cache-centric evaluate on a shared evaluator.
-    // - Compares AoS load precompute vs SoA load precompute on the same model.
+    // - Compares AoS load precompute vs columnar load precompute on the same model.
     let dataset = read_benchmark_dataset();
     let ds_data = sample_dataset(
         &dataset,
@@ -652,8 +651,8 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     });
     eval_group.finish();
 
-    let dataset_soa = Arc::new(ds_data.to_soa().expect("SoA conversion should succeed"));
-    let mut precompute_group = c.benchmark_group("precompute_backend_aos_vs_soa");
+    let dataset_columnar = ds_data.clone();
+    let mut precompute_group = c.benchmark_group("precompute_backend_aos_vs_columnar");
     precompute_group.throughput(Throughput::Elements(n_events));
     precompute_group.bench_function("load_aos_precompute", |b| {
         b.iter(|| {
@@ -661,16 +660,16 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         })
     });
     precompute_group.throughput(Throughput::Elements(n_events));
-    precompute_group.bench_function("load_soa_precompute", |b| {
+    precompute_group.bench_function("load_columnar_precompute", |b| {
         b.iter(|| {
-            let _ = black_box(model.load_soa(black_box(&dataset_soa)));
+            let _ = black_box(model.load(black_box(&dataset_columnar)));
         })
     });
     precompute_group.finish();
 
-    let evaluator_soa = model
-        .load_soa(&dataset_soa)
-        .expect("soa evaluator should build for stage isolation");
+    let evaluator_columnar = model
+        .load(&dataset_columnar)
+        .expect("columnar evaluator should build for stage isolation");
 
     let resources = evaluator.resources.read();
     let params_obj = Parameters::new(&params, &resources.constants);
@@ -773,7 +772,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     });
     gradient_stage_group.finish();
 
-    let mut precompute_only_group = c.benchmark_group("precompute_stage_only_aos_vs_soa");
+    let mut precompute_only_group = c.benchmark_group("precompute_stage_only_aos_vs_columnar");
     precompute_only_group.throughput(Throughput::Elements(n_events));
     precompute_only_group.bench_function("aos_precompute_only", |b| {
         b.iter_batched(
@@ -788,12 +787,12 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         )
     });
     precompute_only_group.throughput(Throughput::Elements(n_events));
-    precompute_only_group.bench_function("soa_precompute_only", |b| {
+    precompute_only_group.bench_function("columnar_precompute_only", |b| {
         b.iter_batched(
-            || evaluator_soa.resources.read().clone(),
+            || evaluator_columnar.resources.read().clone(),
             |mut stage_resources| {
-                for amp in &evaluator_soa.amplitudes {
-                    amp.precompute_all_soa(&dataset_soa, &mut stage_resources);
+                for amp in &evaluator_columnar.amplitudes {
+                    amp.precompute_all_view(&dataset_columnar, &mut stage_resources);
                 }
                 black_box(stage_resources.caches.len())
             },
@@ -803,7 +802,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     precompute_only_group.finish();
 }
 
-fn io_open_aos_vs_soa_benchmarks(c: &mut Criterion) {
+fn io_open_aos_vs_columnar_benchmarks(c: &mut Criterion) {
     let parquet_options = DatasetReadOptions::default()
         .p4_names(P4_NAMES)
         .aux_names(AUX_NAMES);
@@ -818,7 +817,7 @@ fn io_open_aos_vs_soa_benchmarks(c: &mut Criterion) {
         .expect("root warmup should open")
         .n_events() as u64;
 
-    let mut group = c.benchmark_group("file_open_aos_vs_soa");
+    let mut group = c.benchmark_group("file_open_aos_vs_columnar");
     group.throughput(Throughput::Elements(parquet_events));
     group.bench_function("parquet_open_aos", |b| {
         b.iter(|| {
@@ -828,10 +827,10 @@ fn io_open_aos_vs_soa_benchmarks(c: &mut Criterion) {
         })
     });
     group.throughput(Throughput::Elements(parquet_events));
-    group.bench_function("parquet_open_soa", |b| {
+    group.bench_function("parquet_open_columnar", |b| {
         b.iter(|| {
-            let dataset = read_parquet_soa(black_box(&parquet_path), black_box(&parquet_options))
-                .expect("parquet soa load should succeed");
+            let dataset = io::read_parquet(black_box(&parquet_path), black_box(&parquet_options))
+                .expect("parquet columnar load should succeed");
             black_box(dataset.n_events())
         })
     });
@@ -844,10 +843,10 @@ fn io_open_aos_vs_soa_benchmarks(c: &mut Criterion) {
         })
     });
     group.throughput(Throughput::Elements(root_events));
-    group.bench_function("root_open_soa", |b| {
+    group.bench_function("root_open_columnar", |b| {
         b.iter(|| {
-            let dataset = read_root_soa(black_box(&root_path), black_box(&root_options))
-                .expect("root soa load should succeed");
+            let dataset = io::read_root(black_box(&root_path), black_box(&root_options))
+                .expect("root columnar load should succeed");
             black_box(dataset.n_events())
         })
     });
@@ -860,6 +859,6 @@ fn main() {
     moment_analysis_benchmarks(&mut criterion);
     kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
     cached_evaluator_and_precompute_backend_benchmarks(&mut criterion);
-    io_open_aos_vs_soa_benchmarks(&mut criterion);
+    io_open_aos_vs_columnar_benchmarks(&mut criterion);
     criterion.final_summary();
 }

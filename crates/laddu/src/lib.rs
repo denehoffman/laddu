@@ -7,7 +7,7 @@
 //! </div>
 //!
 //! Current migration direction (Phase B O081):
-//! - Public `Dataset` APIs are being standardized onto SoA-backed storage semantics.
+//! - Public `Dataset` APIs are being standardized onto columnar-backed storage semantics.
 //! - Public `evaluate`/`evaluate_gradient` APIs are being standardized onto cache-centric execution semantics.
 //! - Transitional AoS and non-cached pathways may still exist while migration commits are in progress.
 //!
@@ -298,15 +298,12 @@
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data {
     pub use laddu_core::data::{
-        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetSoA,
-        DatasetWriteOptions, EventData,
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, EventData,
     };
 }
 /// Format-specific IO helpers for [`Dataset`]s.
 pub mod io {
-    pub use laddu_core::data::{
-        read_parquet, read_parquet_soa, read_root, read_root_soa, write_parquet, write_root,
-    };
+    pub use laddu_core::data::{read_parquet, read_root, write_parquet, write_root};
 }
 /// Module for likelihood-related structures and methods
 pub mod extensions {
@@ -350,8 +347,8 @@ pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike,
 };
 pub use laddu_core::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetSoA, DatasetWriteOptions,
-    Event, EventData,
+    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
+    EventData,
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{

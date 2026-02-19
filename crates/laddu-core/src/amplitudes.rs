@@ -24,7 +24,7 @@ fn next_amplitude_id() -> u64 {
 }
 
 use crate::{
-    data::{Dataset, DatasetMetadata, DatasetSoA, EventData, SoaNamedEventView},
+    data::{Dataset, DatasetMetadata, EventData, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
@@ -146,12 +146,12 @@ pub trait Amplitude: DynClone + Send + Sync {
     #[allow(unused_variables)]
     fn precompute(&self, event: &EventData, cache: &mut Cache) {}
 
-    /// SoA-native precompute hook.
+    /// columnar-native precompute hook.
     ///
-    /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and SoA
+    /// This path is explicit and separate from [`Amplitude::precompute`] so AoS and columnar
     /// precompute performance can be benchmarked independently.
     #[allow(unused_variables)]
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {}
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {}
     /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
@@ -173,25 +173,25 @@ pub trait Amplitude: DynClone + Send + Sync {
             .for_each(|(event, cache)| self.precompute(event, cache))
     }
 
-    /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
+    /// Evaluate [`Amplitude::precompute_view`] over columnar event views in a [`Dataset`].
     #[cfg(feature = "rayon")]
-    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) {
+    fn precompute_all_view(&self, dataset: &Dataset, resources: &mut Resources) {
         resources
             .caches
             .par_iter_mut()
             .enumerate()
             .for_each(|(event_index, cache)| {
                 let event = dataset.event_view(event_index);
-                self.precompute_soa(&event, cache);
+                self.precompute_view(&event, cache);
             });
     }
 
-    /// Evaluate [`Amplitude::precompute_soa`] over SoA event views in a [`DatasetSoA`].
+    /// Evaluate [`Amplitude::precompute_view`] over columnar event views in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
-    fn precompute_all_soa(&self, dataset: &DatasetSoA, resources: &mut Resources) {
+    fn precompute_all_view(&self, dataset: &Dataset, resources: &mut Resources) {
         dataset.for_each_named_event_local(|event_index, event| {
             let cache = &mut resources.caches[event_index];
-            self.precompute_soa(&event, cache);
+            self.precompute_view(&event, cache);
         });
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
@@ -1071,24 +1071,6 @@ impl Expression {
 
     /// Load an [`Expression`] against a dataset, binding amplitudes and reserving caches.
     pub fn load(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
-        self.load_with_aos_precompute(dataset)
-    }
-
-    fn load_with_aos_precompute(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
-        self.load_with_precompute(dataset, |amplitude, ds, resources| {
-            amplitude.precompute_all(ds, resources);
-            Ok(())
-        })
-    }
-
-    fn load_with_precompute<F>(
-        &self,
-        dataset: &Arc<Dataset>,
-        mut precompute: F,
-    ) -> LadduResult<Evaluator>
-    where
-        F: FnMut(&mut Box<dyn Amplitude>, &Arc<Dataset>, &mut Resources) -> LadduResult<()>,
-    {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events());
@@ -1106,41 +1088,10 @@ impl Expression {
         {
             for amplitude in amplitudes.iter_mut() {
                 amplitude.bind(metadata)?;
-                precompute(amplitude, dataset, &mut resources)?;
+                amplitude.precompute_all_view(dataset, &mut resources);
             }
         }
         Ok(Evaluator {
-            amplitudes,
-            resources: Arc::new(RwLock::new(resources)),
-            dataset: dataset.clone(),
-            expression: self.tree.clone(),
-            expression_program: ExpressionProgram::from_node(&self.tree),
-            registry: self.registry.clone(),
-            parameter_manager,
-        })
-    }
-
-    /// Load an [`Expression`] using a [`DatasetSoA`] precompute path.
-    pub fn load_soa(&self, dataset: &Arc<DatasetSoA>) -> LadduResult<EvaluatorSoA> {
-        let mut resources = self.registry.resources.clone();
-        let metadata = dataset.metadata();
-        resources.reserve_cache(dataset.n_events());
-        resources.refresh_active_indices();
-        let parameter_manager = ParameterManager::with_fixed_values(
-            &resources.parameter_names(),
-            &resources.fixed_parameter_values(),
-        );
-        let mut amplitudes: Vec<Box<dyn Amplitude>> = self
-            .registry
-            .amplitudes
-            .iter()
-            .map(|amp| dyn_clone::clone_box(&**amp))
-            .collect();
-        for amplitude in amplitudes.iter_mut() {
-            amplitude.bind(metadata)?;
-            amplitude.precompute_all_soa(dataset, &mut resources);
-        }
-        Ok(EvaluatorSoA {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
@@ -1273,323 +1224,6 @@ pub struct Evaluator {
     expression_program: ExpressionProgram,
     registry: ExpressionRegistry,
     parameter_manager: ParameterManager,
-}
-
-/// Evaluator for [`Expression`] backed by a [`DatasetSoA`].
-#[allow(missing_docs)]
-#[derive(Clone)]
-pub struct EvaluatorSoA {
-    pub amplitudes: Vec<Box<dyn Amplitude>>,
-    pub resources: Arc<RwLock<Resources>>,
-    pub dataset: Arc<DatasetSoA>,
-    pub expression: ExpressionNode,
-    expression_program: ExpressionProgram,
-    registry: ExpressionRegistry,
-    parameter_manager: ParameterManager,
-}
-
-#[allow(missing_docs)]
-impl EvaluatorSoA {
-    fn fill_amplitude_values(
-        &self,
-        amplitude_values: &mut [Complex64],
-        active_indices: &[usize],
-        parameters: &Parameters,
-        cache: &Cache,
-    ) {
-        for &amp_idx in active_indices {
-            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, cache);
-        }
-    }
-
-    fn fill_amplitude_gradients(
-        &self,
-        gradient_values: &mut [DVector<Complex64>],
-        active_mask: &[bool],
-        parameters: &Parameters,
-        cache: &Cache,
-    ) {
-        for ((amp, active), grad) in self
-            .amplitudes
-            .iter()
-            .zip(active_mask.iter())
-            .zip(gradient_values.iter_mut())
-        {
-            grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
-            if *active {
-                amp.compute_gradient(parameters, cache, grad);
-            }
-        }
-    }
-
-    pub fn expression_slot_count(&self) -> usize {
-        self.expression_program.slot_count()
-    }
-
-    pub fn evaluate_expression_value_with_scratch(
-        &self,
-        amplitude_values: &[Complex64],
-        scratch: &mut [Complex64],
-    ) -> Complex64 {
-        self.expression_program
-            .evaluate_into(amplitude_values, scratch)
-    }
-
-    pub fn evaluate_expression_gradient_with_scratch(
-        &self,
-        amplitude_values: &[Complex64],
-        gradient_values: &[DVector<Complex64>],
-        value_scratch: &mut [Complex64],
-        gradient_scratch: &mut [DVector<Complex64>],
-    ) -> DVector<Complex64> {
-        self.expression_program.evaluate_gradient_into(
-            amplitude_values,
-            gradient_values,
-            value_scratch,
-            gradient_scratch,
-        )
-    }
-
-    fn as_expression(&self) -> Expression {
-        Expression {
-            registry: self.registry.clone(),
-            tree: self.expression.clone(),
-        }
-    }
-
-    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
-        self.as_expression()
-            .fix(name, value)?
-            .load_soa(&self.dataset)
-    }
-
-    pub fn free(&self, name: &str) -> LadduResult<Self> {
-        self.as_expression().free(name)?.load_soa(&self.dataset)
-    }
-
-    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
-        self.as_expression()
-            .rename_parameter(old, new)?
-            .load_soa(&self.dataset)
-    }
-
-    pub fn rename_parameters(
-        &self,
-        mapping: &std::collections::HashMap<String, String>,
-    ) -> LadduResult<Self> {
-        self.as_expression()
-            .rename_parameters(mapping)?
-            .load_soa(&self.dataset)
-    }
-
-    pub fn parameters(&self) -> Vec<String> {
-        self.parameter_manager.parameters()
-    }
-
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.parameter_manager.free_parameters()
-    }
-
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.parameter_manager.fixed_parameters()
-    }
-
-    pub fn n_free(&self) -> usize {
-        self.parameter_manager.n_free_parameters()
-    }
-
-    pub fn n_fixed(&self) -> usize {
-        self.parameter_manager.n_fixed_parameters()
-    }
-
-    pub fn n_parameters(&self) -> usize {
-        self.n_free() + self.n_fixed()
-    }
-
-    pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_len = self.amplitudes.len();
-        let active_indices = resources.active_indices();
-        let slot_count = self.expression_slot_count();
-        #[cfg(feature = "rayon")]
-        {
-            resources
-                .caches
-                .par_iter()
-                .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; amplitude_len],
-                            vec![Complex64::ZERO; slot_count],
-                        )
-                    },
-                    |(amplitude_values, expr_slots), cache| {
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            active_indices,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
-                    },
-                )
-                .collect()
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-            let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            let mut result = Vec::with_capacity(resources.caches.len());
-            for cache in &resources.caches {
-                self.fill_amplitude_values(
-                    &mut amplitude_values,
-                    active_indices,
-                    &parameters,
-                    cache,
-                );
-                result.push(
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots),
-                );
-            }
-            result
-        }
-    }
-
-    #[cfg(feature = "mpi")]
-    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> Vec<Complex64> {
-        let local_evaluation = self.evaluate_local(parameters);
-        let n_events = self.dataset.n_events();
-        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
-            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
-        }
-        buffer
-    }
-
-    pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &world);
-            }
-        }
-        self.evaluate_local(parameters)
-    }
-
-    pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
-        let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_len = self.amplitudes.len();
-        let grad_dim = parameters.len();
-        let active_indices = resources.active_indices();
-        let slot_count = self.expression_slot_count();
-        #[cfg(feature = "rayon")]
-        {
-            resources
-                .caches
-                .par_iter()
-                .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; amplitude_len],
-                            vec![DVector::zeros(grad_dim); amplitude_len],
-                            vec![Complex64::ZERO; slot_count],
-                            vec![DVector::zeros(grad_dim); slot_count],
-                        )
-                    },
-                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            active_indices,
-                            &parameters,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
-                            amplitude_values,
-                            gradient_values,
-                            value_slots,
-                            gradient_slots,
-                        )
-                    },
-                )
-                .collect()
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
-            let mut value_slots = vec![Complex64::ZERO; slot_count];
-            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            let mut result = Vec::with_capacity(resources.caches.len());
-            for cache in &resources.caches {
-                self.fill_amplitude_values(
-                    &mut amplitude_values,
-                    active_indices,
-                    &parameters,
-                    cache,
-                );
-                self.fill_amplitude_gradients(
-                    &mut gradient_values,
-                    &resources.active,
-                    &parameters,
-                    cache,
-                );
-                result.push(self.evaluate_expression_gradient_with_scratch(
-                    &amplitude_values,
-                    &gradient_values,
-                    &mut value_slots,
-                    &mut gradient_slots,
-                ));
-            }
-            result
-        }
-    }
-
-    #[cfg(feature = "mpi")]
-    fn evaluate_gradient_mpi(
-        &self,
-        parameters: &[f64],
-        world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex64>> {
-        let local_evaluation = self.evaluate_gradient_local(parameters);
-        let n_events = self.dataset.n_events();
-        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
-        let (counts, displs) = world.get_counts_displs(n_events);
-        {
-            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
-            world.all_gather_varcount_into(
-                &local_evaluation
-                    .iter()
-                    .flat_map(|v| v.data.as_vec())
-                    .copied()
-                    .collect::<Vec<_>>(),
-                &mut partitioned_buffer,
-            );
-        }
-        buffer
-            .chunks(parameters.len())
-            .map(DVector::from_row_slice)
-            .collect()
-    }
-
-    pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &world);
-            }
-        }
-        self.evaluate_gradient_local(parameters)
-    }
 }
 
 #[allow(missing_docs)]
@@ -2515,14 +2149,14 @@ impl Amplitude for TestAmplitude {
         cache.store_scalar(self.beam_energy, event.p4s[0].e());
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let beam = crate::data::EventAccess::p4_at(event, 0)
             .ok_or_else(|| {
                 LadduError::Custom(
-                    "TestAmplitude expected p4 index 0 in SoA precompute".to_string(),
+                    "TestAmplitude expected p4 index 0 in columnar precompute".to_string(),
                 )
             })
-            .expect("TestAmplitude expected p4 index 0 in SoA precompute");
+            .expect("TestAmplitude expected p4 index 0 in columnar precompute");
         cache.store_scalar(self.beam_energy, beam.e());
     }
 
@@ -2740,7 +2374,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_soa_precompute_backend_matches_aos_results() {
+    fn test_load_columnar_precompute_backend_matches_aos_results() {
         let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
             .unwrap()
             .norm_sqr();
@@ -2755,20 +2389,19 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator_aos = expr.load(&dataset).unwrap();
-        let dataset_soa = Arc::new(dataset.to_soa().unwrap());
-        let evaluator_soa = expr.load_soa(&dataset_soa).unwrap();
+        let evaluator_columnar = expr.load(&dataset).unwrap();
         let params = [1.25, -0.75];
         let aos = evaluator_aos.evaluate(&params);
-        let soa = evaluator_soa.evaluate(&params);
-        assert_eq!(aos.len(), soa.len());
-        for (lhs, rhs) in aos.iter().zip(soa.iter()) {
+        let columnar = evaluator_columnar.evaluate(&params);
+        assert_eq!(aos.len(), columnar.len());
+        for (lhs, rhs) in aos.iter().zip(columnar.iter()) {
             assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
             assert_relative_eq!(lhs.im, rhs.im, epsilon = 1e-12);
         }
     }
 
     #[test]
-    fn test_precompute_all_soa_populates_cache() {
+    fn test_precompute_all_columnar_populates_cache() {
         let mut event1 = test_event();
         event1.p4s[0].t = 7.5;
         let mut event2 = test_event();
@@ -2779,7 +2412,6 @@ mod tests {
             vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
             Arc::new(DatasetMetadata::default()),
         );
-        let dataset_soa = dataset.to_soa().expect("SoA conversion should succeed");
         let mut amplitude = TestAmplitude {
             name: "test".to_string(),
             re: parameter("real"),
@@ -2793,7 +2425,7 @@ mod tests {
             .register(&mut resources)
             .expect("test amplitude should register");
         resources.reserve_cache(dataset.n_events());
-        amplitude.precompute_all_soa(&dataset_soa, &mut resources);
+        amplitude.precompute_all_view(&dataset, &mut resources);
         for cache in &resources.caches {
             assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
         }

@@ -138,7 +138,7 @@ impl EventData {
 
 /// Read-only event access interface for storage-agnostic compute paths.
 ///
-/// This supports both row-backed (`EventData`) and SoA-backed row views.
+/// This supports both row-backed (`EventData`) and columnar-backed row views.
 pub trait EventAccess {
     /// Get four-momentum by positional index.
     fn p4_at(&self, p4_index: usize) -> Option<Vec4>;
@@ -196,7 +196,7 @@ impl EventAccess for EventData {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
-struct SoaP4Column {
+struct ColumnarP4Column {
     px: Vec<f64>,
     py: Vec<f64>,
     pz: Vec<f64>,
@@ -204,7 +204,7 @@ struct SoaP4Column {
 }
 
 #[allow(dead_code)]
-impl SoaP4Column {
+impl ColumnarP4Column {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             px: Vec::with_capacity(capacity),
@@ -231,19 +231,19 @@ impl SoaP4Column {
     }
 }
 
-/// Columnar dataset storage used by SoA execution paths.
+/// Columnar dataset storage used by columnar execution paths.
 ///
 /// O081 migration note: this storage model is the canonical target for the public
 /// [`Dataset`] API. Row-backed storage remains transitional during migration.
 #[derive(Debug, Default)]
-pub struct DatasetSoA {
+pub(crate) struct DatasetStorage {
     metadata: Arc<DatasetMetadata>,
-    p4: Vec<SoaP4Column>,
+    p4: Vec<ColumnarP4Column>,
     aux: Vec<Vec<f64>>,
     weights: Vec<f64>,
 }
 
-impl Clone for DatasetSoA {
+impl Clone for DatasetStorage {
     fn clone(&self) -> Self {
         Self {
             metadata: self.metadata.clone(),
@@ -254,9 +254,9 @@ impl Clone for DatasetSoA {
     }
 }
 
-impl DatasetSoA {
-    /// Build a SoA dataset from an event-row dataset.
-    pub fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
+impl DatasetStorage {
+    /// Build a columnar dataset from an event-row dataset.
+    pub(crate) fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
         let n_events = dataset.events.len();
         let (n_p4, n_aux) = match dataset.events.first() {
             Some(first) => (first.p4s.len(), first.aux.len()),
@@ -266,7 +266,7 @@ impl DatasetSoA {
             ),
         };
         let mut p4 = (0..n_p4)
-            .map(|_| SoaP4Column::with_capacity(n_events))
+            .map(|_| ColumnarP4Column::with_capacity(n_events))
             .collect::<Vec<_>>();
         let mut aux = (0..n_aux)
             .map(|_| Vec::with_capacity(n_events))
@@ -296,8 +296,8 @@ impl DatasetSoA {
         })
     }
 
-    /// Convert this SoA dataset back to a row-event dataset.
-    pub fn to_dataset(&self) -> Dataset {
+    /// Convert this columnar dataset back to a row-event dataset.
+    pub(crate) fn to_dataset(&self) -> Dataset {
         let events = (0..self.n_events())
             .map(|event_index| Arc::new(self.event_data(event_index)))
             .collect::<Vec<_>>();
@@ -305,33 +305,33 @@ impl DatasetSoA {
     }
 
     /// Access metadata.
-    pub fn metadata(&self) -> &DatasetMetadata {
+    pub(crate) fn metadata(&self) -> &DatasetMetadata {
         &self.metadata
     }
 
     /// Number of local events.
-    pub fn n_events(&self) -> usize {
+    pub(crate) fn n_events(&self) -> usize {
         self.weights.len()
     }
 
     /// Retrieve a p4 value by row and p4 index.
     ///
     /// Panics when either index is out of bounds.
-    pub fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
+    pub(crate) fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
         self.p4[p4_index].get(event_index)
     }
 
     /// Retrieve an aux value by row and aux index.
     ///
     /// Panics when either index is out of bounds.
-    pub fn aux(&self, event_index: usize, aux_index: usize) -> f64 {
+    pub(crate) fn aux(&self, event_index: usize, aux_index: usize) -> f64 {
         self.aux[aux_index][event_index]
     }
 
     /// Retrieve event weight by row index.
     ///
     /// Panics when the row index is out of bounds.
-    pub fn weight(&self, event_index: usize) -> f64 {
+    pub(crate) fn weight(&self, event_index: usize) -> f64 {
         self.weights[event_index]
     }
 
@@ -351,8 +351,8 @@ impl DatasetSoA {
         }
     }
 
-    fn row_view(&self, event_index: usize) -> SoaEventView<'_> {
-        SoaEventView {
+    fn row_view(&self, event_index: usize) -> ColumnarEventView<'_> {
+        ColumnarEventView {
             storage: self,
             event_index,
         }
@@ -361,11 +361,11 @@ impl DatasetSoA {
     #[allow(dead_code)]
     pub(crate) fn for_each_named_event_local<F>(&self, mut op: F)
     where
-        F: FnMut(usize, SoaNamedEventView<'_>),
+        F: FnMut(usize, NamedEventView<'_>),
     {
         for event_index in 0..self.n_events() {
             let row = self.row_view(event_index);
-            let view = SoaNamedEventView {
+            let view = NamedEventView {
                 row,
                 metadata: &self.metadata,
             };
@@ -373,9 +373,9 @@ impl DatasetSoA {
         }
     }
 
-    pub(crate) fn event_view(&self, event_index: usize) -> SoaNamedEventView<'_> {
+    pub(crate) fn event_view(&self, event_index: usize) -> NamedEventView<'_> {
         let row = self.row_view(event_index);
-        SoaNamedEventView {
+        NamedEventView {
             row,
             metadata: self.metadata(),
         }
@@ -412,10 +412,11 @@ impl DatasetSoA {
         while start < n_rows {
             let end = (start + batch_size).min(n_rows);
             if let Some(writer) = writer.as_mut() {
-                let batch = soa_range_to_record_batch(self, start, end, schema.clone(), precision)
-                    .map_err(|err| {
-                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
-                    })?;
+                let batch =
+                    columnar_range_to_record_batch(self, start, end, schema.clone(), precision)
+                        .map_err(|err| {
+                            LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
+                        })?;
                 writer.write(&batch).map_err(|err| {
                     LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
                 })?;
@@ -435,13 +436,13 @@ impl DatasetSoA {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct SoaEventView<'a> {
-    storage: &'a DatasetSoA,
+struct ColumnarEventView<'a> {
+    storage: &'a DatasetStorage,
     event_index: usize,
 }
 
 #[allow(dead_code)]
-impl SoaEventView<'_> {
+impl ColumnarEventView<'_> {
     fn p4(&self, p4_index: usize) -> Vec4 {
         self.storage.p4(self.event_index, p4_index)
     }
@@ -459,7 +460,7 @@ impl SoaEventView<'_> {
     }
 }
 
-impl EventAccess for SoaEventView<'_> {
+impl EventAccess for ColumnarEventView<'_> {
     fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
         Some(self.p4(p4_index))
     }
@@ -469,7 +470,7 @@ impl EventAccess for SoaEventView<'_> {
     }
 
     fn weight(&self) -> f64 {
-        SoaEventView::weight(self)
+        ColumnarEventView::weight(self)
     }
 
     fn n_p4(&self) -> usize {
@@ -481,14 +482,14 @@ impl EventAccess for SoaEventView<'_> {
     }
 }
 
-/// A name-aware SoA event view over a single row in a dataset.
+/// A name-aware columnar event view over a single row in a dataset.
 #[derive(Debug)]
-pub struct SoaNamedEventView<'a> {
-    row: SoaEventView<'a>,
+pub struct NamedEventView<'a> {
+    row: ColumnarEventView<'a>,
     metadata: &'a DatasetMetadata,
 }
 
-impl SoaNamedEventView<'_> {
+impl NamedEventView<'_> {
     /// Retrieve a four-momentum by metadata name.
     pub fn p4(&self, name: &str) -> Option<Vec4> {
         let selection = self.metadata.p4_selection(name)?;
@@ -527,11 +528,11 @@ impl SoaNamedEventView<'_> {
 
     /// Evaluate a [`Variable`] against this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        variable.value_soa(self)
+        variable.value_view(self)
     }
 }
 
-impl EventAccess for SoaNamedEventView<'_> {
+impl EventAccess for NamedEventView<'_> {
     fn p4_at(&self, p4_index: usize) -> Option<Vec4> {
         Some(self.row.p4(p4_index))
     }
@@ -553,7 +554,7 @@ impl EventAccess for SoaNamedEventView<'_> {
     }
 }
 
-impl NamedEventAccess for SoaNamedEventView<'_> {
+impl NamedEventAccess for NamedEventView<'_> {
     fn p4_by_name(&self, name: &str) -> Option<Vec4> {
         self.p4(name)
     }
@@ -714,13 +715,13 @@ impl Default for DatasetMetadata {
 
 /// A collection of events with optional metadata for name-based lookups.
 ///
-/// O081 migration note: the public `Dataset` name is planned to become SoA-backed.
+/// O081 migration note: the public `Dataset` name is planned to become columnar-backed.
 /// The current row-backed representation is transitional until full adoption is complete.
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
     pub events: Vec<Event>,
-    pub(crate) soa: DatasetSoA,
+    pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
 }
 
@@ -997,6 +998,19 @@ impl Dataset {
             .and_then(|event| event.aux.get(idx).copied())
     }
 
+    /// Iterate over all local events as metadata-aware columnar views.
+    pub fn for_each_named_event_local<F>(&self, op: F)
+    where
+        F: FnMut(usize, NamedEventView<'_>),
+    {
+        self.columnar.for_each_named_event_local(op);
+    }
+
+    /// Retrieve a metadata-aware columnar event view by local index.
+    pub fn event_view(&self, event_index: usize) -> NamedEventView<'_> {
+        self.columnar.event_view(event_index)
+    }
+
     /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
     /// version).
     ///
@@ -1192,17 +1206,17 @@ where
 }
 
 impl Dataset {
-    fn soa_from_wrapped_events(
+    fn columnar_from_wrapped_events(
         events: &[Event],
         metadata: Arc<DatasetMetadata>,
-    ) -> LadduResult<DatasetSoA> {
+    ) -> LadduResult<DatasetStorage> {
         let n_events = events.len();
         let (n_p4, n_aux) = match events.first() {
             Some(first) => (first.p4s.len(), first.aux.len()),
             None => (metadata.p4_names.len(), metadata.aux_names.len()),
         };
         let mut p4 = (0..n_p4)
-            .map(|_| SoaP4Column::with_capacity(n_events))
+            .map(|_| ColumnarP4Column::with_capacity(n_events))
             .collect::<Vec<_>>();
         let mut aux = (0..n_aux)
             .map(|_| Vec::with_capacity(n_events))
@@ -1224,7 +1238,7 @@ impl Dataset {
             }
             weights.push(event.weight);
         }
-        Ok(DatasetSoA {
+        Ok(DatasetStorage {
             metadata,
             p4,
             aux,
@@ -1243,11 +1257,11 @@ impl Dataset {
             .into_iter()
             .map(|event| Event::new(event, metadata.clone()))
             .collect::<Vec<_>>();
-        let soa = Self::soa_from_wrapped_events(&wrapped_events, metadata.clone())
-            .expect("Dataset requires rectangular p4/aux columns for canonical SoA storage");
+        let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
         Dataset {
             events: wrapped_events,
-            soa,
+            columnar,
             metadata,
         }
     }
@@ -1270,11 +1284,11 @@ impl Dataset {
             .cloned()
             .map(|event| Event::new(event, metadata.clone()))
             .collect();
-        let soa = Self::soa_from_wrapped_events(&local, metadata.clone())
-            .expect("Dataset requires rectangular p4/aux columns for canonical SoA storage");
+        let columnar = Self::columnar_from_wrapped_events(&local, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
         Dataset {
             events: local,
-            soa,
+            columnar,
             metadata,
         }
     }
@@ -1300,9 +1314,9 @@ impl Dataset {
         Dataset::new_local(events, metadata)
     }
 
-    /// Convert this row-event dataset to SoA layout.
-    pub fn to_soa(&self) -> LadduResult<DatasetSoA> {
-        Ok(self.soa.clone())
+    /// Convert this row-event dataset to columnar layout.
+    pub(crate) fn to_storage(&self) -> LadduResult<DatasetStorage> {
+        Ok(self.columnar.clone())
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
@@ -1312,7 +1326,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     pub fn n_events_local(&self) -> usize {
-        self.soa.n_events()
+        self.columnar.n_events()
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (MPI-compatible version).
@@ -1349,7 +1363,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     pub fn weights_local(&self) -> Vec<f64> {
-        self.soa.weights.clone()
+        self.columnar.weights.clone()
     }
 
     /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (MPI-compatible version).
@@ -1391,13 +1405,13 @@ impl Dataset {
     pub fn n_events_weighted_local(&self) -> f64 {
         #[cfg(feature = "rayon")]
         return self
-            .soa
+            .columnar
             .weights
             .par_iter()
             .copied()
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
-        return self.soa.weights.iter().sum();
+        return self.columnar.weights.iter().sum();
     }
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
@@ -1649,7 +1663,7 @@ impl Dataset {
         file_path: PathBuf,
         options: &DatasetWriteOptions,
     ) -> LadduResult<()> {
-        self.soa.write_parquet_impl(file_path, options)
+        self.columnar.write_parquet_impl(file_path, options)
     }
 
     fn write_root_impl(
@@ -1708,27 +1722,15 @@ fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
 
 /// Load a [`Dataset`] from a Parquet file.
 pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-    let path = canonicalize_dataset_path(file_path)?;
-    let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
-    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-
-    #[cfg(feature = "mpi")]
-    {
-        if let Some(world) = crate::mpi::get_world() {
-            return read_parquet_mpi(builder, metadata, &world);
-        }
-    }
-
-    read_parquet_local(builder, metadata)
+    let storage = read_parquet_storage(file_path, options)?;
+    Ok(Arc::new(storage.to_dataset()))
 }
 
-/// Load a [`DatasetSoA`] from a Parquet file without materializing row-event storage.
-pub fn read_parquet_soa(
+/// Load a [`DatasetStorage`] from a Parquet file without materializing row-event storage.
+pub(crate) fn read_parquet_storage(
     file_path: &str,
     options: &DatasetReadOptions,
-) -> LadduResult<Arc<DatasetSoA>> {
+) -> LadduResult<Arc<DatasetStorage>> {
     let path = canonicalize_dataset_path(file_path)?;
     let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
@@ -1738,11 +1740,11 @@ pub fn read_parquet_soa(
     #[cfg(feature = "mpi")]
     {
         if let Some(world) = crate::mpi::get_world() {
-            return read_parquet_soa_mpi(builder, metadata, &world);
+            return read_parquet_columnar_mpi(builder, metadata, &world);
         }
     }
 
-    read_parquet_soa_local(builder, metadata)
+    read_parquet_columnar_local(builder, metadata)
 }
 
 fn read_parquet_local(
@@ -1755,18 +1757,18 @@ fn read_parquet_local(
     Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
 }
 
-fn read_parquet_soa_local(
+fn read_parquet_columnar_local(
     builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
-) -> LadduResult<Arc<DatasetSoA>> {
+) -> LadduResult<Arc<DatasetStorage>> {
     let total_rows = builder.metadata().file_metadata().num_rows() as usize;
     if total_rows == 0 {
-        return Ok(Arc::new(empty_dataset_soa(metadata)));
+        return Ok(Arc::new(empty_dataset_columnar(metadata)));
     }
 
     let reader = builder.build()?;
     let mut p4 = (0..metadata.p4_names.len())
-        .map(|_| SoaP4Column::with_capacity(total_rows))
+        .map(|_| ColumnarP4Column::with_capacity(total_rows))
         .collect::<Vec<_>>();
     let mut aux = (0..metadata.aux_names.len())
         .map(|_| Vec::with_capacity(total_rows))
@@ -1775,10 +1777,16 @@ fn read_parquet_soa_local(
 
     for batch in reader {
         let batch = batch?;
-        append_record_batch_to_soa(&batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
+        append_record_batch_to_columnar(
+            &batch,
+            metadata.as_ref(),
+            &mut p4,
+            &mut aux,
+            &mut weights,
+        )?;
     }
 
-    Ok(Arc::new(DatasetSoA {
+    Ok(Arc::new(DatasetStorage {
         metadata,
         p4,
         aux,
@@ -1837,15 +1845,15 @@ fn read_parquet_mpi(
 }
 
 #[cfg(feature = "mpi")]
-fn read_parquet_soa_mpi(
+fn read_parquet_columnar_mpi(
     mut builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
     world: &SimpleCommunicator,
-) -> LadduResult<Arc<DatasetSoA>> {
+) -> LadduResult<Arc<DatasetStorage>> {
     let parquet_metadata = builder.metadata().clone();
     let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
     if total_rows == 0 {
-        return Ok(Arc::new(empty_dataset_soa(metadata)));
+        return Ok(Arc::new(empty_dataset_columnar(metadata)));
     }
 
     let partition = world.partition(total_rows);
@@ -1854,7 +1862,7 @@ fn read_parquet_soa_mpi(
     let local_start = local_range.start;
     let local_end = local_range.end;
     if local_start == local_end {
-        return Ok(Arc::new(empty_dataset_soa(metadata)));
+        return Ok(Arc::new(empty_dataset_columnar(metadata)));
     }
 
     let (row_groups, first_row_start) =
@@ -1865,7 +1873,7 @@ fn read_parquet_soa_mpi(
 
     let reader = builder.build()?;
     let mut p4 = (0..metadata.p4_names.len())
-        .map(|_| SoaP4Column::with_capacity(local_end - first_row_start))
+        .map(|_| ColumnarP4Column::with_capacity(local_end - first_row_start))
         .collect::<Vec<_>>();
     let mut aux = (0..metadata.aux_names.len())
         .map(|_| Vec::with_capacity(local_end - first_row_start))
@@ -1873,9 +1881,15 @@ fn read_parquet_soa_mpi(
     let mut weights = Vec::with_capacity(local_end - first_row_start);
     for batch in reader {
         let batch = batch?;
-        append_record_batch_to_soa(&batch, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
+        append_record_batch_to_columnar(
+            &batch,
+            metadata.as_ref(),
+            &mut p4,
+            &mut aux,
+            &mut weights,
+        )?;
     }
-    let mut soa = DatasetSoA {
+    let mut columnar = DatasetStorage {
         metadata,
         p4,
         aux,
@@ -1884,16 +1898,16 @@ fn read_parquet_soa_mpi(
 
     let drop_front = local_start.saturating_sub(first_row_start);
     let expected_local = local_end - local_start;
-    trim_soa_rows(&mut soa, drop_front, expected_local);
-    if soa.n_events() != expected_local {
+    trim_columnar_rows(&mut columnar, drop_front, expected_local);
+    if columnar.n_events() != expected_local {
         return Err(LadduError::LengthMismatch {
             context: format!("Loaded rows for MPI rank {rank}"),
             expected: expected_local,
-            actual: soa.n_events(),
+            actual: columnar.n_events(),
         });
     }
 
-    Ok(Arc::new(soa))
+    Ok(Arc::new(columnar))
 }
 
 #[cfg(feature = "mpi")]
@@ -1960,10 +1974,10 @@ fn batches_to_events(
     }
 }
 
-fn empty_dataset_soa(metadata: Arc<DatasetMetadata>) -> DatasetSoA {
-    DatasetSoA {
+fn empty_dataset_columnar(metadata: Arc<DatasetMetadata>) -> DatasetStorage {
+    DatasetStorage {
         p4: (0..metadata.p4_names.len())
-            .map(|_| SoaP4Column::with_capacity(0))
+            .map(|_| ColumnarP4Column::with_capacity(0))
             .collect(),
         aux: (0..metadata.aux_names.len())
             .map(|_| Vec::with_capacity(0))
@@ -1973,10 +1987,10 @@ fn empty_dataset_soa(metadata: Arc<DatasetMetadata>) -> DatasetSoA {
     }
 }
 
-fn append_record_batch_to_soa(
+fn append_record_batch_to_columnar(
     batch: &RecordBatch,
     metadata: &DatasetMetadata,
-    p4_columns_out: &mut [SoaP4Column],
+    p4_columns_out: &mut [ColumnarP4Column],
     aux_columns_out: &mut [Vec<f64>],
     weights_out: &mut Vec<f64>,
 ) -> LadduResult<()> {
@@ -2014,86 +2028,57 @@ fn append_record_batch_to_soa(
 }
 
 #[cfg(feature = "mpi")]
-fn trim_soa_rows(soa: &mut DatasetSoA, drop_front: usize, expected_len: usize) {
+fn trim_columnar_rows(columnar: &mut DatasetStorage, drop_front: usize, expected_len: usize) {
     if drop_front > 0 {
-        for column in &mut soa.p4 {
+        for column in &mut columnar.p4 {
             column.px.drain(0..drop_front);
             column.py.drain(0..drop_front);
             column.pz.drain(0..drop_front);
             column.e.drain(0..drop_front);
         }
-        for column in &mut soa.aux {
+        for column in &mut columnar.aux {
             column.drain(0..drop_front);
         }
-        soa.weights.drain(0..drop_front);
+        columnar.weights.drain(0..drop_front);
     }
 
-    if soa.n_events() > expected_len {
-        for column in &mut soa.p4 {
+    if columnar.n_events() > expected_len {
+        for column in &mut columnar.p4 {
             column.px.truncate(expected_len);
             column.py.truncate(expected_len);
             column.pz.truncate(expected_len);
             column.e.truncate(expected_len);
         }
-        for column in &mut soa.aux {
+        for column in &mut columnar.aux {
             column.truncate(expected_len);
         }
-        soa.weights.truncate(expected_len);
+        columnar.weights.truncate(expected_len);
     }
 }
 
 /// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
 pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-    let root_data = read_root_columns(file_path, options)?;
-
-    let mut events = Vec::with_capacity(root_data.n_events);
-    for row in 0..root_data.n_events {
-        let mut p4s = Vec::with_capacity(root_data.p4_columns.len());
-        for columns in &root_data.p4_columns {
-            p4s.push(Vec4::new(
-                columns.px[row],
-                columns.py[row],
-                columns.pz[row],
-                columns.e[row],
-            ));
-        }
-
-        let mut aux = Vec::with_capacity(root_data.aux_columns.len());
-        for column in &root_data.aux_columns {
-            aux.push(column[row]);
-        }
-
-        let event = EventData {
-            p4s,
-            aux,
-            weight: root_data.weight_values[row],
-        };
-        events.push(Arc::new(event));
-    }
-
-    Ok(Arc::new(Dataset::new_with_metadata(
-        events,
-        root_data.metadata,
-    )))
+    let storage = read_root_storage(file_path, options)?;
+    Ok(Arc::new(storage.to_dataset()))
 }
 
-/// Load a [`DatasetSoA`] from a ROOT TTree without materializing row-event storage.
-pub fn read_root_soa(
+/// Load a [`DatasetStorage`] from a ROOT TTree without materializing row-event storage.
+pub(crate) fn read_root_storage(
     file_path: &str,
     options: &DatasetReadOptions,
-) -> LadduResult<Arc<DatasetSoA>> {
+) -> LadduResult<Arc<DatasetStorage>> {
     let root_data = read_root_columns(file_path, options)?;
     let p4 = root_data
         .p4_columns
         .into_iter()
-        .map(|columns| SoaP4Column {
+        .map(|columns| ColumnarP4Column {
             px: columns.px,
             py: columns.py,
             pz: columns.pz,
             e: columns.e,
         })
         .collect::<Vec<_>>();
-    Ok(Arc::new(DatasetSoA {
+    Ok(Arc::new(DatasetStorage {
         metadata: root_data.metadata,
         p4,
         aux: root_data.aux_columns,
@@ -2254,13 +2239,12 @@ pub fn write_parquet(
     file_path: &str,
     options: &DatasetWriteOptions,
 ) -> LadduResult<()> {
-    let path = expand_output_path(file_path)?;
-    dataset.write_parquet_impl(path, options)
+    write_parquet_storage(&dataset.columnar, file_path, options)
 }
 
-/// Persist a [`DatasetSoA`] to a Parquet file.
-pub fn write_parquet_soa(
-    dataset: &DatasetSoA,
+/// Persist a [`DatasetStorage`] to a Parquet file.
+pub(crate) fn write_parquet_storage(
+    dataset: &DatasetStorage,
     file_path: &str,
     options: &DatasetWriteOptions,
 ) -> LadduResult<()> {
@@ -2760,8 +2744,8 @@ fn record_batch_to_events(
     Ok(events)
 }
 
-fn soa_range_to_record_batch(
-    dataset: &DatasetSoA,
+fn columnar_range_to_record_batch(
+    dataset: &DatasetStorage,
     start: usize,
     end: usize,
     schema: Arc<Schema>,
@@ -3251,7 +3235,7 @@ mod tests {
         }
     }
 
-    fn assert_dataset_soa_close(left: &DatasetSoA, right: &DatasetSoA) {
+    fn assert_dataset_columnar_close(left: &DatasetStorage, right: &DatasetStorage) {
         assert_eq!(left.n_events(), right.n_events());
         assert_eq!(left.metadata().p4_names(), right.metadata().p4_names());
         assert_eq!(left.metadata().aux_names(), right.metadata().aux_names());
@@ -3439,7 +3423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_soa_matches_row_storage() {
+    fn test_dataset_columnar_matches_row_storage() {
         let dataset = Dataset::new(vec![
             Arc::new(test_event()),
             Arc::new(EventData {
@@ -3448,12 +3432,14 @@ mod tests {
                 weight: 0.52,
             }),
         ]);
-        let soa = dataset.to_soa().expect("soa conversion should succeed");
-        assert_eq!(soa.n_events(), dataset.n_events_local());
+        let columnar = dataset
+            .to_storage()
+            .expect("columnar conversion should succeed");
+        assert_eq!(columnar.n_events(), dataset.n_events_local());
         for event_index in 0..dataset.n_events_local() {
             let row = dataset.event(event_index).expect("event should exist");
             for p4_index in 0..row.p4s.len() {
-                let p4 = soa.p4(event_index, p4_index);
+                let p4 = columnar.p4(event_index, p4_index);
                 assert_relative_eq!(p4.px(), row.p4s[p4_index].px(), epsilon = 1e-12);
                 assert_relative_eq!(p4.py(), row.p4s[p4_index].py(), epsilon = 1e-12);
                 assert_relative_eq!(p4.pz(), row.p4s[p4_index].pz(), epsilon = 1e-12);
@@ -3461,13 +3447,13 @@ mod tests {
             }
             for aux_index in 0..row.aux.len() {
                 assert_relative_eq!(
-                    soa.aux(event_index, aux_index),
+                    columnar.aux(event_index, aux_index),
                     row.aux[aux_index],
                     epsilon = 1e-12
                 );
             }
-            assert_relative_eq!(soa.weight(event_index), row.weight, epsilon = 1e-12);
-            let rebuilt = soa.event_data(event_index);
+            assert_relative_eq!(columnar.weight(event_index), row.weight, epsilon = 1e-12);
+            let rebuilt = columnar.event_data(event_index);
             assert_eq!(rebuilt.p4s.len(), row.p4s.len());
             assert_eq!(rebuilt.aux.len(), row.aux.len());
             assert_relative_eq!(rebuilt.weight, row.weight, epsilon = 1e-12);
@@ -3476,7 +3462,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "Dataset requires rectangular p4/aux columns for canonical SoA storage"
+        expected = "Dataset requires rectangular p4/aux columns for canonical columnar storage"
     )]
     fn test_dataset_rejects_ragged_rows_at_construction() {
         let _ = Dataset::new(vec![
@@ -3494,10 +3480,12 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_soa_named_row_view_matches_event_accessors() {
+    fn test_dataset_columnar_named_row_view_matches_event_accessors() {
         let dataset = test_dataset();
-        let soa = dataset.to_soa().expect("soa conversion should succeed");
-        let row = soa.event_view(0);
+        let columnar = dataset
+            .to_storage()
+            .expect("columnar conversion should succeed");
+        let row = columnar.event_view(0);
         let named = dataset.named_event(0).expect("named event should exist");
 
         let beam = row.p4("beam").expect("beam p4 should be present");
@@ -3522,22 +3510,24 @@ mod tests {
     }
 
     #[test]
-    fn test_dataset_soa_row_view_variable_evaluation_matches_event_data() {
+    fn test_dataset_columnar_row_view_variable_evaluation_matches_event_data() {
         let dataset = test_dataset();
-        let soa = dataset.to_soa().expect("soa conversion should succeed");
-        let row = soa.event_view(0);
+        let columnar = dataset
+            .to_storage()
+            .expect("columnar conversion should succeed");
+        let row = columnar.event_view(0);
         let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
         mass.bind(dataset.metadata())
             .expect("mass should bind to metadata");
         let from_view = row.evaluate(&mass);
-        let from_access_soa = mass.value_soa(&row);
+        let from_access_columnar = mass.value_view(&row);
         let from_event = dataset
             .event(0)
             .expect("event should exist")
             .evaluate(&mass);
         assert_relative_eq!(from_view, from_event, epsilon = 1e-12);
-        assert_relative_eq!(from_access_soa, from_event, epsilon = 1e-12);
+        assert_relative_eq!(from_access_columnar, from_event, epsilon = 1e-12);
         let from_named = named.evaluate(&mass);
         assert_relative_eq!(from_named, from_event, epsilon = 1e-12);
     }
@@ -3555,30 +3545,32 @@ mod tests {
     }
 
     #[test]
-    fn test_named_event_access_trait_matches_aos_and_soa_views() {
+    fn test_named_event_access_trait_matches_aos_and_columnar_views() {
         let dataset = test_dataset();
         let aos = dataset.named_event(0).expect("event should exist");
-        let soa_storage = dataset.to_soa().expect("soa conversion should succeed");
-        let soa = soa_storage.event_view(0);
+        let columnar_storage = dataset
+            .to_storage()
+            .expect("columnar conversion should succeed");
+        let columnar = columnar_storage.event_view(0);
 
         let aos_beam =
             NamedEventAccess::p4_by_name(&aos, "beam").expect("aos beam should be present");
-        let soa_beam =
-            NamedEventAccess::p4_by_name(&soa, "beam").expect("soa beam should be present");
-        assert_relative_eq!(aos_beam.px(), soa_beam.px(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.py(), soa_beam.py(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.pz(), soa_beam.pz(), epsilon = 1e-12);
-        assert_relative_eq!(aos_beam.e(), soa_beam.e(), epsilon = 1e-12);
+        let columnar_beam = NamedEventAccess::p4_by_name(&columnar, "beam")
+            .expect("columnar beam should be present");
+        assert_relative_eq!(aos_beam.px(), columnar_beam.px(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.py(), columnar_beam.py(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.pz(), columnar_beam.pz(), epsilon = 1e-12);
+        assert_relative_eq!(aos_beam.e(), columnar_beam.e(), epsilon = 1e-12);
 
         let aos_aux =
             NamedEventAccess::aux_by_name(&aos, "pol_angle").expect("aos aux should be present");
-        let soa_aux =
-            NamedEventAccess::aux_by_name(&soa, "pol_angle").expect("soa aux should be present");
-        assert_relative_eq!(aos_aux, soa_aux, epsilon = 1e-12);
+        let columnar_aux = NamedEventAccess::aux_by_name(&columnar, "pol_angle")
+            .expect("columnar aux should be present");
+        assert_relative_eq!(aos_aux, columnar_aux, epsilon = 1e-12);
 
         assert_relative_eq!(
             EventAccess::weight(&aos),
-            EventAccess::weight(&soa),
+            EventAccess::weight(&columnar),
             epsilon = 1e-12
         );
     }
@@ -3971,59 +3963,59 @@ mod tests {
     }
 
     #[test]
-    fn test_read_parquet_soa_matches_aos_to_soa() {
+    fn test_read_parquet_columnar_matches_aos_to_columnar() {
         let path = test_data_path("data_f32.parquet");
         let path_str = path.to_str().expect("path should be valid UTF-8");
         let aos = read_parquet(path_str, &DatasetReadOptions::new()).expect("aos load should work");
-        let soa_from_aos = aos.to_soa().expect("aos->soa should work");
-        let soa_direct =
-            read_parquet_soa(path_str, &DatasetReadOptions::new()).expect("soa load should work");
-        assert_dataset_soa_close(&soa_from_aos, &soa_direct);
+        let columnar_from_aos = aos.to_storage().expect("aos->columnar should work");
+        let columnar_direct = read_parquet_storage(path_str, &DatasetReadOptions::new())
+            .expect("columnar load should work");
+        assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
     }
 
     #[test]
-    fn test_parquet_soa_roundtrip_to_tempfile() {
+    fn test_parquet_columnar_roundtrip_to_tempfile() {
         let source_path = test_data_path("data_f32.parquet");
         let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
-        let dataset_soa =
-            read_parquet_soa(source_path_str, &DatasetReadOptions::new()).expect("soa load");
+        let dataset_columnar = read_parquet_storage(source_path_str, &DatasetReadOptions::new())
+            .expect("columnar load");
         let dir = make_temp_dir();
-        let path = dir.join("roundtrip_soa.parquet");
+        let path = dir.join("roundtrip_columnar.parquet");
         let path_str = path.to_str().expect("path should be valid UTF-8");
 
-        write_parquet_soa(&dataset_soa, path_str, &DatasetWriteOptions::default())
-            .expect("writing soa parquet should succeed");
-        let reopened =
-            read_parquet_soa(path_str, &DatasetReadOptions::new()).expect("soa roundtrip reopen");
+        write_parquet_storage(&dataset_columnar, path_str, &DatasetWriteOptions::default())
+            .expect("writing columnar parquet should succeed");
+        let reopened = read_parquet_storage(path_str, &DatasetReadOptions::new())
+            .expect("columnar roundtrip reopen");
 
-        assert_dataset_soa_close(&dataset_soa, &reopened);
+        assert_dataset_columnar_close(&dataset_columnar, &reopened);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
     }
 
     #[test]
-    fn test_read_root_soa_matches_root_aos_to_soa() {
+    fn test_read_root_columnar_matches_root_aos_to_columnar() {
         let path = test_data_path("data_f32.root");
         let path_str = path.to_str().expect("path should be valid UTF-8");
         let aos =
             read_root(path_str, &DatasetReadOptions::new()).expect("root aos load should work");
-        let soa_from_aos = aos.to_soa().expect("aos->soa should work");
-        let soa_direct =
-            read_root_soa(path_str, &DatasetReadOptions::new()).expect("root soa load should work");
-        assert_dataset_soa_close(&soa_from_aos, &soa_direct);
+        let columnar_from_aos = aos.to_storage().expect("aos->columnar should work");
+        let columnar_direct = read_root_storage(path_str, &DatasetReadOptions::new())
+            .expect("root columnar load should work");
+        assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
     }
 
     #[test]
-    fn test_read_root_soa_matches_parquet_soa() {
+    fn test_read_root_columnar_matches_parquet_columnar() {
         let root_path = test_data_path("data_f32.root");
         let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
         let parquet_path = test_data_path("data_f32.parquet");
         let parquet_path_str = parquet_path.to_str().expect("path should be valid UTF-8");
 
-        let from_root = read_root_soa(root_path_str, &DatasetReadOptions::new())
-            .expect("root soa load should work");
-        let from_parquet = read_parquet_soa(parquet_path_str, &DatasetReadOptions::new())
-            .expect("parquet soa load should work");
-        assert_dataset_soa_close(&from_root, &from_parquet);
+        let from_root = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("root columnar load should work");
+        let from_parquet = read_parquet_storage(parquet_path_str, &DatasetReadOptions::new())
+            .expect("parquet columnar load should work");
+        assert_dataset_columnar_close(&from_root, &from_parquet);
     }
 
     #[test]

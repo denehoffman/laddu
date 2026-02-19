@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData, SoaNamedEventView},
+    data::{DatasetMetadata, EventData, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
@@ -82,8 +82,8 @@ impl Amplitude for PiecewiseScalar {
         }
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
@@ -237,8 +237,8 @@ impl Amplitude for PiecewiseComplexScalar {
         }
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
@@ -403,8 +403,8 @@ impl Amplitude for PiecewisePolarComplexScalar {
         }
     }
 
-    fn precompute_soa(&self, event: &SoaNamedEventView<'_>, cache: &mut Cache) {
-        let maybe_bin_index = get_bin_index(self.variable.value_soa(event), self.bins, self.range);
+    fn precompute_view(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let maybe_bin_index = get_bin_index(self.variable.value_view(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
