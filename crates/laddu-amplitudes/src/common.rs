@@ -1,6 +1,5 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::EventData,
     resources::{Cache, ParameterID, Parameters, Resources},
     LadduResult,
 };
@@ -38,28 +37,10 @@ impl Amplitude for Scalar {
         self.pid = resources.register_parameter(&self.value)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
-
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
-        Complex64::new(parameters.get(self.pid), 0.0)
-    }
-
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        _cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        if let ParameterID::Parameter(ind) = self.pid {
-            gradient[ind] = Complex64::ONE;
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         _cache: &Cache,
@@ -123,31 +104,10 @@ impl Amplitude for ComplexScalar {
         self.pid_im = resources.register_parameter(&self.im)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
-
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
-        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
-    }
-
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        _cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        if let ParameterID::Parameter(ind) = self.pid_re {
-            gradient[ind] = Complex64::ONE;
-        }
-        if let ParameterID::Parameter(ind) = self.pid_im {
-            gradient[ind] = Complex64::I;
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         _cache: &Cache,
@@ -220,33 +180,10 @@ impl Amplitude for PolarComplexScalar {
         self.pid_theta = resources.register_parameter(&self.theta)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
-
-    fn compute_cached(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
-        Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
-    }
-
     fn compute_gradient(
-        &self,
-        parameters: &Parameters,
-        _event: &EventData,
-        _cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let exp_i_theta = Complex64::cis(parameters.get(self.pid_theta));
-        if let ParameterID::Parameter(ind) = self.pid_r {
-            gradient[ind] = exp_i_theta;
-        }
-        if let ParameterID::Parameter(ind) = self.pid_theta {
-            gradient[ind] = Complex64::I
-                * Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta));
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         parameters: &Parameters,
         _cache: &Cache,

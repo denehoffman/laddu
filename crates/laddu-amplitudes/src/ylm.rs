@@ -77,26 +77,11 @@ impl Amplitude for Ylm {
             ),
         );
     }
-
-    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
-        cache.get_complex_scalar(self.csid)
-    }
-
-    fn compute_cached(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        _cache: &Cache,
-        _gradient: &mut DVector<Complex64>,
-    ) {
-        // This amplitude is independent of free parameters
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         _cache: &Cache,

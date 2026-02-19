@@ -90,8 +90,7 @@ impl Amplitude for PiecewiseScalar {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -99,30 +98,7 @@ impl Amplitude for PiecewiseScalar {
             Complex64::from(parameters.get(self.pids[bin_index]))
         }
     }
-
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index == self.bins + 1 {
-            Complex64::ZERO
-        } else {
-            Complex64::from(parameters.get(self.pids[bin_index]))
-        }
-    }
-
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index < self.bins + 1 {
-            gradient[bin_index] = Complex64::ONE;
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         cache: &Cache,
@@ -269,8 +245,7 @@ impl Amplitude for PiecewiseComplexScalar {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -279,37 +254,7 @@ impl Amplitude for PiecewiseComplexScalar {
             Complex64::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
         }
     }
-
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index == self.bins + 1 {
-            Complex64::ZERO
-        } else {
-            let pid_re_im = self.pids_re_im[bin_index];
-            Complex64::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
-        }
-    }
-
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index < self.bins + 1 {
-            let pid_re_im = self.pids_re_im[bin_index];
-            if let ParameterID::Parameter(ind) = pid_re_im.0 {
-                gradient[ind] = Complex64::ONE;
-            }
-            if let ParameterID::Parameter(ind) = pid_re_im.1 {
-                gradient[ind] = Complex64::I;
-            }
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         cache: &Cache,
@@ -466,8 +411,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -476,40 +420,7 @@ impl Amplitude for PiecewisePolarComplexScalar {
             Complex64::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
         }
     }
-
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index == self.bins + 1 {
-            Complex64::ZERO
-        } else {
-            let pid_r_theta = self.pids_r_theta[bin_index];
-            Complex64::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
-        }
-    }
-
     fn compute_gradient(
-        &self,
-        parameters: &Parameters,
-        _event: &EventData,
-        cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
-        if bin_index < self.bins + 1 {
-            let pid_r_theta = self.pids_r_theta[bin_index];
-            let r = parameters.get(pid_r_theta.0);
-            let theta = parameters.get(pid_r_theta.1);
-            let exp_i_theta = Complex64::cis(theta);
-            if let ParameterID::Parameter(ind) = pid_r_theta.0 {
-                gradient[ind] = exp_i_theta;
-            }
-            if let ParameterID::Parameter(ind) = pid_r_theta.1 {
-                gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
-            }
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         parameters: &Parameters,
         cache: &Cache,

@@ -1265,7 +1265,7 @@ impl Dataset {
         world: &SimpleCommunicator,
     ) -> Self {
         let partitions = Dataset::partition(events, world);
-        let local = partitions[world.rank() as usize]
+        let local: Vec<Event> = partitions[world.rank() as usize]
             .iter()
             .cloned()
             .map(|event| Event::new(event, metadata.clone()))

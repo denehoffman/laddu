@@ -124,20 +124,8 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-//!         let mass = self.resonance_mass.value(event);
-//!         let mass0 = parameters.get(self.pid_mass);
-//!         let width0 = parameters.get(self.pid_width);
-//!         let mass1 = self.daughter_1_mass.value(event);
-//!         let mass2 = self.daughter_2_mass.value(event);
-//!         let q0 = breakup_momentum(mass0, mass1, mass2);
-//!         let q = breakup_momentum(mass, mass1, mass2);
-//!         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-//!         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
-//!         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//!         let n = (mass0 * width0 / PI).sqrt();
-//!         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//!         Complex64::from(f * n) / d
+//!     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+//!         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
 //!     }
 //! }
 //! ```
@@ -215,20 +203,8 @@
 //! #         Ok(())
 //! #     }
 //! #
-//! #     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-//! #         let mass = self.resonance_mass.value(event);
-//! #         let mass0 = parameters.get(self.pid_mass);
-//! #         let width0 = parameters.get(self.pid_width);
-//! #         let mass1 = self.daughter_1_mass.value(event);
-//! #         let mass2 = self.daughter_2_mass.value(event);
-//! #         let q0 = breakup_momentum(mass0, mass1, mass2);
-//! #         let q = breakup_momentum(mass, mass1, mass2);
-//! #         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-//! #         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
-//! #         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//! #         let n = (mass0 * width0 / PI).sqrt();
-//! #         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//! #         Complex64::from(f * n) / d
+//! #     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+//! #         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
 //! #     }
 //! # }
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];

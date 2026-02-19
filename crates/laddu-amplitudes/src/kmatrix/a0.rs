@@ -148,8 +148,7 @@ impl Amplitude for KopfKMatrixA0 {
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
             Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
@@ -160,40 +159,7 @@ impl Amplitude for KopfKMatrixA0 {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
-
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let betas = SVector::from_fn(|i, _| {
-            Complex64::new(
-                parameters.get(self.couplings_indices_real[i]),
-                parameters.get(self.couplings_indices_imag[i]),
-            )
-        });
-        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
-        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
-        FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
-    }
-
     fn compute_gradient(
-        &self,
-        _parameters: &Parameters,
-        _event: &EventData,
-        cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
-        let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
-        let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
-        for i in 0..2 {
-            if let ParameterID::Parameter(index) = self.couplings_indices_real[i] {
-                gradient[index] = internal_gradient[i];
-            }
-            if let ParameterID::Parameter(index) = self.couplings_indices_imag[i] {
-                gradient[index] = Complex64::I * internal_gradient[i];
-            }
-        }
-    }
-
-    fn compute_gradient_cached(
         &self,
         _parameters: &Parameters,
         cache: &Cache,

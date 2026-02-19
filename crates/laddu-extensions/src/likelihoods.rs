@@ -893,7 +893,7 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, cache, grad)
                         }
                     });
                 (
@@ -904,7 +904,7 @@ impl NLL {
                         .zip(data_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&data_parameters, event, cache)
+                                amp.compute(&data_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -942,7 +942,7 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, cache, grad)
                         }
                     });
                 (
@@ -953,7 +953,7 @@ impl NLL {
                         .zip(mc_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&mc_parameters, event, cache)
+                                amp.compute(&mc_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -990,7 +990,7 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, cache, grad)
                         }
                     });
                 (
@@ -1001,7 +1001,7 @@ impl NLL {
                         .zip(data_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&data_parameters, event, cache)
+                                amp.compute(&data_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -1037,7 +1037,7 @@ impl NLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, cache, grad)
                         }
                     });
                 (
@@ -1048,7 +1048,7 @@ impl NLL {
                         .zip(mc_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&mc_parameters, event, cache)
+                                amp.compute(&mc_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -1352,7 +1352,7 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, cache, grad)
                         }
                     });
                 let amp_vals: Vec<_> = self
@@ -1363,7 +1363,7 @@ impl StochasticNLL {
                     .zip(data_resources.active.iter())
                     .map(|(amp, active)| {
                         if *active {
-                            amp.compute(&data_parameters, event, cache)
+                            amp.compute(&data_parameters, cache)
                         } else {
                             Complex64::ZERO
                         }
@@ -1402,7 +1402,7 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, cache, grad)
                         }
                     });
                 (
@@ -1414,7 +1414,7 @@ impl StochasticNLL {
                         .zip(mc_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&mc_parameters, event, cache)
+                                amp.compute(&mc_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -1453,7 +1453,7 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
+                            amp.compute_gradient(&data_parameters, cache, grad)
                         }
                     });
                 let amp_vals: Vec<_> = self
@@ -1464,7 +1464,7 @@ impl StochasticNLL {
                     .zip(data_resources.active.iter())
                     .map(|(amp, active)| {
                         if *active {
-                            amp.compute(&data_parameters, event, cache)
+                            amp.compute(&data_parameters, cache)
                         } else {
                             Complex64::ZERO
                         }
@@ -1501,7 +1501,7 @@ impl StochasticNLL {
                     .zip(gradient_values.iter_mut())
                     .for_each(|((amp, active), grad)| {
                         if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
+                            amp.compute_gradient(&mc_parameters, cache, grad)
                         }
                     });
                 (
@@ -1513,7 +1513,7 @@ impl StochasticNLL {
                         .zip(mc_resources.active.iter())
                         .map(|(amp, active)| {
                             if *active {
-                                amp.compute(&mc_parameters, event, cache)
+                                amp.compute(&mc_parameters, cache)
                             } else {
                                 Complex64::ZERO
                             }
@@ -4077,19 +4077,13 @@ mod tests {
             resources.register_amplitude(&self.name)
         }
 
-        fn compute(
-            &self,
-            parameters: &Parameters,
-            _event: &EventData,
-            _cache: &Cache,
-        ) -> Complex64 {
+        fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid), 0.0)
         }
 
         fn compute_gradient(
             &self,
             _parameters: &Parameters,
-            _event: &EventData,
             _cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {

@@ -635,9 +635,9 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         b.iter(|| black_box(evaluator.evaluate_local(black_box(&params))))
     });
     eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_cached_local", |b| {
+    eval_group.bench_function("evaluate_local", |b| {
         b.iter(|| {
-            let _ = black_box(evaluator.evaluate_cached_local(black_box(&params)));
+            let _ = black_box(evaluator.evaluate_local(black_box(&params)));
         })
     });
     eval_group.throughput(Throughput::Elements(n_events));
@@ -645,9 +645,9 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         b.iter(|| black_box(evaluator.evaluate_gradient_local(black_box(&params))))
     });
     eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_gradient_cached_local", |b| {
+    eval_group.bench_function("evaluate_gradient_local", |b| {
         b.iter(|| {
-            let _ = black_box(evaluator.evaluate_gradient_cached_local(black_box(&params)));
+            let _ = black_box(evaluator.evaluate_gradient_local(black_box(&params)));
         })
     });
     eval_group.finish();
@@ -689,7 +689,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
             |mut amplitude_values| {
                 for &amp_idx in &active_indices {
                     amplitude_values[amp_idx] =
-                        evaluator.amplitudes[amp_idx].compute_cached(&params_obj, &first_cache);
+                        evaluator.amplitudes[amp_idx].compute(&params_obj, &first_cache);
                 }
                 black_box(amplitude_values)
             },
@@ -700,7 +700,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     let mut prefetched_values = vec![Complex64::ZERO; amplitude_len];
     for &amp_idx in &active_indices {
         prefetched_values[amp_idx] =
-            evaluator.amplitudes[amp_idx].compute_cached(&params_obj, &first_cache);
+            evaluator.amplitudes[amp_idx].compute(&params_obj, &first_cache);
     }
     value_stage_group.bench_function("expression_value_eval_only", |b| {
         b.iter_batched(
@@ -731,7 +731,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
                 {
                     grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
                     if *active {
-                        amp.compute_gradient_cached(&params_obj, &first_cache, grad);
+                        amp.compute_gradient(&params_obj, &first_cache, grad);
                     }
                 }
                 black_box(gradient_values)
@@ -749,7 +749,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     {
         grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
         if *active {
-            amp.compute_gradient_cached(&params_obj, &first_cache, grad);
+            amp.compute_gradient(&params_obj, &first_cache, grad);
         }
     }
     gradient_stage_group.bench_function("expression_gradient_eval_only", |b| {

@@ -113,8 +113,7 @@ impl Amplitude for BreitWigner {
         );
         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let mass = cache.get_scalar(self.resonance_mass_id);
         let mass0 = parameters.get(self.pid_mass).abs();
         let width0 = parameters.get(self.pid_width).abs();
@@ -129,50 +128,17 @@ impl Amplitude for BreitWigner {
         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
         Complex64::from(f * n) / d
     }
-
-    fn compute_cached(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let mass = cache.get_scalar(self.resonance_mass_id);
-        let mass0 = parameters.get(self.pid_mass).abs();
-        let width0 = parameters.get(self.pid_width).abs();
-        let mass1 = cache.get_scalar(self.daughter_1_mass_id);
-        let mass2 = cache.get_scalar(self.daughter_2_mass_id);
-        let q0 = breakup_momentum(mass0, mass1, mass2);
-        let q = breakup_momentum(mass, mass1, mass2);
-        let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-        let f = blatt_weisskopf(mass, mass1, mass2, self.l);
-        let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-        let n = f64::sqrt(mass0 * width0 / PI);
-        let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-        Complex64::from(f * n) / d
-    }
-
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
         if let ParameterID::Parameter(index) = self.pid_mass {
-            self.central_difference_with_indices(&[index], parameters, event, cache, gradient);
+            self.central_difference_with_indices(&[index], parameters, cache, gradient);
         }
         if let ParameterID::Parameter(index) = self.pid_width {
-            self.central_difference_with_indices(&[index], parameters, event, cache, gradient);
-        }
-    }
-
-    fn compute_gradient_cached(
-        &self,
-        parameters: &Parameters,
-        cache: &Cache,
-        gradient: &mut DVector<Complex64>,
-    ) {
-        let event = EventData::default();
-        if let ParameterID::Parameter(index) = self.pid_mass {
-            self.central_difference_with_indices(&[index], parameters, &event, cache, gradient);
-        }
-        if let ParameterID::Parameter(index) = self.pid_width {
-            self.central_difference_with_indices(&[index], parameters, &event, cache, gradient);
+            self.central_difference_with_indices(&[index], parameters, cache, gradient);
         }
     }
 }
