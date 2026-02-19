@@ -71,27 +71,58 @@ def from_dict(
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
-    table = _table_from_mapping(data)
+    normalized = _normalize_ingestion_columns(data)
+    table = _build_arrow_table_from_columns(normalized)
     if table is not None:
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
 
-    converted = {name: np.asarray(values) for name, values in data.items()}
     native_aliases = dict(aliases) if aliases is not None else None
     return _backend_from_columns(
-        converted,
+        normalized,
         p4s=p4s,
         aux=aux,
         aliases=native_aliases,
     )
 
 
-def _table_from_mapping(data: Mapping[str, ColumnInput]) -> pa.Table | None:
+def _normalize_ingestion_columns(data: Mapping[str, ColumnInput]) -> NumpyColumns:
+    normalized: NumpyColumns = {}
+    for name, values in data.items():
+        column = np.asarray(values)
+        if column.ndim != 1:
+            msg = f"Column '{name}' must be one-dimensional"
+            raise ValueError(msg)
+
+        if column.dtype in (np.float32, np.float64):
+            normalized[name] = column
+            continue
+
+        if column.dtype.kind in {'b', 'i', 'u', 'f'}:
+            normalized[name] = column.astype(np.float64, copy=False)
+            continue
+
+        try:
+            normalized[name] = column.astype(np.float64)
+        except (TypeError, ValueError) as exc:
+            msg = (
+                f"Column '{name}' is not a numeric one-dimensional array and cannot be "
+                'ingested by from_dict'
+            )
+            raise TypeError(msg) from exc
+
+    return normalized
+
+
+def _build_arrow_table_from_columns(columns: NumpyColumns) -> pa.Table | None:
     try:
         import pyarrow as pa  # ty: ignore[unresolved-import]
     except ModuleNotFoundError:
         return None
-    columns = {name: np.asarray(values) for name, values in data.items()}
-    return pa.table(columns)
+
+    try:
+        return pa.table(columns)
+    except (TypeError, ValueError):
+        return None
 
 
 def _dataset_from_arrow_table(
