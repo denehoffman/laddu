@@ -495,8 +495,7 @@ fn run_mode(mode: Mode, iters: usize) {
                 .to_string_lossy()
                 .into_owned();
             let t0 = Instant::now();
-            let ds =
-                io::read_parquet(&dataset_path, &options).expect("aos parquet load should work");
+            let ds = io::read_parquet(&dataset_path, &options).expect("parquet load should work");
             let elapsed = t0.elapsed();
             let n_events = ds.n_events() as u64;
             let n_p4 = ds.p4_names().len() as u64;
