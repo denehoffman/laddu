@@ -29,51 +29,37 @@ const DEFAULT_ITERS: usize = 4096;
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
-    EvalAos,
-    EvalCached,
-    GradAos,
-    GradCached,
-    LoadAos,
-    LoadColumnar,
-    LoadAosOnce,
-    LoadColumnarOnce,
-    PrecomputeAos,
-    PrecomputeColumnar,
-    PrecomputeAosOnce,
-    PrecomputeColumnarOnce,
+    Evaluate,
+    Gradient,
+    Load,
+    LoadOnce,
+    Precompute,
+    PrecomputeOnce,
     PrecomputeCompare,
-    NllAos,
-    IoAosOnce,
-    IoColumnarOnce,
-    ParquetOpenAos,
-    ParquetOpenColumnar,
-    RootOpenAos,
-    RootOpenColumnar,
+    Nll,
+    IoOnce,
+    ParquetOpen,
+    RootOpen,
 }
 
 impl Mode {
     fn parse(raw: &str) -> Option<Self> {
         match raw {
-            "eval_aos" => Some(Self::EvalAos),
-            "eval_cached" => Some(Self::EvalCached),
-            "grad_aos" => Some(Self::GradAos),
-            "grad_cached" => Some(Self::GradCached),
-            "load_aos" => Some(Self::LoadAos),
-            "load_columnar" | "load_storage" => Some(Self::LoadColumnar),
-            "load_aos_once" => Some(Self::LoadAosOnce),
-            "load_columnar_once" => Some(Self::LoadColumnarOnce),
-            "precompute_aos" => Some(Self::PrecomputeAos),
-            "precompute_columnar" | "precompute" => Some(Self::PrecomputeColumnar),
-            "precompute_aos_once" => Some(Self::PrecomputeAosOnce),
-            "precompute_columnar_once" => Some(Self::PrecomputeColumnarOnce),
+            "evaluate" | "eval_aos" | "eval_cached" => Some(Self::Evaluate),
+            "evaluate_gradient" | "grad_aos" | "grad_cached" => Some(Self::Gradient),
+            "load" | "load_aos" | "load_columnar" | "load_storage" => Some(Self::Load),
+            "load_once" | "load_aos_once" | "load_columnar_once" => Some(Self::LoadOnce),
+            "precompute" | "precompute_aos" | "precompute_columnar" => Some(Self::Precompute),
+            "precompute_once" | "precompute_aos_once" | "precompute_columnar_once" => {
+                Some(Self::PrecomputeOnce)
+            }
             "precompute_compare" => Some(Self::PrecomputeCompare),
-            "nll_aos" => Some(Self::NllAos),
-            "io_aos_once" => Some(Self::IoAosOnce),
-            "io_columnar_once" => Some(Self::IoColumnarOnce),
-            "parquet_open_aos" => Some(Self::ParquetOpenAos),
-            "parquet_open_columnar" => Some(Self::ParquetOpenColumnar),
-            "root_open_aos" => Some(Self::RootOpenAos),
-            "root_open_columnar" => Some(Self::RootOpenColumnar),
+            "nll" | "nll_aos" => Some(Self::Nll),
+            "io_once" | "io_aos_once" | "io_columnar_once" => Some(Self::IoOnce),
+            "parquet_open" | "parquet_open_aos" | "parquet_open_columnar" => {
+                Some(Self::ParquetOpen)
+            }
+            "root_open" | "root_open_aos" | "root_open_columnar" => Some(Self::RootOpen),
             _ => None,
         }
     }
@@ -82,7 +68,7 @@ impl Mode {
 fn usage() {
     eprintln!(
         "Usage: cargo run --release --bin profile_cached_paths -- <mode> [iters]\n\
-         modes: eval_aos | eval_cached | grad_aos | grad_cached | load_aos | load_columnar | load_aos_once | load_columnar_once | precompute_aos | precompute_columnar | precompute_aos_once | precompute_columnar_once | precompute_compare | nll_aos | io_aos_once | io_columnar_once | parquet_open_aos | parquet_open_columnar | root_open_aos | root_open_columnar"
+         modes: evaluate | evaluate_gradient | load | load_once | precompute | precompute_once | precompute_compare | nll | io_once | parquet_open | root_open"
     );
 }
 
@@ -313,11 +299,11 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
 
 fn run_mode(mode: Mode, iters: usize) {
     match mode {
-        Mode::EvalAos => {
+        Mode::Evaluate => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let evaluator = model.load(&ds).expect("evaluator should build");
             let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
@@ -328,34 +314,15 @@ fn run_mode(mode: Mode, iters: usize) {
                 sink += evaluator.evaluate_local(&params)[0].re;
             }
             eprintln!(
-                "mode=eval_aos iters={iters} sink={sink} elapsed={:?}",
+                "mode=evaluate iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
-        Mode::EvalCached => {
+        Mode::Gradient => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
-            let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
-            let mut sink = 0.0;
-            for _ in 0..WARMUP_ITERS {
-                sink += evaluator.evaluate_local(&params)[0].re;
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                sink += evaluator.evaluate_local(&params)[0].re;
-            }
-            eprintln!(
-                "mode=eval_cached iters={iters} sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::GradAos => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let evaluator = model.load(&ds).expect("evaluator should build");
             let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
@@ -366,101 +333,43 @@ fn run_mode(mode: Mode, iters: usize) {
                 sink += evaluator.evaluate_gradient_local(&params)[0][0].re;
             }
             eprintln!(
-                "mode=grad_aos iters={iters} sink={sink} elapsed={:?}",
+                "mode=evaluate_gradient iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
-        Mode::GradCached => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
-            let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
-            let mut sink = 0.0;
-            for _ in 0..WARMUP_ITERS {
-                sink += evaluator.evaluate_gradient_local(&params)[0][0].re;
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                sink += evaluator.evaluate_gradient_local(&params)[0][0].re;
-            }
-            eprintln!(
-                "mode=grad_cached iters={iters} sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::LoadAos => {
+        Mode::Load => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
-                let ev = model.load(&ds).expect("aos load should succeed");
+                let ev = model.load(&ds).expect("load should succeed");
                 sink += ev.n_parameters() as f64;
             }
             let t0 = Instant::now();
             for _ in 0..iters {
-                let ev = model.load(&ds).expect("aos load should succeed");
+                let ev = model.load(&ds).expect("load should succeed");
                 sink += ev.n_parameters() as f64;
             }
             eprintln!(
-                "mode=load_aos iters={iters} sink={sink} elapsed={:?}",
+                "mode=load iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
-        Mode::LoadColumnar => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_columnar = ds.clone();
-            let model = build_breit_wigner_partial_wave_model();
-            let mut sink = 0.0;
-            for _ in 0..WARMUP_ITERS {
-                let ev = model
-                    .load(&ds_columnar)
-                    .expect("columnar load should succeed");
-                sink += ev.n_parameters() as f64;
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                let ev = model
-                    .load(&ds_columnar)
-                    .expect("columnar load should succeed");
-                sink += ev.n_parameters() as f64;
-            }
-            eprintln!(
-                "mode=load_columnar iters={iters} sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::LoadAosOnce => {
+        Mode::LoadOnce => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
             let t0 = Instant::now();
-            let ev = model.load(&ds).expect("aos load should succeed");
+            let ev = model.load(&ds).expect("load should succeed");
             let sink = ev.n_parameters() as f64;
-            eprintln!("mode=load_aos_once sink={sink} elapsed={:?}", t0.elapsed());
+            eprintln!("mode=load_once sink={sink} elapsed={:?}", t0.elapsed());
         }
-        Mode::LoadColumnarOnce => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_columnar = ds.clone();
-            let model = build_breit_wigner_partial_wave_model();
-            let t0 = Instant::now();
-            let ev = model
-                .load(&ds_columnar)
-                .expect("columnar load should succeed");
-            let sink = ev.n_parameters() as f64;
-            eprintln!(
-                "mode=load_columnar_once sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::PrecomputeAos => {
+        Mode::Precompute => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let evaluator = model.load(&ds).expect("evaluator should build");
             let base_resources = evaluator.resources.read().clone();
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
@@ -479,45 +388,15 @@ fn run_mode(mode: Mode, iters: usize) {
                 sink += resources.caches.len() as f64;
             }
             eprintln!(
-                "mode=precompute_aos iters={iters} sink={sink} elapsed={:?}",
+                "mode=precompute iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
-        Mode::PrecomputeColumnar => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_columnar = ds.clone();
-            let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model
-                .load(&ds_columnar)
-                .expect("columnar evaluator should build");
-            let base_resources = evaluator.resources.read().clone();
-            let mut sink = 0.0;
-            for _ in 0..WARMUP_ITERS {
-                let mut resources = base_resources.clone();
-                for amplitude in &evaluator.amplitudes {
-                    amplitude.precompute_all(&ds_columnar, &mut resources);
-                }
-                sink += resources.caches.len() as f64;
-            }
-            let t0 = Instant::now();
-            for _ in 0..iters {
-                let mut resources = base_resources.clone();
-                for amplitude in &evaluator.amplitudes {
-                    amplitude.precompute_all(&ds_columnar, &mut resources);
-                }
-                sink += resources.caches.len() as f64;
-            }
-            eprintln!(
-                "mode=precompute_columnar iters={iters} sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::PrecomputeAosOnce => {
+        Mode::PrecomputeOnce => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model.load(&ds).expect("aos evaluator should build");
+            let evaluator = model.load(&ds).expect("evaluator should build");
             let mut resources = evaluator.resources.read().clone();
             let t0 = Instant::now();
             for amplitude in &evaluator.amplitudes {
@@ -525,95 +404,78 @@ fn run_mode(mode: Mode, iters: usize) {
             }
             let sink = resources.caches.len() as f64;
             eprintln!(
-                "mode=precompute_aos_once sink={sink} elapsed={:?}",
-                t0.elapsed()
-            );
-        }
-        Mode::PrecomputeColumnarOnce => {
-            let dataset = read_benchmark_dataset();
-            let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_columnar = ds.clone();
-            let model = build_breit_wigner_partial_wave_model();
-            let evaluator = model
-                .load(&ds_columnar)
-                .expect("columnar evaluator should build");
-            let mut resources = evaluator.resources.read().clone();
-            let t0 = Instant::now();
-            for amplitude in &evaluator.amplitudes {
-                amplitude.precompute_all(&ds_columnar, &mut resources);
-            }
-            let sink = resources.caches.len() as f64;
-            eprintln!(
-                "mode=precompute_columnar_once sink={sink} elapsed={:?}",
+                "mode=precompute_once sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
         Mode::PrecomputeCompare => {
             let dataset = read_benchmark_dataset();
             let ds = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
-            let ds_columnar = ds.clone();
+            let ds_canonical = ds.clone();
             let model = build_breit_wigner_partial_wave_model();
-            let evaluator_aos = model.load(&ds).expect("aos evaluator should build");
-            let evaluator_columnar = model
-                .load(&ds_columnar)
-                .expect("columnar evaluator should build");
+            let evaluator_baseline = model.load(&ds).expect("baseline evaluator should build");
+            let evaluator_canonical = model
+                .load(&ds_canonical)
+                .expect("canonical evaluator should build");
 
-            let amp_len = evaluator_aos.amplitudes.len();
-            let mut totals_aos_ns = vec![0u128; amp_len];
-            let mut totals_columnar_ns = vec![0u128; amp_len];
+            let amp_len = evaluator_baseline.amplitudes.len();
+            let mut totals_baseline_ns = vec![0u128; amp_len];
+            let mut totals_canonical_ns = vec![0u128; amp_len];
             let mut sink = 0.0;
 
             for _ in 0..iters {
-                let mut resources_aos = evaluator_aos.resources.read().clone();
-                for (amp_index, amplitude) in evaluator_aos.amplitudes.iter().enumerate() {
+                let mut resources_baseline = evaluator_baseline.resources.read().clone();
+                for (amp_index, amplitude) in evaluator_baseline.amplitudes.iter().enumerate() {
                     let t0 = Instant::now();
-                    amplitude.precompute_all(&ds, &mut resources_aos);
-                    totals_aos_ns[amp_index] += t0.elapsed().as_nanos();
+                    amplitude.precompute_all(&ds, &mut resources_baseline);
+                    totals_baseline_ns[amp_index] += t0.elapsed().as_nanos();
                 }
-                sink += resources_aos.caches.len() as f64;
+                sink += resources_baseline.caches.len() as f64;
 
-                let mut resources_columnar = evaluator_columnar.resources.read().clone();
-                for (amp_index, amplitude) in evaluator_columnar.amplitudes.iter().enumerate() {
+                let mut resources_canonical = evaluator_canonical.resources.read().clone();
+                for (amp_index, amplitude) in evaluator_canonical.amplitudes.iter().enumerate() {
                     let t0 = Instant::now();
-                    amplitude.precompute_all(&ds_columnar, &mut resources_columnar);
-                    totals_columnar_ns[amp_index] += t0.elapsed().as_nanos();
+                    amplitude.precompute_all(&ds_canonical, &mut resources_canonical);
+                    totals_canonical_ns[amp_index] += t0.elapsed().as_nanos();
                 }
-                sink += resources_columnar.caches.len() as f64;
+                sink += resources_canonical.caches.len() as f64;
             }
 
-            print_precompute_breakdown_header("precompute_compare_aos", iters);
-            print_precompute_breakdown_rows(&totals_aos_ns, iters);
+            print_precompute_breakdown_header("precompute_compare_baseline", iters);
+            print_precompute_breakdown_rows(&totals_baseline_ns, iters);
 
-            print_precompute_breakdown_header("precompute_compare_columnar", iters);
-            print_precompute_breakdown_rows(&totals_columnar_ns, iters);
+            print_precompute_breakdown_header("precompute_compare_canonical", iters);
+            print_precompute_breakdown_rows(&totals_canonical_ns, iters);
 
             let mut compare_rows: Vec<(usize, u128, u128, f64)> = (0..amp_len)
                 .map(|amp_index| {
-                    let aos = totals_aos_ns[amp_index];
-                    let columnar = totals_columnar_ns[amp_index];
-                    let ratio = if aos == 0 {
+                    let baseline = totals_baseline_ns[amp_index];
+                    let canonical = totals_canonical_ns[amp_index];
+                    let ratio = if baseline == 0 {
                         f64::INFINITY
                     } else {
-                        columnar as f64 / aos as f64
+                        canonical as f64 / baseline as f64
                     };
-                    (amp_index, aos, columnar, ratio)
+                    (amp_index, baseline, canonical, ratio)
                 })
                 .collect();
             compare_rows.sort_by(|a, b| b.3.total_cmp(&a.3));
             eprintln!("mode=precompute_compare slowdown_rank iters={iters} sink={sink}");
-            eprintln!("rank amp_index aos_total_ns columnar_total_ns columnar_over_aos");
-            for (rank, (amp_index, aos, columnar, ratio)) in compare_rows.iter().enumerate() {
+            eprintln!(
+                "rank amp_index baseline_total_ns canonical_total_ns canonical_over_baseline"
+            );
+            for (rank, (amp_index, baseline, canonical, ratio)) in compare_rows.iter().enumerate() {
                 eprintln!(
                     "{} {} {} {} {:.6}",
                     rank + 1,
                     amp_index,
-                    aos,
-                    columnar,
+                    baseline,
+                    canonical,
                     ratio
                 );
             }
         }
-        Mode::NllAos => {
+        Mode::Nll => {
             let (nll, params) = build_kmatrix_nll();
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
@@ -624,11 +486,11 @@ fn run_mode(mode: Mode, iters: usize) {
                 sink += nll.evaluate(&params).expect("nll value should succeed");
             }
             eprintln!(
-                "mode=nll_aos iters={iters} sink={sink} elapsed={:?}",
+                "mode=nll iters={iters} sink={sink} elapsed={:?}",
                 t0.elapsed()
             );
         }
-        Mode::IoAosOnce => {
+        Mode::IoOnce => {
             let options = DatasetReadOptions::default()
                 .p4_names(P4_NAMES)
                 .aux_names(AUX_NAMES);
@@ -644,94 +506,38 @@ fn run_mode(mode: Mode, iters: usize) {
             let n_p4 = ds.p4_names().len() as u64;
             let n_aux = ds.aux_names().len() as u64;
             let scalar_copies = n_events * (4 * n_p4 + n_aux + 1);
-            let row_materializations = n_events;
-            let event_arc_allocations = n_events;
-            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
-            eprintln!(
-                "mode=io_aos_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
-            );
-        }
-        Mode::IoColumnarOnce => {
-            let options = DatasetReadOptions::default()
-                .p4_names(P4_NAMES)
-                .aux_names(AUX_NAMES);
-            let dataset_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join(BENCH_DATASET_RELATIVE_PATH)
-                .to_string_lossy()
-                .into_owned();
-            let t0 = Instant::now();
-            let ds = io::read_parquet(&dataset_path, &options)
-                .expect("columnar parquet load should work");
-            let elapsed = t0.elapsed();
-            let n_events = ds.n_events() as u64;
-            let n_p4 = ds.p4_names().len() as u64;
-            let n_aux = ds.aux_names().len() as u64;
-            let scalar_copies = n_events * (4 * n_p4 + n_aux + 1);
             let row_materializations = 0u64;
             let event_arc_allocations = 0u64;
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=io_columnar_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
+                "mode=io_once elapsed={elapsed:?} n_events={n_events} n_p4={n_p4} n_aux={n_aux} scalar_copies={scalar_copies} row_materializations={row_materializations} event_arc_allocations={event_arc_allocations} peak_rss_kb={peak_rss_kb}"
             );
         }
-        Mode::ParquetOpenAos => {
+        Mode::ParquetOpen => {
             let options = DatasetReadOptions::default()
                 .p4_names(P4_NAMES)
                 .aux_names(AUX_NAMES);
             let dataset_path = benchmark_parquet_path();
             let t0 = Instant::now();
-            let ds =
-                io::read_parquet(&dataset_path, &options).expect("parquet aos load should work");
+            let ds = io::read_parquet(&dataset_path, &options).expect("parquet load should work");
             let elapsed = t0.elapsed();
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=parquet_open_aos elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                "mode=parquet_open elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
                 ds.n_events(),
                 ds.p4_names().len(),
                 ds.aux_names().len()
             );
         }
-        Mode::ParquetOpenColumnar => {
-            let options = DatasetReadOptions::default()
-                .p4_names(P4_NAMES)
-                .aux_names(AUX_NAMES);
-            let dataset_path = benchmark_parquet_path();
-            let t0 = Instant::now();
-            let ds = io::read_parquet(&dataset_path, &options)
-                .expect("parquet columnar load should work");
-            let elapsed = t0.elapsed();
-            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
-            eprintln!(
-                "mode=parquet_open_columnar elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
-                ds.n_events(),
-                ds.p4_names().len(),
-                ds.aux_names().len()
-            );
-        }
-        Mode::RootOpenAos => {
+        Mode::RootOpen => {
             let options = DatasetReadOptions::default();
             let dataset_path = benchmark_root_path();
             let t0 = Instant::now();
-            let ds = io::read_root(&dataset_path, &options).expect("root aos load should work");
+            let ds = io::read_root(&dataset_path, &options).expect("root load should work");
             let elapsed = t0.elapsed();
             let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
             eprintln!(
-                "mode=root_open_aos elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
-                ds.n_events(),
-                ds.p4_names().len(),
-                ds.aux_names().len()
-            );
-        }
-        Mode::RootOpenColumnar => {
-            let options = DatasetReadOptions::default();
-            let dataset_path = benchmark_root_path();
-            let t0 = Instant::now();
-            let ds =
-                io::read_root(&dataset_path, &options).expect("root columnar load should work");
-            let elapsed = t0.elapsed();
-            let peak_rss_kb = read_peak_rss_kb().unwrap_or(0);
-            eprintln!(
-                "mode=root_open_columnar elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
+                "mode=root_open elapsed={elapsed:?} n_events={} n_p4={} n_aux={} peak_rss_kb={peak_rss_kb}",
                 ds.n_events(),
                 ds.p4_names().len(),
                 ds.aux_names().len()

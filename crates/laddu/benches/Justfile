@@ -75,24 +75,31 @@ report-mpi-scaling:
       --json-out ../../../target/criterion/summary/mpi_rank_scaling_report.json \
       --md-out ../../../target/criterion/summary/mpi_rank_scaling_report.md
 
-# Open-path profiling: parquet/root AoS vs columnar (single run per mode)
+# Open-path profiling: parquet/root canonical loaders (single run per mode)
+open-parquet:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
+
+open-root:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
+
+# Backward-compatible aliases
 open-parquet-aos:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open_aos
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
 
 open-parquet-columnar:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open_columnar
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
 
 open-root-aos:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open_aos
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
 
 open-root-columnar:
-    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open_columnar
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
 
-# Run only file-open Criterion benchmarks (AoS vs columnar)
+# Run only file-open Criterion benchmarks
 bench-open:
-    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- file_open_aos_vs_columnar --noplot
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- file_open --noplot
 
 # Emit Criterion JSON messages for only file-open benchmark group
 json-open:
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json -- file_open_aos_vs_columnar > ../../../target/criterion/messages_cpu_open.jsonl
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json -- file_open > ../../../target/criterion/messages_cpu_open.jsonl

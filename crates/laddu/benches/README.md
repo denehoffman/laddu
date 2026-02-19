@@ -72,12 +72,12 @@ Configured report thresholds:
 - improvement threshold: `<= -3.0%`
 - policy in this run: `off` (records status, does not fail)
 
-Observed AoS-vs-cached and AoS-vs-columnar deltas from
+Observed benchmark deltas from
 `target/criterion/summary/benchmark_summary_cpu.json` (typical estimate):
 
-- `evaluator_cached_vs_aos/evaluate_cached_local` vs `evaluate_aos_local`: `-0.266%` (cached faster)
-- `evaluator_cached_vs_aos/evaluate_gradient_cached_local` vs `evaluate_gradient_aos_local`: `-0.277%` (cached faster)
-- `precompute_backend_aos_vs_columnar/load_columnar_precompute` vs `load_aos_precompute`: `+79.129%` (columnar slower)
+- `stage_isolated_cached_value_and_expression/cached_value_fill_only`: use as value-fill baseline
+- `stage_isolated_cached_gradient_and_expression/cached_gradient_fill_only`: use as gradient-fill baseline
+- `precompute_stage_only/precompute_only`: use as precompute baseline
 
 Notes:
 
@@ -172,15 +172,13 @@ Outputs:
 - `target/criterion/summary/mpi_rank_scaling_report.json`
 - `target/criterion/summary/mpi_rank_scaling_report.md`
 
-## File-Open Path Profiling (AoS vs columnar)
+## File-Open Path Profiling
 
 These commands run direct file-open pathways (no evaluator/precompute):
 
 ```bash
-just --justfile crates/laddu/benches/Justfile open-parquet-aos
-just --justfile crates/laddu/benches/Justfile open-parquet-columnar
-just --justfile crates/laddu/benches/Justfile open-root-aos
-just --justfile crates/laddu/benches/Justfile open-root-columnar
+just --justfile crates/laddu/benches/Justfile open-parquet
+just --justfile crates/laddu/benches/Justfile open-root
 ```
 
 Each mode emits elapsed time, event dimensions, and process peak RSS (`VmHWM`).
@@ -199,9 +197,7 @@ Emit JSON-line messages for only this benchmark group:
 just --justfile crates/laddu/benches/Justfile json-open
 ```
 
-The group is named `file_open_aos_vs_columnar` and includes:
+The group is named `file_open` and includes:
 
-- `parquet_open_aos`
-- `parquet_open_columnar`
-- `root_open_aos`
-- `root_open_columnar`
+- `parquet_open`
+- `root_open`
