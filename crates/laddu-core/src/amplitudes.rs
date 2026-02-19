@@ -2267,61 +2267,6 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_local_matches_aos_path() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
-            .unwrap()
-            .norm_sqr();
-        let mut event1 = test_event();
-        event1.p4s[0].t = 7.5;
-        let mut event2 = test_event();
-        event2.p4s[0].t = 8.25;
-        let mut event3 = test_event();
-        event3.p4s[0].t = 9.0;
-        let dataset = Arc::new(Dataset::new_with_metadata(
-            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
-            Arc::new(DatasetMetadata::default()),
-        ));
-        let evaluator = expr.load(&dataset).unwrap();
-        let params = [1.25, -0.75];
-        let aos = evaluator.evaluate_local(&params);
-        let cached = evaluator.evaluate_local(&params);
-        assert_eq!(aos.len(), cached.len());
-        for (lhs, rhs) in aos.iter().zip(cached.iter()) {
-            assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
-            assert_relative_eq!(lhs.im, rhs.im, epsilon = 1e-12);
-        }
-    }
-
-    #[test]
-    fn test_evaluate_gradient_local_matches_aos_path() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
-            .unwrap()
-            .norm_sqr();
-        let mut event1 = test_event();
-        event1.p4s[0].t = 7.5;
-        let mut event2 = test_event();
-        event2.p4s[0].t = 8.25;
-        let mut event3 = test_event();
-        event3.p4s[0].t = 9.0;
-        let dataset = Arc::new(Dataset::new_with_metadata(
-            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
-            Arc::new(DatasetMetadata::default()),
-        ));
-        let evaluator = expr.load(&dataset).unwrap();
-        let params = [1.25, -0.75];
-        let aos = evaluator.evaluate_gradient_local(&params);
-        let cached = evaluator.evaluate_gradient_local(&params);
-        assert_eq!(aos.len(), cached.len());
-        for (lhs, rhs) in aos.iter().zip(cached.iter()) {
-            assert_eq!(lhs.len(), rhs.len());
-            for (lhs_entry, rhs_entry) in lhs.iter().zip(rhs.iter()) {
-                assert_relative_eq!(lhs_entry.re, rhs_entry.re, epsilon = 1e-12);
-                assert_relative_eq!(lhs_entry.im, rhs_entry.im, epsilon = 1e-12);
-            }
-        }
-    }
-
-    #[test]
     fn test_evaluate_local_does_not_depend_on_dataset_rows() {
         let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
             .unwrap()
@@ -2369,33 +2314,6 @@ mod tests {
             .clear_events_local();
         let cached = evaluator.evaluate_gradient_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
-    }
-
-    #[test]
-    fn test_load_columnar_precompute_backend_matches_aos_results() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
-            .unwrap()
-            .norm_sqr();
-        let mut event1 = test_event();
-        event1.p4s[0].t = 7.5;
-        let mut event2 = test_event();
-        event2.p4s[0].t = 8.25;
-        let mut event3 = test_event();
-        event3.p4s[0].t = 9.0;
-        let dataset = Arc::new(Dataset::new_with_metadata(
-            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
-            Arc::new(DatasetMetadata::default()),
-        ));
-        let evaluator_aos = expr.load(&dataset).unwrap();
-        let evaluator_columnar = expr.load(&dataset).unwrap();
-        let params = [1.25, -0.75];
-        let aos = evaluator_aos.evaluate(&params);
-        let columnar = evaluator_columnar.evaluate(&params);
-        assert_eq!(aos.len(), columnar.len());
-        for (lhs, rhs) in aos.iter().zip(columnar.iter()) {
-            assert_relative_eq!(lhs.re, rhs.re, epsilon = 1e-12);
-            assert_relative_eq!(lhs.im, rhs.im, epsilon = 1e-12);
-        }
     }
 
     #[test]

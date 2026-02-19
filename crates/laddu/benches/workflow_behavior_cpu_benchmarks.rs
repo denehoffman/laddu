@@ -613,8 +613,6 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     // Dataset/setup notes:
     // - Source parquet: benches/bench.parquet
     // - Subsampled events: 512
-    // - Compares AoS evaluate vs cache-centric evaluate on a shared evaluator.
-    // - Compares AoS load precompute vs columnar load precompute on the same model.
     let dataset = read_benchmark_dataset();
     let ds_data = sample_dataset(
         &dataset,
@@ -622,54 +620,9 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         PARTIAL_WAVE_DATA_SAMPLE_EVENTS,
     );
     let model = build_breit_wigner_partial_wave_model();
-    let evaluator = model
-        .load(&ds_data)
-        .expect("aos evaluator should build for cached comparison");
+    let evaluator = model.load(&ds_data).expect("evaluator should build");
     let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
     let n_events = ds_data.n_events() as u64;
-
-    let mut eval_group = c.benchmark_group("evaluator_cached_vs_aos");
-    eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_aos_local", |b| {
-        b.iter(|| black_box(evaluator.evaluate_local(black_box(&params))))
-    });
-    eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_local", |b| {
-        b.iter(|| {
-            let _ = black_box(evaluator.evaluate_local(black_box(&params)));
-        })
-    });
-    eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_gradient_aos_local", |b| {
-        b.iter(|| black_box(evaluator.evaluate_gradient_local(black_box(&params))))
-    });
-    eval_group.throughput(Throughput::Elements(n_events));
-    eval_group.bench_function("evaluate_gradient_local", |b| {
-        b.iter(|| {
-            let _ = black_box(evaluator.evaluate_gradient_local(black_box(&params)));
-        })
-    });
-    eval_group.finish();
-
-    let dataset_columnar = ds_data.clone();
-    let mut precompute_group = c.benchmark_group("precompute_backend_aos_vs_columnar");
-    precompute_group.throughput(Throughput::Elements(n_events));
-    precompute_group.bench_function("load_aos_precompute", |b| {
-        b.iter(|| {
-            let _ = black_box(model.load(black_box(&ds_data)));
-        })
-    });
-    precompute_group.throughput(Throughput::Elements(n_events));
-    precompute_group.bench_function("load_columnar_precompute", |b| {
-        b.iter(|| {
-            let _ = black_box(model.load(black_box(&dataset_columnar)));
-        })
-    });
-    precompute_group.finish();
-
-    let evaluator_columnar = model
-        .load(&dataset_columnar)
-        .expect("columnar evaluator should build for stage isolation");
 
     let resources = evaluator.resources.read();
     let params_obj = Parameters::new(&params, &resources.constants);
@@ -772,9 +725,9 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     });
     gradient_stage_group.finish();
 
-    let mut precompute_only_group = c.benchmark_group("precompute_stage_only_aos_vs_columnar");
+    let mut precompute_only_group = c.benchmark_group("precompute_stage_only");
     precompute_only_group.throughput(Throughput::Elements(n_events));
-    precompute_only_group.bench_function("aos_precompute_only", |b| {
+    precompute_only_group.bench_function("precompute_only", |b| {
         b.iter_batched(
             || resources.clone(),
             |mut stage_resources| {
@@ -787,12 +740,12 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
         )
     });
     precompute_only_group.throughput(Throughput::Elements(n_events));
-    precompute_only_group.bench_function("columnar_precompute_only", |b| {
+    precompute_only_group.bench_function("precompute_view_only", |b| {
         b.iter_batched(
-            || evaluator_columnar.resources.read().clone(),
+            || resources.clone(),
             |mut stage_resources| {
-                for amp in &evaluator_columnar.amplitudes {
-                    amp.precompute_all_view(&dataset_columnar, &mut stage_resources);
+                for amp in &evaluator.amplitudes {
+                    amp.precompute_all_view(&ds_data, &mut stage_resources);
                 }
                 black_box(stage_resources.caches.len())
             },
@@ -802,7 +755,7 @@ fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
     precompute_only_group.finish();
 }
 
-fn io_open_aos_vs_columnar_benchmarks(c: &mut Criterion) {
+fn io_open_benchmarks(c: &mut Criterion) {
     let parquet_options = DatasetReadOptions::default()
         .p4_names(P4_NAMES)
         .aux_names(AUX_NAMES);
@@ -817,36 +770,20 @@ fn io_open_aos_vs_columnar_benchmarks(c: &mut Criterion) {
         .expect("root warmup should open")
         .n_events() as u64;
 
-    let mut group = c.benchmark_group("file_open_aos_vs_columnar");
+    let mut group = c.benchmark_group("file_open");
     group.throughput(Throughput::Elements(parquet_events));
-    group.bench_function("parquet_open_aos", |b| {
+    group.bench_function("parquet_open", |b| {
         b.iter(|| {
             let dataset = io::read_parquet(black_box(&parquet_path), black_box(&parquet_options))
-                .expect("parquet aos load should succeed");
-            black_box(dataset.n_events())
-        })
-    });
-    group.throughput(Throughput::Elements(parquet_events));
-    group.bench_function("parquet_open_columnar", |b| {
-        b.iter(|| {
-            let dataset = io::read_parquet(black_box(&parquet_path), black_box(&parquet_options))
-                .expect("parquet columnar load should succeed");
+                .expect("parquet load should succeed");
             black_box(dataset.n_events())
         })
     });
     group.throughput(Throughput::Elements(root_events));
-    group.bench_function("root_open_aos", |b| {
+    group.bench_function("root_open", |b| {
         b.iter(|| {
             let dataset = io::read_root(black_box(&root_path), black_box(&root_options))
-                .expect("root aos load should succeed");
-            black_box(dataset.n_events())
-        })
-    });
-    group.throughput(Throughput::Elements(root_events));
-    group.bench_function("root_open_columnar", |b| {
-        b.iter(|| {
-            let dataset = io::read_root(black_box(&root_path), black_box(&root_options))
-                .expect("root columnar load should succeed");
+                .expect("root load should succeed");
             black_box(dataset.n_events())
         })
     });
@@ -859,6 +796,6 @@ fn main() {
     moment_analysis_benchmarks(&mut criterion);
     kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
     cached_evaluator_and_precompute_backend_benchmarks(&mut criterion);
-    io_open_aos_vs_columnar_benchmarks(&mut criterion);
+    io_open_benchmarks(&mut criterion);
     criterion.final_summary();
 }
