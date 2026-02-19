@@ -190,7 +190,7 @@ def from_polars(
         table = data.to_arrow()
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
     except ModuleNotFoundError:
-        converted = data.to_dict(as_series=False)
+        converted = {name: data.get_column(name).to_numpy() for name in data.columns}
         return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
 

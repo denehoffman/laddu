@@ -58,6 +58,10 @@ test-python: develop-tests
 test-python-mpi: develop-tests-mpi
     LADDU_BACKEND="MPI" {{bin}}/pytest
 
+# Benchmark Python ingestion readers
+bench-python-ingest *args: develop-tests
+    {{python}} py-laddu/benchmarks/ingestion_benchmark.py {{args}}
+
 # Test Rust crate (CPU)
 test-rust: create-venv
     cargo nextest run
