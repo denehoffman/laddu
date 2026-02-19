@@ -1,6 +1,10 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{
+        io::{
+            infer_p4_and_aux_names_from_columns, resolve_columns_case_insensitive,
+            resolve_optional_weight_column, resolve_p4_component_columns, P4_COMPONENT_SUFFIXES,
+        },
         read_parquet as core_read_parquet, read_root as core_read_root,
         write_parquet as core_write_parquet, write_root as core_write_root, BinnedDataset, Dataset,
         DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
@@ -8,11 +12,11 @@ use laddu_core::{
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
 };
-use numpy::PyArray1;
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
-    types::PyDict,
+    types::{PyDict, PyList},
     IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -69,6 +73,35 @@ fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
             "Unsupported precision '{other}' (expected 'f64' or 'f32')"
         ))),
     }
+}
+
+fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
+    if let Ok(array) = value.extract::<PyReadonlyArray1<'_, f64>>() {
+        return Ok(array.as_slice()?.to_vec());
+    }
+    if let Ok(array) = value.extract::<PyReadonlyArray1<'_, f32>>() {
+        return Ok(array.as_slice()?.iter().map(|v| *v as f64).collect());
+    }
+    if let Ok(values) = value.extract::<Vec<f64>>() {
+        return Ok(values);
+    }
+    if let Ok(values) = value.extract::<Vec<f32>>() {
+        return Ok(values.into_iter().map(|v| v as f64).collect());
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        let mut converted = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            converted.push(item.extract::<f64>().map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "Column '{name}' must be numeric (float32/float64/list of floats)"
+                ))
+            })?);
+        }
+        return Ok(converted);
+    }
+    Err(PyTypeError::new_err(format!(
+        "Column '{name}' must be numeric (float32/float64/list of floats)"
+    )))
 }
 
 /// A single event
@@ -794,6 +827,189 @@ pub fn write_root(
     }
     write_options.precision = parse_precision_arg(Some(precision))?;
     core_write_root(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
+}
+
+/// Build a Dataset from columnar arrays.
+///
+/// This is the canonical high-throughput ingestion path used by Python reader helpers.
+#[pyfunction]
+#[pyo3(signature = (columns, *, p4s=None, aux=None, aliases=None))]
+pub fn from_columns(
+    columns: Bound<'_, PyDict>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<'_, PyDict>>,
+) -> PyResult<PyDataset> {
+    let column_names = columns
+        .iter()
+        .map(|(key, _)| key.extract::<String>())
+        .collect::<PyResult<Vec<_>>>()?;
+
+    let (detected_p4_names, detected_aux_names) =
+        infer_p4_and_aux_names_from_columns(&column_names);
+    let p4_names = p4s.unwrap_or(detected_p4_names);
+    if p4_names.is_empty() {
+        let mut partial_components: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeSet<&str>,
+        > = std::collections::BTreeMap::new();
+        for column_name in &column_names {
+            let lowered = column_name.to_ascii_lowercase();
+            for suffix in P4_COMPONENT_SUFFIXES {
+                if lowered.ends_with(suffix) && column_name.len() > suffix.len() {
+                    let prefix = column_name[..column_name.len() - suffix.len()].to_string();
+                    partial_components.entry(prefix).or_default().insert(suffix);
+                }
+            }
+        }
+        if let Some((prefix, present)) = partial_components.iter().next() {
+            if present.len() < P4_COMPONENT_SUFFIXES.len() {
+                let missing = P4_COMPONENT_SUFFIXES
+                    .iter()
+                    .filter(|suffix| !present.contains(**suffix))
+                    .map(|suffix| format!("{prefix}{suffix}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(PyKeyError::new_err(format!(
+                    "Missing components [{missing}] for four-momentum '{prefix}'"
+                )));
+            }
+        }
+        return Err(PyValueError::new_err(
+            "No four-momentum columns found (expected *_px, *_py, *_pz, *_e)",
+        ));
+    }
+
+    let aux_names = aux.unwrap_or(detected_aux_names);
+    let p4_component_columns =
+        resolve_p4_component_columns(&column_names, &p4_names).map_err(PyErr::from)?;
+    let resolved_aux_columns =
+        resolve_columns_case_insensitive(&column_names, &aux_names).map_err(PyErr::from)?;
+
+    let n_events = {
+        let first_name = p4_component_columns
+            .first()
+            .map(|components| components[0].clone())
+            .ok_or_else(|| PyKeyError::new_err("Missing required p4 column"))?;
+        let values = extract_numeric_column(
+            columns
+                .get_item(first_name.as_str())?
+                .ok_or_else(|| PyKeyError::new_err("Missing required p4 column"))?,
+            &first_name,
+        )?;
+        values.len()
+    };
+
+    let mut p4_columns: Vec<[Vec<f64>; 4]> = Vec::with_capacity(p4_names.len());
+    for component_names in &p4_component_columns {
+        let px = extract_numeric_column(
+            columns
+                .get_item(component_names[0].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[0])))?,
+            component_names[0].as_str(),
+        )?;
+        let py = extract_numeric_column(
+            columns
+                .get_item(component_names[1].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[1])))?,
+            component_names[1].as_str(),
+        )?;
+        let pz = extract_numeric_column(
+            columns
+                .get_item(component_names[2].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[2])))?,
+            component_names[2].as_str(),
+        )?;
+        let e = extract_numeric_column(
+            columns
+                .get_item(component_names[3].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[3])))?,
+            component_names[3].as_str(),
+        )?;
+        if px.len() != n_events
+            || py.len() != n_events
+            || pz.len() != n_events
+            || e.len() != n_events
+        {
+            return Err(PyValueError::new_err(format!(
+                "All p4 components must have the same length"
+            )));
+        }
+        p4_columns.push([px, py, pz, e]);
+    }
+
+    let mut aux_columns: Vec<Vec<f64>> = Vec::with_capacity(resolved_aux_columns.len());
+    for (aux_name, aux_column_name) in aux_names.iter().zip(&resolved_aux_columns) {
+        let values = extract_numeric_column(
+            columns.get_item(aux_column_name.as_str())?.ok_or_else(|| {
+                PyKeyError::new_err(format!("Missing auxiliary column '{aux_name}'"))
+            })?,
+            aux_name,
+        )?;
+        if values.len() != n_events {
+            return Err(PyValueError::new_err(format!(
+                "Auxiliary column '{aux_name}' length does not match p4 columns"
+            )));
+        }
+        aux_columns.push(values);
+    }
+
+    let weights = if let Some(weight_column_name) = resolve_optional_weight_column(&column_names) {
+        let weight_values = columns
+            .get_item(weight_column_name.as_str())?
+            .ok_or_else(|| PyKeyError::new_err("Missing weight column"))?;
+        let values = extract_numeric_column(weight_values, "weight")?;
+        if values.len() != n_events {
+            return Err(PyValueError::new_err(
+                "Column 'weight' length does not match p4 columns",
+            ));
+        }
+        values
+    } else {
+        vec![1.0; n_events]
+    };
+
+    let parsed_aliases = parse_aliases(aliases)?;
+    let mut metadata =
+        DatasetMetadata::new(p4_names.clone(), aux_names.clone()).map_err(PyErr::from)?;
+    if !parsed_aliases.is_empty() {
+        metadata
+            .add_p4_aliases(
+                parsed_aliases
+                    .into_iter()
+                    .map(|(alias_name, selection)| (alias_name, selection.into_selection())),
+            )
+            .map_err(PyErr::from)?;
+    }
+
+    let mut events = Vec::with_capacity(n_events);
+    for event_idx in 0..n_events {
+        let p4s = p4_columns
+            .iter()
+            .map(|components| {
+                laddu_core::utils::vectors::Vec4::new(
+                    components[0][event_idx],
+                    components[1][event_idx],
+                    components[2][event_idx],
+                    components[3][event_idx],
+                )
+            })
+            .collect::<Vec<_>>();
+        let aux = aux_columns
+            .iter()
+            .map(|values| values[event_idx])
+            .collect::<Vec<_>>();
+        events.push(Arc::new(EventData {
+            p4s,
+            aux,
+            weight: weights[event_idx],
+        }));
+    }
+
+    Ok(PyDataset(Arc::new(Dataset::new_with_metadata(
+        events,
+        Arc::new(metadata),
+    ))))
 }
 
 /// A collection of Datasets binned by a Variable

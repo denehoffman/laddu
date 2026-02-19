@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Iterable,
+    Literal,
+    Mapping,
+    Protocol,
+    Sequence,
+    TypeAlias,
+)
 
 import numpy as np
+from numpy.typing import NDArray
 
+from laddu.laddu import from_columns as _backend_from_columns
 from laddu.laddu import read_parquet as _backend_read_parquet
 from laddu.laddu import read_root as _backend_read_root
 from laddu.laddu import write_parquet as _backend_write_parquet
@@ -18,126 +27,102 @@ from .utils.vectors import Vec4
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
-    from numpy.typing import NDArray
+    import pyarrow as pa  # ty: ignore[unresolved-import]
+
+FloatArray: TypeAlias = NDArray[np.float32] | NDArray[np.float64]
+ColumnInput: TypeAlias = Sequence[float] | FloatArray
+NumpyColumns: TypeAlias = dict[str, np.ndarray]
+UprootKwargValue: TypeAlias = str | int | float | bool | None
+UprootKwargs: TypeAlias = dict[str, UprootKwargValue]
 
 
-def _import_optional_dependency(
-    module_name: str,
-    *,
-    extra: str,
-    feature: str,
-) -> Any:
-    try:
-        return import_module(module_name)
-    except ModuleNotFoundError as exc:
-        msg = (
-            f"{feature} requires the optional dependency '{module_name}'. "
-            f'Install it with `pip install laddu[{extra}]` '
-            f'or `pip install laddu-mpi[{extra}]`.'
-        )
-        raise ModuleNotFoundError(msg) from exc
+class _UprootBranch(Protocol):
+    def array(
+        self,
+        *,
+        library: Literal['np'],
+        entry_stop: int | None = None,
+    ) -> np.ndarray | Sequence[float]: ...
 
 
-def _infer_p4_names(columns: dict[str, Any]) -> list[str]:
-    p4_names: list[str] = []
-    for key in columns:
-        if key.endswith('_px'):
-            base = key[:-3]
-            if base not in p4_names:
-                required = [f'{base}_{suffix}' for suffix in ('px', 'py', 'pz', 'e')]
-                missing = [name for name in required if name not in columns]
-                if missing:
-                    msg = f"Missing components {missing} for four-momentum '{base}'"
-                    raise KeyError(msg)
-                p4_names.append(base)
-    if not p4_names:
-        msg = 'No four-momentum columns found (expected *_px, *_py, *_pz, *_e)'
-        raise ValueError(msg)
-    return p4_names
+class _UprootTree(Protocol):
+    def arrays(
+        self,
+        *,
+        library: Literal['np'],
+        **kwargs: UprootKwargValue,
+    ) -> Mapping[str, np.ndarray | Sequence[float]]: ...
+
+    def __getitem__(self, key: str) -> _UprootBranch: ...
+
+    def __contains__(self, key: str) -> bool: ...
 
 
-def _infer_aux_names(columns: dict[str, Any], used: set[str]) -> list[str]:
-    aux_names: list[str] = []
-    for key in columns:
-        if key == 'weight' or key in used:
-            continue
-        aux_names.append(key)
-    return aux_names
+class _UprootFile(Protocol):
+    def __getitem__(self, key: str) -> _UprootTree: ...
+
+    def classnames(self) -> Mapping[str, str]: ...
 
 
 def from_dict(
-    data: dict[str, Any],
+    data: Mapping[str, ColumnInput],
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
-    columns = {name: np.asarray(values) for name, values in data.items()}
+    table = _table_from_mapping(data)
+    if table is not None:
+        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
 
-    if p4s is None:
-        p4_names = _infer_p4_names(columns)
-    else:
-        p4_names = list(p4s)
-        for name in p4_names:
-            required = [f'{name}_{suffix}' for suffix in ('px', 'py', 'pz', 'e')]
-            missing = [col for col in required if col not in columns]
-            if missing:
-                msg = f"Missing components {missing} for four-momentum '{name}'"
-                raise KeyError(msg)
-
-    component_names = {
-        f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-    }
-
-    if aux is None:
-        aux_names = _infer_aux_names(columns, component_names)
-    else:
-        aux_names = list(aux)
-        missing_aux = [name for name in aux_names if name not in columns]
-        if missing_aux:
-            msg = f'Missing auxiliary columns {missing_aux}'
-            raise KeyError(msg)
-
-    n_events = len(columns[f'{p4_names[0]}_px'])
-    weights = np.asarray(
-        columns.get('weight', np.ones(n_events, dtype=float)), dtype=float
-    )
-
-    events: list[Event] = []
-    for i in range(n_events):
-        p4_vectors = [
-            Vec4.from_array(
-                [
-                    float(columns[f'{name}_px'][i]),
-                    float(columns[f'{name}_py'][i]),
-                    float(columns[f'{name}_pz'][i]),
-                    float(columns[f'{name}_e'][i]),
-                ]
-            )
-            for name in p4_names
-        ]
-        aux_values = [float(columns[name][i]) for name in aux_names]
-        events.append(
-            Event(
-                p4_vectors,
-                aux_values,
-                float(weights[i]),
-                p4_names=p4_names,
-                aux_names=aux_names,
-            )
-        )
-
+    converted = {name: np.asarray(values) for name, values in data.items()}
     native_aliases = dict(aliases) if aliases is not None else None
-    return Dataset(
-        events,
-        p4_names=p4_names,
-        aux_names=aux_names,
+    return _backend_from_columns(
+        converted,
+        p4s=p4s,
+        aux=aux,
         aliases=native_aliases,
     )
 
 
+def _table_from_mapping(data: Mapping[str, ColumnInput]) -> pa.Table | None:
+    try:
+        import pyarrow as pa  # ty: ignore[unresolved-import]
+    except ModuleNotFoundError:
+        return None
+    columns = {name: np.asarray(values) for name, values in data.items()}
+    return pa.table(columns)
+
+
+def _dataset_from_arrow_table(
+    table: pa.Table,
+    *,
+    p4s: list[str] | None,
+    aux: list[str] | None,
+    aliases: Mapping[str, str | Sequence[str]] | None,
+) -> Dataset:
+    converted = _arrow_table_to_numpy_columns(table)
+    native_aliases = dict(aliases) if aliases is not None else None
+    return _backend_from_columns(
+        converted,
+        p4s=p4s,
+        aux=aux,
+        aliases=native_aliases,
+    )
+
+
+def _arrow_table_to_numpy_columns(table: pa.Table) -> NumpyColumns:
+    column_names = list(table.column_names)
+    converted: dict[str, np.ndarray] = {}
+    for name in column_names:
+        chunked = table[name]
+        array = chunked.combine_chunks() if len(chunked.chunks) != 1 else chunked.chunk(0)
+        converted[name] = np.asarray(array.to_numpy(zero_copy_only=False))
+    return converted
+
+
 def from_numpy(
-    data: dict[str, NDArray[np.floating]],
+    data: Mapping[str, FloatArray],
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
@@ -154,13 +139,14 @@ def from_pandas(
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
-    _import_optional_dependency(
-        'pandas',
-        extra='pandas',
-        feature='laddu.io.from_pandas',
-    )
-    converted = {col: data[col].to_list() for col in data.columns}
-    return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+    try:
+        import pyarrow as pa  # ty: ignore[unresolved-import]
+
+        table = pa.Table.from_pandas(data, preserve_index=False)
+        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
+    except ModuleNotFoundError:
+        converted = {col: data[col].to_numpy() for col in data.columns}
+        return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def from_polars(
@@ -170,13 +156,12 @@ def from_polars(
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
-    _import_optional_dependency(
-        'polars',
-        extra='polars',
-        feature='laddu.io.from_polars',
-    )
-    converted = {col: data[col].to_list() for col in data.columns}
-    return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+    try:
+        table = data.to_arrow()
+        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
+    except ModuleNotFoundError:
+        converted = data.to_dict(as_series=False)
+        return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def read_parquet(
@@ -203,7 +188,7 @@ def read_root(
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
     backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
-    uproot_kwargs: dict[str, Any] | None = None,
+    uproot_kwargs: UprootKwargs | None = None,
 ) -> Dataset:
     backend_name = backend.lower() if backend else 'oxyroot'
     native_aliases = dict(aliases) if aliases is not None else None
@@ -290,7 +275,7 @@ def write_root(
     backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
     chunk_size: int = 10_000,
     precision: Literal['f64', 'f32'] = 'f64',
-    uproot_kwargs: dict[str, Any] | None = None,
+    uproot_kwargs: UprootKwargs | None = None,
 ) -> None:
     backend_name = backend.lower() if backend else 'oxyroot'
     if backend_name not in {'oxyroot', 'uproot'}:
@@ -310,11 +295,15 @@ def write_root(
 
     kwargs = dict(uproot_kwargs or {})
     tree_name = tree or kwargs.pop('tree', 'events')
-    uproot_module = _import_optional_dependency(
-        'uproot',
-        extra='uproot',
-        feature="laddu.io.write_root(... backend='uproot')",
-    )
+    try:
+        import uproot as uproot_module
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.write_root(... backend='uproot') requires the optional dependency "
+            "'uproot'. Install it with `pip install laddu[uproot]` or "
+            '`pip install laddu-mpi[uproot]`.'
+        )
+        raise ModuleNotFoundError(msg) from exc
 
     with uproot_module.recreate(path) as root_file:
         batches = _iter_numpy_batches(
@@ -339,19 +328,26 @@ def _open_with_uproot(
     p4s: list[str] | None,
     aux: list[str] | None,
     aliases: Mapping[str, str | Sequence[str]] | None,
-    uproot_kwargs: dict[str, Any],
+    uproot_kwargs: UprootKwargs,
 ) -> Dataset:
-    uproot_module = _import_optional_dependency(
-        'uproot',
-        extra='uproot',
-        feature="laddu.io.read_root(... backend='uproot')",
-    )
+    try:
+        import uproot as uproot_module
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.read_root(... backend='uproot') requires the optional dependency "
+            "'uproot'. Install it with `pip install laddu[uproot]` or "
+            '`pip install laddu-mpi[uproot]`.'
+        )
+        raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as root_file:
         tree_obj = _select_uproot_tree(root_file, tree)
         arrays = tree_obj.arrays(library='np', **uproot_kwargs)
 
     columns = {name: np.asarray(values) for name, values in arrays.items()}
-    selected = _prepare_uproot_columns(columns, p4s=p4s, aux=aux)
+    if not columns:
+        msg = 'ROOT tree does not contain any readable columns'
+        raise ValueError(msg)
+    selected = {name: np.asarray(values) for name, values in columns.items()}
     return from_numpy(selected, p4s=p4s, aux=aux, aliases=aliases)
 
 
@@ -418,7 +414,7 @@ def _open_amptools_format(
     return Dataset(events, p4_names=p4_names, aux_names=aux_names)
 
 
-def _select_uproot_tree(file: Any, tree_name: str | None) -> Any:
+def _select_uproot_tree(file: _UprootFile, tree_name: str | None) -> _UprootTree:
     if tree_name:
         try:
             return file[tree_name]
@@ -438,49 +434,6 @@ def _select_uproot_tree(file: Any, tree_name: str | None) -> Any:
         msg = f"Multiple TTrees found ({tree_candidates}); please specify the 'tree' argument"
         raise ValueError(msg)
     return file[tree_candidates[0]]
-
-
-def _prepare_uproot_columns(
-    columns: dict[str, np.ndarray],
-    *,
-    p4s: list[str] | None,
-    aux: list[str] | None,
-) -> dict[str, np.ndarray]:
-    if not columns:
-        msg = 'ROOT tree does not contain any readable columns'
-        raise ValueError(msg)
-
-    data = {name: np.asarray(values) for name, values in columns.items()}
-    p4_names = _infer_p4_names(data) if p4s is None else p4s
-
-    component_columns = [
-        f'{name}_{suffix}' for name in p4_names for suffix in ('px', 'py', 'pz', 'e')
-    ]
-    missing_components = [col for col in component_columns if col not in data]
-    if missing_components:
-        msg = f'Missing components {missing_components} in ROOT data'
-        raise KeyError(msg)
-
-    used_components = set(component_columns)
-
-    if aux is None:
-        aux_names = _infer_aux_names(data, used_components)
-    else:
-        aux_names = aux
-        missing_aux = [col for col in aux_names if col not in data]
-        if missing_aux:
-            msg = f'Missing auxiliary columns {missing_aux}'
-            raise KeyError(msg)
-
-    selected: dict[str, np.ndarray] = {}
-    for name in component_columns:
-        selected[name] = data[name]
-    for name in aux_names:
-        selected[name] = data[name]
-    if 'weight' in data:
-        selected['weight'] = data['weight']
-
-    return selected
 
 
 @dataclass
@@ -578,12 +531,20 @@ def _coalesce_numpy_batches(
     }
 
 
-def _read_amptools_scalar(branch: Any, *, entry_stop: int | None = None) -> np.ndarray:
+def _read_amptools_scalar(
+    branch: _UprootBranch,
+    *,
+    entry_stop: int | None = None,
+) -> np.ndarray:
     array = branch.array(library='np', entry_stop=entry_stop)
     return np.asarray(array, dtype=np.float32)
 
 
-def _read_amptools_matrix(branch: Any, *, entry_stop: int | None = None) -> np.ndarray:
+def _read_amptools_matrix(
+    branch: _UprootBranch,
+    *,
+    entry_stop: int | None = None,
+) -> np.ndarray:
     raw = branch.array(library='np', entry_stop=entry_stop)
     return np.asarray(list(raw), dtype=np.float32)
 
@@ -594,11 +555,14 @@ def _load_amptools_arrays(
     *,
     entry_stop: int | None,
 ) -> tuple[np.ndarray, ...]:
-    uproot_module = _import_optional_dependency(
-        'uproot',
-        extra='uproot',
-        feature='laddu.io.read_amptools',
-    )
+    try:
+        import uproot as uproot_module
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.read_amptools requires the optional dependency 'uproot'. "
+            'Install it with `pip install laddu[uproot]` or `pip install laddu-mpi[uproot]`.'
+        )
+        raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as file:
         try:
             tree = file[tree_name]

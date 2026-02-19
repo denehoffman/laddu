@@ -1,6 +1,9 @@
 import os
 from typing import Literal, Mapping, Sequence
 
+import numpy as np
+import numpy.typing as npt
+
 from laddu.amplitudes import (
     Evaluator,
     Expression,
@@ -130,6 +133,7 @@ __all__ = [
     'expr_product',
     'expr_sum',
     'finalize_mpi',
+    'from_columns',
     'get_rank',
     'get_size',
     'integrated_autocorrelation_times',
@@ -182,6 +186,17 @@ def read_parquet(
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     """Load a dataset from a Parquet file using the loaded backend."""
+
+def from_columns(
+    columns: Mapping[
+        str, Sequence[float] | npt.NDArray[np.float32] | npt.NDArray[np.float64]
+    ],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset:
+    """Build a dataset from in-memory columnar arrays."""
 
 def read_root(
     path: str | os.PathLike[str],
