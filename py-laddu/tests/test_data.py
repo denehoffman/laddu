@@ -354,6 +354,21 @@ def test_from_dict_accepts_names_and_aliases() -> None:
     _assert_vec4_close(alias, beam)
 
 
+def test_from_dict_accepts_non_contiguous_columns() -> None:
+    base = np.arange(12.0)
+    data = {
+        'beam_px': base[0:8:2],
+        'beam_py': base[1:9:2],
+        'beam_pz': base[2:10:2],
+        'beam_e': base[3:11:2],
+    }
+    assert not np.asarray(data['beam_px']).flags.c_contiguous
+
+    dataset = ldio.from_dict(data, p4s=['beam'], aux=[])
+    assert dataset.n_events == 4
+    assert pytest.approx(dataset[1].p4s['beam'].px) == float(data['beam_px'][1])
+
+
 def test_from_numpy_propagates_aliases_and_names() -> None:
     data = {
         'beam_px': np.array([0.0]),
