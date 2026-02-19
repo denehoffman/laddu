@@ -572,7 +572,7 @@ impl PyDataset {
     /// Returns
     /// -------
     /// datasets : BinnedDataset
-    ///     A pub structure that holds a list of Datasets binned by the given `variable`
+    ///     A structure containing Datasets binned by the given `variable`
     ///
     /// See Also
     /// --------
