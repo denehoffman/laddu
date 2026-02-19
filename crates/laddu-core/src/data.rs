@@ -255,47 +255,6 @@ impl Clone for DatasetStorage {
 }
 
 impl DatasetStorage {
-    /// Build a columnar dataset from an event-row dataset.
-    pub(crate) fn from_dataset(dataset: &Dataset) -> LadduResult<Self> {
-        let n_events = dataset.events.len();
-        let (n_p4, n_aux) = match dataset.events.first() {
-            Some(first) => (first.p4s.len(), first.aux.len()),
-            None => (
-                dataset.metadata.p4_names.len(),
-                dataset.metadata.aux_names.len(),
-            ),
-        };
-        let mut p4 = (0..n_p4)
-            .map(|_| ColumnarP4Column::with_capacity(n_events))
-            .collect::<Vec<_>>();
-        let mut aux = (0..n_aux)
-            .map(|_| Vec::with_capacity(n_events))
-            .collect::<Vec<_>>();
-        let mut weights = Vec::with_capacity(n_events);
-        for (event_index, event) in dataset.events.iter().enumerate() {
-            if event.p4s.len() != n_p4 || event.aux.len() != n_aux {
-                return Err(LadduError::Custom(format!(
-                    "Ragged dataset shape at event {event_index}: expected ({n_p4} p4, {n_aux} aux), got ({} p4, {} aux)",
-                    event.p4s.len(),
-                    event.aux.len()
-                )));
-            }
-            for (column, value) in p4.iter_mut().zip(event.p4s.iter()) {
-                column.push(*value);
-            }
-            for (column, value) in aux.iter_mut().zip(event.aux.iter()) {
-                column.push(*value);
-            }
-            weights.push(event.weight);
-        }
-        Ok(Self {
-            metadata: dataset.metadata.clone(),
-            p4,
-            aux,
-            weights,
-        })
-    }
-
     /// Convert this columnar dataset back to a row-event dataset.
     pub(crate) fn to_dataset(&self) -> Dataset {
         let events = (0..self.n_events())
@@ -1324,11 +1283,6 @@ impl Dataset {
         Dataset::new_local(events, metadata)
     }
 
-    /// Convert this row-event dataset to columnar layout.
-    pub(crate) fn to_storage(&self) -> LadduResult<DatasetStorage> {
-        Ok(self.columnar.clone())
-    }
-
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
@@ -1668,14 +1622,6 @@ impl Dataset {
         variable.value_on(self)
     }
 
-    fn write_parquet_impl(
-        &self,
-        file_path: PathBuf,
-        options: &DatasetWriteOptions,
-    ) -> LadduResult<()> {
-        self.columnar.write_parquet_impl(file_path, options)
-    }
-
     fn write_root_impl(
         &self,
         file_path: PathBuf,
@@ -1757,16 +1703,6 @@ pub(crate) fn read_parquet_storage(
     read_parquet_columnar_local(builder, metadata)
 }
 
-fn read_parquet_local(
-    builder: ParquetRecordBatchReaderBuilder<File>,
-    metadata: Arc<DatasetMetadata>,
-) -> LadduResult<Arc<Dataset>> {
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let events = batches_to_events(batches, metadata.as_ref())?;
-    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
-}
-
 fn read_parquet_columnar_local(
     builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
@@ -1802,56 +1738,6 @@ fn read_parquet_columnar_local(
         aux,
         weights,
     }))
-}
-
-#[cfg(feature = "mpi")]
-fn read_parquet_mpi(
-    mut builder: ParquetRecordBatchReaderBuilder<File>,
-    metadata: Arc<DatasetMetadata>,
-    world: &SimpleCommunicator,
-) -> LadduResult<Arc<Dataset>> {
-    let parquet_metadata = builder.metadata().clone();
-    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
-    if total_rows == 0 {
-        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
-    }
-
-    let partition = world.partition(total_rows);
-    let rank = world.rank() as usize;
-    let local_range = partition.range_for_rank(rank);
-    let local_start = local_range.start;
-    let local_end = local_range.end;
-    if local_start == local_end {
-        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
-    }
-
-    let (row_groups, first_row_start) =
-        row_groups_for_range(&parquet_metadata, local_start, local_end);
-    if !row_groups.is_empty() {
-        builder = builder.with_row_groups(row_groups);
-    }
-
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let mut events = batches_to_events(batches, metadata.as_ref())?;
-
-    let drop_front = local_start.saturating_sub(first_row_start);
-    if drop_front > 0 {
-        events.drain(0..drop_front);
-    }
-    let expected_local = local_end - local_start;
-    if events.len() > expected_local {
-        events.truncate(expected_local);
-    }
-    if events.len() != expected_local {
-        return Err(LadduError::LengthMismatch {
-            context: format!("Loaded rows for MPI rank {rank}"),
-            expected: expected_local,
-            actual: events.len(),
-        });
-    }
-
-    Ok(Arc::new(Dataset::new_local(events, metadata)))
 }
 
 #[cfg(feature = "mpi")]
@@ -1952,36 +1838,6 @@ fn row_groups_for_range(
     }
 
     (selected, first_row_start)
-}
-
-fn batches_to_events(
-    batches: Vec<RecordBatch>,
-    metadata: &DatasetMetadata,
-) -> LadduResult<Vec<Arc<EventData>>> {
-    #[cfg(feature = "rayon")]
-    {
-        let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
-            .into_par_iter()
-            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-            .collect();
-        let mut events = Vec::new();
-        for batch in batch_events {
-            let mut batch = batch?;
-            events.append(&mut batch);
-        }
-        Ok(events)
-    }
-
-    #[cfg(not(feature = "rayon"))]
-    {
-        Ok(batches
-            .into_iter()
-            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-            .collect::<LadduResult<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect())
-    }
 }
 
 fn empty_dataset_columnar(metadata: Arc<DatasetMetadata>) -> DatasetStorage {
@@ -2108,7 +1964,6 @@ struct RootReadColumns {
     p4_columns: Vec<RootP4Columns>,
     aux_columns: Vec<Vec<f64>>,
     weight_values: Vec<f64>,
-    n_events: usize,
 }
 
 fn read_root_columns(
@@ -2239,7 +2094,6 @@ fn read_root_columns(
         p4_columns,
         aux_columns,
         weight_values,
-        n_events,
     })
 }
 
@@ -2249,10 +2103,12 @@ pub fn write_parquet(
     file_path: &str,
     options: &DatasetWriteOptions,
 ) -> LadduResult<()> {
-    write_parquet_storage(&dataset.columnar, file_path, options)
+    let path = expand_output_path(file_path)?;
+    dataset.columnar.write_parquet_impl(path, options)
 }
 
 /// Persist a [`DatasetStorage`] to a Parquet file.
+#[cfg(test)]
 pub(crate) fn write_parquet_storage(
     dataset: &DatasetStorage,
     file_path: &str,
@@ -2705,53 +2561,6 @@ fn prepare_float_column_from_candidates<'a>(
     find_float_column_from_candidates(batch, candidates)?.ok_or_else(|| LadduError::MissingColumn {
         name: logical_name.to_string(),
     })
-}
-
-fn record_batch_to_events(
-    batch: RecordBatch,
-    p4_names: &[String],
-    aux_names: &[String],
-) -> LadduResult<Vec<Arc<EventData>>> {
-    let batch_ref = &batch;
-    let p4_columns: Vec<P4Columns<'_>> = p4_names
-        .iter()
-        .map(|name| prepare_p4_columns(batch_ref, name))
-        .collect::<Result<_, _>>()?;
-
-    let aux_columns: Vec<FloatColumn<'_>> = aux_names
-        .iter()
-        .map(|name| prepare_float_column(batch_ref, name))
-        .collect::<Result<_, _>>()?;
-
-    let weight_column = find_float_column_from_candidates(batch_ref, &["weight".to_string()])?;
-
-    let mut events = Vec::with_capacity(batch_ref.num_rows());
-    for row in 0..batch_ref.num_rows() {
-        let mut p4s = Vec::with_capacity(p4_columns.len());
-        for columns in &p4_columns {
-            let px = columns.px.value(row);
-            let py = columns.py.value(row);
-            let pz = columns.pz.value(row);
-            let e = columns.e.value(row);
-            p4s.push(Vec4::new(px, py, pz, e));
-        }
-
-        let mut aux = Vec::with_capacity(aux_columns.len());
-        for column in &aux_columns {
-            aux.push(column.value(row));
-        }
-
-        let event = EventData {
-            p4s,
-            aux,
-            weight: weight_column
-                .as_ref()
-                .map(|column| column.value(row))
-                .unwrap_or(1.0),
-        };
-        events.push(Arc::new(event));
-    }
-    Ok(events)
 }
 
 fn columnar_range_to_record_batch(
@@ -3442,9 +3251,7 @@ mod tests {
                 weight: 0.52,
             }),
         ]);
-        let columnar = dataset
-            .to_storage()
-            .expect("columnar conversion should succeed");
+        let columnar = dataset.columnar.clone();
         assert_eq!(columnar.n_events(), dataset.n_events_local());
         for event_index in 0..dataset.n_events_local() {
             let row = dataset.event(event_index).expect("event should exist");
@@ -3492,9 +3299,7 @@ mod tests {
     #[test]
     fn test_dataset_columnar_named_row_view_matches_event_accessors() {
         let dataset = test_dataset();
-        let columnar = dataset
-            .to_storage()
-            .expect("columnar conversion should succeed");
+        let columnar = dataset.columnar.clone();
         let row = columnar.event_view(0);
         let named = dataset.named_event(0).expect("named event should exist");
 
@@ -3522,9 +3327,7 @@ mod tests {
     #[test]
     fn test_dataset_columnar_row_view_variable_evaluation_matches_event_data() {
         let dataset = test_dataset();
-        let columnar = dataset
-            .to_storage()
-            .expect("columnar conversion should succeed");
+        let columnar = dataset.columnar.clone();
         let row = columnar.event_view(0);
         let named = dataset.named_event(0).expect("event should exist");
         let mut mass = Mass::new(["proton"]);
@@ -3558,9 +3361,7 @@ mod tests {
     fn test_named_event_access_trait_matches_aos_and_columnar_views() {
         let dataset = test_dataset();
         let aos = dataset.named_event(0).expect("event should exist");
-        let columnar_storage = dataset
-            .to_storage()
-            .expect("columnar conversion should succeed");
+        let columnar_storage = dataset.columnar.clone();
         let columnar = columnar_storage.event_view(0);
 
         let aos_beam =
@@ -3977,7 +3778,7 @@ mod tests {
         let path = test_data_path("data_f32.parquet");
         let path_str = path.to_str().expect("path should be valid UTF-8");
         let aos = read_parquet(path_str, &DatasetReadOptions::new()).expect("aos load should work");
-        let columnar_from_aos = aos.to_storage().expect("aos->columnar should work");
+        let columnar_from_aos = aos.columnar.clone();
         let columnar_direct = read_parquet_storage(path_str, &DatasetReadOptions::new())
             .expect("columnar load should work");
         assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
@@ -4008,7 +3809,7 @@ mod tests {
         let path_str = path.to_str().expect("path should be valid UTF-8");
         let aos =
             read_root(path_str, &DatasetReadOptions::new()).expect("root aos load should work");
-        let columnar_from_aos = aos.to_storage().expect("aos->columnar should work");
+        let columnar_from_aos = aos.columnar.clone();
         let columnar_direct = read_root_storage(path_str, &DatasetReadOptions::new())
             .expect("root columnar load should work");
         assert_dataset_columnar_close(&columnar_from_aos, &columnar_direct);
