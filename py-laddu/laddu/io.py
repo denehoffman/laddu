@@ -21,8 +21,7 @@ from laddu.laddu import read_root as _backend_read_root
 from laddu.laddu import write_parquet as _backend_write_parquet
 from laddu.laddu import write_root as _backend_write_root
 
-from .data import Dataset, Event
-from .utils.vectors import Vec4
+from .data import Dataset
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -94,15 +93,15 @@ def _normalize_ingestion_columns(data: Mapping[str, ColumnInput]) -> NumpyColumn
             raise ValueError(msg)
 
         if column.dtype in (np.float32, np.float64):
-            normalized[name] = column
+            normalized[name] = np.ascontiguousarray(column)
             continue
 
         if column.dtype.kind in {'b', 'i', 'u', 'f'}:
-            normalized[name] = column.astype(np.float64, copy=False)
+            normalized[name] = np.ascontiguousarray(column.astype(np.float64, copy=False))
             continue
 
         try:
-            normalized[name] = column.astype(np.float64)
+            normalized[name] = np.ascontiguousarray(column.astype(np.float64))
         except (TypeError, ValueError) as exc:
             msg = (
                 f"Column '{name}' is not a numeric one-dimensional array and cannot be "
@@ -378,8 +377,7 @@ def _open_with_uproot(
     if not columns:
         msg = 'ROOT tree does not contain any readable columns'
         raise ValueError(msg)
-    selected = {name: np.asarray(values) for name, values in columns.items()}
-    return from_numpy(selected, p4s=p4s, aux=aux, aliases=aliases)
+    return from_dict(columns, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def _open_amptools_format(
@@ -397,52 +395,21 @@ def _open_amptools_format(
     polarisation_requested = pol_in_beam or (
         pol_angle is not None and pol_magnitude is not None
     )
-    p4s_list, aux_rows, weight_list = _read_amptools_events(
-        path,
-        tree or 'kin',
+    arrays = _load_amptools_arrays(path, tree or 'kin', entry_stop=num_entries)
+    amptools_data = _prepare_amptools_data(
+        *arrays,
         pol_in_beam=pol_in_beam,
         pol_angle_rad=pol_angle_rad,
         pol_magnitude=pol_magnitude,
-        num_entries=num_entries,
     )
-
-    if not p4s_list:
-        msg = 'AmpTools source produced no events'
-        raise ValueError(msg)
-
-    n_particles = len(p4s_list[0])
-    if n_particles == 0:
-        msg = 'AmpTools source produced no particles'
-        raise ValueError(msg)
-
-    p4_names = ['beam']
-    if n_particles > 1:
-        p4_names.extend(f'final_state_{i}' for i in range(n_particles - 1))
-
-    aux_names: list[str] = []
-    if aux_rows and aux_rows[0]:
-        if polarisation_requested and len(aux_rows[0]) >= 2:
-            aux_names = [pol_magnitude_name, pol_angle_name]
-            extra = len(aux_rows[0]) - 2
-            if extra > 0:
-                aux_names.extend(f'aux_{i}' for i in range(extra))
-        else:
-            aux_names = [f'aux_{i}' for i in range(len(aux_rows[0]))]
-
-    events: list[Event] = []
-    for p4s, aux_values, weight in zip(p4s_list, aux_rows, weight_list):
-        p4_vectors = [Vec4.from_array(p4) for p4 in p4s]
-        aux_floats = [float(value) for value in aux_values]
-        events.append(
-            Event(
-                p4_vectors,
-                aux_floats,
-                float(weight),
-                p4_names=p4_names,
-                aux_names=aux_names,
-            )
-        )
-    return Dataset(events, p4_names=p4_names, aux_names=aux_names)
+    columns, p4_names, aux_names = _amptools_columns(
+        amptools_data,
+        pol_in_beam=pol_in_beam,
+        polarisation_requested=polarisation_requested,
+        pol_magnitude_name=pol_magnitude_name,
+        pol_angle_name=pol_angle_name,
+    )
+    return from_dict(columns, p4s=p4_names, aux=aux_names)
 
 
 def _select_uproot_tree(file: _UprootFile, tree_name: str | None) -> _UprootTree:
@@ -701,63 +668,47 @@ def _prepare_amptools_data(
     )
 
 
-def _read_amptools_events(
-    path: Path,
-    tree: str,
+def _amptools_columns(
+    data: _AmpToolsData,
     *,
     pol_in_beam: bool,
-    pol_angle_rad: float | None,
-    pol_magnitude: float | None,
-    num_entries: int | None,
-) -> tuple[list[list[np.ndarray]], list[list[float]], list[float]]:
-    arrays = _load_amptools_arrays(path, tree, entry_stop=num_entries)
-    data = _prepare_amptools_data(
-        *arrays,
-        pol_in_beam=pol_in_beam,
-        pol_angle_rad=pol_angle_rad,
-        pol_magnitude=pol_magnitude,
-    )
-
+    polarisation_requested: bool,
+    pol_magnitude_name: str,
+    pol_angle_name: str,
+) -> tuple[NumpyColumns, list[str], list[str]]:
     n_events, n_finals = data.finals_e.shape
+    if n_events == 0:
+        msg = 'AmpTools source produced no events'
+        raise ValueError(msg)
+    if n_finals == 0:
+        msg = 'AmpTools source produced no particles'
+        raise ValueError(msg)
 
-    p4s_list: list[list[np.ndarray]] = []
-    for event_idx in range(n_events):
-        event_vectors: list[np.ndarray] = [
-            np.array(
-                [
-                    data.beam_px[event_idx],
-                    data.beam_py[event_idx],
-                    data.beam_pz[event_idx],
-                    data.beam_e[event_idx],
-                ],
-                dtype=np.float32,
-            )
-        ]
-        event_vectors.extend(
-            [
-                np.array(
-                    [
-                        data.finals_px[event_idx, final_idx],
-                        data.finals_py[event_idx, final_idx],
-                        data.finals_pz[event_idx, final_idx],
-                        data.finals_e[event_idx, final_idx],
-                    ],
-                    dtype=np.float32,
-                )
-                for final_idx in range(n_finals)
-            ]
-        )
-        p4s_list.append(event_vectors)
+    p4_names = ['beam', *(f'final_state_{i}' for i in range(n_finals))]
+    columns: NumpyColumns = {
+        'beam_px': data.beam_px,
+        'beam_py': data.beam_py,
+        'beam_pz': data.beam_pz,
+        'beam_e': data.beam_e,
+        'weight': data.weights,
+    }
+    for final_idx in range(n_finals):
+        name = f'final_state_{final_idx}'
+        columns[f'{name}_px'] = data.finals_px[:, final_idx]
+        columns[f'{name}_py'] = data.finals_py[:, final_idx]
+        columns[f'{name}_pz'] = data.finals_pz[:, final_idx]
+        columns[f'{name}_e'] = data.finals_e[:, final_idx]
 
+    aux_names: list[str] = []
     if data.pol_magnitude is not None and data.pol_angle is not None:
-        polarisation_values = np.column_stack((data.pol_magnitude, data.pol_angle))
-        aux_rows = polarisation_values.astype(np.float32).tolist()
-    else:
-        aux_rows = [[] for _ in range(n_events)]
+        aux_names = [pol_magnitude_name, pol_angle_name]
+        columns[pol_magnitude_name] = data.pol_magnitude
+        columns[pol_angle_name] = data.pol_angle
+    elif pol_in_beam or polarisation_requested:
+        msg = 'Polarization inputs were requested but no polarization data was available'
+        raise ValueError(msg)
 
-    weight_list = data.weights.tolist()
-
-    return p4s_list, aux_rows, weight_list
+    return columns, p4_names, aux_names
 
 
 __all__ = [
