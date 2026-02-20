@@ -1,4 +1,5 @@
 use super::ExpressionNode;
+use nalgebra::DVector;
 use num::complex::Complex64;
 use std::collections::HashMap;
 
@@ -178,6 +179,193 @@ impl ExpressionIR {
 
     pub(super) fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
+        debug_assert!(slots.len() >= self.nodes.len());
+        for (node_index, node) in self.nodes.iter().enumerate() {
+            slots[node_index] = match *node {
+                IrNode::Constant(value) => value,
+                IrNode::Amp(amp_idx) => amplitude_values.get(amp_idx).copied().unwrap_or_default(),
+                IrNode::Unary { op, input } => {
+                    let value = slots[input];
+                    match op {
+                        IrUnaryOp::Neg => -value,
+                        IrUnaryOp::Real => Complex64::new(value.re, 0.0),
+                        IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
+                        IrUnaryOp::Conj => value.conj(),
+                        IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+                    }
+                }
+                IrNode::Binary { op, left, right } => {
+                    let left_value = slots[left];
+                    let right_value = slots[right];
+                    match op {
+                        IrBinaryOp::Add => left_value + right_value,
+                        IrBinaryOp::Sub => left_value - right_value,
+                        IrBinaryOp::Mul => left_value * right_value,
+                        IrBinaryOp::Div => left_value / right_value,
+                    }
+                }
+            };
+        }
+    }
+
+    pub(super) fn evaluate_into(
+        &self,
+        amplitude_values: &[Complex64],
+        value_slots: &mut [Complex64],
+    ) -> Complex64 {
+        if self.nodes.is_empty() {
+            return Complex64::ZERO;
+        }
+        self.fill_values(amplitude_values, value_slots);
+        value_slots[self.root]
+    }
+
+    pub(super) fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        let mut value_slots = vec![Complex64::ZERO; self.nodes.len()];
+        self.evaluate_into(amplitude_values, &mut value_slots)
+    }
+
+    pub(super) fn evaluate_gradient_into(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        if self.nodes.is_empty() {
+            let grad_dim = amplitude_gradients.first().map(|g| g.len()).unwrap_or(0);
+            return DVector::zeros(grad_dim);
+        }
+        self.fill_values(amplitude_values, value_slots);
+        for (node_index, node) in self.nodes.iter().enumerate() {
+            let (before, tail) = gradient_slots.split_at_mut(node_index);
+            let (dst_grad, _) = tail
+                .split_first_mut()
+                .expect("destination gradient slot should exist");
+            match *node {
+                IrNode::Constant(_) => {
+                    for value in dst_grad.iter_mut() {
+                        *value = Complex64::ZERO;
+                    }
+                }
+                IrNode::Amp(amp_idx) => {
+                    if let Some(source) = amplitude_gradients.get(amp_idx) {
+                        dst_grad.clone_from(source);
+                    } else {
+                        for value in dst_grad.iter_mut() {
+                            *value = Complex64::ZERO;
+                        }
+                    }
+                }
+                IrNode::Unary { op, input } => {
+                    let input_grad = &before[input];
+                    match op {
+                        IrUnaryOp::Neg => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = -*input_item;
+                            }
+                        }
+                        IrUnaryOp::Real => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = Complex64::new(input_item.re, 0.0);
+                            }
+                        }
+                        IrUnaryOp::Imag => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = Complex64::new(input_item.im, 0.0);
+                            }
+                        }
+                        IrUnaryOp::Conj => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = input_item.conj();
+                            }
+                        }
+                        IrUnaryOp::NormSqr => {
+                            let conj_input = value_slots[input].conj();
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item =
+                                    Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
+                            }
+                        }
+                    }
+                }
+                IrNode::Binary { op, left, right } => {
+                    let left_grad = &before[left];
+                    let right_grad = &before[right];
+                    match op {
+                        IrBinaryOp::Add => {
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item + *right_item;
+                            }
+                        }
+                        IrBinaryOp::Sub => {
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item - *right_item;
+                            }
+                        }
+                        IrBinaryOp::Mul => {
+                            let left_value = value_slots[left];
+                            let right_value = value_slots[right];
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item * right_value + *right_item * left_value;
+                            }
+                        }
+                        IrBinaryOp::Div => {
+                            let left_value = value_slots[left];
+                            let right_value = value_slots[right];
+                            let denom = right_value * right_value;
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item =
+                                    (*left_item * right_value - *right_item * left_value) / denom;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        gradient_slots[self.root].clone()
+    }
+
+    pub(super) fn evaluate_gradient(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        let grad_dim = amplitude_gradients.first().map(|g| g.len()).unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; self.nodes.len()];
+        let mut gradient_slots: Vec<DVector<Complex64>> = (0..self.nodes.len())
+            .map(|_| DVector::zeros(grad_dim))
+            .collect();
+        self.evaluate_gradient_into(
+            amplitude_values,
+            amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+        )
     }
 }
 

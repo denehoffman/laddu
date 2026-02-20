@@ -23,6 +23,7 @@ fn next_amplitude_id() -> u64 {
     AMPLITUDE_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+#[cfg(feature = "expression-ir")]
 #[allow(dead_code)]
 mod ir;
 
@@ -1067,17 +1068,22 @@ impl Expression {
                 amplitude.precompute_all(dataset, &mut resources);
             }
         }
-        let mut active_amplitudes = vec![false; amplitudes.len()];
-        for &index in resources.active_indices() {
-            active_amplitudes[index] = true;
-        }
+        #[cfg(feature = "expression-ir")]
+        let expression_ir = {
+            let mut active_amplitudes = vec![false; amplitudes.len()];
+            for &index in resources.active_indices() {
+                active_amplitudes[index] = true;
+            }
+            ir::compile_expression_ir(&self.tree, &active_amplitudes)
+        };
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
             expression_program: ExpressionProgram::from_node(&self.tree),
-            expression_ir: ir::compile_expression_ir(&self.tree, &active_amplitudes),
+            #[cfg(feature = "expression-ir")]
+            expression_ir,
             registry: self.registry.clone(),
             parameter_manager,
         })
@@ -1203,6 +1209,7 @@ pub struct Evaluator {
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
     expression_program: ExpressionProgram,
+    #[cfg(feature = "expression-ir")]
     expression_ir: ir::ExpressionIR,
     registry: ExpressionRegistry,
     parameter_manager: ParameterManager,
@@ -1243,10 +1250,89 @@ impl Evaluator {
     }
 
     pub fn expression_slot_count(&self) -> usize {
-        self.expression_program.slot_count()
+        #[cfg(feature = "expression-ir")]
+        {
+            return self.expression_ir.node_count();
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program.slot_count()
+        }
     }
 
     pub fn evaluate_expression_value_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        #[cfg(feature = "expression-ir")]
+        {
+            return self.expression_ir.evaluate_into(amplitude_values, scratch);
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program
+                .evaluate_into(amplitude_values, scratch)
+        }
+    }
+
+    pub fn evaluate_expression_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        #[cfg(feature = "expression-ir")]
+        {
+            return self.expression_ir.evaluate_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            );
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program.evaluate_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            )
+        }
+    }
+
+    pub fn evaluate_expression_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        #[cfg(feature = "expression-ir")]
+        {
+            self.expression_ir.evaluate(amplitude_values)
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program.evaluate(amplitude_values)
+        }
+    }
+
+    pub fn evaluate_expression_gradient(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        #[cfg(feature = "expression-ir")]
+        {
+            self.expression_ir
+                .evaluate_gradient(amplitude_values, gradient_values)
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program
+                .evaluate_gradient(amplitude_values, gradient_values)
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_expression_value_with_program(
         &self,
         amplitude_values: &[Complex64],
         scratch: &mut [Complex64],
@@ -1255,7 +1341,8 @@ impl Evaluator {
             .evaluate_into(amplitude_values, scratch)
     }
 
-    pub fn evaluate_expression_gradient_with_scratch(
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_expression_gradient_with_program(
         &self,
         amplitude_values: &[Complex64],
         gradient_values: &[DVector<Complex64>],
@@ -1268,19 +1355,6 @@ impl Evaluator {
             value_scratch,
             gradient_scratch,
         )
-    }
-
-    pub fn evaluate_expression_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
-        self.expression_program.evaluate(amplitude_values)
-    }
-
-    pub fn evaluate_expression_gradient(
-        &self,
-        amplitude_values: &[Complex64],
-        gradient_values: &[DVector<Complex64>],
-    ) -> DVector<Complex64> {
-        self.expression_program
-            .evaluate_gradient(amplitude_values, gradient_values)
     }
 
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
@@ -2239,7 +2313,95 @@ mod tests {
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        assert!(evaluator.expression_ir.node_count() > 0);
+        assert!(evaluator.expression_slot_count() > 0);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_value_matches_program() {
+        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        .conj()
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_slots = vec![Complex64::ZERO; evaluator.expression_ir.node_count()];
+        let mut program_slots = vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
+        let ir_value =
+            evaluator.evaluate_expression_value_with_scratch(&amplitude_values, &mut ir_slots);
+        let program_value =
+            evaluator.evaluate_expression_value_with_program(&amplitude_values, &mut program_slots);
+        assert_relative_eq!(ir_value.re, program_value.re);
+        assert_relative_eq!(ir_value.im, program_value.im);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_gradient_matches_program() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            * TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_value_slots = vec![Complex64::ZERO; evaluator.expression_ir.node_count()];
+        let mut ir_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_ir.node_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let mut program_value_slots =
+            vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
+        let mut program_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_program.slot_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let ir_gradient = evaluator.evaluate_expression_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let program_gradient = evaluator.evaluate_expression_gradient_with_program(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut program_value_slots,
+            &mut program_gradient_slots,
+        );
+        for (ir, program) in ir_gradient.iter().zip(program_gradient.iter()) {
+            assert_relative_eq!(ir.re, program.re);
+            assert_relative_eq!(ir.im, program.im);
+        }
     }
 
     #[test]
