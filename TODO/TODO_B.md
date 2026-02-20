@@ -197,7 +197,7 @@ for p in params_iter {
 - [x] [B.O075.01][E:M][D:B.O081.18] Define IR nodes + pass pipeline (CSE, constant fold, activation specialization).
 - [x] [B.O075.02][E:M][D:B.O075.01] Compile from existing expression tree into IR once per load.
 - [x] [B.O075.03][E:M][D:B.O075.02] Execute IR for value/gradient on representative models.
-- [ ] [B.O075.04][E:S][D:B.O075.03] Compare with current evaluator for speed and maintainability.
+- [x] [B.O075.04][E:S][D:B.O075.03] Compare with current evaluator for speed and maintainability. (near-parity on value/gradient microbenchmarks; small mixed deltas within noise)
 
 ### Pseudocode
 ```rust

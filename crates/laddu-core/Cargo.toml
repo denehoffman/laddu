@@ -53,6 +53,10 @@ harness = false
 name = "execution_context_benchmark"
 harness = false
 
+[[bench]]
+name = "expression_ir_benchmarks"
+harness = false
+
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]

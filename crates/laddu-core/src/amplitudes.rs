@@ -1331,32 +1331,6 @@ impl Evaluator {
         }
     }
 
-    #[cfg(feature = "expression-ir")]
-    fn evaluate_expression_value_with_program(
-        &self,
-        amplitude_values: &[Complex64],
-        scratch: &mut [Complex64],
-    ) -> Complex64 {
-        self.expression_program
-            .evaluate_into(amplitude_values, scratch)
-    }
-
-    #[cfg(feature = "expression-ir")]
-    fn evaluate_expression_gradient_with_program(
-        &self,
-        amplitude_values: &[Complex64],
-        gradient_values: &[DVector<Complex64>],
-        value_scratch: &mut [Complex64],
-        gradient_scratch: &mut [DVector<Complex64>],
-    ) -> DVector<Complex64> {
-        self.expression_program.evaluate_gradient_into(
-            amplitude_values,
-            gradient_values,
-            value_scratch,
-            gradient_scratch,
-        )
-    }
-
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
@@ -2339,8 +2313,9 @@ mod tests {
         let mut program_slots = vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
         let ir_value =
             evaluator.evaluate_expression_value_with_scratch(&amplitude_values, &mut ir_slots);
-        let program_value =
-            evaluator.evaluate_expression_value_with_program(&amplitude_values, &mut program_slots);
+        let program_value = evaluator
+            .expression_program
+            .evaluate_into(&amplitude_values, &mut program_slots);
         assert_relative_eq!(ir_value.re, program_value.re);
         assert_relative_eq!(ir_value.im, program_value.im);
     }
@@ -2392,7 +2367,7 @@ mod tests {
             &mut ir_value_slots,
             &mut ir_gradient_slots,
         );
-        let program_gradient = evaluator.evaluate_expression_gradient_with_program(
+        let program_gradient = evaluator.expression_program.evaluate_gradient_into(
             &amplitude_values,
             &amplitude_gradients,
             &mut program_value_slots,
