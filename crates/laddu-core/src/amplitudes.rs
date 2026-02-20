@@ -1067,12 +1067,17 @@ impl Expression {
                 amplitude.precompute_all(dataset, &mut resources);
             }
         }
+        let mut active_amplitudes = vec![false; amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_amplitudes[index] = true;
+        }
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
             expression_program: ExpressionProgram::from_node(&self.tree),
+            expression_ir: ir::compile_expression_ir(&self.tree, &active_amplitudes),
             registry: self.registry.clone(),
             parameter_manager,
         })
@@ -1198,6 +1203,7 @@ pub struct Evaluator {
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
     expression_program: ExpressionProgram,
+    expression_ir: ir::ExpressionIR,
     registry: ExpressionRegistry,
     parameter_manager: ParameterManager,
 }
@@ -2224,6 +2230,16 @@ mod tests {
         assert_eq!(result_grad[0][1], Complex64::new(0.0, 10.0));
         assert_eq!(result_grad[1][0], Complex64::new(12.0, 0.0));
         assert_eq!(result_grad[1][1], Complex64::new(0.0, 12.0));
+    }
+
+    #[test]
+    fn test_load_compiles_expression_ir_once() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator.expression_ir.node_count() > 0);
     }
 
     #[test]

@@ -37,7 +37,7 @@ enum IrNode {
 }
 
 #[derive(Clone, Debug)]
-struct ExpressionIR {
+pub(super) struct ExpressionIR {
     nodes: Vec<IrNode>,
     root: IrValueId,
 }
@@ -176,9 +176,22 @@ impl ExpressionIR {
         Self { nodes, root }
     }
 
-    fn node_count(&self) -> usize {
+    pub(super) fn node_count(&self) -> usize {
         self.nodes.len()
     }
+}
+
+pub(super) fn compile_expression_ir(
+    tree: &ExpressionNode,
+    active_amplitudes: &[bool],
+) -> ExpressionIR {
+    let mut ir = ExpressionIR::from_expression_node(tree);
+    ExpressionIrPipeline::new()
+        .cse()
+        .activation_specialize(active_amplitudes.to_vec())
+        .constant_fold()
+        .run(&mut ir);
+    ir
 }
 
 struct ConstantFoldPass;
