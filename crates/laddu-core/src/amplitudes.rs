@@ -23,6 +23,9 @@ fn next_amplitude_id() -> u64 {
     AMPLITUDE_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+#[allow(dead_code)]
+mod ir;
+
 use crate::{
     data::{Dataset, DatasetMetadata, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
