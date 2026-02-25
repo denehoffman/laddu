@@ -1282,14 +1282,26 @@ impl StochasticNLL {
     pub fn n_parameters(&self) -> usize {
         self.nll.n_parameters()
     }
-    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+    #[cfg(feature = "mpi")]
+    fn data_batch_weight_local(&self, indices: &[usize]) -> f64 {
+        #[cfg(feature = "rayon")]
+        return indices
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        return indices
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .sum_with_accumulator::<Klein<f64>>();
+    }
+
+    fn evaluate_terms_local(&self, parameters: &[f64], indices: &[usize]) -> (f64, f64) {
         let data_result = self
             .nll
             .data_evaluator
             .evaluate_batch_local(parameters, indices);
         let mc_result = self.nll.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         {
             let data_term: f64 = indices
@@ -1305,7 +1317,7 @@ impl StochasticNLL {
                 .zip(self.nll.accmc_evaluator.dataset.events_local().par_iter())
                 .map(|(l, e)| e.weight * l.re)
                 .parallel_sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+            (data_term, mc_term)
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -1322,8 +1334,15 @@ impl StochasticNLL {
                 .zip(self.nll.accmc_evaluator.dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re)
                 .sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+            (data_term, mc_term)
         }
+    }
+
+    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted_local();
+        let (data_term, mc_term) = self.evaluate_terms_local(parameters, indices);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1335,39 +1354,27 @@ impl StochasticNLL {
     ) -> f64 {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
-        let n_data_batch_local = {
-            #[cfg(feature = "rayon")]
-            {
-                indices
-                    .par_iter()
-                    .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
-                    .parallel_sum_with_accumulator::<Klein<f64>>()
-            }
-            #[cfg(not(feature = "rayon"))]
-            {
-                indices
-                    .iter()
-                    .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
-                    .sum_with_accumulator::<Klein<f64>>()
-            }
-        };
+        let n_data_batch_local = self.data_batch_weight_local(&locals);
+        let n_data_total_local = self.nll.data_evaluator.dataset.n_events_weighted_local();
+        let n_mc_local = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let (data_term_local, mc_term_local) = self.evaluate_terms_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
-        let local_evaluation = self.evaluate_local(parameters, &locals, n_data_batch);
-        reduce_scalar(world, local_evaluation)
+        let n_data_total = reduce_scalar(world, n_data_total_local);
+        let n_mc = reduce_scalar(world, n_mc_local);
+        let data_term = reduce_scalar(world, data_term_local);
+        let mc_term = reduce_scalar(world, mc_term_local);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
 
-    fn evaluate_gradient_local(
+    fn evaluate_gradient_terms_local(
         &self,
         parameters: &[f64],
         indices: &[usize],
-        n_data_batch: f64,
-    ) -> DVector<f64> {
+    ) -> (DVector<f64>, DVector<f64>) {
         let data_resources = self.nll.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
         let mc_resources = self.nll.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = indices
             .par_iter()
@@ -1566,6 +1573,18 @@ impl StochasticNLL {
             })
             .map(|(w, g)| w * g.map(|gi| gi.re))
             .sum();
+        (data_term, mc_term)
+    }
+
+    fn evaluate_gradient_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+        n_data_batch: f64,
+    ) -> DVector<f64> {
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted_local();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let (data_term, mc_term) = self.evaluate_gradient_terms_local(parameters, indices);
         -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
 
@@ -1578,25 +1597,17 @@ impl StochasticNLL {
     ) -> DVector<f64> {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
-        let n_data_batch_local = {
-            #[cfg(feature = "rayon")]
-            {
-                indices
-                    .par_iter()
-                    .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
-                    .parallel_sum_with_accumulator::<Klein<f64>>()
-            }
-            #[cfg(not(feature = "rayon"))]
-            {
-                indices
-                    .iter()
-                    .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
-                    .sum_with_accumulator::<Klein<f64>>()
-            }
-        };
+        let n_data_batch_local = self.data_batch_weight_local(&locals);
+        let n_data_total_local = self.nll.data_evaluator.dataset.n_events_weighted_local();
+        let n_mc_local = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let (data_term_local, mc_term_local) =
+            self.evaluate_gradient_terms_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
-        let local_gradient = self.evaluate_gradient_local(parameters, &locals, n_data_batch);
-        reduce_gradient(world, &local_gradient)
+        let n_data_total = reduce_scalar(world, n_data_total_local);
+        let n_mc = reduce_scalar(world, n_mc_local);
+        let data_term = reduce_gradient(world, &data_term_local);
+        let mc_term = reduce_gradient(world, &mc_term_local);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
 }
 
@@ -4055,6 +4066,7 @@ pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
 #[cfg(test)]
 mod tests {
     use super::{LikelihoodScalar, LikelihoodTerm, NLL};
+    #[cfg(feature = "mpi")]
     use accurate::{sum::Klein, traits::SumWithAccumulator};
     use approx::assert_relative_eq;
     #[cfg(feature = "mpi")]
