@@ -214,7 +214,7 @@ let ir = compile_expression(expr)
 
 ## O080: MPI Objective Model Prototype
 ### Subtasks
-- [ ] [B.O080.01][E:L][D:B.O075.04] Prototype rank-local event ownership objective.
+- [x] [B.O080.01][E:L][D:B.O075.04] Prototype rank-local event ownership objective. (2026-02-25: `717348b`, `26c61b9`)
 - [ ] [B.O080.02][E:M][D:B.O080.01] Reduce only aggregate objective/gradient values by default.
 - [ ] [B.O080.03][E:M][D:B.O080.02] Keep explicit gather path for per-event outputs.
 - [ ] [B.O080.04][E:S][D:B.O080.03] Measure communication reduction and semantic/API impact.
