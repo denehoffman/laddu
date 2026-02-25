@@ -13,6 +13,8 @@ readme = "README.md"
 [dependencies]
 laddu-core = { workspace = true }
 laddu-python = { workspace = true, optional = true }
+laddu-amplitudes = { workspace = true }
+approx = { workspace = true }
 
 accurate = { workspace = true }
 auto_ops = { workspace = true }
@@ -45,6 +47,10 @@ mpi = ["dep:mpi", "laddu-core/mpi"]
 approx = { workspace = true }
 serde = { workspace = true }
 typetag = { workspace = true }
+
+[[bin]]
+name = "mpi_nll_check"
+path = "bin/mpi_nll_check.rs"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]
