@@ -4079,7 +4079,7 @@ mod tests {
         Expression, LadduError, LadduResult,
     };
     #[cfg(feature = "mpi")]
-    use mpi::topology::SimpleCommunicator;
+    use mpi::topology::{Communicator, SimpleCommunicator};
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
@@ -4563,6 +4563,55 @@ mod tests {
         let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
         assert_relative_eq!(mpi_gradient, local_gradient);
 
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_projection_paths_are_explicit_global_gathers() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+        let (nll, params) = make_constant_nll();
+
+        let local_projection = nll
+            .project_local(&params, None)
+            .expect("local projection should evaluate");
+        let gathered_projection = nll
+            .project_mpi(&params, None, &world)
+            .expect("mpi projection should gather global projection");
+        let local_len = nll.accmc_evaluator.dataset.n_events_local();
+        let total_len = nll.accmc_evaluator.dataset.n_events();
+        assert_eq!(local_projection.len(), local_len);
+        assert_eq!(gathered_projection.len(), total_len);
+
+        let (counts, displs) = world.get_counts_displs(total_len);
+        let rank = world.rank() as usize;
+        let start = displs[rank] as usize;
+        let end = start + counts[rank] as usize;
+        assert_eq!(
+            &gathered_projection[start..end],
+            local_projection.as_slice()
+        );
+
+        let (local_weights, local_gradients) = nll
+            .project_gradient_local(&params, None)
+            .expect("local projection gradient should evaluate");
+        let (gathered_weights, gathered_gradients) = nll
+            .project_gradient_mpi(&params, None, &world)
+            .expect("mpi projection gradient should gather global projection");
+        assert_eq!(local_weights.len(), local_len);
+        assert_eq!(local_gradients.len(), local_len);
+        assert_eq!(gathered_weights.len(), total_len);
+        assert_eq!(gathered_gradients.len(), total_len);
+        assert_eq!(&gathered_weights[start..end], local_weights.as_slice());
+
+        let local_grad_slice = &gathered_gradients[start..end];
+        for (lhs, rhs) in local_grad_slice.iter().zip(local_gradients.iter()) {
+            assert_relative_eq!(lhs, rhs);
+        }
         finalize_mpi();
     }
 }
