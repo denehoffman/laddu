@@ -1050,7 +1050,7 @@ impl Expression {
     pub fn load(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
-        resources.reserve_cache(dataset.n_events());
+        resources.reserve_cache(dataset.n_events_local());
         resources.refresh_active_indices();
         let parameter_manager = ParameterManager::with_fixed_values(
             &resources.parameter_names(),
@@ -2458,6 +2458,44 @@ mod tests {
         for cache in &resources.caches {
             assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
         }
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_load_reserves_local_cache_size_in_mpi() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+
+        use_mpi(true);
+        let Some(_world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let expr = ComplexScalar::new(
+            "constant",
+            constant("const_re", 2.0),
+            constant("const_im", 3.0),
+        )
+        .expect("constant amplitude should construct");
+        let events = vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let local_events = dataset.n_events_local();
+        let cache_len = evaluator.resources.read().caches.len();
+
+        assert_eq!(
+            cache_len, local_events,
+            "cache length must match local event count under MPI"
+        );
+        finalize_mpi();
     }
 
     #[test]
