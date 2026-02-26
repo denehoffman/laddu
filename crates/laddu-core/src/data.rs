@@ -186,7 +186,14 @@ impl DatasetStorage {
         let events = (0..self.n_events())
             .map(|event_index| Arc::new(self.event_data(event_index)))
             .collect::<Vec<_>>();
-        Dataset::new_local(events, self.metadata.clone())
+        let mut dataset = Dataset::new_local(events, self.metadata.clone());
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                dataset.set_cached_global_event_count_from_world(&world);
+            }
+        }
+        dataset
     }
 
     /// Access metadata.
@@ -669,6 +676,10 @@ impl Dataset {
     #[cfg(test)]
     pub(crate) fn clear_events_local(&mut self) {
         self.events.clear();
+        #[cfg(feature = "mpi")]
+        {
+            self.cached_global_event_count = None;
+        }
     }
 
     /// Iterate over all events in the dataset. When MPI is enabled, this will visit
