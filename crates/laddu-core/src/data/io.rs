@@ -29,7 +29,14 @@ fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
 /// Load a [`Dataset`] from a Parquet file.
 pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
     let storage = read_parquet_storage(file_path, options)?;
-    Ok(Arc::new(storage.to_dataset()))
+    let mut dataset = storage.to_dataset();
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            dataset.set_cached_global_event_count_from_world(&world);
+        }
+    }
+    Ok(Arc::new(dataset))
 }
 
 pub(crate) fn read_parquet_storage(
@@ -271,7 +278,14 @@ fn trim_columnar_rows(columnar: &mut DatasetStorage, drop_front: usize, expected
 /// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
 pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
     let storage = read_root_storage(file_path, options)?;
-    Ok(Arc::new(storage.to_dataset()))
+    let mut dataset = storage.to_dataset();
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            dataset.set_cached_global_event_count_from_world(&world);
+        }
+    }
+    Ok(Arc::new(dataset))
 }
 
 pub(crate) fn read_root_storage(

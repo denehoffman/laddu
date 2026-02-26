@@ -969,6 +969,14 @@ where
 }
 
 impl Dataset {
+    #[cfg(feature = "mpi")]
+    pub(crate) fn set_cached_global_event_count_from_world(&mut self, world: &SimpleCommunicator) {
+        let local_count = self.n_events_local();
+        let mut counts = vec![0usize; world.size() as usize];
+        world.all_gather_into(&local_count, &mut counts);
+        self.cached_global_event_count = Some(counts.iter().sum());
+    }
+
     fn columnar_from_wrapped_events(
         events: &[Event],
         metadata: Arc<DatasetMetadata>,
@@ -1051,12 +1059,14 @@ impl Dataset {
             .collect();
         let columnar = Self::columnar_from_wrapped_events(&local, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
-        Dataset {
+        let mut dataset = Dataset {
             events: local,
             columnar,
             metadata,
             cached_global_event_count: None,
-        }
+        };
+        dataset.set_cached_global_event_count_from_world(world);
+        dataset
     }
 
     /// Create a new [`Dataset`] from a list of [`EventData`].
