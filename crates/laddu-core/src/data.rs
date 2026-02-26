@@ -809,7 +809,7 @@ impl Dataset {
         (0..partition.n_ranks())
             .map(|rank| {
                 let range = partition.range_for_rank(rank);
-                events[range.clone()].iter().cloned().collect()
+                events[range.clone()].to_vec()
             })
             .collect()
     }

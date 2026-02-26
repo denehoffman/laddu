@@ -9,13 +9,14 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
-use parking_lot::Mutex;
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
 #[cfg(feature = "mpi")]
 use parquet::file::metadata::ParquetMetaData;
 use std::{
+    cell::RefCell,
     fs::File,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
@@ -497,8 +498,8 @@ impl Dataset {
                     None
                 };
 
-                for source_rank in 0..(world.size() as usize) {
-                    let source_total_rows = local_counts[source_rank] as usize;
+                for (source_rank, source_count) in local_counts.iter().enumerate() {
+                    let source_total_rows = *source_count as usize;
                     let mut source_start = 0usize;
                     while source_start < source_total_rows {
                         let source_end = (source_start + batch_size).min(source_total_rows);
@@ -637,7 +638,7 @@ impl Dataset {
         #[cfg(feature = "mpi")]
         let mut world_opt = crate::mpi::get_world();
         #[cfg(feature = "mpi")]
-        let is_root = world_opt.as_ref().map_or(true, |world| world.rank() == 0);
+        let is_root = world_opt.as_ref().is_none_or(|world| world.rank() == 0);
         #[cfg(not(feature = "mpi"))]
         let is_root = true;
 
@@ -1248,14 +1249,14 @@ enum ColumnKind {
 }
 
 struct ColumnIterator<T> {
-    fetcher: Arc<Mutex<SharedEventFetcher>>,
+    fetcher: Rc<RefCell<SharedEventFetcher>>,
     index: usize,
     kind: ColumnKind,
     _marker: std::marker::PhantomData<T>,
 }
 
 impl<T> ColumnIterator<T> {
-    fn new(fetcher: Arc<Mutex<SharedEventFetcher>>, kind: ColumnKind) -> Self {
+    fn new(fetcher: Rc<RefCell<SharedEventFetcher>>, kind: ColumnKind) -> Self {
         Self {
             fetcher,
             index: 0,
@@ -1272,7 +1273,7 @@ where
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut fetcher = self.fetcher.lock();
+        let mut fetcher = self.fetcher.borrow_mut();
         let event = fetcher.event_for_index(self.index)?;
         self.index += 1;
 
@@ -1296,14 +1297,14 @@ fn build_root_column_iterators<T>(
 where
     T: FromF64,
 {
-    let fetcher = Arc::new(Mutex::new(SharedEventFetcher::new(
+    let fetcher = Rc::new(RefCell::new(SharedEventFetcher::new(
         dataset,
         world,
         total,
         branch_count,
     )));
-    let p4_names: Vec<String> = fetcher.lock().dataset.metadata.p4_names.clone();
-    let aux_names: Vec<String> = fetcher.lock().dataset.metadata.aux_names.clone();
+    let p4_names: Vec<String> = fetcher.borrow().dataset.metadata.p4_names.clone();
+    let aux_names: Vec<String> = fetcher.borrow().dataset.metadata.aux_names.clone();
     let mut iterators = Vec::new();
     for (idx, name) in p4_names.iter().enumerate() {
         iterators.push((

@@ -79,6 +79,7 @@ impl ScratchAllocator {
     }
 
     /// Ensure and return reusable workspaces for gradient evaluation.
+    #[allow(clippy::type_complexity)]
     pub fn reserve_gradient_workspaces(
         &mut self,
         amplitude_len: usize,

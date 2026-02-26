@@ -2411,7 +2411,7 @@ impl PyNLL {
             full_settings.set_item("settings", settings)?;
         }
         let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &p0.into_iter().map(DVector::from_vec).collect(),
             &full_settings,
         )?)?;
         Ok(PyMCMCSummary(result))
@@ -2778,7 +2778,7 @@ impl PyStochasticNLL {
             full_settings.set_item("settings", settings)?;
         }
         let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &p0.into_iter().map(DVector::from_vec).collect(),
             &full_settings,
         )?)?;
         Ok(PyMCMCSummary(result))
@@ -3090,7 +3090,7 @@ impl LikelihoodRegistry {
     }
 }
 
-///
+/// Python wrapper for [`LikelihoodExpression`].
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodExpression", module = "laddu")]
 #[derive(Clone)]
@@ -3974,7 +3974,7 @@ impl PyLikelihoodEvaluator {
             full_settings.set_item("settings", settings)?;
         }
         let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
+            &p0.into_iter().map(DVector::from_vec).collect(),
             &full_settings,
         )?)?;
         Ok(PyMCMCSummary(result))
@@ -4214,7 +4214,7 @@ mod tests {
         let (counts, displs): (Vec<i32>, Vec<i32>) = world.get_counts_displs(total);
         counts
             .into_iter()
-            .zip(displs.into_iter())
+            .zip(displs)
             .map(|(count, displ)| {
                 let start = displ as usize;
                 let end = start + count as usize;

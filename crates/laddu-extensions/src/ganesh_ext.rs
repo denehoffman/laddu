@@ -900,11 +900,11 @@ pub mod py_ganesh {
                             .map(|v| v.extract())
                             .transpose()?
                             .unwrap_or(0.00025);
-                        return Ok(SimplexConstructionMethod::custom_scaled_orthogonal(
+                        Ok(SimplexConstructionMethod::custom_scaled_orthogonal(
                             args,
                             orthogonal_multiplier,
                             orthogonal_zero_step,
-                        ));
+                        ))
                     }
                     "orthogonal" => {
                         let simplex_size = d
@@ -912,10 +912,10 @@ pub mod py_ganesh {
                             .map(|v| v.extract())
                             .transpose()?
                             .unwrap_or(1.0);
-                        return Ok(SimplexConstructionMethod::custom_orthogonal(
+                        Ok(SimplexConstructionMethod::custom_orthogonal(
                             args,
                             simplex_size,
-                        ));
+                        ))
                     }
                     "custom" => {
                         if let Some(other_simplex_points) = d.get_item("simplex")? {
@@ -930,17 +930,15 @@ pub mod py_ganesh {
                                 )));
                             }
                             simplex.extend(others.iter().map(|x| DVector::from_vec(x.clone())));
-                            return Ok(SimplexConstructionMethod::custom(simplex));
+                            Ok(SimplexConstructionMethod::custom(simplex))
                         } else {
-                            return Err(PyValueError::new_err("Simplex must be specified when using the 'custom' simplex_construction_method."));
+                            Err(PyValueError::new_err("Simplex must be specified when using the 'custom' simplex_construction_method."))
                         }
                     }
-                    _ => {
-                        return Err(PyValueError::new_err(format!(
-                            "Invalid simplex_construction_method: {}",
-                            simplex_construction_method
-                        )))
-                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid simplex_construction_method: {}",
+                        simplex_construction_method
+                    ))),
                 }
             } else {
                 Ok(SimplexConstructionMethod::scaled_orthogonal(args))
@@ -1054,12 +1052,12 @@ pub mod py_ganesh {
                             d.get_item("swarm_position_bounds")?,
                             d.get_item("swarm_size")?,
                         ) {
-                            return Ok(SwarmPositionInitializer::RandomInLimits {
+                            Ok(SwarmPositionInitializer::RandomInLimits {
                                 bounds: swarm_position_bounds.extract()?,
                                 n_particles: swarm_size.extract()?,
-                            });
+                            })
                         } else {
-                            return Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'randominlimits' swarm_position_initializer."));
+                            Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'randominlimits' swarm_position_initializer."))
                         }
                     }
                     "latinhypercube" => {
@@ -1067,39 +1065,37 @@ pub mod py_ganesh {
                             d.get_item("swarm_position_bounds")?,
                             d.get_item("swarm_size")?,
                         ) {
-                            return Ok(SwarmPositionInitializer::LatinHypercube {
+                            Ok(SwarmPositionInitializer::LatinHypercube {
                                 bounds: swarm_position_bounds.extract()?,
                                 n_particles: swarm_size.extract()?,
-                            });
+                            })
                         } else {
-                            return Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'latinhypercube' swarm_position_initializer."));
+                            Err(PyValueError::new_err("The swarm_position_bounds and swarm_size must be specified when using the 'latinhypercube' swarm_position_initializer."))
                         }
                     }
                     "custom" => {
                         if let Some(swarm) = d.get_item("swarm")? {
-                            return Ok(SwarmPositionInitializer::Custom(
+                            Ok(SwarmPositionInitializer::Custom(
                                 swarm
                                     .extract::<Vec<Vec<f64>>>()?
                                     .iter()
-                                    .chain(vec![args].into_iter())
+                                    .chain(vec![args])
                                     .map(|x| DVector::from_vec(x.clone()))
                                     .collect(), // TODO: numpy arrays?
-                            ));
+                            ))
                         } else {
-                            return Err(PyValueError::new_err("The swarm must be specified when using the 'custom' swarm_position_initializer."));
+                            Err(PyValueError::new_err("The swarm must be specified when using the 'custom' swarm_position_initializer."))
                         }
                     }
-                    _ => {
-                        return Err(PyValueError::new_err(format!(
-                            "Invalid swarm_position_initializer: {}",
-                            swarm_position_initializer
-                        )));
-                    }
+                    _ => Err(PyValueError::new_err(format!(
+                        "Invalid swarm_position_initializer: {}",
+                        swarm_position_initializer
+                    ))),
                 }
             } else {
-                return Err(PyValueError::new_err(
+                Err(PyValueError::new_err(
                     "The swarm_position_initializer must be specified for the PSO algorithm.",
-                ));
+                ))
             }
         }
     }
@@ -1700,101 +1696,89 @@ pub mod py_ganesh {
     }
 
     enum MinimizationStatus {
-        GradientStatus(Arc<Mutex<GradientStatus>>),
-        GradientFreeStatus(Arc<Mutex<GradientFreeStatus>>),
-        SwarmStatus(Arc<Mutex<SwarmStatus>>),
+        Gradient(Arc<Mutex<GradientStatus>>),
+        GradientFree(Arc<Mutex<GradientFreeStatus>>),
+        Swarm(Arc<Mutex<SwarmStatus>>),
     }
     impl MinimizationStatus {
         fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
             match self {
-                Self::GradientStatus(gradient_status) => {
+                Self::Gradient(gradient_status) => {
                     gradient_status.lock().x.as_slice().to_pyarray(py)
                 }
-                Self::GradientFreeStatus(gradient_free_status) => {
+                Self::GradientFree(gradient_free_status) => {
                     gradient_free_status.lock().x.as_slice().to_pyarray(py)
                 }
-                Self::SwarmStatus(swarm_status) => {
-                    swarm_status.lock().gbest.x.as_slice().to_pyarray(py)
-                }
+                Self::Swarm(swarm_status) => swarm_status.lock().gbest.x.as_slice().to_pyarray(py),
             }
         }
         fn fx(&self) -> f64 {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().fx,
-                Self::GradientFreeStatus(gradient_free_status) => gradient_free_status.lock().fx,
-                Self::SwarmStatus(swarm_status) => swarm_status.lock().gbest.fx.unwrap_or(f64::NAN),
+                Self::Gradient(gradient_status) => gradient_status.lock().fx,
+                Self::GradientFree(gradient_free_status) => gradient_free_status.lock().fx,
+                Self::Swarm(swarm_status) => swarm_status.lock().gbest.fx.unwrap_or(f64::NAN),
             }
         }
         fn message(&self) -> String {
             match self {
-                Self::GradientStatus(gradient_status) => {
-                    gradient_status.lock().message().to_string()
-                }
-                Self::GradientFreeStatus(gradient_free_status) => {
+                Self::Gradient(gradient_status) => gradient_status.lock().message().to_string(),
+                Self::GradientFree(gradient_free_status) => {
                     gradient_free_status.lock().message().to_string()
                 }
-                Self::SwarmStatus(swarm_status) => swarm_status.lock().message().to_string(),
+                Self::Swarm(swarm_status) => swarm_status.lock().message().to_string(),
             }
         }
         fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().err.clone(),
-                Self::GradientFreeStatus(gradient_free_status) => {
-                    gradient_free_status.lock().err.clone()
-                }
-                Self::SwarmStatus(_) => None,
+                Self::Gradient(gradient_status) => gradient_status.lock().err.clone(),
+                Self::GradientFree(gradient_free_status) => gradient_free_status.lock().err.clone(),
+                Self::Swarm(_) => None,
             }
             .map(|e| e.as_slice().to_pyarray(py))
         }
         fn n_f_evals(&self) -> usize {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().n_f_evals,
-                Self::GradientFreeStatus(gradient_free_status) => {
-                    gradient_free_status.lock().n_f_evals
-                }
-                Self::SwarmStatus(swarm_status) => swarm_status.lock().n_f_evals,
+                Self::Gradient(gradient_status) => gradient_status.lock().n_f_evals,
+                Self::GradientFree(gradient_free_status) => gradient_free_status.lock().n_f_evals,
+                Self::Swarm(swarm_status) => swarm_status.lock().n_f_evals,
             }
         }
         fn n_g_evals(&self) -> usize {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().n_g_evals,
-                Self::GradientFreeStatus(_) => 0,
-                Self::SwarmStatus(_) => 0,
+                Self::Gradient(gradient_status) => gradient_status.lock().n_g_evals,
+                Self::GradientFree(_) => 0,
+                Self::Swarm(_) => 0,
             }
         }
         fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().cov.clone(),
-                Self::GradientFreeStatus(gradient_free_status) => {
-                    gradient_free_status.lock().cov.clone()
-                }
-                Self::SwarmStatus(_) => None,
+                Self::Gradient(gradient_status) => gradient_status.lock().cov.clone(),
+                Self::GradientFree(gradient_free_status) => gradient_free_status.lock().cov.clone(),
+                Self::Swarm(_) => None,
             }
             .map(|cov| cov.to_pyarray(py))
         }
         fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().hess.clone(),
-                Self::GradientFreeStatus(gradient_free_status) => {
+                Self::Gradient(gradient_status) => gradient_status.lock().hess.clone(),
+                Self::GradientFree(gradient_free_status) => {
                     gradient_free_status.lock().hess.clone()
                 }
-                Self::SwarmStatus(_) => None,
+                Self::Swarm(_) => None,
             }
             .map(|hess| hess.to_pyarray(py))
         }
         fn converged(&self) -> bool {
             match self {
-                Self::GradientStatus(gradient_status) => gradient_status.lock().converged(),
-                Self::GradientFreeStatus(gradient_free_status) => {
-                    gradient_free_status.lock().converged()
-                }
-                Self::SwarmStatus(swarm_status) => swarm_status.lock().converged(),
+                Self::Gradient(gradient_status) => gradient_status.lock().converged(),
+                Self::GradientFree(gradient_free_status) => gradient_free_status.lock().converged(),
+                Self::Swarm(swarm_status) => swarm_status.lock().converged(),
             }
         }
         fn swarm(&self) -> Option<PySwarm> {
             match self {
-                Self::GradientStatus(_) | Self::GradientFreeStatus(_) => None,
-                Self::SwarmStatus(swarm_status) => Some(PySwarm(swarm_status.lock().swarm.clone())),
+                Self::Gradient(_) | Self::GradientFree(_) => None,
+                Self::Swarm(swarm_status) => Some(PySwarm(swarm_status.lock().swarm.clone())),
             }
         }
     }
@@ -2181,9 +2165,9 @@ pub mod py_ganesh {
                     "observe",
                     (
                         current_step,
-                        PyMinimizationStatus(MinimizationStatus::GradientStatus(Arc::new(
-                            Mutex::new(status.clone()),
-                        ))),
+                        PyMinimizationStatus(MinimizationStatus::Gradient(Arc::new(Mutex::new(
+                            status.clone(),
+                        )))),
                     ),
                 ) {
                     err.print(py);
@@ -2210,7 +2194,7 @@ pub mod py_ganesh {
                     "observe",
                     (
                         current_step,
-                        PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(Arc::new(
+                        PyMinimizationStatus(MinimizationStatus::GradientFree(Arc::new(
                             Mutex::new(status.clone()),
                         ))),
                     ),
@@ -2238,9 +2222,9 @@ pub mod py_ganesh {
                     "observe",
                     (
                         current_step,
-                        PyMinimizationStatus(MinimizationStatus::SwarmStatus(Arc::new(
-                            Mutex::new(status.clone()),
-                        ))),
+                        PyMinimizationStatus(MinimizationStatus::Swarm(Arc::new(Mutex::new(
+                            status.clone(),
+                        )))),
                     ),
                 ) {
                     err.print(py);
@@ -2282,9 +2266,7 @@ pub mod py_ganesh {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,
-                    PyMinimizationStatus(MinimizationStatus::GradientStatus(
-                        wrapped_status.clone(),
-                    )),
+                    PyMinimizationStatus(MinimizationStatus::Gradient(wrapped_status.clone())),
                 )?;
                 let call_result = self
                     .0
@@ -2319,9 +2301,7 @@ pub mod py_ganesh {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,
-                    PyMinimizationStatus(MinimizationStatus::GradientFreeStatus(
-                        wrapped_status.clone(),
-                    )),
+                    PyMinimizationStatus(MinimizationStatus::GradientFree(wrapped_status.clone())),
                 )?;
                 let call_result = self
                     .0
@@ -2356,7 +2336,7 @@ pub mod py_ganesh {
                 let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
                 let py_status = Py::new(
                     py,
-                    PyMinimizationStatus(MinimizationStatus::SwarmStatus(wrapped_status.clone())),
+                    PyMinimizationStatus(MinimizationStatus::Swarm(wrapped_status.clone())),
                 )?;
                 let call_result = self
                     .0
@@ -2839,7 +2819,7 @@ pub mod py_ganesh {
     ) -> Bound<'py, PyArray1<f64>> {
         let samples: Vec<Vec<DVector<f64>>> = samples
             .into_iter()
-            .map(|v| v.into_iter().map(|p| DVector::from_vec(p)).collect())
+            .map(|v| v.into_iter().map(DVector::from_vec).collect())
             .collect();
         integrated_autocorrelation_times(samples, c)
             .as_slice()

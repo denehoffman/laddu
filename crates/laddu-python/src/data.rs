@@ -931,9 +931,9 @@ pub fn from_columns(
             || pz.len() != n_events
             || e.len() != n_events
         {
-            return Err(PyValueError::new_err(format!(
-                "All p4 components must have the same length"
-            )));
+            return Err(PyValueError::new_err(
+                "All p4 components must have the same length",
+            ));
         }
         p4_columns.push([px, py, pz, e]);
     }

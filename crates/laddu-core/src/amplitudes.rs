@@ -623,6 +623,7 @@ impl ExpressionProgram {
         builder.build(root)
     }
 
+    #[allow(dead_code)]
     fn slot_count(&self) -> usize {
         self.slot_count
     }
@@ -1208,6 +1209,7 @@ pub struct Evaluator {
     pub resources: Arc<RwLock<Resources>>,
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
+    #[allow(dead_code)]
     expression_program: ExpressionProgram,
     #[cfg(feature = "expression-ir")]
     expression_ir: ir::ExpressionIR,
@@ -1252,7 +1254,7 @@ impl Evaluator {
     pub fn expression_slot_count(&self) -> usize {
         #[cfg(feature = "expression-ir")]
         {
-            return self.expression_ir.node_count();
+            self.expression_ir.node_count()
         }
         #[cfg(not(feature = "expression-ir"))]
         {
@@ -1267,7 +1269,7 @@ impl Evaluator {
     ) -> Complex64 {
         #[cfg(feature = "expression-ir")]
         {
-            return self.expression_ir.evaluate_into(amplitude_values, scratch);
+            self.expression_ir.evaluate_into(amplitude_values, scratch)
         }
         #[cfg(not(feature = "expression-ir"))]
         {
@@ -1285,12 +1287,12 @@ impl Evaluator {
     ) -> DVector<Complex64> {
         #[cfg(feature = "expression-ir")]
         {
-            return self.expression_ir.evaluate_gradient_into(
+            self.expression_ir.evaluate_gradient_into(
                 amplitude_values,
                 gradient_values,
                 value_scratch,
                 gradient_scratch,
-            );
+            )
         }
         #[cfg(not(feature = "expression-ir"))]
         {
@@ -1940,7 +1942,7 @@ impl Evaluator {
         }
         buffer
             .chunks(parameters.len())
-            .map(|chunk| DVector::from_row_slice(chunk))
+            .map(DVector::from_row_slice)
             .collect()
     }
 
@@ -1968,7 +1970,7 @@ impl Evaluator {
         }
         buffer
             .chunks(parameters.len())
-            .map(|chunk| DVector::from_row_slice(chunk))
+            .map(DVector::from_row_slice)
             .collect()
     }
 

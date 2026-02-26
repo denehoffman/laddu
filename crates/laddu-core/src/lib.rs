@@ -459,9 +459,8 @@ pub mod mpi {
                 let mut cursor = displs[rank] as usize;
                 for &target in &targets_by_rank[rank] {
                     let dst = target * stride;
-                    for offset in 0..stride {
-                        result[dst + offset] = gathered[cursor + offset].clone();
-                    }
+                    result[dst..(stride + dst)]
+                        .clone_from_slice(&gathered[cursor..(stride + cursor)]);
                     cursor += stride;
                 }
             }
