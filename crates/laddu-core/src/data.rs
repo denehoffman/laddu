@@ -982,9 +982,13 @@ impl Dataset {
     #[cfg(feature = "mpi")]
     pub(crate) fn set_cached_global_event_count_from_world(&mut self, world: &SimpleCommunicator) {
         let local_count = self.n_events_local();
-        let mut counts = vec![0usize; world.size() as usize];
-        world.all_gather_into(&local_count, &mut counts);
-        self.cached_global_event_count = counts.iter().sum();
+        let mut global_count = 0usize;
+        world.all_reduce_into(
+            &local_count,
+            &mut global_count,
+            mpi::collective::SystemOperation::sum(),
+        );
+        self.cached_global_event_count = global_count;
     }
 
     #[cfg(feature = "mpi")]
