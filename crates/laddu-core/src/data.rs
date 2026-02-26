@@ -191,6 +191,7 @@ impl DatasetStorage {
         {
             if let Some(world) = crate::mpi::get_world() {
                 dataset.set_cached_global_event_count_from_world(&world);
+                dataset.set_cached_global_weighted_sum_from_world(&world);
             }
         }
         dataset
@@ -520,8 +521,11 @@ pub struct Dataset {
     events: Vec<Event>,
     pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
+    pub(crate) cached_local_weighted_sum: f64,
     #[cfg(feature = "mpi")]
     pub(crate) cached_global_event_count: usize,
+    #[cfg(feature = "mpi")]
+    pub(crate) cached_global_weighted_sum: f64,
 }
 
 /// Metadata-aware view of an [`EventData`] with name-based helpers.
@@ -676,10 +680,6 @@ impl Dataset {
     #[cfg(test)]
     pub(crate) fn clear_events_local(&mut self) {
         self.events.clear();
-        #[cfg(feature = "mpi")]
-        {
-            self.cached_global_event_count = 0;
-        }
     }
 
     /// Iterate over all events in the dataset. When MPI is enabled, this will visit
@@ -988,6 +988,13 @@ impl Dataset {
         self.cached_global_event_count = counts.iter().sum();
     }
 
+    #[cfg(feature = "mpi")]
+    pub(crate) fn set_cached_global_weighted_sum_from_world(&mut self, world: &SimpleCommunicator) {
+        let mut weighted_sums = vec![0.0_f64; world.size() as usize];
+        world.all_gather_into(&self.cached_local_weighted_sum, &mut weighted_sums);
+        self.cached_global_weighted_sum = weighted_sums.iter().sum();
+    }
+
     fn columnar_from_wrapped_events(
         events: &[Event],
         metadata: Arc<DatasetMetadata>,
@@ -1042,12 +1049,16 @@ impl Dataset {
         let local_count = wrapped_events.len();
         let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
+        let local_weighted_sum = columnar.weights.iter().sum();
         Dataset {
             events: wrapped_events,
             columnar,
             metadata,
+            cached_local_weighted_sum: local_weighted_sum,
             #[cfg(feature = "mpi")]
             cached_global_event_count: local_count,
+            #[cfg(feature = "mpi")]
+            cached_global_weighted_sum: local_weighted_sum,
         }
     }
 
@@ -1071,13 +1082,17 @@ impl Dataset {
             .collect();
         let columnar = Self::columnar_from_wrapped_events(&local, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
+        let local_weighted_sum = columnar.weights.iter().sum();
         let mut dataset = Dataset {
             events: local,
             columnar,
             metadata,
+            cached_local_weighted_sum: local_weighted_sum,
             cached_global_event_count: 0,
+            cached_global_weighted_sum: local_weighted_sum,
         };
         dataset.set_cached_global_event_count_from_world(world);
+        dataset.set_cached_global_weighted_sum_from_world(world);
         dataset
     }
 
