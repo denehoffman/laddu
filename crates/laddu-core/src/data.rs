@@ -1,6 +1,5 @@
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
-#[cfg(feature = "rayon")]
 use accurate::{sum::Klein, traits::*};
 use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
@@ -992,7 +991,19 @@ impl Dataset {
     pub(crate) fn set_cached_global_weighted_sum_from_world(&mut self, world: &SimpleCommunicator) {
         let mut weighted_sums = vec![0.0_f64; world.size() as usize];
         world.all_gather_into(&self.cached_local_weighted_sum, &mut weighted_sums);
-        self.cached_global_weighted_sum = weighted_sums.iter().sum();
+        #[cfg(feature = "rayon")]
+        {
+            self.cached_global_weighted_sum = weighted_sums
+                .into_par_iter()
+                .parallel_sum_with_accumulator::<Klein<f64>>();
+            return;
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            self.cached_global_weighted_sum = weighted_sums
+                .into_iter()
+                .sum_with_accumulator::<Klein<f64>>();
+        }
     }
 
     fn columnar_from_wrapped_events(
@@ -1049,7 +1060,18 @@ impl Dataset {
         let local_count = wrapped_events.len();
         let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
-        let local_weighted_sum = columnar.weights.iter().sum();
+        #[cfg(feature = "rayon")]
+        let local_weighted_sum = columnar
+            .weights
+            .par_iter()
+            .copied()
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let local_weighted_sum = columnar
+            .weights
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Klein<f64>>();
         Dataset {
             events: wrapped_events,
             columnar,
@@ -1082,7 +1104,18 @@ impl Dataset {
             .collect();
         let columnar = Self::columnar_from_wrapped_events(&local, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
-        let local_weighted_sum = columnar.weights.iter().sum();
+        #[cfg(feature = "rayon")]
+        let local_weighted_sum = columnar
+            .weights
+            .par_iter()
+            .copied()
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let local_weighted_sum = columnar
+            .weights
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Klein<f64>>();
         let mut dataset = Dataset {
             events: local,
             columnar,
@@ -1198,15 +1231,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     pub fn n_events_weighted_local(&self) -> f64 {
-        #[cfg(feature = "rayon")]
-        return self
-            .columnar
-            .weights
-            .par_iter()
-            .copied()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        return self.columnar.weights.iter().sum();
+        self.cached_local_weighted_sum
     }
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
@@ -1215,16 +1240,8 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> f64 {
-        let mut n_events_weighted_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
-        let n_events_weighted_local = self.n_events_weighted_local();
-        world.all_gather_into(&n_events_weighted_local, &mut n_events_weighted_partitioned);
-        #[cfg(feature = "rayon")]
-        return n_events_weighted_partitioned
-            .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        return n_events_weighted_partitioned.iter().sum();
+    pub fn n_events_weighted_mpi(&self, _world: &SimpleCommunicator) -> f64 {
+        self.cached_global_weighted_sum
     }
 
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`].

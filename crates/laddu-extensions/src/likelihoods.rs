@@ -886,10 +886,9 @@ impl NLL {
     #[cfg(feature = "mpi")]
     fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
         let (data_term_local, mc_term_local) = self.evaluate_terms_local(parameters);
-        let n_mc_local = self.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = reduce_scalar(world, mc_term_local);
-        let n_mc = reduce_scalar(world, n_mc_local);
         -2.0 * (data_term - mc_term / n_mc)
     }
 
@@ -1109,11 +1108,10 @@ impl NLL {
         parameters: &[f64],
         world: &SimpleCommunicator,
     ) -> DVector<f64> {
-        let n_mc_local = self.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let (data_term_local, mc_term_local) = self.evaluate_gradient_terms_local(parameters);
         let data_term = reduce_gradient(world, &data_term_local);
         let mc_term = reduce_gradient(world, &mc_term_local);
-        let n_mc = reduce_scalar(world, n_mc_local);
         -2.0 * (data_term - mc_term / n_mc)
     }
 
@@ -1355,12 +1353,10 @@ impl StochasticNLL {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
-        let n_data_total_local = self.nll.data_evaluator.dataset.n_events_weighted_local();
-        let n_mc_local = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let (data_term_local, mc_term_local) = self.evaluate_terms_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
-        let n_data_total = reduce_scalar(world, n_data_total_local);
-        let n_mc = reduce_scalar(world, n_mc_local);
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = reduce_scalar(world, mc_term_local);
         -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
@@ -1598,13 +1594,11 @@ impl StochasticNLL {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
-        let n_data_total_local = self.nll.data_evaluator.dataset.n_events_weighted_local();
-        let n_mc_local = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let (data_term_local, mc_term_local) =
             self.evaluate_gradient_terms_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
-        let n_data_total = reduce_scalar(world, n_data_total_local);
-        let n_mc = reduce_scalar(world, n_mc_local);
         let data_term = reduce_gradient(world, &data_term_local);
         let mc_term = reduce_gradient(world, &mc_term_local);
         -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
