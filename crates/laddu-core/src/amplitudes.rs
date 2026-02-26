@@ -1608,6 +1608,8 @@ impl Evaluator {
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event outputs.
+            // Do not replace with all-reduce unless semantics change to scalar aggregates only.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
@@ -1626,6 +1628,8 @@ impl Evaluator {
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event outputs.
+            // Do not replace with all-reduce unless semantics change to scalar aggregates only.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
@@ -1930,6 +1934,8 @@ impl Evaluator {
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
         let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event gradients.
+            // Do not replace with all-reduce unless semantics change to aggregate-only outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(
                 &local_evaluation
@@ -1958,6 +1964,8 @@ impl Evaluator {
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
         let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event gradients.
+            // Do not replace with all-reduce unless semantics change to aggregate-only outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(
                 &local_evaluation

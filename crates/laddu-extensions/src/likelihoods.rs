@@ -373,6 +373,8 @@ impl NLL {
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection returns per-event global outputs.
+            // Use all-reduce only for aggregate scalar/vector reductions.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -491,6 +493,7 @@ impl NLL {
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection-gradient returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -503,6 +506,7 @@ impl NLL {
         let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        // NOTE: gather is required because projection-gradient returns full per-event gradients.
         world.all_gather_varcount_into(
             &flattened_local_gradient_projection,
             &mut partitioned_flattened_result_buffer,
@@ -627,6 +631,7 @@ impl NLL {
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -792,6 +797,7 @@ impl NLL {
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection-gradient returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -804,6 +810,7 @@ impl NLL {
         let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        // NOTE: gather is required because projection-gradient returns full per-event gradients.
         world.all_gather_varcount_into(
             &flattened_local_gradient_projection,
             &mut partitioned_flattened_result_buffer,

@@ -1210,6 +1210,8 @@ impl Dataset {
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because this API returns full global event weights.
+            // Use all-reduce only for scalar/vector aggregate values.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
         }
