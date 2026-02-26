@@ -227,6 +227,30 @@ mod mpi_benches {
                 )
             },
         );
+        group.throughput(Throughput::Elements(n_events));
+        group.bench_with_input(
+            BenchmarkId::new("project_only", rank_count),
+            &rank_count,
+            |b, &_rank_count| {
+                b.iter_batched(
+                    || params.clone(),
+                    |parameters| black_box(nll.project(&parameters, None)),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+        group.throughput(Throughput::Elements(n_events));
+        group.bench_with_input(
+            BenchmarkId::new("project_gradient", rank_count),
+            &rank_count,
+            |b, &_rank_count| {
+                b.iter_batched(
+                    || params.clone(),
+                    |parameters| black_box(nll.project_gradient(&parameters, None)),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
         group.finish();
     }
 
