@@ -299,6 +299,14 @@ pub mod mpi {
             total: usize,
             stride: Option<usize>,
         ) -> Vec<T>;
+        /// Gather local slices into a buffer using explicit
+        /// `(counts, displacements)` in element units.
+        fn all_gather_with_counts<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            counts: &[i32],
+            displs: &[i32],
+        ) -> Vec<T>;
         /// Gather batches corresponding to arbitrary global indices while
         /// preserving the order of `global_indices`.
         fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
@@ -359,6 +367,31 @@ pub mod mpi {
             let (counts, displs) = counts_displs(size, total, stride);
             {
                 let mut partition = PartitionMut::new(&mut out, counts, displs);
+                self.all_gather_varcount_into(local, &mut partition);
+            }
+            out
+        }
+
+        fn all_gather_with_counts<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            counts: &[i32],
+            displs: &[i32],
+        ) -> Vec<T> {
+            assert_eq!(
+                counts.len(),
+                displs.len(),
+                "Counts and displacements must have the same length"
+            );
+            assert_eq!(
+                counts.len(),
+                self.size() as usize,
+                "Counts/displacements must match communicator size"
+            );
+            let total = counts.iter().map(|count| *count as usize).sum();
+            let mut out = vec![T::default(); total];
+            {
+                let mut partition = PartitionMut::new(&mut out, counts.to_vec(), displs.to_vec());
                 self.all_gather_varcount_into(local, &mut partition);
             }
             out

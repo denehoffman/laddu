@@ -1,6 +1,8 @@
 //! Dataset I/O implementations and shared column-inference helpers.
 
 use super::*;
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
 use arrow::{
     array::{Float32Array, Float64Array},
     datatypes::{DataType, Field, Schema},
@@ -409,7 +411,7 @@ pub fn write_parquet(
     options: &DatasetWriteOptions,
 ) -> LadduResult<()> {
     let path = expand_output_path(file_path)?;
-    dataset.columnar.write_parquet_impl(path, options)
+    dataset.write_parquet_impl(path, options)
 }
 
 #[cfg(test)]
@@ -441,52 +443,189 @@ impl DatasetStorage {
         let batch_size = options.batch_size.max(1);
         let precision = options.precision;
         let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
-
-        #[cfg(feature = "mpi")]
-        let is_root = crate::mpi::get_world()
-            .as_ref()
-            .map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        let mut writer: Option<ArrowWriter<File>> = None;
-        if is_root {
-            let file = File::create(&file_path)?;
-            writer = Some(
-                ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
-                    LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
-                })?,
-            );
-        }
+        let file = File::create(&file_path)?;
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), None)
+            .map_err(|err| LadduError::Custom(format!("Failed to create Parquet writer: {err}")))?;
 
         let n_rows = self.n_events();
         let mut start = 0usize;
         while start < n_rows {
             let end = (start + batch_size).min(n_rows);
-            if let Some(writer) = writer.as_mut() {
-                let batch =
-                    columnar_range_to_record_batch(self, start, end, schema.clone(), precision)
-                        .map_err(|err| {
-                            LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
-                        })?;
-                writer.write(&batch).map_err(|err| {
-                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
+            let batch = columnar_range_to_record_batch(self, start, end, schema.clone(), precision)
+                .map_err(|err| {
+                    LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
                 })?;
-            }
+            writer.write(&batch).map_err(|err| {
+                LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
+            })?;
             start = end;
         }
 
-        if let Some(writer) = writer {
-            writer.close().map_err(|err| {
-                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
-            })?;
-        }
+        writer
+            .close()
+            .map_err(|err| LadduError::Custom(format!("Failed to finalise Parquet file: {err}")))?;
 
         Ok(())
     }
 }
 
 impl Dataset {
+    pub(super) fn write_parquet_impl(
+        &self,
+        file_path: PathBuf,
+        options: &DatasetWriteOptions,
+    ) -> LadduResult<()> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                let is_root = world.rank() == crate::mpi::ROOT_RANK;
+                let batch_size = options.batch_size.max(1);
+                let precision = options.precision;
+                let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
+
+                let mut local_counts = vec![0_i32; world.size() as usize];
+                let local_n_events = self.n_events_local() as i32;
+                world.all_gather_into(&local_n_events, &mut local_counts);
+                let mut writer = if is_root {
+                    let file = File::create(&file_path)?;
+                    Some(
+                        ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
+                            LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
+                        })?,
+                    )
+                } else {
+                    None
+                };
+
+                for source_rank in 0..(world.size() as usize) {
+                    let source_total_rows = local_counts[source_rank] as usize;
+                    let mut source_start = 0usize;
+                    while source_start < source_total_rows {
+                        let source_end = (source_start + batch_size).min(source_total_rows);
+                        let source_chunk_rows = source_end - source_start;
+                        let local_chunk_rows = if world.rank() as usize == source_rank {
+                            source_chunk_rows as i32
+                        } else {
+                            0
+                        };
+                        let mut chunk_counts = vec![0_i32; world.size() as usize];
+                        world.all_gather_into(&local_chunk_rows, &mut chunk_counts);
+                        let mut chunk_displs = vec![0_i32; chunk_counts.len()];
+                        for i in 1..chunk_displs.len() {
+                            chunk_displs[i] = chunk_displs[i - 1] + chunk_counts[i - 1];
+                        }
+                        let mut gathered_p4 = Vec::with_capacity(self.columnar.p4.len());
+                        for p4 in &self.columnar.p4 {
+                            let px_local = if world.rank() as usize == source_rank {
+                                &p4.px[source_start..source_end]
+                            } else {
+                                &[]
+                            };
+                            let py_local = if world.rank() as usize == source_rank {
+                                &p4.py[source_start..source_end]
+                            } else {
+                                &[]
+                            };
+                            let pz_local = if world.rank() as usize == source_rank {
+                                &p4.pz[source_start..source_end]
+                            } else {
+                                &[]
+                            };
+                            let e_local = if world.rank() as usize == source_rank {
+                                &p4.e[source_start..source_end]
+                            } else {
+                                &[]
+                            };
+                            gathered_p4.push(ColumnarP4Column {
+                                px: world.all_gather_with_counts(
+                                    px_local,
+                                    &chunk_counts,
+                                    &chunk_displs,
+                                ),
+                                py: world.all_gather_with_counts(
+                                    py_local,
+                                    &chunk_counts,
+                                    &chunk_displs,
+                                ),
+                                pz: world.all_gather_with_counts(
+                                    pz_local,
+                                    &chunk_counts,
+                                    &chunk_displs,
+                                ),
+                                e: world.all_gather_with_counts(
+                                    e_local,
+                                    &chunk_counts,
+                                    &chunk_displs,
+                                ),
+                            });
+                        }
+
+                        let mut gathered_aux = Vec::with_capacity(self.columnar.aux.len());
+                        for aux_column in &self.columnar.aux {
+                            let aux_local = if world.rank() as usize == source_rank {
+                                &aux_column[source_start..source_end]
+                            } else {
+                                &[]
+                            };
+                            gathered_aux.push(world.all_gather_with_counts(
+                                aux_local,
+                                &chunk_counts,
+                                &chunk_displs,
+                            ));
+                        }
+
+                        let weights_local = if world.rank() as usize == source_rank {
+                            &self.columnar.weights[source_start..source_end]
+                        } else {
+                            &[]
+                        };
+                        let gathered_weights = world.all_gather_with_counts(
+                            weights_local,
+                            &chunk_counts,
+                            &chunk_displs,
+                        );
+
+                        if is_root {
+                            let chunk = DatasetStorage {
+                                metadata: self.metadata.clone(),
+                                p4: gathered_p4,
+                                aux: gathered_aux,
+                                weights: gathered_weights,
+                            };
+                            let batch = columnar_range_to_record_batch(
+                                &chunk,
+                                0,
+                                chunk.n_events(),
+                                schema.clone(),
+                                precision,
+                            )
+                            .map_err(|err| {
+                                LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
+                            })?;
+                            if let Some(ref mut active_writer) = writer {
+                                active_writer.write(&batch).map_err(|err| {
+                                    LadduError::Custom(format!(
+                                        "Failed to write Parquet batch: {err}"
+                                    ))
+                                })?;
+                            }
+                        }
+
+                        source_start = source_end;
+                    }
+                }
+
+                if let Some(active_writer) = writer {
+                    active_writer.close().map_err(|err| {
+                        LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
+                    })?;
+                }
+                return Ok(());
+            }
+        }
+        self.columnar.write_parquet_impl(file_path, options)
+    }
+
     pub(super) fn write_root_impl(
         &self,
         file_path: PathBuf,

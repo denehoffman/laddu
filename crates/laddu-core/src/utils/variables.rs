@@ -44,7 +44,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         let mut variable = dyn_clone::clone_box(self);
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
-        let local_values: Vec<f64> = (0..dataset.n_events())
+        let local_values: Vec<f64> = (0..dataset.n_events_local())
             .into_par_iter()
             .map(|event_index| {
                 let event = dataset.event_view(event_index);
@@ -52,7 +52,7 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<f64> = (0..dataset.n_events())
+        let local_values: Vec<f64> = (0..dataset.n_events_local())
             .map(|event_index| {
                 let event = dataset.event_view(event_index);
                 variable.value(&event)

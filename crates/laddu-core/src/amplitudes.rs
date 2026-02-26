@@ -1926,7 +1926,7 @@ impl Evaluator {
         let local_evaluation = self.evaluate_gradient_local(parameters);
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
-        let (counts, displs) = world.get_counts_displs(n_events);
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(
@@ -1954,7 +1954,7 @@ impl Evaluator {
         let local_evaluation = self.evaluate_gradient_local_with_ctx(parameters, execution_context);
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
-        let (counts, displs) = world.get_counts_displs(n_events);
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(
