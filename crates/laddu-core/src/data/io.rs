@@ -78,16 +78,7 @@ fn read_parquet_columnar_local(
         .collect::<Vec<_>>();
     let mut weights = Vec::with_capacity(total_rows);
 
-    for batch in reader {
-        let batch = batch?;
-        append_record_batch_to_columnar(
-            &batch,
-            metadata.as_ref(),
-            &mut p4,
-            &mut aux,
-            &mut weights,
-        )?;
-    }
+    append_record_batch_stream(reader, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
 
     Ok(Arc::new(DatasetStorage {
         metadata,
@@ -132,16 +123,7 @@ fn read_parquet_columnar_mpi(
         .map(|_| Vec::with_capacity(local_end - first_row_start))
         .collect::<Vec<_>>();
     let mut weights = Vec::with_capacity(local_end - first_row_start);
-    for batch in reader {
-        let batch = batch?;
-        append_record_batch_to_columnar(
-            &batch,
-            metadata.as_ref(),
-            &mut p4,
-            &mut aux,
-            &mut weights,
-        )?;
-    }
+    append_record_batch_stream(reader, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
     let mut columnar = DatasetStorage {
         metadata,
         p4,
@@ -244,6 +226,30 @@ fn append_record_batch_to_columnar(
         );
     }
 
+    Ok(())
+}
+
+fn append_record_batch_stream<I, E>(
+    reader: I,
+    metadata: &DatasetMetadata,
+    p4_columns_out: &mut [ColumnarP4Column],
+    aux_columns_out: &mut [Vec<f64>],
+    weights_out: &mut Vec<f64>,
+) -> LadduResult<()>
+where
+    I: IntoIterator<Item = Result<RecordBatch, E>>,
+    E: Into<LadduError>,
+{
+    for batch in reader {
+        let batch = batch.map_err(Into::into)?;
+        append_record_batch_to_columnar(
+            &batch,
+            metadata,
+            p4_columns_out,
+            aux_columns_out,
+            weights_out,
+        )?;
+    }
     Ok(())
 }
 
