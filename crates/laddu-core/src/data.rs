@@ -513,6 +513,8 @@ pub struct Dataset {
     events: Vec<Event>,
     pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
+    #[cfg(feature = "mpi")]
+    pub(crate) cached_global_event_count: Option<usize>,
 }
 
 /// Metadata-aware view of an [`EventData`] with name-based helpers.
@@ -1024,6 +1026,8 @@ impl Dataset {
             events: wrapped_events,
             columnar,
             metadata,
+            #[cfg(feature = "mpi")]
+            cached_global_event_count: None,
         }
     }
 
@@ -1051,6 +1055,7 @@ impl Dataset {
             events: local,
             columnar,
             metadata,
+            cached_global_event_count: None,
         }
     }
 
