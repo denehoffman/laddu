@@ -2473,6 +2473,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parquet_roundtrip_incremental_small_batches() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let dir = make_temp_dir();
+        let path = dir.join("roundtrip_small_batches.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        let write_options = DatasetWriteOptions::default().batch_size(1);
+        write_parquet(&dataset, path_str, &write_options)
+            .expect("writing parquet in small batches should succeed");
+        let reopened = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("parquet roundtrip should reopen");
+
+        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
     fn test_parquet_storage_roundtrip_to_tempfile() {
         let source_path = test_data_path("data_f32.parquet");
         let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
