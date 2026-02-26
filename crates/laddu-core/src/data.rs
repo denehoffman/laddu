@@ -996,7 +996,6 @@ impl Dataset {
             self.cached_global_weighted_sum = weighted_sums
                 .into_par_iter()
                 .parallel_sum_with_accumulator::<Klein<f64>>();
-            return;
         }
         #[cfg(not(feature = "rayon"))]
         {

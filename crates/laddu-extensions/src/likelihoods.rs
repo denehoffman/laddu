@@ -78,14 +78,14 @@ fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> Lad
 #[cfg(feature = "mpi")]
 fn reduce_scalar(world: &SimpleCommunicator, value: f64) -> f64 {
     let mut reduced = 0.0;
-    world.all_reduce_into(&value, &mut reduced, &SystemOperation::sum());
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::sum());
     reduced
 }
 
 #[cfg(feature = "mpi")]
 fn reduce_gradient(world: &SimpleCommunicator, gradient: &DVector<f64>) -> DVector<f64> {
     let mut reduced = vec![0.0; gradient.len()];
-    world.all_reduce_into(gradient.as_slice(), &mut reduced, &SystemOperation::sum());
+    world.all_reduce_into(gradient.as_slice(), &mut reduced, SystemOperation::sum());
     DVector::from_vec(reduced)
 }
 
@@ -1337,8 +1337,8 @@ impl StochasticNLL {
     }
 
     fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted_local();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         let (data_term, mc_term) = self.evaluate_terms_local(parameters, indices);
         -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
@@ -1578,8 +1578,8 @@ impl StochasticNLL {
         indices: &[usize],
         n_data_batch: f64,
     ) -> DVector<f64> {
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted_local();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted_local();
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let (data_term, mc_term) = self.evaluate_gradient_terms_local(parameters, indices);
         -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
     }
