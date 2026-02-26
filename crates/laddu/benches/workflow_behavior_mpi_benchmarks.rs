@@ -23,6 +23,7 @@ mod mpi_benches {
         },
         RngSubsetExtension,
     };
+    use mpi::collective::SystemOperation;
     use mpi::traits::{Communicator, CommunicatorCollectives};
 
     const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
@@ -320,10 +321,87 @@ mod mpi_benches {
         group.finish();
     }
 
+    fn mpi_reduction_materialization_microbenchmarks(c: &mut Criterion) {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            return;
+        };
+        let rank_count = world.size();
+        let rank_count_usize = rank_count as usize;
+        let reduction_len = 16_384usize;
+        let reduction_local: Vec<f64> = (0..reduction_len)
+            .map(|idx| (idx as f64 + 1.0) * (world.rank() as f64 + 1.0))
+            .collect();
+        let gather_local_len = 8_192usize;
+        let gather_local: Vec<f64> = (0..gather_local_len)
+            .map(|idx| idx as f64 + world.rank() as f64 * 0.01)
+            .collect();
+        let gather_global_len = gather_local_len * rank_count_usize;
+        let temp_sizes_bytes = [64 * 1024usize, 1024 * 1024usize, 8 * 1024 * 1024usize];
+
+        let mut reduction_group = c.benchmark_group("mpi_reduction_latency");
+        reduction_group.throughput(Throughput::Elements(reduction_len as u64));
+        reduction_group.bench_with_input(
+            BenchmarkId::new("all_reduce_vector_sum", rank_count),
+            &rank_count,
+            |b, &_rank_count| {
+                b.iter_batched(
+                    || vec![0.0f64; reduction_len],
+                    |mut global_reduced| {
+                        world.all_reduce_into(
+                            reduction_local.as_slice(),
+                            global_reduced.as_mut_slice(),
+                            SystemOperation::sum(),
+                        );
+                        black_box(global_reduced)
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+        reduction_group.finish();
+
+        let mut materialization_group = c.benchmark_group("mpi_materialization_temp_buffer");
+        for &temp_buffer_bytes in &temp_sizes_bytes {
+            materialization_group.throughput(Throughput::Bytes(temp_buffer_bytes as u64));
+            materialization_group.bench_with_input(
+                BenchmarkId::new(
+                    format!(
+                        "all_gather_then_materialize_temp_{}KiB",
+                        temp_buffer_bytes / 1024
+                    ),
+                    rank_count,
+                ),
+                &temp_buffer_bytes,
+                |b, &_temp_buffer_bytes| {
+                    b.iter_batched(
+                        || {
+                            (
+                                vec![0.0f64; gather_global_len],
+                                vec![0.0f64; temp_buffer_bytes / std::mem::size_of::<f64>()],
+                            )
+                        },
+                        |mut global_buffer| {
+                            world.all_gather_into(gather_local.as_slice(), &mut global_buffer.0);
+                            for (idx, value) in global_buffer.1.iter_mut().enumerate() {
+                                let source_idx = idx % global_buffer.0.len();
+                                *value = global_buffer.0[source_idx];
+                            }
+                            black_box(global_buffer)
+                        },
+                        BatchSize::SmallInput,
+                    )
+                },
+            );
+        }
+        materialization_group.finish();
+    }
+
     pub fn run() {
         let mut criterion = Criterion::default().sample_size(120).configure_from_args();
         kmatrix_nll_mpi_rank_parameterized_benchmarks(&mut criterion);
         mpi_collective_overhead_isolation_benchmarks(&mut criterion);
+        mpi_reduction_materialization_microbenchmarks(&mut criterion);
         criterion.final_summary();
         finalize_mpi();
     }
