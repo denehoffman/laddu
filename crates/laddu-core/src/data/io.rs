@@ -38,10 +38,17 @@ pub(crate) fn read_parquet_storage(
     options: &DatasetReadOptions,
 ) -> LadduResult<Arc<DatasetStorage>> {
     let path = canonicalize_dataset_path(file_path)?;
-    let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
-    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema();
+    let float_cols: Vec<&str> = schema
+        .fields()
+        .iter()
+        .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
+        .map(|f| f.name().as_str())
+        .collect();
+    let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&float_cols);
+    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
 
     #[cfg(feature = "mpi")]
     {
@@ -773,19 +780,6 @@ pub fn resolve_p4_component_columns(
 /// Resolve an optional `weight` column using case-insensitive matching.
 pub fn resolve_optional_weight_column(column_names: &[String]) -> Option<String> {
     resolve_column_name_case_insensitive(column_names, "weight")
-}
-
-fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)> {
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let schema = builder.schema();
-    let float_cols: Vec<&str> = schema
-        .fields()
-        .iter()
-        .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
-        .map(|f| f.name().as_str())
-        .collect();
-    Ok(infer_p4_and_aux_names(&float_cols))
 }
 
 fn infer_p4_and_aux_names(float_cols: &[&str]) -> (Vec<String>, Vec<String>) {
