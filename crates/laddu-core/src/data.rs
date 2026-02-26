@@ -1847,6 +1847,50 @@ mod tests {
     }
 
     #[test]
+    fn test_from_parquet_alias_resolution_parity_auto_vs_explicit() {
+        let auto = open_test_dataset(
+            "data_f32.parquet",
+            DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
+        );
+        let explicit = open_test_dataset(
+            "data_f32.parquet",
+            DatasetReadOptions::new()
+                .p4_names(TEST_P4_NAMES)
+                .aux_names(TEST_AUX_NAMES)
+                .alias("resonance", ["kshort1", "kshort2"]),
+        );
+
+        assert_datasets_close(&auto, &explicit, TEST_P4_NAMES, TEST_AUX_NAMES);
+        for event_index in 0..auto.n_events() {
+            let auto_event = auto
+                .named_event(event_index)
+                .expect("auto parquet event should exist");
+            let explicit_event = explicit
+                .named_event(event_index)
+                .expect("explicit parquet event should exist");
+
+            let auto_alias = auto_event
+                .p4("resonance")
+                .expect("auto alias should resolve");
+            let explicit_alias = explicit_event
+                .p4("resonance")
+                .expect("explicit alias should resolve");
+            let auto_expected = auto_event.get_p4_sum(["kshort1", "kshort2"]);
+            let explicit_expected = explicit_event.get_p4_sum(["kshort1", "kshort2"]);
+
+            assert_relative_eq!(auto_alias.px(), auto_expected.px(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.py(), auto_expected.py(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.pz(), auto_expected.pz(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.e(), auto_expected.e(), epsilon = 1e-9);
+
+            assert_relative_eq!(explicit_alias.px(), explicit_expected.px(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.py(), explicit_expected.py(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.pz(), explicit_expected.pz(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.e(), explicit_expected.e(), epsilon = 1e-9);
+        }
+    }
+
+    #[test]
     fn test_from_parquet_f64_matches_f32() {
         let f32_ds = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let f64_ds = open_test_dataset("data_f64.parquet", DatasetReadOptions::new());
