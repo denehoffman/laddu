@@ -2171,6 +2171,64 @@ mod tests {
         assert_eq!(empty_bootstrap.n_events(), 0);
     }
 
+    fn assert_weight_cache_matches_local_events(dataset: &Dataset) {
+        #[cfg(feature = "rayon")]
+        let expected = dataset
+            .events_local()
+            .par_iter()
+            .map(|event| event.weight)
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let expected = dataset
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum_with_accumulator::<Klein<f64>>();
+        assert_relative_eq!(dataset.cached_local_weighted_sum, expected);
+        assert_relative_eq!(dataset.n_events_weighted_local(), expected);
+    }
+
+    #[test]
+    fn test_weight_cache_recomputed_for_dataset_transforms() {
+        let metadata = Arc::new(
+            DatasetMetadata::new(vec!["beam"], Vec::<String>::new())
+                .expect("metadata should be valid"),
+        );
+        let dataset = Dataset::new_with_metadata(
+            vec![
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 1.0,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 2.0,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 3.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 3.0,
+                }),
+            ],
+            metadata,
+        );
+        assert_weight_cache_matches_local_events(&dataset);
+
+        let filtered = dataset.filter(&Mass::new(["beam"]).gt(0.0)).unwrap();
+        assert_weight_cache_matches_local_events(&filtered);
+
+        let bootstrapped = dataset.bootstrap(7);
+        assert_weight_cache_matches_local_events(&bootstrapped);
+
+        let boosted = dataset.boost_to_rest_frame_of(&["beam"]);
+        assert_weight_cache_matches_local_events(&boosted);
+
+        let combined = &dataset + &dataset;
+        assert_weight_cache_matches_local_events(&combined);
+    }
+
     #[test]
     fn test_dataset_iteration_returns_events() {
         let dataset = test_dataset();
