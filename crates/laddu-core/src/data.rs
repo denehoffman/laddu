@@ -521,7 +521,7 @@ pub struct Dataset {
     pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
     #[cfg(feature = "mpi")]
-    pub(crate) cached_global_event_count: Option<usize>,
+    pub(crate) cached_global_event_count: usize,
 }
 
 /// Metadata-aware view of an [`EventData`] with name-based helpers.
@@ -678,7 +678,7 @@ impl Dataset {
         self.events.clear();
         #[cfg(feature = "mpi")]
         {
-            self.cached_global_event_count = None;
+            self.cached_global_event_count = 0;
         }
     }
 
@@ -985,7 +985,7 @@ impl Dataset {
         let local_count = self.n_events_local();
         let mut counts = vec![0usize; world.size() as usize];
         world.all_gather_into(&local_count, &mut counts);
-        self.cached_global_event_count = Some(counts.iter().sum());
+        self.cached_global_event_count = counts.iter().sum();
     }
 
     fn columnar_from_wrapped_events(
@@ -1039,6 +1039,7 @@ impl Dataset {
             .into_iter()
             .map(|event| Event::new(event, metadata.clone()))
             .collect::<Vec<_>>();
+        let local_count = wrapped_events.len();
         let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
         Dataset {
@@ -1046,7 +1047,7 @@ impl Dataset {
             columnar,
             metadata,
             #[cfg(feature = "mpi")]
-            cached_global_event_count: None,
+            cached_global_event_count: local_count,
         }
     }
 
@@ -1074,7 +1075,7 @@ impl Dataset {
             events: local,
             columnar,
             metadata,
-            cached_global_event_count: None,
+            cached_global_event_count: 0,
         };
         dataset.set_cached_global_event_count_from_world(world);
         dataset
@@ -1118,11 +1119,8 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_mpi(&self, world: &SimpleCommunicator) -> usize {
-        let mut n_events_partitioned: Vec<usize> = vec![0; world.size() as usize];
-        let n_events_local = self.n_events_local();
-        world.all_gather_into(&n_events_local, &mut n_events_partitioned);
-        n_events_partitioned.iter().sum()
+    pub fn n_events_mpi(&self, _world: &SimpleCommunicator) -> usize {
+        self.cached_global_event_count
     }
 
     /// The number of [`EventData`]s in the [`Dataset`].
