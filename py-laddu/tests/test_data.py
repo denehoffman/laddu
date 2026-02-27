@@ -289,6 +289,30 @@ def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
         _assert_datasets_close(reopened_root, baseline)
 
 
+def test_table_entrypoints_dtype_and_null_handling() -> None:
+    data = {
+        'beam_px': [1, 2, 3],
+        'beam_py': [0.0, 0.1, 0.2],
+        'beam_pz': [3, 4, 5],
+        'beam_e': [4.0, 5.0, 6.0],
+        'pol_magnitude': [True, False, True],
+        'pol_angle': [0.1, None, 0.3],
+        'weight': [1.0, 2.0, None],
+    }
+    datasets = {
+        'dict': ldio.from_dict(data),
+        'pandas': ldio.from_pandas(pd.DataFrame(data)),
+        'polars': ldio.from_polars(pl.DataFrame(data)),
+    }
+
+    for name, dataset in datasets.items():
+        assert dataset.n_events == 3, name
+        assert pytest.approx(dataset[0].aux['pol_magnitude']) == 1.0, name
+        assert pytest.approx(dataset[1].aux['pol_magnitude']) == 0.0, name
+        assert np.isnan(dataset[1].aux['pol_angle']), name
+        assert np.isnan(dataset[2].weight), name
+
+
 def test_dataset_rejects_duplicate_p4_names() -> None:
     event = make_test_event()
     with pytest.raises(ValueError):
