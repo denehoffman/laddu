@@ -354,6 +354,8 @@ fn read_root_columns(
     let column_names: Vec<&str> = lookup.keys().copied().collect();
     let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+    // Keep ROOT reads sequential for now: oxyroot branch handles are not `Sync`,
+    // so sharing this lookup across worker threads is unsound.
     let p4_columns = metadata
         .p4_names
         .iter()

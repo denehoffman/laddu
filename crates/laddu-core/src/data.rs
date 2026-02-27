@@ -2559,6 +2559,17 @@ mod tests {
     }
 
     #[test]
+    fn test_root_storage_repeated_reads_are_stable() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let first = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("first root columnar load should work");
+        let second = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("second root columnar load should work");
+        assert_dataset_columnar_close(&first, &second);
+    }
+
+    #[test]
     fn test_root_roundtrip_to_tempfile() {
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let dir = make_temp_dir();
