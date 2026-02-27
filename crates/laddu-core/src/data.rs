@@ -1482,7 +1482,10 @@ impl Dataset {
 
 #[cfg(test)]
 pub(crate) use io::write_parquet_storage;
-pub use io::{read_parquet, read_parquet_chunks, read_root, write_parquet, write_root};
+pub use io::{
+    read_parquet, read_parquet_chunks, read_parquet_chunks_with_options, read_root, write_parquet,
+    write_root,
+};
 #[cfg(test)]
 pub(crate) use io::{read_parquet_storage, read_root_storage};
 
@@ -1513,6 +1516,8 @@ pub struct DatasetReadOptions {
     pub tree: Option<String>,
     /// Optional aliases mapping logical names to selections of four-momenta.
     pub aliases: IndexMap<String, P4Selection>,
+    /// Preferred chunk size for chunked read APIs.
+    pub chunk_size: Option<usize>,
 }
 
 /// Precision for writing floating-point columns.
@@ -1626,6 +1631,12 @@ impl DatasetReadOptions {
         self
     }
 
+    /// Set the chunk size used by chunked read APIs; values below 1 are clamped to 1.
+    pub fn chunk_size(mut self, chunk_size: usize) -> Self {
+        self.chunk_size = Some(chunk_size.max(1));
+        self
+    }
+
     fn resolve_metadata(
         &self,
         detected_p4_names: Vec<String>,
@@ -1643,6 +1654,7 @@ impl DatasetReadOptions {
 }
 
 const DEFAULT_WRITE_BATCH_SIZE: usize = 10_000;
+pub(crate) const DEFAULT_READ_CHUNK_SIZE: usize = 10_000;
 
 /// A list of [`Dataset`]s formed by binning [`EventData`] by some [`Variable`].
 pub struct BinnedDataset {
@@ -2610,5 +2622,45 @@ mod tests {
         }
 
         assert_eq!(global_idx, full.n_events());
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_with_options_chunk_size_one() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new().chunk_size(1);
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+        let mut event_count = 0usize;
+        let mut chunk_count = 0usize;
+
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            chunk_count += 1;
+            assert_eq!(chunk.n_events_local(), 1);
+            event_count += chunk.n_events_local();
+        }
+
+        assert_eq!(event_count, full.n_events());
+        assert_eq!(chunk_count, full.n_events());
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_with_options_large_chunk_size() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let options = DatasetReadOptions::new().chunk_size(full.n_events() + 100);
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+        let chunk_vec = chunks
+            .collect::<LadduResult<Vec<_>>>()
+            .expect("all chunk reads should succeed");
+
+        assert_eq!(chunk_vec.len(), 1);
+        assert_eq!(chunk_vec[0].n_events_local(), full.n_events());
     }
 }

@@ -43,6 +43,18 @@ pub fn read_parquet_chunks(
     Ok(chunks.map(|chunk| chunk.map(|storage| Arc::new(storage.to_dataset()))))
 }
 
+/// Load a Parquet file as chunked [`Dataset`] values using the chunk size from [`DatasetReadOptions`].
+pub fn read_parquet_chunks_with_options(
+    file_path: &str,
+    options: &DatasetReadOptions,
+) -> LadduResult<impl Iterator<Item = LadduResult<Arc<Dataset>>>> {
+    read_parquet_chunks(
+        file_path,
+        options,
+        options.chunk_size.unwrap_or(DEFAULT_READ_CHUNK_SIZE),
+    )
+}
+
 pub(crate) fn read_parquet_storage(
     file_path: &str,
     options: &DatasetReadOptions,
@@ -89,6 +101,8 @@ pub(crate) fn read_parquet_storage_chunks(
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
     let mut reader = builder.build()?;
     let rows_per_chunk = chunk_size.max(1);
+    let mut pending_batch: Option<RecordBatch> = None;
+    let mut pending_offset = 0usize;
 
     Ok(std::iter::from_fn(move || {
         let mut p4 = (0..metadata.p4_names.len())
@@ -100,24 +114,46 @@ pub(crate) fn read_parquet_storage_chunks(
         let mut weights = Vec::with_capacity(rows_per_chunk);
 
         while weights.len() < rows_per_chunk {
-            let next_batch = match reader.next() {
-                Some(batch) => batch,
-                None => break,
-            };
+            if pending_batch.is_none() {
+                let next_batch = match reader.next() {
+                    Some(batch) => batch,
+                    None => break,
+                };
+                let batch = match next_batch {
+                    Ok(batch) => batch,
+                    Err(err) => return Some(Err(err.into())),
+                };
+                pending_batch = Some(batch);
+                pending_offset = 0;
+            }
 
-            let batch = match next_batch {
-                Ok(batch) => batch,
-                Err(err) => return Some(Err(err.into())),
-            };
+            let batch = pending_batch
+                .as_ref()
+                .expect("pending batch should exist after refill");
+            let available_rows = batch.num_rows().saturating_sub(pending_offset);
+            if available_rows == 0 {
+                pending_batch = None;
+                pending_offset = 0;
+                continue;
+            }
 
-            if let Err(err) = append_record_batch_to_columnar(
-                &batch,
+            let take_rows = available_rows.min(rows_per_chunk - weights.len());
+            let end_row = pending_offset + take_rows;
+            if let Err(err) = append_record_batch_range_to_columnar(
+                batch,
                 metadata.as_ref(),
+                pending_offset,
+                end_row,
                 &mut p4,
                 &mut aux,
                 &mut weights,
             ) {
                 return Some(Err(err));
+            }
+            pending_offset = end_row;
+            if pending_offset >= batch.num_rows() {
+                pending_batch = None;
+                pending_offset = 0;
             }
         }
 
@@ -132,6 +168,47 @@ pub(crate) fn read_parquet_storage_chunks(
             weights,
         })))
     }))
+}
+
+fn append_record_batch_range_to_columnar(
+    batch: &RecordBatch,
+    metadata: &DatasetMetadata,
+    start_row: usize,
+    end_row: usize,
+    p4_columns_out: &mut [ColumnarP4Column],
+    aux_columns_out: &mut [Vec<f64>],
+    weights_out: &mut Vec<f64>,
+) -> LadduResult<()> {
+    let p4_columns: Vec<P4Columns<'_>> = metadata
+        .p4_names
+        .iter()
+        .map(|name| prepare_p4_columns(batch, name))
+        .collect::<Result<_, _>>()?;
+    let aux_columns: Vec<FloatColumn<'_>> = metadata
+        .aux_names
+        .iter()
+        .map(|name| prepare_float_column(batch, name))
+        .collect::<Result<_, _>>()?;
+    let weight_column = find_float_column_from_candidates(batch, &["weight".to_string()])?;
+
+    for row in start_row..end_row {
+        for (target, source) in p4_columns_out.iter_mut().zip(&p4_columns) {
+            target.px.push(source.px.value(row));
+            target.py.push(source.py.value(row));
+            target.pz.push(source.pz.value(row));
+            target.e.push(source.e.value(row));
+        }
+        for (target, source) in aux_columns_out.iter_mut().zip(&aux_columns) {
+            target.push(source.value(row));
+        }
+        weights_out.push(
+            weight_column
+                .as_ref()
+                .map(|column| column.value(row))
+                .unwrap_or(1.0),
+        );
+    }
+    Ok(())
 }
 
 fn read_parquet_columnar_local(
