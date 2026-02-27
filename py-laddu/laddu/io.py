@@ -405,7 +405,8 @@ def _open_with_uproot(
     if not columns:
         msg = 'ROOT tree does not contain any readable columns'
         raise ValueError(msg)
-    return from_dict(columns, p4s=p4s, aux=aux, aliases=aliases)
+    normalized = _normalize_ingestion_columns(columns)
+    return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def _build_uproot_selected_columns(
@@ -508,7 +509,10 @@ def _open_amptools_format(
         pol_magnitude_name=pol_magnitude_name,
         pol_angle_name=pol_angle_name,
     )
-    return from_dict(columns, p4s=p4_names, aux=aux_names)
+    normalized = _normalize_ingestion_columns(columns)
+    return _backend_from_numpy_columns(
+        normalized, p4s=p4_names, aux=aux_names, aliases=None
+    )
 
 
 def _select_uproot_tree(file: _UprootFile, tree_name: str | None) -> _UprootTree:
