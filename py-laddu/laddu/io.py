@@ -634,9 +634,21 @@ def _read_amptools_matrix(
     raw = branch.array(library='np', entry_stop=entry_stop)
     array = np.asarray(raw)
     if array.dtype == object:
-        rows = cast(Sequence[np.ndarray], array)
-        return np.stack(rows).astype(np.float32, copy=False)
+        return _amptools_object_rows_to_matrix(cast(Sequence[np.ndarray], array))
     return np.asarray(array, dtype=np.float32)
+
+
+def _amptools_object_rows_to_matrix(rows: Sequence[np.ndarray]) -> np.ndarray:
+    if len(rows) == 0:
+        return np.empty((0, 0), dtype=np.float32)
+    first = np.asarray(rows[0], dtype=np.float32)
+    n_rows = len(rows)
+    n_cols = int(first.shape[0])
+    out = np.empty((n_rows, n_cols), dtype=np.float32)
+    out[0, :] = first
+    for row_index, row in enumerate(rows[1:], start=1):
+        out[row_index, :] = np.asarray(row, dtype=np.float32)
+    return out
 
 
 def _load_amptools_arrays(
