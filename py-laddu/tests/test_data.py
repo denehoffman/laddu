@@ -652,6 +652,24 @@ def test_dataset_from_parquet_with_aliases() -> None:
     _assert_vec4_close(alias_vec, expected)
 
 
+def test_arrow_chunked_columns_convert_to_numpy_columns() -> None:
+    pa = pytest.importorskip('pyarrow')
+    table = pa.table(
+        {
+            'beam_px': pa.chunked_array([[0.0, 1.0], [2.0, 3.0]]),
+            'beam_py': pa.chunked_array([[0.1, 1.1], [2.1, 3.1]]),
+            'beam_pz': pa.chunked_array([[0.2, 1.2], [2.2, 3.2]]),
+            'beam_e': pa.chunked_array([[1.0, 2.0], [3.0, 4.0]]),
+            'weight': pa.chunked_array([[1.0, 1.0], [2.0, 2.0]]),
+        }
+    )
+    convert = ldio._arrow_table_to_numpy_columns  # ty: ignore[unresolved-attribute]
+    converted = convert(table)
+    np.testing.assert_allclose(converted['beam_px'], [0.0, 1.0, 2.0, 3.0])
+    np.testing.assert_allclose(converted['beam_py'], [0.1, 1.1, 2.1, 3.1])
+    np.testing.assert_allclose(converted['weight'], [1.0, 1.0, 2.0, 2.0])
+
+
 def test_uproot_selected_columns_include_requested_p4_aux_and_weight() -> None:
     build_selected = ldio._build_uproot_selected_columns  # ty: ignore[unresolved-attribute]
     tree = _FakeTreeKeys(

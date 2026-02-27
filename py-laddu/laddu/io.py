@@ -148,9 +148,21 @@ def _arrow_table_to_numpy_columns(table: pa.Table) -> NumpyColumns:
     converted: dict[str, np.ndarray] = {}
     for name in column_names:
         chunked = table[name]
-        array = chunked.combine_chunks() if len(chunked.chunks) != 1 else chunked.chunk(0)
-        converted[name] = np.asarray(array.to_numpy(zero_copy_only=False))
+        converted[name] = _chunked_array_to_numpy(chunked)
     return converted
+
+
+def _chunked_array_to_numpy(chunked: pa.ChunkedArray) -> np.ndarray:
+    if len(chunked.chunks) == 1:
+        return _arrow_array_to_numpy(chunked.chunk(0))
+    return np.concatenate([_arrow_array_to_numpy(chunk) for chunk in chunked.chunks])
+
+
+def _arrow_array_to_numpy(array: pa.Array) -> np.ndarray:
+    try:
+        return np.asarray(array.to_numpy(zero_copy_only=True))
+    except (TypeError, ValueError):
+        return np.asarray(array.to_numpy(zero_copy_only=False))
 
 
 def from_numpy(
