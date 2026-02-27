@@ -1482,7 +1482,7 @@ impl Dataset {
 
 #[cfg(test)]
 pub(crate) use io::write_parquet_storage;
-pub use io::{read_parquet, read_root, write_parquet, write_root};
+pub use io::{read_parquet, read_parquet_chunks, read_root, write_parquet, write_root};
 #[cfg(test)]
 pub(crate) use io::{read_parquet_storage, read_root_storage};
 
@@ -2583,5 +2583,32 @@ mod tests {
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_matches_full_read() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new();
+        let full = read_parquet(path_str, &options).expect("full parquet read should work");
+        let chunks =
+            read_parquet_chunks(path_str, &options, 17).expect("chunk iterator should open");
+
+        let mut global_idx = 0usize;
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            for local_idx in 0..chunk.n_events_local() {
+                let left = full
+                    .event(global_idx)
+                    .expect("full dataset event should exist");
+                let right = chunk
+                    .event(local_idx)
+                    .expect("chunk dataset event should exist");
+                assert_events_close(&left, &right, TEST_P4_NAMES, TEST_AUX_NAMES);
+                global_idx += 1;
+            }
+        }
+
+        assert_eq!(global_idx, full.n_events());
     }
 }

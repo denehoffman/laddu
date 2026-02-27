@@ -33,6 +33,16 @@ pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResul
     Ok(Arc::new(storage.to_dataset()))
 }
 
+/// Load a Parquet file as an iterator of chunked [`Dataset`] values.
+pub fn read_parquet_chunks(
+    file_path: &str,
+    options: &DatasetReadOptions,
+    chunk_size: usize,
+) -> LadduResult<impl Iterator<Item = LadduResult<Arc<Dataset>>>> {
+    let chunks = read_parquet_storage_chunks(file_path, options, chunk_size)?;
+    Ok(chunks.map(|chunk| chunk.map(|storage| Arc::new(storage.to_dataset()))))
+}
+
 pub(crate) fn read_parquet_storage(
     file_path: &str,
     options: &DatasetReadOptions,
@@ -58,6 +68,70 @@ pub(crate) fn read_parquet_storage(
     }
 
     read_parquet_columnar_local(builder, metadata)
+}
+
+pub(crate) fn read_parquet_storage_chunks(
+    file_path: &str,
+    options: &DatasetReadOptions,
+    chunk_size: usize,
+) -> LadduResult<impl Iterator<Item = LadduResult<Arc<DatasetStorage>>>> {
+    let path = canonicalize_dataset_path(file_path)?;
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema();
+    let float_cols: Vec<&str> = schema
+        .fields()
+        .iter()
+        .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
+        .map(|f| f.name().as_str())
+        .collect();
+    let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&float_cols);
+    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+    let mut reader = builder.build()?;
+    let rows_per_chunk = chunk_size.max(1);
+
+    Ok(std::iter::from_fn(move || {
+        let mut p4 = (0..metadata.p4_names.len())
+            .map(|_| ColumnarP4Column::with_capacity(rows_per_chunk))
+            .collect::<Vec<_>>();
+        let mut aux = (0..metadata.aux_names.len())
+            .map(|_| Vec::with_capacity(rows_per_chunk))
+            .collect::<Vec<_>>();
+        let mut weights = Vec::with_capacity(rows_per_chunk);
+
+        while weights.len() < rows_per_chunk {
+            let next_batch = match reader.next() {
+                Some(batch) => batch,
+                None => break,
+            };
+
+            let batch = match next_batch {
+                Ok(batch) => batch,
+                Err(err) => return Some(Err(err.into())),
+            };
+
+            if let Err(err) = append_record_batch_to_columnar(
+                &batch,
+                metadata.as_ref(),
+                &mut p4,
+                &mut aux,
+                &mut weights,
+            ) {
+                return Some(Err(err));
+            }
+        }
+
+        if weights.is_empty() {
+            return None;
+        }
+
+        Some(Ok(Arc::new(DatasetStorage {
+            metadata: metadata.clone(),
+            p4,
+            aux,
+            weights,
+        })))
+    }))
 }
 
 fn read_parquet_columnar_local(
