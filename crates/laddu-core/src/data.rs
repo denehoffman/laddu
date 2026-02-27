@@ -2490,6 +2490,42 @@ mod tests {
     }
 
     #[test]
+    fn test_parquet_read_order_is_deterministic_across_repeated_reads() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let dir = make_temp_dir();
+        let path = dir.join("deterministic_order.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        // Force many parquet batches so order stability is verified under incremental reads.
+        let write_options = DatasetWriteOptions::default().batch_size(1);
+        write_parquet(&dataset, path_str, &write_options)
+            .expect("writing parquet in small batches should succeed");
+
+        let first = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("first parquet read should succeed");
+        let second = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("second parquet read should succeed");
+
+        assert_eq!(first.n_events(), second.n_events());
+        assert_eq!(first.n_events(), dataset.n_events());
+        for event_index in 0..dataset.n_events() {
+            let source = dataset
+                .event(event_index)
+                .expect("source event should exist");
+            let first_event = first
+                .event(event_index)
+                .expect("first read event should exist");
+            let second_event = second
+                .event(event_index)
+                .expect("second read event should exist");
+            assert_events_close(&source, &first_event, TEST_P4_NAMES, TEST_AUX_NAMES);
+            assert_events_close(&source, &second_event, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
     fn test_parquet_storage_roundtrip_to_tempfile() {
         let source_path = test_data_path("data_f32.parquet");
         let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
