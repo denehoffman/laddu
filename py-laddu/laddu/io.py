@@ -10,6 +10,7 @@ from typing import (
     Protocol,
     Sequence,
     TypeAlias,
+    cast,
 )
 
 import numpy as np
@@ -631,7 +632,11 @@ def _read_amptools_matrix(
     entry_stop: int | None = None,
 ) -> np.ndarray:
     raw = branch.array(library='np', entry_stop=entry_stop)
-    return np.asarray(list(raw), dtype=np.float32)
+    array = np.asarray(raw)
+    if array.dtype == object:
+        rows = cast(Sequence[np.ndarray], array)
+        return np.stack(rows).astype(np.float32, copy=False)
+    return np.asarray(array, dtype=np.float32)
 
 
 def _load_amptools_arrays(
@@ -691,12 +696,14 @@ def _derive_amptools_polarization(
     pol_angle_rad: float | None,
     pol_magnitude: float | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
-    beam_px = px_beam.copy()
-    beam_py = py_beam.copy()
+    beam_px = px_beam
+    beam_py = py_beam
     pol_magnitude_arr: np.ndarray | None = None
     pol_angle_arr: np.ndarray | None = None
 
     if pol_in_beam:
+        beam_px = px_beam.copy()
+        beam_py = py_beam.copy()
         transverse_sq = px_beam.astype(np.float64) ** 2 + py_beam.astype(np.float64) ** 2
         pol_magnitude_arr = np.sqrt(transverse_sq).astype(np.float32)
         pol_angle_arr = np.arctan2(
@@ -749,7 +756,7 @@ def _prepare_amptools_data(
         finals_py=py_final,
         finals_pz=pz_final,
         finals_e=e_final,
-        weights=weight.astype(np.float32),
+        weights=weight.astype(np.float32, copy=False),
         pol_magnitude=pol_magnitude_arr,
         pol_angle=pol_angle_arr,
     )
