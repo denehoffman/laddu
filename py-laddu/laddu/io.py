@@ -714,15 +714,10 @@ def _derive_amptools_polarization(
     pol_angle_arr: np.ndarray | None = None
 
     if pol_in_beam:
-        beam_px = px_beam.copy()
-        beam_py = py_beam.copy()
-        transverse_sq = px_beam.astype(np.float64) ** 2 + py_beam.astype(np.float64) ** 2
-        pol_magnitude_arr = np.sqrt(transverse_sq).astype(np.float32)
-        pol_angle_arr = np.arctan2(
-            py_beam.astype(np.float64), px_beam.astype(np.float64)
-        ).astype(np.float32)
-        beam_px.fill(0.0)
-        beam_py.fill(0.0)
+        beam_px = np.zeros_like(px_beam, dtype=np.float32)
+        beam_py = np.zeros_like(py_beam, dtype=np.float32)
+        pol_magnitude_arr = np.hypot(px_beam, py_beam).astype(np.float32, copy=False)
+        pol_angle_arr = np.arctan2(py_beam, px_beam).astype(np.float32, copy=False)
     elif pol_angle_rad is not None and pol_magnitude is not None:
         n_events = px_beam.shape[0]
         pol_magnitude_arr = np.full(n_events, pol_magnitude, dtype=np.float32)
