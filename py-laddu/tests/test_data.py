@@ -313,6 +313,36 @@ def test_table_entrypoints_dtype_and_null_handling() -> None:
         assert np.isnan(dataset[2].weight), name
 
 
+def test_table_entrypoints_accept_column_major_views() -> None:
+    # Build a strided column-major payload and pass column views directly.
+    matrix = np.arange(36.0).reshape((3, 12))
+    columns = {
+        'beam_px': matrix[:, 0],
+        'beam_py': matrix[:, 1],
+        'beam_pz': matrix[:, 2],
+        'beam_e': matrix[:, 3],
+        'proton_px': matrix[:, 4],
+        'proton_py': matrix[:, 5],
+        'proton_pz': matrix[:, 6],
+        'proton_e': matrix[:, 7],
+        'pol_magnitude': matrix[:, 8],
+        'pol_angle': matrix[:, 9],
+        'weight': matrix[:, 10],
+    }
+    for array in columns.values():
+        assert not np.asarray(array).flags.c_contiguous
+
+    datasets = {
+        'numpy': ldio.from_numpy({k: np.asarray(v) for k, v in columns.items()}),
+        'pandas': ldio.from_pandas(pd.DataFrame(columns)),
+        'polars': ldio.from_polars(pl.DataFrame(columns)),
+    }
+    baseline = ldio.from_dict(columns)
+    for name, dataset in datasets.items():
+        _assert_datasets_close(dataset, baseline)
+        assert dataset.n_events == 3, name
+
+
 def test_dataset_rejects_duplicate_p4_names() -> None:
     event = make_test_event()
     with pytest.raises(ValueError):
