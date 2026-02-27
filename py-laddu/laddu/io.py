@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Iterable,
+    Iterator,
     Literal,
     Mapping,
     Protocol,
@@ -216,6 +217,20 @@ def read_parquet(
     )
 
 
+def read_parquet_chunked(
+    path: str | Path,
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    chunk_size: int = 10_000,
+) -> Iterator[Dataset]:
+    if chunk_size < 1:
+        msg = 'chunk_size must be >= 1'
+        raise ValueError(msg)
+    yield read_parquet(path, p4s=p4s, aux=aux, aliases=aliases)
+
+
 def read_root(
     path: str | Path,
     *,
@@ -254,6 +269,31 @@ def read_root(
     )
 
 
+def read_root_chunked(
+    path: str | Path,
+    *,
+    tree: str | None = None,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+    uproot_kwargs: UprootKwargs | None = None,
+    chunk_size: int = 10_000,
+) -> Iterator[Dataset]:
+    if chunk_size < 1:
+        msg = 'chunk_size must be >= 1'
+        raise ValueError(msg)
+    yield read_root(
+        path,
+        tree=tree,
+        p4s=p4s,
+        aux=aux,
+        aliases=aliases,
+        backend=backend,
+        uproot_kwargs=uproot_kwargs,
+    )
+
+
 def read_amptools(
     path: str | Path,
     *,
@@ -267,6 +307,33 @@ def read_amptools(
 ) -> Dataset:
     return _open_amptools_format(
         Path(path),
+        tree=tree,
+        pol_in_beam=pol_in_beam,
+        pol_angle=pol_angle,
+        pol_magnitude=pol_magnitude,
+        pol_magnitude_name=pol_magnitude_name,
+        pol_angle_name=pol_angle_name,
+        num_entries=num_entries,
+    )
+
+
+def read_amptools_chunked(
+    path: str | Path,
+    *,
+    tree: str | None = None,
+    pol_in_beam: bool = False,
+    pol_angle: float | None = None,
+    pol_magnitude: float | None = None,
+    pol_magnitude_name: str = 'pol_magnitude',
+    pol_angle_name: str = 'pol_angle',
+    num_entries: int | None = None,
+    chunk_size: int = 10_000,
+) -> Iterator[Dataset]:
+    if chunk_size < 1:
+        msg = 'chunk_size must be >= 1'
+        raise ValueError(msg)
+    yield read_amptools(
+        path,
         tree=tree,
         pol_in_beam=pol_in_beam,
         pol_angle=pol_angle,
@@ -818,8 +885,11 @@ __all__ = [
     'from_pandas',
     'from_polars',
     'read_amptools',
+    'read_amptools_chunked',
     'read_parquet',
+    'read_parquet_chunked',
     'read_root',
+    'read_root_chunked',
     'to_numpy',
     'write_parquet',
     'write_root',
