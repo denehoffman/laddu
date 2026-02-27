@@ -672,6 +672,24 @@ def test_uproot_selected_columns_missing_component_raises_key_error() -> None:
         )
 
 
+def test_uproot_arrays_kwargs_sets_filter_name_when_unset() -> None:
+    build_kwargs = ldio._uproot_arrays_kwargs  # ty: ignore[unresolved-attribute]
+    kwargs = build_kwargs({}, ['beam_px', 'beam_py'])
+    assert kwargs['filter_name'] == ['beam_px', 'beam_py']
+
+
+def test_uproot_arrays_kwargs_preserves_user_filter_and_expressions() -> None:
+    build_kwargs = ldio._uproot_arrays_kwargs  # ty: ignore[unresolved-attribute]
+    original_filter = {'filter_name': ['existing']}
+    updated_filter = build_kwargs(original_filter, ['beam_px'])
+    assert updated_filter['filter_name'] == ['existing']
+
+    original_expr = {'expressions': ['existing_expr']}
+    updated_expr = build_kwargs(original_expr, ['beam_px'])
+    assert updated_expr['expressions'] == ['existing_expr']
+    assert 'filter_name' not in updated_expr
+
+
 def test_mass_uses_alias_string() -> None:
     dataset = ldio.read_parquet(
         DATA_F32_PARQUET,

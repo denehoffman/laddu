@@ -49,7 +49,6 @@ class _UprootTree(Protocol):
         self,
         *,
         library: Literal['np'],
-        expressions: Sequence[str] | None = None,
         **kwargs: object,
     ) -> Mapping[str, np.ndarray | Sequence[float]]: ...
 
@@ -374,31 +373,14 @@ def _open_with_uproot(
         raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as root_file:
         tree_obj = _select_uproot_tree(root_file, tree)
-        kwargs = dict(uproot_kwargs)
-        raw_expressions = kwargs.pop('expressions', None)
-        expressions: Sequence[str] | None
-        if raw_expressions is None:
-            expressions = None
-        elif isinstance(raw_expressions, Sequence) and not isinstance(
-            raw_expressions, (str, bytes)
-        ):
-            expressions = [str(name) for name in raw_expressions]
-        else:
-            msg = "uproot_kwargs['expressions'] must be a sequence of strings"
-            raise TypeError(msg)
         selected_columns = _build_uproot_selected_columns(
             tree_obj,
             p4s=p4s,
             aux=aux,
             include_weight=True,
         )
-        if (
-            selected_columns is not None
-            and 'filter_name' not in kwargs
-            and expressions is None
-        ):
-            expressions = selected_columns
-        arrays = tree_obj.arrays(library='np', expressions=expressions, **kwargs)
+        kwargs = _uproot_arrays_kwargs(uproot_kwargs, selected_columns)
+        arrays = tree_obj.arrays(library='np', **kwargs)
 
     columns = {name: np.asarray(values) for name, values in arrays.items()}
     if not columns:
@@ -434,6 +416,19 @@ def _build_uproot_selected_columns(
 
     # Preserve first-seen order and avoid duplicates.
     return list(dict.fromkeys(selected))
+
+
+def _uproot_arrays_kwargs(
+    uproot_kwargs: UprootKwargs, selected_columns: Sequence[str] | None
+) -> UprootKwargs:
+    kwargs = dict(uproot_kwargs)
+    if (
+        selected_columns is not None
+        and 'filter_name' not in kwargs
+        and 'expressions' not in kwargs
+    ):
+        kwargs['filter_name'] = list(selected_columns)
+    return kwargs
 
 
 def _canonicalize_uproot_column_names(raw_keys: Iterable[str]) -> list[str]:
