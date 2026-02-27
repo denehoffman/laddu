@@ -325,39 +325,6 @@ struct RootReadColumns {
     weight_values: Vec<f64>,
 }
 
-struct RootP4ReadGroup {
-    name: String,
-    px_candidates: Vec<String>,
-    py_candidates: Vec<String>,
-    pz_candidates: Vec<String>,
-    e_candidates: Vec<String>,
-}
-
-struct RootReadPlan {
-    p4_groups: Vec<RootP4ReadGroup>,
-    aux_columns: Vec<String>,
-    weight_column: String,
-}
-
-fn build_root_read_plan(metadata: &DatasetMetadata) -> RootReadPlan {
-    let p4_groups = metadata
-        .p4_names
-        .iter()
-        .map(|name| RootP4ReadGroup {
-            name: name.clone(),
-            px_candidates: component_candidates(name, "px"),
-            py_candidates: component_candidates(name, "py"),
-            pz_candidates: component_candidates(name, "pz"),
-            e_candidates: component_candidates(name, "e"),
-        })
-        .collect();
-    RootReadPlan {
-        p4_groups,
-        aux_columns: metadata.aux_names.clone(),
-        weight_column: "weight".to_string(),
-    }
-}
-
 fn read_root_columns(
     file_path: &str,
     options: &DatasetReadOptions,
@@ -387,40 +354,39 @@ fn read_root_columns(
     let column_names: Vec<&str> = lookup.keys().copied().collect();
     let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-    // Explicitly model independent branch-read groups (p4/aux/weight). This
-    // keeps behavior unchanged now and establishes the safe parallelization
-    // boundary for D.O017.02.
-    let read_plan = build_root_read_plan(metadata.as_ref());
+    let p4_columns = metadata
+        .p4_names
+        .iter()
+        .map(|name| {
+            let px = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "px"),
+                &format!("{name}_px"),
+            )?;
+            let py = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "py"),
+                &format!("{name}_py"),
+            )?;
+            let pz = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "pz"),
+                &format!("{name}_pz"),
+            )?;
+            let e = read_branch_values_from_candidates(
+                &lookup,
+                &component_candidates(name, "e"),
+                &format!("{name}_e"),
+            )?;
+            Ok(RootP4Columns { px, py, pz, e })
+        })
+        .collect::<LadduResult<Vec<_>>>()?;
 
-    let mut p4_columns = Vec::with_capacity(read_plan.p4_groups.len());
-    for p4_group in &read_plan.p4_groups {
-        let px = read_branch_values_from_candidates(
-            &lookup,
-            &p4_group.px_candidates,
-            &format!("{}_px", p4_group.name),
-        )?;
-        let py = read_branch_values_from_candidates(
-            &lookup,
-            &p4_group.py_candidates,
-            &format!("{}_py", p4_group.name),
-        )?;
-        let pz = read_branch_values_from_candidates(
-            &lookup,
-            &p4_group.pz_candidates,
-            &format!("{}_pz", p4_group.name),
-        )?;
-        let e = read_branch_values_from_candidates(
-            &lookup,
-            &p4_group.e_candidates,
-            &format!("{}_e", p4_group.name),
-        )?;
-        p4_columns.push(RootP4Columns { px, py, pz, e });
-    }
-
-    let mut aux_columns = Vec::with_capacity(read_plan.aux_columns.len());
-    for name in &read_plan.aux_columns {
-        aux_columns.push(read_branch_values(&lookup, name)?);
-    }
+    let aux_columns = metadata
+        .aux_names
+        .iter()
+        .map(|name| read_branch_values(&lookup, name))
+        .collect::<LadduResult<Vec<_>>>()?;
 
     let n_events = if let Some(first) = p4_columns.first() {
         first.px.len()
@@ -433,11 +399,11 @@ fn read_root_columns(
         ));
     };
 
-    let weight_values = match read_branch_values_optional(&lookup, &read_plan.weight_column)? {
+    let weight_values = match read_branch_values_optional(&lookup, "weight")? {
         Some(values) => {
             if values.len() != n_events {
                 return Err(LadduError::LengthMismatch {
-                    context: format!("Column '{}'", read_plan.weight_column),
+                    context: "Column 'weight'".to_string(),
                     expected: n_events,
                     actual: values.len(),
                 });
@@ -1077,32 +1043,6 @@ fn component_candidates(name: &str, suffix: &str) -> Vec<String> {
         candidates.push(format!("{name}_{upper}"));
     }
     candidates
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn root_read_plan_separates_independent_groups() {
-        let metadata = DatasetMetadata::new(
-            ["beam", "p"].to_vec(),
-            ["pol_magnitude", "pol_angle"].to_vec(),
-        )
-        .expect("test metadata should build");
-
-        let plan = build_root_read_plan(&metadata);
-        assert_eq!(plan.p4_groups.len(), 2);
-        assert_eq!(plan.aux_columns, metadata.aux_names);
-        assert_eq!(plan.weight_column, "weight");
-
-        let beam = &plan.p4_groups[0];
-        assert_eq!(beam.name, "beam");
-        assert_eq!(beam.px_candidates[0], "beam_px");
-        assert_eq!(beam.py_candidates[0], "beam_py");
-        assert_eq!(beam.pz_candidates[0], "beam_pz");
-        assert_eq!(beam.e_candidates[0], "beam_e");
-    }
 }
 
 fn find_float_column_from_candidates<'a>(
