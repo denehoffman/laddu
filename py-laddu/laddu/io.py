@@ -73,10 +73,6 @@ def from_dict(
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     normalized = _normalize_ingestion_columns(data)
-    table = _build_arrow_table_from_columns(normalized)
-    if table is not None:
-        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
-
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
@@ -106,18 +102,6 @@ def _normalize_ingestion_columns(data: Mapping[str, ColumnInput]) -> NumpyColumn
             raise TypeError(msg) from exc
 
     return normalized
-
-
-def _build_arrow_table_from_columns(columns: NumpyColumns) -> pa.Table | None:
-    try:
-        import pyarrow as pa  # ty: ignore[unresolved-import]
-    except ModuleNotFoundError:
-        return None
-
-    try:
-        return pa.table(columns)
-    except (TypeError, ValueError):
-        return None
 
 
 def _dataset_from_arrow_table(
