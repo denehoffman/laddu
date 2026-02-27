@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 FloatArray: TypeAlias = NDArray[np.float32] | NDArray[np.float64]
 ColumnInput: TypeAlias = Sequence[float] | FloatArray
 NumpyColumns: TypeAlias = dict[str, np.ndarray]
-UprootKwargValue: TypeAlias = str | int | float | bool | None
+UprootKwargValue: TypeAlias = str | int | float | bool | Sequence[str] | None
 UprootKwargs: TypeAlias = dict[str, UprootKwargValue]
 
 
@@ -49,8 +49,11 @@ class _UprootTree(Protocol):
         self,
         *,
         library: Literal['np'],
-        **kwargs: UprootKwargValue,
+        expressions: Sequence[str] | None = None,
+        **kwargs: object,
     ) -> Mapping[str, np.ndarray | Sequence[float]]: ...
+
+    def keys(self) -> Iterable[str]: ...
 
     def __getitem__(self, key: str) -> _UprootBranch: ...
 
@@ -371,13 +374,95 @@ def _open_with_uproot(
         raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as root_file:
         tree_obj = _select_uproot_tree(root_file, tree)
-        arrays = tree_obj.arrays(library='np', **uproot_kwargs)
+        kwargs = dict(uproot_kwargs)
+        raw_expressions = kwargs.pop('expressions', None)
+        expressions: Sequence[str] | None
+        if raw_expressions is None:
+            expressions = None
+        elif isinstance(raw_expressions, Sequence) and not isinstance(
+            raw_expressions, (str, bytes)
+        ):
+            expressions = [str(name) for name in raw_expressions]
+        else:
+            msg = "uproot_kwargs['expressions'] must be a sequence of strings"
+            raise TypeError(msg)
+        selected_columns = _build_uproot_selected_columns(
+            tree_obj,
+            p4s=p4s,
+            aux=aux,
+            include_weight=True,
+        )
+        if (
+            selected_columns is not None
+            and 'filter_name' not in kwargs
+            and expressions is None
+        ):
+            expressions = selected_columns
+        arrays = tree_obj.arrays(library='np', expressions=expressions, **kwargs)
 
     columns = {name: np.asarray(values) for name, values in arrays.items()}
     if not columns:
         msg = 'ROOT tree does not contain any readable columns'
         raise ValueError(msg)
     return from_dict(columns, p4s=p4s, aux=aux, aliases=aliases)
+
+
+def _build_uproot_selected_columns(
+    tree: _UprootTree,
+    *,
+    p4s: list[str] | None,
+    aux: list[str] | None,
+    include_weight: bool,
+) -> list[str] | None:
+    if p4s is None:
+        return None
+
+    available = _canonicalize_uproot_column_names(tree.keys())
+    selected: list[str] = []
+
+    for name in p4s:
+        for suffix in ('_px', '_py', '_pz', '_e'):
+            logical = f'{name}{suffix}'
+            selected.append(_resolve_uproot_column_name(available, logical))
+
+    selected.extend(_resolve_uproot_column_name(available, name) for name in aux or [])
+
+    if include_weight:
+        weight = _resolve_uproot_column_name_optional(available, 'weight')
+        if weight is not None:
+            selected.append(weight)
+
+    # Preserve first-seen order and avoid duplicates.
+    return list(dict.fromkeys(selected))
+
+
+def _canonicalize_uproot_column_names(raw_keys: Iterable[str]) -> list[str]:
+    names: list[str] = []
+    for key in raw_keys:
+        base = key.split(';', 1)[0]
+        if base:
+            names.append(base)
+    return list(dict.fromkeys(names))
+
+
+def _resolve_uproot_column_name(available: Sequence[str], logical_name: str) -> str:
+    resolved = _resolve_uproot_column_name_optional(available, logical_name)
+    if resolved is None:
+        msg = f"Missing required ROOT column '{logical_name}'"
+        raise KeyError(msg)
+    return resolved
+
+
+def _resolve_uproot_column_name_optional(
+    available: Sequence[str], logical_name: str
+) -> str | None:
+    for name in available:
+        if name == logical_name:
+            return name
+    for name in available:
+        if name.lower() == logical_name.lower():
+            return name
+    return None
 
 
 def _open_amptools_format(

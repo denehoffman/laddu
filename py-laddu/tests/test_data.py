@@ -22,6 +22,14 @@ DATA_AMPTOOLS_ROOT = TEST_DATA_DIR / 'data_amptools.root'
 DATA_AMPTOOLS_POL_ROOT = TEST_DATA_DIR / 'data_amptools_pol.root'
 
 
+class _FakeTreeKeys:
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    def keys(self) -> list[str]:
+        return self._names
+
+
 def _assert_vec4_close(vec_left: Vec4 | None, vec_right: Vec4 | None) -> None:
     assert vec_left is not None
     assert vec_right is not None
@@ -622,6 +630,46 @@ def test_dataset_from_parquet_with_aliases() -> None:
     alias_vec = dataset[0].p4('resonance')
     expected = dataset[0].get_p4_sum(['kshort1', 'kshort2'])
     _assert_vec4_close(alias_vec, expected)
+
+
+def test_uproot_selected_columns_include_requested_p4_aux_and_weight() -> None:
+    build_selected = ldio._build_uproot_selected_columns  # ty: ignore[unresolved-attribute]
+    tree = _FakeTreeKeys(
+        [
+            'Beam_PX;1',
+            'Beam_py;1',
+            'beam_pz;1',
+            'beam_E;1',
+            'Pol_Magnitude;1',
+            'Weight;1',
+        ]
+    )
+    selected = build_selected(
+        tree,
+        p4s=['beam'],
+        aux=['pol_magnitude'],
+        include_weight=True,
+    )
+    assert selected == [
+        'Beam_PX',
+        'Beam_py',
+        'beam_pz',
+        'beam_E',
+        'Pol_Magnitude',
+        'Weight',
+    ]
+
+
+def test_uproot_selected_columns_missing_component_raises_key_error() -> None:
+    build_selected = ldio._build_uproot_selected_columns  # ty: ignore[unresolved-attribute]
+    tree = _FakeTreeKeys(['beam_px;1', 'beam_py;1', 'beam_pz;1'])
+    with pytest.raises(KeyError, match="Missing required ROOT column 'beam_e'"):
+        build_selected(
+            tree,
+            p4s=['beam'],
+            aux=[],
+            include_weight=True,
+        )
 
 
 def test_mass_uses_alias_string() -> None:
