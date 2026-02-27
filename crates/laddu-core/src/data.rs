@@ -1501,6 +1501,60 @@ impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
     Dataset::new_with_metadata(events, a.metadata.clone())
 });
 
+/// Incrementally builds a [`Dataset`] from chunked dataset reads.
+#[derive(Default)]
+pub struct DatasetChunkBuilder {
+    metadata: Option<Arc<DatasetMetadata>>,
+    events: Vec<Arc<EventData>>,
+}
+
+impl DatasetChunkBuilder {
+    /// Create an empty chunk builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append a dataset chunk.
+    pub fn push_chunk(&mut self, chunk: &Dataset) -> LadduResult<()> {
+        if let Some(existing) = &self.metadata {
+            if existing.p4_names != chunk.metadata.p4_names
+                || existing.aux_names != chunk.metadata.aux_names
+            {
+                return Err(LadduError::Custom(
+                    "Dataset chunk metadata does not match previous chunks".to_string(),
+                ));
+            }
+        } else {
+            self.metadata = Some(chunk.metadata.clone());
+        }
+        self.events
+            .extend(chunk.events_local().iter().map(Event::data_arc));
+        Ok(())
+    }
+
+    /// Finish building a dataset from all received chunks.
+    pub fn finish(self) -> Arc<Dataset> {
+        let metadata = self
+            .metadata
+            .unwrap_or_else(|| Arc::new(DatasetMetadata::empty()));
+        Arc::new(Dataset::new_with_metadata(self.events, metadata))
+    }
+}
+
+/// Fold over chunked datasets without materializing a full dataset.
+pub fn try_fold_dataset_chunks<I, T, F>(chunks: I, init: T, mut op: F) -> LadduResult<T>
+where
+    I: IntoIterator<Item = LadduResult<Arc<Dataset>>>,
+    F: FnMut(T, &Dataset) -> LadduResult<T>,
+{
+    let mut acc = init;
+    for chunk in chunks {
+        let chunk = chunk?;
+        acc = op(acc, &chunk)?;
+    }
+    Ok(acc)
+}
+
 /// Options for reading a [`Dataset`] from a file.
 ///
 /// # See Also
@@ -2662,5 +2716,42 @@ mod tests {
 
         assert_eq!(chunk_vec.len(), 1);
         assert_eq!(chunk_vec[0].n_events_local(), full.n_events());
+    }
+
+    #[test]
+    fn test_dataset_chunk_builder_matches_full_parquet_read() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new().chunk_size(13);
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+
+        let mut builder = DatasetChunkBuilder::new();
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            builder.push_chunk(&chunk).expect("chunk should append");
+        }
+        let rebuilt = builder.finish();
+
+        assert_datasets_close(&full, &rebuilt, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_try_fold_dataset_chunks_matches_full_weight_sum() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks(path_str, &DatasetReadOptions::new(), 11)
+            .expect("chunk iterator should open");
+
+        let folded = try_fold_dataset_chunks(chunks, 0.0_f64, |acc, chunk| {
+            Ok(acc + chunk.n_events_weighted_local())
+        })
+        .expect("chunk fold should succeed");
+
+        assert_relative_eq!(folded, full.n_events_weighted_local(), epsilon = 1e-9);
     }
 }
