@@ -77,13 +77,7 @@ def from_dict(
     if table is not None:
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
 
-    native_aliases = dict(aliases) if aliases is not None else None
-    return _backend_from_columns(
-        normalized,
-        p4s=p4s,
-        aux=aux,
-        aliases=native_aliases,
-    )
+    return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def _normalize_ingestion_columns(data: Mapping[str, ColumnInput]) -> NumpyColumns:
@@ -134,9 +128,19 @@ def _dataset_from_arrow_table(
     aliases: Mapping[str, str | Sequence[str]] | None,
 ) -> Dataset:
     converted = _arrow_table_to_numpy_columns(table)
+    return _backend_from_numpy_columns(converted, p4s=p4s, aux=aux, aliases=aliases)
+
+
+def _backend_from_numpy_columns(
+    columns: NumpyColumns,
+    *,
+    p4s: list[str] | None,
+    aux: list[str] | None,
+    aliases: Mapping[str, str | Sequence[str]] | None,
+) -> Dataset:
     native_aliases = dict(aliases) if aliases is not None else None
     return _backend_from_columns(
-        converted,
+        columns,
         p4s=p4s,
         aux=aux,
         aliases=native_aliases,
@@ -173,7 +177,8 @@ def from_numpy(
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     converted = {key: np.asarray(value) for key, value in data.items()}
-    return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+    normalized = _normalize_ingestion_columns(converted)
+    return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def from_pandas(
@@ -190,7 +195,8 @@ def from_pandas(
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
     except ModuleNotFoundError:
         converted = {col: data[col].to_numpy() for col in data.columns}
-        return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+        normalized = _normalize_ingestion_columns(converted)
+        return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def from_polars(
@@ -205,7 +211,8 @@ def from_polars(
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
     except ModuleNotFoundError:
         converted = {name: data.get_column(name).to_numpy() for name in data.columns}
-        return from_dict(converted, p4s=p4s, aux=aux, aliases=aliases)
+        normalized = _normalize_ingestion_columns(converted)
+        return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
 def read_parquet(
