@@ -622,6 +622,26 @@ def test_dataset_from_root_matches_parquet() -> None:
     _assert_datasets_close(root_auto, root_named)
 
 
+def test_read_root_uproot_missing_required_p4_branch_reports_name() -> None:
+    with pytest.raises(KeyError, match="Missing required ROOT column 'missing_px'"):
+        ldio.read_root(
+            DATA_F32_ROOT,
+            backend='uproot',
+            p4s=['missing'],
+            aux=AUX_NAMES,
+        )
+
+
+def test_read_root_uproot_missing_required_aux_branch_reports_name() -> None:
+    with pytest.raises(KeyError, match="Missing required ROOT column 'missing_aux'"):
+        ldio.read_root(
+            DATA_F32_ROOT,
+            backend='uproot',
+            p4s=P4_NAMES,
+            aux=['missing_aux'],
+        )
+
+
 def test_dataset_from_parquet_with_aliases() -> None:
     dataset = ldio.read_parquet(
         DATA_F32_PARQUET,
