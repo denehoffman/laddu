@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 
 from laddu.laddu import from_columns as _backend_from_columns
 from laddu.laddu import read_parquet as _backend_read_parquet
+from laddu.laddu import read_parquet_chunked as _backend_read_parquet_chunked
 from laddu.laddu import read_root as _backend_read_root
 from laddu.laddu import write_parquet as _backend_write_parquet
 from laddu.laddu import write_root as _backend_write_root
@@ -28,7 +29,13 @@ from .data import Dataset
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
-    import pyarrow as pa  # ty: ignore[unresolved-import]
+    import pyarrow as pa
+
+    PandasDataFrame: TypeAlias = pd.DataFrame
+    PolarsDataFrame: TypeAlias = pl.DataFrame
+else:
+    PandasDataFrame: TypeAlias = object
+    PolarsDataFrame: TypeAlias = object
 
 FloatArray: TypeAlias = NDArray[np.float32] | NDArray[np.float64]
 ColumnInput: TypeAlias = Sequence[float] | FloatArray
@@ -36,17 +43,25 @@ NumpyColumns: TypeAlias = dict[str, np.ndarray]
 UprootKwargValue: TypeAlias = str | int | float | bool | Sequence[str] | None
 UprootKwargs: TypeAlias = dict[str, UprootKwargValue]
 
+_OPTIONAL_DEPENDENCY_HINTS: dict[str, str] = {
+    'uproot': 'Install it with `pip install laddu[uproot]` or `pip install laddu-mpi[uproot]`.',
+    'pyarrow': 'Install it with `pip install pyarrow`.',
+}
+
 
 class _UprootBranch(Protocol):
     def array(
         self,
         *,
         library: Literal['np'],
+        entry_start: int | None = None,
         entry_stop: int | None = None,
     ) -> np.ndarray | Sequence[float]: ...
 
 
 class _UprootTree(Protocol):
+    num_entries: int
+
     def arrays(
         self,
         *,
@@ -168,14 +183,14 @@ def from_numpy(
 
 
 def from_pandas(
-    data: pd.DataFrame,
+    data: PandasDataFrame,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     try:
-        import pyarrow as pa  # ty: ignore[unresolved-import]
+        import pyarrow as pa
 
         table = pa.Table.from_pandas(data, preserve_index=False)
         return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
@@ -186,7 +201,7 @@ def from_pandas(
 
 
 def from_polars(
-    data: pl.DataFrame,
+    data: PolarsDataFrame,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
@@ -228,7 +243,15 @@ def read_parquet_chunked(
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
-    yield read_parquet(path, p4s=p4s, aux=aux, aliases=aliases)
+    native_aliases = dict(aliases) if aliases is not None else None
+    chunks = _backend_read_parquet_chunked(
+        path,
+        p4s=p4s,
+        aux=aux,
+        aliases=native_aliases,
+        chunk_size=chunk_size,
+    )
+    yield from chunks
 
 
 def read_root(
@@ -283,14 +306,40 @@ def read_root_chunked(
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
-    yield read_root(
-        path,
-        tree=tree,
+    backend_name = backend.lower() if backend else 'oxyroot'
+    native_aliases = dict(aliases) if aliases is not None else None
+
+    if backend_name not in {'oxyroot', 'uproot'}:
+        msg = f"Unsupported backend '{backend_name}'. Valid options are 'oxyroot' or 'uproot'."
+        raise ValueError(msg)
+
+    if backend_name == 'oxyroot':
+        # Native oxyroot chunking is not exposed yet; preserve API shape with full-read fallback.
+        yield _backend_read_root(
+            path,
+            tree=tree,
+            p4s=p4s,
+            aux=aux,
+            aliases=native_aliases,
+        )
+        return
+
+    kwargs = dict(uproot_kwargs or {})
+    if 'entry_start' in kwargs or 'entry_stop' in kwargs:
+        msg = (
+            'read_root_chunked controls entry windows internally; do not pass '
+            "'entry_start' or 'entry_stop' in uproot_kwargs"
+        )
+        raise ValueError(msg)
+    backend_tree = tree or kwargs.pop('tree', None)
+    yield from _open_with_uproot_chunked(
+        Path(path),
+        tree=backend_tree,
         p4s=p4s,
         aux=aux,
-        aliases=aliases,
-        backend=backend,
-        uproot_kwargs=uproot_kwargs,
+        aliases=native_aliases,
+        uproot_kwargs=kwargs,
+        chunk_size=chunk_size,
     )
 
 
@@ -313,7 +362,8 @@ def read_amptools(
         pol_magnitude=pol_magnitude,
         pol_magnitude_name=pol_magnitude_name,
         pol_angle_name=pol_angle_name,
-        num_entries=num_entries,
+        entry_start=None,
+        entry_stop=num_entries,
     )
 
 
@@ -332,16 +382,22 @@ def read_amptools_chunked(
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
-    yield read_amptools(
-        path,
-        tree=tree,
-        pol_in_beam=pol_in_beam,
-        pol_angle=pol_angle,
-        pol_magnitude=pol_magnitude,
-        pol_magnitude_name=pol_magnitude_name,
-        pol_angle_name=pol_angle_name,
-        num_entries=num_entries,
-    )
+    tree_name = tree or 'kin'
+    total_entries = _amptools_total_entries(Path(path), tree_name)
+    limit = min(total_entries, num_entries) if num_entries is not None else total_entries
+    for start in range(0, limit, chunk_size):
+        stop = min(start + chunk_size, limit)
+        yield _open_amptools_format(
+            Path(path),
+            tree=tree,
+            pol_in_beam=pol_in_beam,
+            pol_angle=pol_angle,
+            pol_magnitude=pol_magnitude,
+            pol_magnitude_name=pol_magnitude_name,
+            pol_angle_name=pol_angle_name,
+            entry_start=start,
+            entry_stop=stop,
+        )
 
 
 def to_numpy(
@@ -403,8 +459,7 @@ def write_root(
     except ModuleNotFoundError as exc:
         msg = (
             "laddu.io.write_root(... backend='uproot') requires the optional dependency "
-            "'uproot'. Install it with `pip install laddu[uproot]` or "
-            '`pip install laddu-mpi[uproot]`.'
+            f"'uproot'. {_OPTIONAL_DEPENDENCY_HINTS['uproot']}"
         )
         raise ModuleNotFoundError(msg) from exc
 
@@ -438,8 +493,7 @@ def _open_with_uproot(
     except ModuleNotFoundError as exc:
         msg = (
             "laddu.io.read_root(... backend='uproot') requires the optional dependency "
-            "'uproot'. Install it with `pip install laddu[uproot]` or "
-            '`pip install laddu-mpi[uproot]`.'
+            f"'uproot'. {_OPTIONAL_DEPENDENCY_HINTS['uproot']}"
         )
         raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as root_file:
@@ -459,6 +513,58 @@ def _open_with_uproot(
         raise ValueError(msg)
     normalized = _normalize_ingestion_columns(columns)
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
+
+
+def _open_with_uproot_chunked(
+    path: Path,
+    *,
+    tree: str | None,
+    p4s: list[str] | None,
+    aux: list[str] | None,
+    aliases: Mapping[str, str | Sequence[str]] | None,
+    uproot_kwargs: UprootKwargs,
+    chunk_size: int,
+) -> Iterator[Dataset]:
+    try:
+        import uproot as uproot_module
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.read_root_chunked(... backend='uproot') requires the optional dependency "
+            f"'uproot'. {_OPTIONAL_DEPENDENCY_HINTS['uproot']}"
+        )
+        raise ModuleNotFoundError(msg) from exc
+
+    with uproot_module.open(path) as root_file:
+        tree_obj = _select_uproot_tree(root_file, tree)
+        total_entries = int(tree_obj.num_entries)
+        selected_columns = _build_uproot_selected_columns(
+            tree_obj,
+            p4s=p4s,
+            aux=aux,
+            include_weight=True,
+        )
+        kwargs_base = _uproot_arrays_kwargs(uproot_kwargs, selected_columns)
+        if 'entry_start' in kwargs_base or 'entry_stop' in kwargs_base:
+            msg = (
+                'read_root_chunked controls entry windows internally; do not pass '
+                "'entry_start' or 'entry_stop' in uproot_kwargs"
+            )
+            raise ValueError(msg)
+
+        for start in range(0, total_entries, chunk_size):
+            stop = min(start + chunk_size, total_entries)
+            kwargs = dict(kwargs_base)
+            kwargs['entry_start'] = start
+            kwargs['entry_stop'] = stop
+            arrays = tree_obj.arrays(library='np', **kwargs)
+            columns = {name: np.asarray(values) for name, values in arrays.items()}
+            if not columns:
+                msg = 'ROOT tree does not contain any readable columns'
+                raise ValueError(msg)
+            normalized = _normalize_ingestion_columns(columns)
+            yield _backend_from_numpy_columns(
+                normalized, p4s=p4s, aux=aux, aliases=aliases
+            )
 
 
 def _build_uproot_selected_columns(
@@ -541,13 +647,19 @@ def _open_amptools_format(
     pol_magnitude: float | None,
     pol_magnitude_name: str,
     pol_angle_name: str,
-    num_entries: int | None,
+    entry_start: int | None,
+    entry_stop: int | None,
 ) -> Dataset:
     pol_angle_rad = pol_angle * np.pi / 180 if pol_angle is not None else None
     polarisation_requested = pol_in_beam or (
         pol_angle is not None and pol_magnitude is not None
     )
-    arrays = _load_amptools_arrays(path, tree or 'kin', entry_stop=num_entries)
+    arrays = _load_amptools_arrays(
+        path,
+        tree or 'kin',
+        entry_start=entry_start,
+        entry_stop=entry_stop,
+    )
     amptools_data = _prepare_amptools_data(
         *arrays,
         pol_in_beam=pol_in_beam,
@@ -687,18 +799,20 @@ def _coalesce_numpy_batches(
 def _read_amptools_scalar(
     branch: _UprootBranch,
     *,
+    entry_start: int | None = None,
     entry_stop: int | None = None,
 ) -> np.ndarray:
-    array = branch.array(library='np', entry_stop=entry_stop)
+    array = branch.array(library='np', entry_start=entry_start, entry_stop=entry_stop)
     return np.asarray(array, dtype=np.float32)
 
 
 def _read_amptools_matrix(
     branch: _UprootBranch,
     *,
+    entry_start: int | None = None,
     entry_stop: int | None = None,
 ) -> np.ndarray:
-    raw = branch.array(library='np', entry_stop=entry_stop)
+    raw = branch.array(library='np', entry_start=entry_start, entry_stop=entry_stop)
     array = np.asarray(raw)
     if array.dtype == object:
         return _amptools_object_rows_to_matrix(cast(Sequence[np.ndarray], array))
@@ -722,6 +836,7 @@ def _load_amptools_arrays(
     path: Path,
     tree_name: str,
     *,
+    entry_start: int | None,
     entry_stop: int | None,
 ) -> tuple[np.ndarray, ...]:
     try:
@@ -729,7 +844,7 @@ def _load_amptools_arrays(
     except ModuleNotFoundError as exc:
         msg = (
             "laddu.io.read_amptools requires the optional dependency 'uproot'. "
-            'Install it with `pip install laddu[uproot]` or `pip install laddu-mpi[uproot]`.'
+            f'{_OPTIONAL_DEPENDENCY_HINTS["uproot"]}'
         )
         raise ModuleNotFoundError(msg) from exc
     with uproot_module.open(path) as file:
@@ -739,18 +854,54 @@ def _load_amptools_arrays(
             msg = f"Input file must contain a tree named '{tree_name}'"
             raise KeyError(msg) from exc
 
-        e_beam = _read_amptools_scalar(tree['E_Beam'], entry_stop=entry_stop)
-        px_beam = _read_amptools_scalar(tree['Px_Beam'], entry_stop=entry_stop)
-        py_beam = _read_amptools_scalar(tree['Py_Beam'], entry_stop=entry_stop)
-        pz_beam = _read_amptools_scalar(tree['Pz_Beam'], entry_stop=entry_stop)
+        e_beam = _read_amptools_scalar(
+            tree['E_Beam'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        px_beam = _read_amptools_scalar(
+            tree['Px_Beam'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        py_beam = _read_amptools_scalar(
+            tree['Py_Beam'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        pz_beam = _read_amptools_scalar(
+            tree['Pz_Beam'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
 
-        e_final = _read_amptools_matrix(tree['E_FinalState'], entry_stop=entry_stop)
-        px_final = _read_amptools_matrix(tree['Px_FinalState'], entry_stop=entry_stop)
-        py_final = _read_amptools_matrix(tree['Py_FinalState'], entry_stop=entry_stop)
-        pz_final = _read_amptools_matrix(tree['Pz_FinalState'], entry_stop=entry_stop)
+        e_final = _read_amptools_matrix(
+            tree['E_FinalState'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        px_final = _read_amptools_matrix(
+            tree['Px_FinalState'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        py_final = _read_amptools_matrix(
+            tree['Py_FinalState'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
+        pz_final = _read_amptools_matrix(
+            tree['Pz_FinalState'],
+            entry_start=entry_start,
+            entry_stop=entry_stop,
+        )
 
         if 'Weight' in tree:
-            weight = _read_amptools_scalar(tree['Weight'], entry_stop=entry_stop)
+            weight = _read_amptools_scalar(
+                tree['Weight'],
+                entry_start=entry_start,
+                entry_stop=entry_stop,
+            )
         else:
             weight = np.ones_like(e_beam, dtype=np.float32)
 
@@ -765,6 +916,24 @@ def _load_amptools_arrays(
         pz_final,
         weight,
     )
+
+
+def _amptools_total_entries(path: Path, tree_name: str) -> int:
+    try:
+        import uproot as uproot_module
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.read_amptools_chunked requires the optional dependency 'uproot'. "
+            f'{_OPTIONAL_DEPENDENCY_HINTS["uproot"]}'
+        )
+        raise ModuleNotFoundError(msg) from exc
+    with uproot_module.open(path) as file:
+        try:
+            tree = file[tree_name]
+        except uproot_module.KeyInFileError as exc:
+            msg = f"Input file must contain a tree named '{tree_name}'"
+            raise KeyError(msg) from exc
+        return int(tree.num_entries)
 
 
 def _derive_amptools_polarization(

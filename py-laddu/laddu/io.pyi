@@ -2,11 +2,13 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 import numpy as np
-import pandas as pd
-import polars as pl
 from numpy.typing import NDArray
+from typing_extensions import TypeAlias
 
 from .data import Dataset
+
+PandasDataFrame: TypeAlias = Any
+PolarsDataFrame: TypeAlias = Any
 
 def from_dict(
     data: dict[str, Any],
@@ -23,14 +25,14 @@ def from_numpy(
     aliases: dict[str, str | list[str]] | None = None,
 ) -> Dataset: ...
 def from_pandas(
-    data: pd.DataFrame,
+    data: PandasDataFrame,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
     aliases: dict[str, str | list[str]] | None = None,
 ) -> Dataset: ...
 def from_polars(
-    data: pl.DataFrame,
+    data: PolarsDataFrame,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,

@@ -5,3 +5,13 @@ exclude = [
   "crates/laddu-core/test_data/**",
   "make.py",
 ]
+
+[[overrides]]
+include = [
+  "py-laddu/laddu/io.py",
+  "py-laddu/tests/test_data.py",
+  "py-laddu/benchmarks/ingestion_benchmark.py",
+]
+
+[overrides.rules]
+unresolved-import = "ignore"

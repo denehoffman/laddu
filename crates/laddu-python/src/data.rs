@@ -5,9 +5,11 @@ use laddu_core::{
             infer_p4_and_aux_names_from_columns, resolve_columns_case_insensitive,
             resolve_optional_weight_column, resolve_p4_component_columns, P4_COMPONENT_SUFFIXES,
         },
-        read_parquet as core_read_parquet, read_root as core_read_root,
-        write_parquet as core_write_parquet, write_root as core_write_root, BinnedDataset, Dataset,
-        DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
+        read_parquet as core_read_parquet,
+        read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
+        read_root as core_read_root, write_parquet as core_write_parquet,
+        write_root as core_write_root, BinnedDataset, Dataset, DatasetMetadata,
+        DatasetWriteOptions, Event, EventData, FloatPrecision,
     },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
@@ -357,6 +359,26 @@ impl PyEvent {
 #[pyclass(name = "Dataset", module = "laddu", subclass)]
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
+
+#[pyclass(name = "ParquetChunkIter", module = "laddu", unsendable)]
+pub struct PyParquetChunkIter {
+    chunks: Box<dyn Iterator<Item = laddu_core::LadduResult<Arc<Dataset>>> + Send>,
+}
+
+#[pymethods]
+impl PyParquetChunkIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyParquetChunkIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyDataset>> {
+        match self.chunks.next() {
+            Some(Ok(dataset)) => Ok(Some(PyDataset(dataset))),
+            Some(Err(err)) => Err(PyErr::from(err)),
+            None => Ok(None),
+        }
+    }
+}
 
 #[pyclass(name = "DatasetIter", module = "laddu")]
 struct PyDatasetIter {
@@ -759,6 +781,37 @@ pub fn read_parquet(
     }
     let dataset = core_read_parquet(&path_str, &read_options)?;
     Ok(PyDataset(dataset))
+}
+
+/// Read a Dataset from a Parquet file in chunks.
+#[pyfunction]
+#[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None, chunk_size=None))]
+pub fn read_parquet_chunked(
+    path: Bound<PyAny>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<PyDict>>,
+    chunk_size: Option<usize>,
+) -> PyResult<PyParquetChunkIter> {
+    let path_str = parse_dataset_path(path)?;
+    let mut read_options = DatasetReadOptions::default();
+    if let Some(p4s) = p4s {
+        read_options = read_options.p4_names(p4s);
+    }
+    if let Some(aux) = aux {
+        read_options = read_options.aux_names(aux);
+    }
+    if let Some(chunk_size) = chunk_size {
+        read_options = read_options.chunk_size(chunk_size);
+    }
+    for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+        read_options = read_options.alias(alias_name, selection);
+    }
+
+    let chunks = core_read_parquet_chunks_with_options(&path_str, &read_options)?;
+    Ok(PyParquetChunkIter {
+        chunks: Box::new(chunks),
+    })
 }
 
 /// Read a Dataset from a ROOT file using the oxyroot backend.

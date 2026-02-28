@@ -16,7 +16,7 @@ mod laddu {
             py_test_amplitude, PyEvaluator, PyExpression, PyParameterLike,
         },
         available_parallelism,
-        data::{PyBinnedDataset, PyDataset, PyEvent},
+        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         utils::{
             variables::{
@@ -61,5 +61,7 @@ mod laddu {
     use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
 
     #[pymodule_export]
-    use laddu_python::data::{from_columns, read_parquet, read_root, write_parquet, write_root};
+    use laddu_python::data::{
+        from_columns, read_parquet, read_parquet_chunked, read_root, write_parquet, write_root,
+    };
 }

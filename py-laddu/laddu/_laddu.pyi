@@ -104,6 +104,7 @@ __all__ = [
     'MinimizationSummary',
     'One',
     'ParameterLike',
+    'ParquetChunkIter',
     'PhaseSpaceFactor',
     'Phi',
     'PiecewiseComplexScalar',
@@ -143,6 +144,7 @@ __all__ = [
     'likelihood_sum',
     'parameter',
     'read_parquet',
+    'read_parquet_chunked',
     'read_root',
     'use_mpi',
     'using_mpi',
@@ -150,6 +152,10 @@ __all__ = [
     'write_parquet',
     'write_root',
 ]
+
+class ParquetChunkIter:
+    def __iter__(self) -> ParquetChunkIter: ...
+    def __next__(self) -> Dataset: ...
 
 def version() -> str:
     """Return the version string of the loaded laddu backend."""
@@ -186,6 +192,16 @@ def read_parquet(
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     """Load a dataset from a Parquet file using the loaded backend."""
+
+def read_parquet_chunked(
+    path: str | os.PathLike[str],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    chunk_size: int | None = None,
+) -> ParquetChunkIter:
+    """Load a dataset from a Parquet file in chunks using the loaded backend."""
 
 def from_columns(
     columns: Mapping[
