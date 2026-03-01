@@ -184,6 +184,15 @@ impl GradientScratchWorkspace {
             gradient_values: vec![DVector::zeros(key.n_parameters); key.n_amplitudes],
         }
     }
+
+    fn matches_key(&self, key: GradientScratchKey) -> bool {
+        self.amplitude_values.len() == key.n_amplitudes
+            && self.gradient_values.len() == key.n_amplitudes
+            && self
+                .gradient_values
+                .iter()
+                .all(|gradient| gradient.len() == key.n_parameters)
+    }
 }
 
 #[cfg(feature = "rayon")]
@@ -214,11 +223,14 @@ impl Drop for GradientScratchLease {
 
 #[cfg(feature = "rayon")]
 fn acquire_gradient_scratch(key: GradientScratchKey) -> GradientScratchLease {
-    let workspace = TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
+    let mut workspace = TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
         pool.borrow_mut()
             .remove(&key)
             .unwrap_or_else(|| GradientScratchWorkspace::new(key))
     });
+    if !workspace.matches_key(key) {
+        workspace = GradientScratchWorkspace::new(key);
+    }
     GradientScratchLease {
         key,
         workspace: Some(workspace),
@@ -4241,6 +4253,16 @@ mod tests {
         (nll, vec![2.0])
     }
 
+    fn make_two_parameter_nll() -> (Box<NLL>, Vec<f64>) {
+        let amp_a = ConstantAmplitude::new("amp_a", parameter("alpha")).unwrap();
+        let amp_b = ConstantAmplitude::new("amp_b", parameter("beta")).unwrap();
+        let expr = (amp_a + amp_b).norm_sqr();
+        let data = dataset_with_weights(&[1.0, 2.0, 3.0, 1.0]);
+        let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
+        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        (nll, vec![0.75, -1.25])
+    }
+
     fn case_nll_evaluate_short(nll: &NLL) -> LadduResult<()> {
         nll.evaluate(&[]).map(|_| ())
     }
@@ -4467,6 +4489,54 @@ mod tests {
         let grad = nll.evaluate_gradient(&params).unwrap();
         let expected_grad = -4.0 * (weight_sum / params[0] - params[0]);
         assert_relative_eq!(grad[0], expected_grad, epsilon = 1e-12);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn gradient_scratch_reuse_is_thread_safe_across_parallel_calls() {
+        let (nll_single, params_single) = make_constant_nll();
+        let (nll_multi, params_multi) = make_two_parameter_nll();
+        let nll_single = Arc::new(*nll_single);
+        let nll_multi = Arc::new(*nll_multi);
+        let expected_single = nll_single
+            .evaluate_gradient(&params_single)
+            .expect("single-parameter gradient should evaluate");
+        let expected_multi = nll_multi
+            .evaluate_gradient(&params_multi)
+            .expect("two-parameter gradient should evaluate");
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let nll_single = Arc::clone(&nll_single);
+                let nll_multi = Arc::clone(&nll_multi);
+                let params_single = params_single.clone();
+                let params_multi = params_multi.clone();
+                let expected_single = expected_single.clone();
+                let expected_multi = expected_multi.clone();
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        let single_gradient = nll_single
+                            .evaluate_gradient(&params_single)
+                            .expect("single-parameter gradient should evaluate");
+                        assert_relative_eq!(
+                            single_gradient[0],
+                            expected_single[0],
+                            epsilon = 1e-12
+                        );
+                        let multi_gradient = nll_multi
+                            .evaluate_gradient(&params_multi)
+                            .expect("two-parameter gradient should evaluate");
+                        assert_eq!(multi_gradient.len(), expected_multi.len());
+                        for index in 0..expected_multi.len() {
+                            assert_relative_eq!(
+                                multi_gradient[index],
+                                expected_multi[index],
+                                epsilon = 1e-12
+                            );
+                        }
+                    }
+                });
+            }
+        });
     }
 
     #[test]
