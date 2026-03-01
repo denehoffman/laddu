@@ -148,6 +148,20 @@ where
     }
 }
 
+#[cfg(feature = "rayon")]
+fn sum_dvectors_parallel(
+    iter: impl rayon::iter::ParallelIterator<Item = DVector<f64>>,
+    len: usize,
+) -> DVector<f64> {
+    iter.reduce(
+        || DVector::zeros(len),
+        |mut accum, value| {
+            accum += value;
+            accum
+        },
+    )
+}
+
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
@@ -950,102 +964,104 @@ impl NLL {
         let mc_resources = self.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = self
-            .data_evaluator
-            .dataset
-            .events_local()
-            .par_iter()
-            .zip(data_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
+        let data_term: DVector<f64> = sum_dvectors_parallel(
+            self.data_evaluator
+                .dataset
+                .events_local()
+                .par_iter()
+                .zip(data_resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values = vec![
+                        DVector::zeros(parameters.len());
+                        self.data_evaluator.amplitudes.len()
+                    ];
                     self.data_evaluator
                         .amplitudes
                         .iter()
                         .zip(data_resources.active.iter())
-                        .map(|(amp, active)| {
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
                             if *active {
-                                amp.compute(&data_parameters, cache)
-                            } else {
-                                Complex64::ZERO
+                                amp.compute_gradient(&data_parameters, cache, grad)
                             }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.data_evaluator.evaluate_expression_value(&amp_vals),
-                    self.data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum(); // TODO: replace with custom implementation of accurate crate's trait
+                        });
+                    (
+                        event.weight,
+                        self.data_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(data_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&data_parameters, cache)
+                                } else {
+                                    Complex64::ZERO
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                        gradient_values,
+                    )
+                })
+                .map(|(weight, amp_vals, grad_vals)| {
+                    (
+                        weight,
+                        self.data_evaluator.evaluate_expression_value(&amp_vals),
+                        self.data_evaluator
+                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
+                    )
+                })
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
+            parameters.len(),
+        );
         #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
-            .accmc_evaluator
-            .dataset
-            .events_local()
-            .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-                self.accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
+        let mc_term: DVector<f64> = sum_dvectors_parallel(
+            self.accmc_evaluator
+                .dataset
+                .events_local()
+                .par_iter()
+                .zip(mc_resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values = vec![
+                        DVector::zeros(parameters.len());
+                        self.accmc_evaluator.amplitudes.len()
+                    ];
                     self.accmc_evaluator
                         .amplitudes
                         .iter()
                         .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
                             if *active {
-                                amp.compute(&mc_parameters, cache)
-                            } else {
-                                Complex64::ZERO
+                                amp.compute_gradient(&mc_parameters, cache, grad)
                             }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum();
+                        });
+                    (
+                        event.weight,
+                        self.accmc_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(mc_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&mc_parameters, cache)
+                                } else {
+                                    Complex64::ZERO
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                        gradient_values,
+                    )
+                })
+                .map(|(weight, amp_vals, grad_vals)| {
+                    (
+                        weight,
+                        self.accmc_evaluator
+                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
+                    )
+                })
+                .map(|(w, g)| w * g.map(|gi| gi.re)),
+            parameters.len(),
+        );
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<f64> = self
             .data_evaluator
@@ -1418,106 +1434,105 @@ impl StochasticNLL {
         let mc_resources = self.nll.accmc_evaluator.resources.read();
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = indices
-            .par_iter()
-            .map(|&idx| {
-                let event = &self.nll.data_evaluator.dataset.events_local()[idx];
-                let cache = &data_resources.caches[idx];
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.data_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, cache, grad)
-                        }
-                    });
-                let amp_vals: Vec<_> = self
-                    .nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .map(|(amp, active)| {
-                        if *active {
-                            amp.compute(&data_parameters, cache)
-                        } else {
-                            Complex64::ZERO
-                        }
-                    })
-                    .collect();
-                (
-                    event.weight,
-                    self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
+        let data_term: DVector<f64> = sum_dvectors_parallel(
+            indices
+                .par_iter()
+                .map(|&idx| {
+                    let event = &self.nll.data_evaluator.dataset.events_local()[idx];
+                    let cache = &data_resources.caches[idx];
+                    let mut gradient_values = vec![
+                        DVector::zeros(parameters.len());
+                        self.nll.data_evaluator.amplitudes.len()
+                    ];
                     self.nll
                         .data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &gradient_values),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum(); // TODO: replace with custom implementation of accurate crate's trait
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
+                            if *active {
+                                amp.compute_gradient(&data_parameters, cache, grad)
+                            }
+                        });
+                    let amp_vals: Vec<_> = self
+                        .nll
+                        .data_evaluator
+                        .amplitudes
+                        .iter()
+                        .zip(data_resources.active.iter())
+                        .map(|(amp, active)| {
+                            if *active {
+                                amp.compute(&data_parameters, cache)
+                            } else {
+                                Complex64::ZERO
+                            }
+                        })
+                        .collect();
+                    (
+                        event.weight,
+                        self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
+                        self.nll
+                            .data_evaluator
+                            .evaluate_expression_gradient(&amp_vals, &gradient_values),
+                    )
+                })
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
+            parameters.len(),
+        );
         #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
-            .nll
-            .accmc_evaluator
-            .dataset
-            .events_local()
-            .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.accmc_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
+        let mc_term: DVector<f64> = sum_dvectors_parallel(
+            self.nll
+                .accmc_evaluator
+                .dataset
+                .events_local()
+                .par_iter()
+                .zip(mc_resources.caches.par_iter())
+                .map(|(event, cache)| {
+                    let mut gradient_values = vec![
+                        DVector::zeros(parameters.len());
+                        self.nll.accmc_evaluator.amplitudes.len()
+                    ];
                     self.nll
                         .accmc_evaluator
                         .amplitudes
                         .iter()
                         .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
+                        .zip(gradient_values.iter_mut())
+                        .for_each(|((amp, active), grad)| {
                             if *active {
-                                amp.compute(&mc_parameters, cache)
-                            } else {
-                                Complex64::ZERO
+                                amp.compute_gradient(&mc_parameters, cache, grad)
                             }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.nll
-                        .accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum();
+                        });
+                    (
+                        event.weight,
+                        self.nll
+                            .accmc_evaluator
+                            .amplitudes
+                            .iter()
+                            .zip(mc_resources.active.iter())
+                            .map(|(amp, active)| {
+                                if *active {
+                                    amp.compute(&mc_parameters, cache)
+                                } else {
+                                    Complex64::ZERO
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                        gradient_values,
+                    )
+                })
+                .map(|(weight, amp_vals, grad_vals)| {
+                    (
+                        weight,
+                        self.nll
+                            .accmc_evaluator
+                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
+                    )
+                })
+                .map(|(w, g)| w * g.map(|gi| gi.re)),
+            parameters.len(),
+        );
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<f64> = indices
             .iter()
