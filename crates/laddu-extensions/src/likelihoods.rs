@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fmt::{Debug, Display},
     sync::Arc,
@@ -160,6 +161,74 @@ fn sum_dvectors_parallel(
             accum
         },
     )
+}
+
+#[cfg(feature = "rayon")]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct GradientScratchKey {
+    n_parameters: usize,
+    n_amplitudes: usize,
+}
+
+#[cfg(feature = "rayon")]
+struct GradientScratchWorkspace {
+    amplitude_values: Vec<Complex64>,
+    gradient_values: Vec<DVector<Complex64>>,
+}
+
+#[cfg(feature = "rayon")]
+impl GradientScratchWorkspace {
+    fn new(key: GradientScratchKey) -> Self {
+        Self {
+            amplitude_values: vec![Complex64::ZERO; key.n_amplitudes],
+            gradient_values: vec![DVector::zeros(key.n_parameters); key.n_amplitudes],
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+struct GradientScratchLease {
+    key: GradientScratchKey,
+    workspace: Option<GradientScratchWorkspace>,
+}
+
+#[cfg(feature = "rayon")]
+impl GradientScratchLease {
+    fn workspace_mut(&mut self) -> &mut GradientScratchWorkspace {
+        self.workspace
+            .as_mut()
+            .expect("gradient scratch workspace must be available while leased")
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl Drop for GradientScratchLease {
+    fn drop(&mut self) {
+        if let Some(workspace) = self.workspace.take() {
+            TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
+                pool.borrow_mut().insert(self.key, workspace);
+            });
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn acquire_gradient_scratch(key: GradientScratchKey) -> GradientScratchLease {
+    let workspace = TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
+        pool.borrow_mut()
+            .remove(&key)
+            .unwrap_or_else(|| GradientScratchWorkspace::new(key))
+    });
+    GradientScratchLease {
+        key,
+        workspace: Some(workspace),
+    }
+}
+
+#[cfg(feature = "rayon")]
+thread_local! {
+    static TLS_GRADIENT_SCRATCH_POOL: RefCell<HashMap<GradientScratchKey, GradientScratchWorkspace>> =
+        RefCell::new(HashMap::new());
 }
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
@@ -965,6 +1034,16 @@ impl NLL {
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
+        let data_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.data_evaluator.amplitudes.len(),
+        };
+        #[cfg(feature = "rayon")]
+        let mc_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.accmc_evaluator.amplitudes.len(),
+        };
+        #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
             self.data_evaluator
                 .dataset
@@ -972,16 +1051,11 @@ impl NLL {
                 .par_iter()
                 .zip(data_resources.caches.par_iter())
                 .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; self.data_evaluator.amplitudes.len()],
-                            vec![
-                                DVector::zeros(n_parameters);
-                                self.data_evaluator.amplitudes.len()
-                            ],
-                        )
-                    },
-                    |(amp_vals, grad_vals), (event, cache)| {
+                    || acquire_gradient_scratch(data_scratch_key),
+                    |scratch, (event, cache)| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
                         for (idx, amp) in self.data_evaluator.amplitudes.iter().enumerate() {
                             if data_resources.active[idx] {
                                 grad_vals[idx].fill(Complex64::ZERO);
@@ -1011,16 +1085,11 @@ impl NLL {
                 .par_iter()
                 .zip(mc_resources.caches.par_iter())
                 .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; self.accmc_evaluator.amplitudes.len()],
-                            vec![
-                                DVector::zeros(n_parameters);
-                                self.accmc_evaluator.amplitudes.len()
-                            ],
-                        )
-                    },
-                    |(amp_vals, grad_vals), (event, cache)| {
+                    || acquire_gradient_scratch(mc_scratch_key),
+                    |scratch, (event, cache)| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
                         for (idx, amp) in self.accmc_evaluator.amplitudes.iter().enumerate() {
                             if mc_resources.active[idx] {
                                 grad_vals[idx].fill(Complex64::ZERO);
@@ -1414,20 +1483,25 @@ impl StochasticNLL {
         let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
+        let data_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.nll.data_evaluator.amplitudes.len(),
+        };
+        #[cfg(feature = "rayon")]
+        let mc_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.nll.accmc_evaluator.amplitudes.len(),
+        };
+        #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
             indices
                 .par_iter()
                 .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; self.nll.data_evaluator.amplitudes.len()],
-                            vec![
-                                DVector::zeros(n_parameters);
-                                self.nll.data_evaluator.amplitudes.len()
-                            ],
-                        )
-                    },
-                    |(amp_vals, grad_vals), &idx| {
+                    || acquire_gradient_scratch(data_scratch_key),
+                    |scratch, &idx| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
                         let event = &self.nll.data_evaluator.dataset.events_local()[idx];
                         let cache = &data_resources.caches[idx];
                         for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate()
@@ -1466,16 +1540,11 @@ impl StochasticNLL {
                 .par_iter()
                 .zip(mc_resources.caches.par_iter())
                 .map_init(
-                    || {
-                        (
-                            vec![Complex64::ZERO; self.nll.accmc_evaluator.amplitudes.len()],
-                            vec![
-                                DVector::zeros(n_parameters);
-                                self.nll.accmc_evaluator.amplitudes.len()
-                            ],
-                        )
-                    },
-                    |(amp_vals, grad_vals), (event, cache)| {
+                    || acquire_gradient_scratch(mc_scratch_key),
+                    |scratch, (event, cache)| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
                         for (amp_idx, amp) in self.nll.accmc_evaluator.amplitudes.iter().enumerate()
                         {
                             if mc_resources.active[amp_idx] {
