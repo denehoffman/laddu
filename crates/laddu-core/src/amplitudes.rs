@@ -1238,6 +1238,7 @@ pub struct Evaluator {
 
 #[allow(missing_docs)]
 impl Evaluator {
+    #[inline]
     fn fill_amplitude_values(
         &self,
         amplitude_values: &mut [Complex64],
@@ -1250,6 +1251,7 @@ impl Evaluator {
         }
     }
 
+    #[inline]
     fn fill_amplitude_gradients(
         &self,
         gradient_values: &mut [DVector<Complex64>],
@@ -1263,36 +1265,81 @@ impl Evaluator {
             .zip(active_mask.iter())
             .zip(gradient_values.iter_mut())
         {
-            grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
+            grad.fill(Complex64::ZERO);
             if *active {
                 amp.compute_gradient(parameters, cache, grad);
             }
         }
     }
 
+    #[inline]
     fn fill_amplitude_values_and_gradients(
         &self,
         amplitude_values: &mut [Complex64],
         gradient_values: &mut [DVector<Complex64>],
+        active_indices: &[usize],
         active_mask: &[bool],
         parameters: &Parameters,
         cache: &Cache,
     ) {
-        for (((amp, active), value), grad) in self
-            .amplitudes
-            .iter()
-            .zip(active_mask.iter())
-            .zip(amplitude_values.iter_mut())
-            .zip(gradient_values.iter_mut())
-        {
-            grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
-            if *active {
-                *value = amp.compute(parameters, cache);
-                amp.compute_gradient(parameters, cache, grad);
-            } else {
-                *value = Complex64::ZERO;
-            }
-        }
+        self.fill_amplitude_values(amplitude_values, active_indices, parameters, cache);
+        self.fill_amplitude_gradients(gradient_values, active_mask, parameters, cache);
+    }
+
+    #[inline]
+    fn evaluate_cache_gradient_with_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> DVector<Complex64> {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_gradient_with_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+        )
+    }
+
+    #[inline]
+    fn evaluate_cache_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> (Complex64, DVector<Complex64>) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_value_gradient_with_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+        )
     }
 
     pub fn expression_slot_count(&self) -> usize {
@@ -1847,23 +1894,15 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
+                        self.evaluate_cache_gradient_with_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -1879,23 +1918,15 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.fill_amplitude_values(
+                    self.evaluate_cache_gradient_with_scratch(
                         &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
                         &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
                     )
                 })
                 .collect()
@@ -1933,23 +1964,15 @@ impl Evaluator {
                             },
                             |(amplitude_values, gradient_values, value_slots, gradient_slots),
                              cache| {
-                                self.fill_amplitude_values(
-                                    amplitude_values,
-                                    &active_indices,
-                                    &parameters,
-                                    cache,
-                                );
-                                self.fill_amplitude_gradients(
-                                    gradient_values,
-                                    &resources.active,
-                                    &parameters,
-                                    cache,
-                                );
-                                self.evaluate_expression_gradient_with_scratch(
+                                self.evaluate_cache_gradient_with_scratch(
                                     amplitude_values,
                                     gradient_values,
                                     value_slots,
                                     gradient_slots,
+                                    &active_indices,
+                                    &resources.active,
+                                    &parameters,
+                                    cache,
                                 )
                             },
                         )
@@ -1964,23 +1987,15 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.fill_amplitude_values(
-                        amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
-                        gradient_values,
-                        &resources.active,
-                        &parameters,
-                        cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
+                    self.evaluate_cache_gradient_with_scratch(
                         amplitude_values,
                         gradient_values,
                         value_slots,
                         gradient_slots,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
                     )
                 })
                 .collect()
@@ -2113,23 +2128,15 @@ impl Evaluator {
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
                         let cache = &resources.caches[idx];
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
+                        self.evaluate_cache_gradient_with_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -2141,27 +2148,19 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            indices
+            resources
+                .caches
                 .iter()
-                .map(|&idx| {
-                    let cache = &resources.caches[idx];
-                    self.fill_amplitude_values(
+                .map(|cache| {
+                    self.evaluate_cache_gradient_with_scratch(
                         &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
                         &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
                     )
                 })
                 .collect()
@@ -2222,6 +2221,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -2238,18 +2238,15 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.fill_amplitude_values_and_gradients(
-                            amplitude_values,
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_value_gradient_with_scratch(
+                        self.evaluate_cache_value_gradient_with_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -2265,18 +2262,15 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.fill_amplitude_values_and_gradients(
+                    self.evaluate_cache_value_gradient_with_scratch(
                         &mut amplitude_values,
                         &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
-                    );
-                    self.evaluate_expression_value_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
                     )
                 })
                 .collect()
@@ -2293,6 +2287,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -2309,18 +2304,15 @@ impl Evaluator {
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
                         let cache = &resources.caches[idx];
-                        self.fill_amplitude_values_and_gradients(
-                            amplitude_values,
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            cache,
-                        );
-                        self.evaluate_expression_value_gradient_with_scratch(
+                        self.evaluate_cache_value_gradient_with_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -2336,18 +2328,15 @@ impl Evaluator {
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
-                    self.fill_amplitude_values_and_gradients(
+                    self.evaluate_cache_value_gradient_with_scratch(
                         &mut amplitude_values,
                         &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
-                    );
-                    self.evaluate_expression_value_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
                     )
                 })
                 .collect()
