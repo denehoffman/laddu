@@ -1593,6 +1593,26 @@ impl Evaluator {
         self.resources.write().isolate_many_strict(names)
     }
 
+    /// Return a copy of the current active-amplitude mask.
+    pub fn active_mask(&self) -> Vec<bool> {
+        self.resources.read().active.clone()
+    }
+
+    /// Apply a precomputed active-amplitude mask.
+    pub fn set_active_mask(&self, mask: &[bool]) -> LadduResult<()> {
+        let mut resources = self.resources.write();
+        if mask.len() != resources.active.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "active amplitude mask".to_string(),
+                expected: resources.active.len(),
+                actual: mask.len(),
+            });
+        }
+        resources.active.clone_from_slice(mask);
+        resources.refresh_active_indices();
+        Ok(())
+    }
+
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters (non-MPI version).
     ///

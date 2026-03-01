@@ -474,6 +474,19 @@ impl PyEvaluator {
         }
         Ok(())
     }
+
+    /// Return the current active-amplitude mask.
+    #[getter]
+    fn active_mask(&self) -> Vec<bool> {
+        self.0.active_mask()
+    }
+
+    /// Apply an active-amplitude mask.
+    fn set_active_mask(&self, mask: Vec<bool>) -> PyResult<()> {
+        self.0.set_active_mask(&mask)?;
+        Ok(())
+    }
+
     /// Evaluate the stored Expression over the stored Dataset
     ///
     /// Parameters

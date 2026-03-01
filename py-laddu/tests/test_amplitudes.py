@@ -225,6 +225,20 @@ def test_amplitude_activation() -> None:
     assert result[0] == 3.0 + 0.0j
 
 
+def test_evaluator_active_mask_roundtrip() -> None:
+    amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
+    amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
+    evaluator = (amp1 + amp2).load(make_test_dataset())
+
+    assert evaluator.active_mask == [True, True]
+    evaluator.set_active_mask([True, False])
+    assert evaluator.active_mask == [True, False]
+    assert evaluator.evaluate([])[0] == 1.0 + 0.0j
+
+    with pytest.raises(ValueError):
+        evaluator.set_active_mask([True])
+
+
 def test_gradient() -> None:
     amp1 = ComplexScalar(
         'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')

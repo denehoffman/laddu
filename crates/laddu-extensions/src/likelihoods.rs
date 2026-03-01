@@ -290,6 +290,7 @@ pub struct NLL {
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
     parameter_manager: ParameterManager,
+    projection_active_mask_cache: Arc<Mutex<HashMap<Vec<String>, Vec<bool>>>>,
 }
 
 impl NLL {
@@ -306,8 +307,46 @@ impl NLL {
             parameter_manager: data_evaluator.parameter_manager().clone(),
             data_evaluator,
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
+    }
+
+    fn normalized_projection_key<T: AsRef<str>>(names: &[T]) -> Vec<String> {
+        let mut key = names
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<Vec<_>>();
+        key.sort_unstable();
+        key.dedup();
+        key
+    }
+
+    fn get_or_build_projection_active_mask<T: AsRef<str>>(
+        &self,
+        names: &[T],
+    ) -> LadduResult<Vec<bool>> {
+        let key = Self::normalized_projection_key(names);
+        if let Some(mask) = self.projection_active_mask_cache.lock().get(&key).cloned() {
+            return Ok(mask);
+        }
+
+        let current_active_data = self.data_evaluator.active_mask();
+        let current_active_accmc = self.accmc_evaluator.active_mask();
+        let isolate_result = self.isolate_many_strict(names);
+        let resolved_mask = if isolate_result.is_ok() {
+            self.accmc_evaluator.active_mask()
+        } else {
+            Vec::new()
+        };
+        self.data_evaluator.set_active_mask(&current_active_data)?;
+        self.accmc_evaluator
+            .set_active_mask(&current_active_accmc)?;
+        isolate_result?;
+        self.projection_active_mask_cache
+            .lock()
+            .insert(key, resolved_mask.clone());
+        Ok(resolved_mask)
     }
 
     /// The parameter names for this NLL.
@@ -348,6 +387,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.fix(name, value)?,
             data_evaluator,
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -360,6 +400,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.free(name)?,
             data_evaluator,
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -372,6 +413,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename(old, new)?,
             data_evaluator,
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -384,6 +426,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename_parameters(mapping)?,
             data_evaluator,
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -725,8 +768,12 @@ impl NLL {
     ) -> LadduResult<Vec<f64>> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many_strict(names)?;
+            let current_active_mc = mc_evaluator.active_mask();
+            let isolate_result = mc_evaluator.isolate_many_strict(names);
+            if let Err(err) = isolate_result {
+                mc_evaluator.set_active_mask(&current_active_mc)?;
+                return Err(err);
+            }
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -742,12 +789,14 @@ impl NLL {
                 .zip(mc_dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
-            mc_evaluator.resources.write().active = current_active_mc;
+            mc_evaluator.set_active_mask(&current_active_mc)?;
             Ok(output)
         } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many_strict(names)?;
+            let current_active_data = self.data_evaluator.active_mask();
+            let current_active_accmc = self.accmc_evaluator.active_mask();
+            let resolved_mask = self.get_or_build_projection_active_mask(names)?;
+            self.data_evaluator.set_active_mask(&resolved_mask)?;
+            self.accmc_evaluator.set_active_mask(&resolved_mask)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self.accmc_evaluator.evaluate_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -763,8 +812,9 @@ impl NLL {
                 .zip(mc_dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
-            self.data_evaluator.resources.write().active = current_active_data;
-            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            self.data_evaluator.set_active_mask(&current_active_data)?;
+            self.accmc_evaluator
+                .set_active_mask(&current_active_accmc)?;
             Ok(output)
         }
     }
@@ -851,8 +901,12 @@ impl NLL {
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many_strict(names)?;
+            let current_active_mc = mc_evaluator.active_mask();
+            let isolate_result = mc_evaluator.isolate_many_strict(names);
+            if let Err(err) = isolate_result {
+                mc_evaluator.set_active_mask(&current_active_mc)?;
+                return Err(err);
+            }
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_with_gradient_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -886,12 +940,14 @@ impl NLL {
                         .collect(),
                 )
             };
-            mc_evaluator.resources.write().active = current_active_mc;
+            mc_evaluator.set_active_mask(&current_active_mc)?;
             Ok((res, res_gradient))
         } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many_strict(names)?;
+            let current_active_data = self.data_evaluator.active_mask();
+            let current_active_accmc = self.accmc_evaluator.active_mask();
+            let resolved_mask = self.get_or_build_projection_active_mask(names)?;
+            self.data_evaluator.set_active_mask(&resolved_mask)?;
+            self.accmc_evaluator.set_active_mask(&resolved_mask)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self
                 .accmc_evaluator
@@ -927,8 +983,9 @@ impl NLL {
                         .collect(),
                 )
             };
-            self.data_evaluator.resources.write().active = current_active_data;
-            self.accmc_evaluator.resources.write().active = current_active_accmc;
+            self.data_evaluator.set_active_mask(&current_active_data)?;
+            self.accmc_evaluator
+                .set_active_mask(&current_active_accmc)?;
             Ok((res, res_gradient))
         }
     }
