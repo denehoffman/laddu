@@ -155,6 +155,31 @@ def test_nll_project_with_many_matches_repeated_project_with() -> None:
         assert batched_row == pytest.approx(repeated_row)
 
 
+def test_nll_project_with_many_handles_empty_and_duplicate_subsets() -> None:
+    amp_a = Scalar('amp_a', parameter('alpha'))
+    amp_b = Scalar('amp_b', parameter('beta'))
+    expr = (amp_a + amp_b).norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    nll = NLL(expr, data, mc)
+    params = [1.25, -0.5]
+
+    empty = nll.project_with_many(params, [])
+    assert empty.shape == (0, 0)
+
+    subsets = [
+        ['amp_b'],
+        ['amp_a'],
+        ['amp_a', 'amp_b'],
+        ['amp_a'],
+        ['amp_b'],
+    ]
+    batched = nll.project_with_many(params, subsets)
+    repeated = [nll.project_with(params, subset).tolist() for subset in subsets]
+    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+        assert batched_row == pytest.approx(repeated_row)
+
+
 def test_nll_parameter_fix_free_and_rename() -> None:
     amp = Scalar('scale', parameter('scale'))
     expr = amp.norm_sqr()

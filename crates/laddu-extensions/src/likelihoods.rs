@@ -4955,6 +4955,41 @@ mod tests {
     }
 
     #[test]
+    fn nll_project_with_many_handles_empty_and_duplicate_subsets() {
+        let (nll, params) = make_two_parameter_nll();
+        let empty: Vec<Vec<String>> = Vec::new();
+        let empty_projection = nll
+            .project_with_many_local(&params, &empty, None)
+            .expect("empty subset list should evaluate");
+        assert!(empty_projection.is_empty());
+
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_b".to_string()],
+        ];
+        let batched = nll
+            .project_with_many_local(&params, &subsets, None)
+            .expect("batched projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_with_local(&params, subset, None)
+                    .expect("single subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
     fn nll_project_with_many_reports_missing_amplitude_error() {
         let (nll, params) = make_two_parameter_nll();
         let subsets = vec![vec!["amp_a".to_string()], vec!["missing".to_string()]];
@@ -5236,6 +5271,41 @@ mod tests {
         let local_grad_slice = &gathered_gradients[start..end];
         for (lhs, rhs) in local_grad_slice.iter().zip(local_gradients.iter()) {
             assert_relative_eq!(lhs, rhs);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_project_with_many_matches_repeated_project_with_mpi() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+        ];
+        let batched = nll
+            .project_with_many_mpi(&params, &subsets, None, &world)
+            .expect("batched mpi projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_with_mpi(&params, subset, None, &world)
+                    .expect("single mpi subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
         }
         finalize_mpi();
     }
