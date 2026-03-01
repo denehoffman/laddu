@@ -314,7 +314,8 @@ def read_root_chunked(
         raise ValueError(msg)
 
     if backend_name == 'oxyroot':
-        # Native oxyroot chunking is not exposed yet; preserve API shape with full-read fallback.
+        # TODO(io): Implement true oxyroot chunked reads with entry windows.
+        # Current behavior is a compatibility fallback that yields one fully materialized chunk.
         yield _backend_read_root(
             path,
             tree=tree,

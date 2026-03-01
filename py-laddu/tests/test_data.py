@@ -71,6 +71,13 @@ def _assert_datasets_close(dataset_left: Dataset, dataset_right: Dataset) -> Non
         _assert_events_close(dataset_left[idx], dataset_right[idx], shared_p4, shared_aux)
 
 
+def _materialize_chunked(chunks: list[Dataset], reference: Dataset) -> Dataset:
+    events: list[Event] = []
+    for chunk in chunks:
+        events.extend(list(chunk))
+    return Dataset(events, p4_names=reference.p4_names, aux_names=reference.aux_names)
+
+
 def make_test_event() -> Event:
     return Event(
         [
@@ -674,6 +681,64 @@ def test_dataset_from_root_matches_parquet() -> None:
         aux=AUX_NAMES,
     )
     _assert_datasets_close(root_auto, root_named)
+
+
+def test_read_parquet_chunked_parity_and_chunk_sizes() -> None:
+    full = ldio.read_parquet(DATA_F32_PARQUET)
+    for chunk_size in (1, 2, 128):
+        chunks = list(ldio.read_parquet_chunked(DATA_F32_PARQUET, chunk_size=chunk_size))
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
+
+
+def test_read_root_chunked_uproot_parity_and_chunk_sizes() -> None:
+    pytest.importorskip('uproot')
+    full = ldio.read_root(DATA_F32_ROOT, backend='uproot')
+    for chunk_size in (1, 2, 128):
+        chunks = list(
+            ldio.read_root_chunked(
+                DATA_F32_ROOT,
+                backend='uproot',
+                chunk_size=chunk_size,
+            )
+        )
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
+
+
+def test_read_root_chunked_oxyroot_is_single_chunk_fallback() -> None:
+    full = ldio.read_root(DATA_F32_ROOT, backend='oxyroot')
+    chunks = list(ldio.read_root_chunked(DATA_F32_ROOT, backend='oxyroot', chunk_size=1))
+    assert len(chunks) == 1
+    _assert_datasets_close(chunks[0], full)
+
+
+def test_read_root_chunked_rejects_entry_window_kwargs() -> None:
+    with pytest.raises(ValueError, match='entry_start'):
+        list(
+            ldio.read_root_chunked(
+                DATA_F32_ROOT,
+                backend='uproot',
+                chunk_size=2,
+                uproot_kwargs={'entry_start': 0},
+            )
+        )
+
+
+def test_read_amptools_chunked_parity_and_chunk_sizes() -> None:
+    full = ldio.read_amptools(DATA_AMPTOOLS_ROOT)
+    for chunk_size in (1, 2, 128):
+        chunks = list(
+            ldio.read_amptools_chunked(DATA_AMPTOOLS_ROOT, chunk_size=chunk_size)
+        )
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
 
 
 def test_read_root_uproot_missing_required_p4_branch_reports_name() -> None:
