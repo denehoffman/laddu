@@ -89,6 +89,65 @@ fn reduce_gradient(world: &SimpleCommunicator, gradient: &DVector<f64>) -> DVect
     DVector::from_vec(reduced)
 }
 
+fn evaluate_weighted_expression_sum_local<F>(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    value_map: F,
+) -> f64
+where
+    F: Fn(Complex64) -> f64 + Copy + Send + Sync,
+{
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resources.active_indices().to_vec();
+    let slot_count = evaluator.expression_slot_count();
+    #[cfg(feature = "rayon")]
+    {
+        resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let l = evaluator
+                        .evaluate_expression_value_with_scratch(amplitude_values, expr_slots);
+                    event.weight * value_map(l)
+                },
+            )
+            .parallel_sum_with_accumulator::<Klein<f64>>()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let l = evaluator
+                    .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots);
+                event.weight * value_map(l)
+            })
+            .sum_with_accumulator::<Klein<f64>>()
+    }
+}
+
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
@@ -855,32 +914,12 @@ impl NLL {
     }
 
     fn evaluate_terms_local(&self, parameters: &[f64]) -> (f64, f64) {
-        let data_result = self.data_evaluator.evaluate_local(parameters);
-        let mc_result = self.accmc_evaluator.evaluate_local(parameters);
-        #[cfg(feature = "rayon")]
-        let data_term: f64 = data_result
-            .par_iter()
-            .zip(self.data_evaluator.dataset.events_local().par_iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(feature = "rayon")]
-        let mc_term: f64 = mc_result
-            .par_iter()
-            .zip(self.accmc_evaluator.dataset.events_local().par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let data_term: f64 = data_result
-            .iter()
-            .zip(self.data_evaluator.dataset.events_local().iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
-            .sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: f64 = mc_result
-            .iter()
-            .zip(self.accmc_evaluator.dataset.events_local().iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum_with_accumulator::<Klein<f64>>();
+        let data_term =
+            evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
+                f64::ln(l.re)
+            });
+        let mc_term =
+            evaluate_weighted_expression_sum_local(&self.accmc_evaluator, parameters, |l| l.re);
         (data_term, mc_term)
     }
 
