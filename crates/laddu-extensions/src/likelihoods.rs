@@ -4170,6 +4170,46 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Serialize, Deserialize)]
+    struct CachedBeamScaleAmplitude {
+        name: String,
+        parameter: ParameterLike,
+        pid: ParameterID,
+        sid: laddu_core::resources::ScalarID,
+        p4_index: usize,
+    }
+
+    impl CachedBeamScaleAmplitude {
+        #[allow(clippy::new_ret_no_self)]
+        fn new(name: &str, parameter: ParameterLike, p4_index: usize) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                parameter,
+                pid: ParameterID::default(),
+                sid: laddu_core::resources::ScalarID::default(),
+                p4_index,
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CachedBeamScaleAmplitude {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.pid = resources.register_parameter(&self.parameter)?;
+            self.sid = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
+        }
+
+        fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(parameters.get(self.pid), 0.0) * cache.get_scalar(self.sid)
+        }
+    }
+
     fn dataset_with_weights(weights: &[f64]) -> Arc<Dataset> {
         let metadata = Arc::new(DatasetMetadata::default());
         let events = weights
@@ -4177,6 +4217,26 @@ mod tests {
             .map(|&weight| {
                 Arc::new(EventData {
                     p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                    aux: vec![],
+                    weight,
+                })
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    fn dataset_with_two_p4_and_weights(
+        beam_energies: &[(f64, f64)],
+        weights: &[f64],
+    ) -> Arc<Dataset> {
+        assert_eq!(beam_energies.len(), weights.len());
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = beam_energies
+            .iter()
+            .zip(weights.iter())
+            .map(|(&(e0, e1), &weight)| {
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, e0), Vec4::new(0.0, 0.0, 0.0, e1)],
                     aux: vec![],
                     weight,
                 })
@@ -4551,6 +4611,17 @@ mod tests {
     }
 
     #[test]
+    fn stochastic_nll_matches_closed_form_on_full_batch() {
+        let (nll, params) = make_constant_nll();
+        let stochastic = nll
+            .to_stochastic(nll.data_evaluator.dataset.n_events(), Some(0))
+            .unwrap();
+        let stochastic_value = stochastic.evaluate(&params).unwrap();
+        let deterministic_value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(stochastic_value, deterministic_value, epsilon = 1e-12);
+    }
+
+    #[test]
     fn likelihood_evaluator_reports_length_mismatch() {
         let alpha = LikelihoodScalar::new("alpha");
         let evaluator = alpha.load();
@@ -4630,6 +4701,49 @@ mod tests {
         let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
         assert_relative_eq!(mpi_gradient, local_gradient);
 
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_mixed_scale_value_matches_local_evaluate() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("scale_a"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("scale_b"), 1).unwrap();
+        let expr = (amp_a + amp_b).norm_sqr();
+        let data = dataset_with_two_p4_and_weights(
+            &[(1.0, 0.5), (10.0, 1.0), (3.0, 5.0), (1.0e2, 2.0e-1)],
+            &[1.0e12, 1.0e-12, 3.5, 7.25e4],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[(4.0, 0.1), (6.0, 2.0), (8.0, 1.5), (1.0e1, 3.0)],
+            &[4.0e9, 9.0e-6, 1.25, 2.5e2],
+        );
+        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let params = vec![1.125, -0.375];
+
+        let data_local = nll.data_evaluator.evaluate_local(&params);
+        let mc_local = nll.accmc_evaluator.evaluate_local(&params);
+        let data_term_local: f64 = data_local
+            .iter()
+            .zip(nll.data_evaluator.dataset.events_local().iter())
+            .map(|(value, event)| event.weight * value.re.ln())
+            .sum();
+        let mc_term_local: f64 = mc_local
+            .iter()
+            .zip(nll.accmc_evaluator.dataset.events_local().iter())
+            .map(|(value, event)| event.weight * value.re)
+            .sum();
+        let data_term = super::reduce_scalar(&world, data_term_local);
+        let mc_term = super::reduce_scalar(&world, mc_term_local);
+        let n_mc = nll.accmc_evaluator.dataset.n_events_weighted();
+        let expected = -2.0 * (data_term - mc_term / n_mc);
+        let mpi_value = nll.evaluate_mpi_value(&params, &world);
+        assert_relative_eq!(mpi_value, expected, epsilon = 1e-9, max_relative = 1e-12);
         finalize_mpi();
     }
 
