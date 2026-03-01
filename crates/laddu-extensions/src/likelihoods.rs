@@ -347,6 +347,10 @@ impl NLL {
         Ok(resolved_mask)
     }
 
+    fn invalidate_projection_mask_cache(&self) {
+        self.projection_active_mask_cache.lock().clear();
+    }
+
     /// The parameter names for this NLL.
     pub fn parameters(&self) -> Vec<String> {
         self.parameter_manager.parameters()
@@ -438,76 +442,90 @@ impl NLL {
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate(&name);
         self.accmc_evaluator.activate(name);
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_strict(&name)?;
         self.accmc_evaluator.activate_strict(name)?;
         Ok(())
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many(names);
         self.accmc_evaluator.activate_many(names);
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many_strict(names)?;
         self.accmc_evaluator.activate_many_strict(names)?;
         Ok(())
     }
     /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate(&name);
         self.accmc_evaluator.deactivate(name);
     }
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_strict(&name)?;
         self.accmc_evaluator.deactivate_strict(name)?;
         Ok(())
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many(names);
         self.accmc_evaluator.deactivate_many(names);
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many_strict(names)?;
         self.accmc_evaluator.deactivate_many_strict(names)?;
         Ok(())
     }
     /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest), skipping missing entries.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate(&name);
         self.accmc_evaluator.isolate(name);
     }
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_strict(&name)?;
         self.accmc_evaluator.isolate_strict(name)?;
         Ok(())
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many(names);
         self.accmc_evaluator.isolate_many(names);
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many_strict(names)?;
         self.accmc_evaluator.isolate_many_strict(names)?;
         Ok(())
@@ -4702,6 +4720,26 @@ mod tests {
             .project_with_local::<&str>(&params, &["missing_amplitude"], None)
             .unwrap_err();
         assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
+    }
+
+    #[test]
+    fn nll_activation_changes_invalidate_projection_mask_cache() {
+        let (nll, params) = make_constant_nll();
+        assert!(nll.projection_active_mask_cache.lock().is_empty());
+
+        let _ = nll
+            .project_with_local::<&str>(&params, &["amp"], None)
+            .unwrap();
+        assert!(!nll.projection_active_mask_cache.lock().is_empty());
+
+        nll.deactivate("amp");
+        assert!(nll.projection_active_mask_cache.lock().is_empty());
+
+        let projection = nll
+            .project_with_local::<&str>(&params, &["amp"], None)
+            .unwrap();
+        assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
     }
 
     #[test]
