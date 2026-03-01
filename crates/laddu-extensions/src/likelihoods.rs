@@ -168,12 +168,15 @@ fn sum_dvectors_parallel(
 struct GradientScratchKey {
     n_parameters: usize,
     n_amplitudes: usize,
+    n_expression_slots: usize,
 }
 
 #[cfg(feature = "rayon")]
 struct GradientScratchWorkspace {
     amplitude_values: Vec<Complex64>,
     gradient_values: Vec<DVector<Complex64>>,
+    value_slots: Vec<Complex64>,
+    gradient_slots: Vec<DVector<Complex64>>,
 }
 
 #[cfg(feature = "rayon")]
@@ -182,16 +185,24 @@ impl GradientScratchWorkspace {
         Self {
             amplitude_values: vec![Complex64::ZERO; key.n_amplitudes],
             gradient_values: vec![DVector::zeros(key.n_parameters); key.n_amplitudes],
+            value_slots: vec![Complex64::ZERO; key.n_expression_slots],
+            gradient_slots: vec![DVector::zeros(key.n_parameters); key.n_expression_slots],
         }
     }
 
     fn matches_key(&self, key: GradientScratchKey) -> bool {
         self.amplitude_values.len() == key.n_amplitudes
             && self.gradient_values.len() == key.n_amplitudes
+            && self.value_slots.len() == key.n_expression_slots
+            && self.gradient_slots.len() == key.n_expression_slots
             && self
                 .gradient_values
                 .iter()
                 .all(|gradient| gradient.len() == key.n_parameters)
+            && self
+                .gradient_slots
+                .iter()
+                .all(|slot| slot.len() == key.n_parameters)
     }
 }
 
@@ -576,17 +587,16 @@ impl NLL {
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
-        let (mc_dataset, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
+        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
             (
                 mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_local(parameters),
-                mc_evaluator.evaluate_gradient_local(parameters),
+                mc_evaluator.evaluate_with_gradient_local(parameters),
             )
         } else {
             (
                 self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate_local(parameters),
-                self.accmc_evaluator.evaluate_gradient_local(parameters),
+                self.accmc_evaluator
+                    .evaluate_with_gradient_local(parameters),
             )
         };
         let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
@@ -596,12 +606,12 @@ impl NLL {
                 result
                     .par_iter()
                     .zip(mc_dataset.events_local().par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .map(|((l, _), e)| e.weight * l.re / n_mc)
                     .collect(),
-                result_gradient
+                result
                     .par_iter()
                     .zip(mc_dataset.events_local().par_iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
             ))
         }
@@ -611,12 +621,12 @@ impl NLL {
                 result
                     .iter()
                     .zip(mc_dataset.events_local().iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .map(|((l, _), e)| e.weight * l.re / n_mc)
                     .collect(),
-                result_gradient
+                result
                     .iter()
                     .zip(mc_dataset.events_local().iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                     .collect(),
             ))
         }
@@ -844,8 +854,7 @@ impl NLL {
             let current_active_mc = mc_evaluator.resources.read().active.clone();
             mc_evaluator.isolate_many_strict(names)?;
             let mc_dataset = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate_local(parameters);
-            let result_gradient = mc_evaluator.evaluate_gradient(parameters);
+            let result = mc_evaluator.evaluate_with_gradient_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
@@ -853,12 +862,12 @@ impl NLL {
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / n_mc)
                         .collect(),
-                    result_gradient
+                    result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
             };
@@ -868,12 +877,12 @@ impl NLL {
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / n_mc)
                         .collect(),
-                    result_gradient
+                    result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
             };
@@ -884,8 +893,9 @@ impl NLL {
             let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
             self.isolate_many_strict(names)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate_local(parameters);
-            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
+            let result = self
+                .accmc_evaluator
+                .evaluate_with_gradient_local(parameters);
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
@@ -893,12 +903,12 @@ impl NLL {
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / n_mc)
                         .collect(),
-                    result_gradient
+                    result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
             };
@@ -908,12 +918,12 @@ impl NLL {
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / n_mc)
                         .collect(),
-                    result_gradient
+                    result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
                         .collect(),
                 )
             };
@@ -1049,11 +1059,13 @@ impl NLL {
         let data_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.data_evaluator.amplitudes.len(),
+            n_expression_slots: self.data_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let mc_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.accmc_evaluator.amplitudes.len(),
+            n_expression_slots: self.accmc_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
@@ -1078,12 +1090,15 @@ impl NLL {
                                 amp_vals[idx] = Complex64::ZERO;
                             }
                         }
-                        (
-                            event.weight,
-                            self.data_evaluator.evaluate_expression_value(amp_vals),
-                            self.data_evaluator
-                                .evaluate_expression_gradient(amp_vals, grad_vals),
-                        )
+                        let (value, gradient) = self
+                            .data_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, value, gradient)
                     },
                 )
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
@@ -1112,11 +1127,15 @@ impl NLL {
                                 amp_vals[idx] = Complex64::ZERO;
                             }
                         }
-                        (
-                            event.weight,
-                            self.accmc_evaluator
-                                .evaluate_expression_gradient(amp_vals, grad_vals),
-                        )
+                        let (_, gradient) = self
+                            .accmc_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, gradient)
                     },
                 )
                 .map(|(w, g)| w * g.map(|gi| gi.re)),
@@ -1127,6 +1146,10 @@ impl NLL {
             let mut amp_vals = vec![Complex64::ZERO; self.data_evaluator.amplitudes.len()];
             let mut grad_vals =
                 vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.data_evaluator.expression_slot_count()];
+            let mut gradient_slots =
+                vec![DVector::zeros(parameters.len()); self.data_evaluator.expression_slot_count()];
             self.data_evaluator
                 .dataset
                 .events_local()
@@ -1143,12 +1166,15 @@ impl NLL {
                             amp_vals[idx] = Complex64::ZERO;
                         }
                     }
-                    (
-                        event.weight,
-                        self.data_evaluator.evaluate_expression_value(&amp_vals),
-                        self.data_evaluator
-                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                    )
+                    let (value, gradient) = self
+                        .data_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, value, gradient)
                 })
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
@@ -1158,6 +1184,12 @@ impl NLL {
             let mut amp_vals = vec![Complex64::ZERO; self.accmc_evaluator.amplitudes.len()];
             let mut grad_vals =
                 vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.accmc_evaluator.expression_slot_count()];
+            let mut gradient_slots = vec![
+                DVector::zeros(parameters.len());
+                self.accmc_evaluator.expression_slot_count()
+            ];
             self.accmc_evaluator
                 .dataset
                 .events_local()
@@ -1174,11 +1206,15 @@ impl NLL {
                             amp_vals[idx] = Complex64::ZERO;
                         }
                     }
-                    (
-                        event.weight,
-                        self.accmc_evaluator
-                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                    )
+                    let (_, gradient) = self
+                        .accmc_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, gradient)
                 })
                 .map(|(w, g)| w * g.map(|gi| gi.re))
                 .sum()
@@ -1466,11 +1502,13 @@ impl StochasticNLL {
         let data_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.nll.data_evaluator.amplitudes.len(),
+            n_expression_slots: self.nll.data_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let mc_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.nll.accmc_evaluator.amplitudes.len(),
+            n_expression_slots: self.nll.accmc_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
@@ -1499,13 +1537,16 @@ impl StochasticNLL {
                                 amp_vals[amp_idx] = Complex64::ZERO;
                             }
                         }
-                        (
-                            event.weight,
-                            self.nll.data_evaluator.evaluate_expression_value(amp_vals),
-                            self.nll
-                                .data_evaluator
-                                .evaluate_expression_gradient(amp_vals, grad_vals),
-                        )
+                        let (value, gradient) = self
+                            .nll
+                            .data_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, value, gradient)
                     },
                 )
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
@@ -1540,12 +1581,16 @@ impl StochasticNLL {
                                 amp_vals[amp_idx] = Complex64::ZERO;
                             }
                         }
-                        (
-                            event.weight,
-                            self.nll
-                                .accmc_evaluator
-                                .evaluate_expression_gradient(amp_vals, grad_vals),
-                        )
+                        let (_, gradient) = self
+                            .nll
+                            .accmc_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, gradient)
                     },
                 )
                 .map(|(w, g)| w * g.map(|gi| gi.re)),
@@ -1556,6 +1601,12 @@ impl StochasticNLL {
             let mut amp_vals = vec![Complex64::ZERO; self.nll.data_evaluator.amplitudes.len()];
             let mut grad_vals =
                 vec![DVector::zeros(parameters.len()); self.nll.data_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.nll.data_evaluator.expression_slot_count()];
+            let mut gradient_slots = vec![
+                DVector::zeros(parameters.len());
+                self.nll.data_evaluator.expression_slot_count()
+            ];
             indices
                 .iter()
                 .map(|&idx| {
@@ -1571,13 +1622,16 @@ impl StochasticNLL {
                             amp_vals[amp_idx] = Complex64::ZERO;
                         }
                     }
-                    (
-                        event.weight,
-                        self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
-                        self.nll
-                            .data_evaluator
-                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                    )
+                    let (value, gradient) = self
+                        .nll
+                        .data_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, value, gradient)
                 })
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
@@ -1587,6 +1641,12 @@ impl StochasticNLL {
             let mut amp_vals = vec![Complex64::ZERO; self.nll.accmc_evaluator.amplitudes.len()];
             let mut grad_vals =
                 vec![DVector::zeros(parameters.len()); self.nll.accmc_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.nll.accmc_evaluator.expression_slot_count()];
+            let mut gradient_slots = vec![
+                DVector::zeros(parameters.len());
+                self.nll.accmc_evaluator.expression_slot_count()
+            ];
             self.nll
                 .accmc_evaluator
                 .dataset
@@ -1604,12 +1664,16 @@ impl StochasticNLL {
                             amp_vals[amp_idx] = Complex64::ZERO;
                         }
                     }
-                    (
-                        event.weight,
-                        self.nll
-                            .accmc_evaluator
-                            .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                    )
+                    let (_, gradient) = self
+                        .nll
+                        .accmc_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, gradient)
                 })
                 .map(|(w, g)| w * g.map(|gi| gi.re))
                 .sum()
