@@ -1670,6 +1670,72 @@ impl Evaluator {
         }
     }
 
+    /// Evaluate local events using an explicit active-amplitude mask without mutating evaluator state.
+    pub fn evaluate_local_with_active_mask(
+        &self,
+        parameters: &[f64],
+        active_mask: &[bool],
+    ) -> LadduResult<Vec<Complex64>> {
+        let resources = self.resources.read();
+        if active_mask.len() != resources.active.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "active amplitude mask".to_string(),
+                expected: resources.active.len(),
+                actual: active_mask.len(),
+            });
+        }
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = active_mask
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &active)| if active { Some(index) } else { None })
+            .collect::<Vec<_>>();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            Ok(resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                        )
+                    },
+                    |(amplitude_values, expr_slots), cache| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            cache,
+                        );
+                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    },
+                )
+                .collect())
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut expr_slots = vec![Complex64::ZERO; slot_count];
+            Ok(resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                })
+                .collect())
+        }
+    }
+
     /// Evaluate the stored expression over local events using a reusable execution context.
     #[cfg(feature = "execution-context-prototype")]
     pub fn evaluate_local_with_ctx(
@@ -2294,6 +2360,83 @@ impl Evaluator {
                     )
                 })
                 .collect()
+        }
+    }
+
+    /// Evaluate local events and gradients with an explicit active-amplitude mask without mutating evaluator state.
+    pub fn evaluate_with_gradient_local_with_active_mask(
+        &self,
+        parameters: &[f64],
+        active_mask: &[bool],
+    ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
+        let resources = self.resources.read();
+        if active_mask.len() != resources.active.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "active amplitude mask".to_string(),
+                expected: resources.active.len(),
+                actual: active_mask.len(),
+            });
+        }
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = active_mask
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &active)| if active { Some(index) } else { None })
+            .collect::<Vec<_>>();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            Ok(resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
+                        self.evaluate_cache_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                            &active_indices,
+                            active_mask,
+                            &parameters,
+                            cache,
+                        )
+                    },
+                )
+                .collect())
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            Ok(resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.evaluate_cache_value_gradient_with_scratch(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        &active_indices,
+                        active_mask,
+                        &parameters,
+                        cache,
+                    )
+                })
+                .collect())
         }
     }
 

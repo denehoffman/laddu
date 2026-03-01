@@ -331,15 +331,13 @@ impl NLL {
             return Ok(mask);
         }
 
-        let current_active_data = self.data_evaluator.active_mask();
         let current_active_accmc = self.accmc_evaluator.active_mask();
-        let isolate_result = self.isolate_many_strict(names);
+        let isolate_result = self.accmc_evaluator.isolate_many_strict(names);
         let resolved_mask = if isolate_result.is_ok() {
             self.accmc_evaluator.active_mask()
         } else {
             Vec::new()
         };
-        self.data_evaluator.set_active_mask(&current_active_data)?;
         self.accmc_evaluator
             .set_active_mask(&current_active_accmc)?;
         isolate_result?;
@@ -792,13 +790,11 @@ impl NLL {
             mc_evaluator.set_active_mask(&current_active_mc)?;
             Ok(output)
         } else {
-            let current_active_data = self.data_evaluator.active_mask();
-            let current_active_accmc = self.accmc_evaluator.active_mask();
             let resolved_mask = self.get_or_build_projection_active_mask(names)?;
-            self.data_evaluator.set_active_mask(&resolved_mask)?;
-            self.accmc_evaluator.set_active_mask(&resolved_mask)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate_local(parameters);
+            let result = self
+                .accmc_evaluator
+                .evaluate_local_with_active_mask(parameters, &resolved_mask)?;
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
@@ -812,9 +808,6 @@ impl NLL {
                 .zip(mc_dataset.events_local().iter())
                 .map(|(l, e)| e.weight * l.re / n_mc)
                 .collect();
-            self.data_evaluator.set_active_mask(&current_active_data)?;
-            self.accmc_evaluator
-                .set_active_mask(&current_active_accmc)?;
             Ok(output)
         }
     }
@@ -943,15 +936,11 @@ impl NLL {
             mc_evaluator.set_active_mask(&current_active_mc)?;
             Ok((res, res_gradient))
         } else {
-            let current_active_data = self.data_evaluator.active_mask();
-            let current_active_accmc = self.accmc_evaluator.active_mask();
             let resolved_mask = self.get_or_build_projection_active_mask(names)?;
-            self.data_evaluator.set_active_mask(&resolved_mask)?;
-            self.accmc_evaluator.set_active_mask(&resolved_mask)?;
             let mc_dataset = &self.accmc_evaluator.dataset;
             let result = self
                 .accmc_evaluator
-                .evaluate_with_gradient_local(parameters);
+                .evaluate_with_gradient_local_with_active_mask(parameters, &resolved_mask)?;
             let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
@@ -983,9 +972,6 @@ impl NLL {
                         .collect(),
                 )
             };
-            self.data_evaluator.set_active_mask(&current_active_data)?;
-            self.accmc_evaluator
-                .set_active_mask(&current_active_accmc)?;
             Ok((res, res_gradient))
         }
     }
