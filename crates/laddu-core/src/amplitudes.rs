@@ -700,6 +700,25 @@ impl ExpressionProgram {
         gradient_slots[self.root_slot].clone()
     }
 
+    pub fn evaluate_value_gradient_into(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        if self.slot_count == 0 {
+            let dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+            return (Complex64::ZERO, DVector::zeros(dim));
+        }
+        self.fill_values(amplitude_values, value_slots);
+        self.fill_gradients(gradient_values, value_slots, gradient_slots);
+        (
+            value_slots[self.root_slot],
+            gradient_slots[self.root_slot].clone(),
+        )
+    }
+
     pub fn evaluate_gradient(
         &self,
         amplitude_values: &[Complex64],
@@ -1251,6 +1270,31 @@ impl Evaluator {
         }
     }
 
+    fn fill_amplitude_values_and_gradients(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) {
+        for (((amp, active), value), grad) in self
+            .amplitudes
+            .iter()
+            .zip(active_mask.iter())
+            .zip(amplitude_values.iter_mut())
+            .zip(gradient_values.iter_mut())
+        {
+            grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
+            if *active {
+                *value = amp.compute(parameters, cache);
+                amp.compute_gradient(parameters, cache, grad);
+            } else {
+                *value = Complex64::ZERO;
+            }
+        }
+    }
+
     pub fn expression_slot_count(&self) -> usize {
         #[cfg(feature = "expression-ir")]
         {
@@ -1297,6 +1341,33 @@ impl Evaluator {
         #[cfg(not(feature = "expression-ir"))]
         {
             self.expression_program.evaluate_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            )
+        }
+    }
+
+    pub fn evaluate_expression_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        #[cfg(feature = "expression-ir")]
+        {
+            self.expression_ir.evaluate_value_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            )
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program.evaluate_value_gradient_into(
                 amplitude_values,
                 gradient_values,
                 value_scratch,
@@ -2141,6 +2212,147 @@ impl Evaluator {
         }
         self.evaluate_gradient_batch_local(parameters, indices)
     }
+
+    /// Evaluate the stored expression and its gradient over local events in one fused pass.
+    pub fn evaluate_with_gradient_local(
+        &self,
+        parameters: &[f64],
+    ) -> Vec<(Complex64, DVector<Complex64>)> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        self.evaluate_expression_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        )
+                    },
+                )
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.fill_amplitude_values_and_gradients(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    );
+                    self.evaluate_expression_value_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                    )
+                })
+                .collect()
+        }
+    }
+
+    /// Evaluate the stored expression and its gradient over a local subset of events in one fused pass.
+    pub fn evaluate_with_gradient_batch_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+    ) -> Vec<(Complex64, DVector<Complex64>)> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            indices
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
+                        let cache = &resources.caches[idx];
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        self.evaluate_expression_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        )
+                    },
+                )
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            indices
+                .iter()
+                .map(|&idx| {
+                    let cache = &resources.caches[idx];
+                    self.fill_amplitude_values_and_gradients(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    );
+                    self.evaluate_expression_value_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                    )
+                })
+                .collect()
+        }
+    }
 }
 
 /// A testing [`Amplitude`].
@@ -2437,6 +2649,70 @@ mod tests {
             .clear_events_local();
         let cached = evaluator.evaluate_gradient_local(&[1.25, -0.75]);
         assert_eq!(cached.len(), expected_len);
+    }
+
+    #[test]
+    fn test_evaluate_with_gradient_local_matches_separate_paths() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = [1.25, -0.75];
+        let values = evaluator.evaluate_local(&params);
+        let gradients = evaluator.evaluate_gradient_local(&params);
+        let fused = evaluator.evaluate_with_gradient_local(&params);
+        assert_eq!(fused.len(), values.len());
+        assert_eq!(fused.len(), gradients.len());
+        for ((value_gradient, value), gradient) in
+            fused.iter().zip(values.iter()).zip(gradients.iter())
+        {
+            let (fused_value, fused_gradient) = value_gradient;
+            assert_relative_eq!(fused_value.re, value.re, epsilon = 1e-12);
+            assert_relative_eq!(fused_value.im, value.im, epsilon = 1e-12);
+            assert_eq!(fused_gradient.len(), gradient.len());
+            for (fused_item, item) in fused_gradient.iter().zip(gradient.iter()) {
+                assert_relative_eq!(fused_item.re, item.re, epsilon = 1e-12);
+                assert_relative_eq!(fused_item.im, item.im, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn test_evaluate_with_gradient_batch_local_matches_separate_paths() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = [0.5, -1.25];
+        let indices = vec![0, 2, 3];
+        let values = evaluator.evaluate_batch_local(&params, &indices);
+        let gradients = evaluator.evaluate_gradient_batch_local(&params, &indices);
+        let fused = evaluator.evaluate_with_gradient_batch_local(&params, &indices);
+        assert_eq!(fused.len(), values.len());
+        assert_eq!(fused.len(), gradients.len());
+        for ((value_gradient, value), gradient) in
+            fused.iter().zip(values.iter()).zip(gradients.iter())
+        {
+            let (fused_value, fused_gradient) = value_gradient;
+            assert_relative_eq!(fused_value.re, value.re, epsilon = 1e-12);
+            assert_relative_eq!(fused_value.im, value.im, epsilon = 1e-12);
+            assert_eq!(fused_gradient.len(), gradient.len());
+            for (fused_item, item) in fused_gradient.iter().zip(gradient.iter()) {
+                assert_relative_eq!(fused_item.re, item.re, epsilon = 1e-12);
+                assert_relative_eq!(fused_item.im, item.im, epsilon = 1e-12);
+            }
+        }
     }
 
     #[test]

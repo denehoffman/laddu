@@ -350,6 +350,22 @@ impl ExpressionIR {
         gradient_slots[self.root].clone()
     }
 
+    pub(super) fn evaluate_value_gradient_into(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        let gradient = self.evaluate_gradient_into(
+            amplitude_values,
+            amplitude_gradients,
+            value_slots,
+            gradient_slots,
+        );
+        (value_slots[self.root], gradient)
+    }
+
     pub(super) fn evaluate_gradient(
         &self,
         amplitude_values: &[Complex64],
