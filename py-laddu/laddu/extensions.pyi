@@ -269,6 +269,14 @@ class NLL:
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
+    def project_with_many(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        subsets: list[list[str]],
+        *,
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
         p0: list[float] | npt.ArrayLike,

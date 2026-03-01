@@ -40,7 +40,7 @@ use laddu_python::{
     data::PyDataset,
 };
 #[cfg(feature = "python")]
-use numpy::PyArray1;
+use numpy::{PyArray1, PyArray2};
 #[cfg(feature = "python")]
 use pyo3::{
     exceptions::PyTypeError,
@@ -892,6 +892,123 @@ impl NLL {
             }
         }
         self.project_with_local(parameters, names, mc_evaluator)
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets (non-MPI version).
+    pub fn project_with_many_local<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        if subsets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
+        if let Some(mc_evaluator) = &mc_evaluator {
+            let current_active_mc = mc_evaluator.active_mask();
+            let mut resolved_masks = Vec::with_capacity(subsets.len());
+            for names in subsets {
+                let isolate_result = mc_evaluator.isolate_many_strict(names);
+                if let Err(err) = isolate_result {
+                    mc_evaluator.set_active_mask(&current_active_mc)?;
+                    return Err(err);
+                }
+                resolved_masks.push(mc_evaluator.active_mask());
+            }
+            mc_evaluator.set_active_mask(&current_active_mc)?;
+            let mc_dataset = mc_evaluator.dataset.clone();
+            let mut outputs = Vec::with_capacity(subsets.len());
+            for mask in resolved_masks {
+                let result = mc_evaluator.evaluate_local_with_active_mask(parameters, &mask)?;
+                #[cfg(feature = "rayon")]
+                let output: Vec<f64> = result
+                    .par_iter()
+                    .zip(mc_dataset.events_local().par_iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect();
+                #[cfg(not(feature = "rayon"))]
+                let output: Vec<f64> = result
+                    .iter()
+                    .zip(mc_dataset.events_local().iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect();
+                outputs.push(output);
+            }
+            Ok(outputs)
+        } else {
+            let mut resolved_masks = Vec::with_capacity(subsets.len());
+            for names in subsets {
+                resolved_masks.push(self.get_or_build_projection_active_mask(names)?);
+            }
+            let mc_dataset = &self.accmc_evaluator.dataset;
+            let mut outputs = Vec::with_capacity(subsets.len());
+            for mask in resolved_masks {
+                let result = self
+                    .accmc_evaluator
+                    .evaluate_local_with_active_mask(parameters, &mask)?;
+                #[cfg(feature = "rayon")]
+                let output: Vec<f64> = result
+                    .par_iter()
+                    .zip(mc_dataset.events_local().par_iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect();
+                #[cfg(not(feature = "rayon"))]
+                let output: Vec<f64> = result
+                    .iter()
+                    .zip(mc_dataset.events_local().iter())
+                    .map(|(l, e)| e.weight * l.re / n_mc)
+                    .collect();
+                outputs.push(output);
+            }
+            Ok(outputs)
+        }
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets (MPI-compatible version).
+    #[cfg(feature = "mpi")]
+    pub fn project_with_many_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let local_projections = self.project_with_many_local(parameters, subsets, mc_evaluator)?;
+        let (counts, displs) = world.get_counts_displs(n_events);
+        let mut gathered = Vec::with_capacity(local_projections.len());
+        for local_projection in local_projections {
+            let mut buffer = vec![0.0; n_events];
+            {
+                let mut partitioned_buffer =
+                    PartitionMut::new(&mut buffer, counts.clone(), displs.clone());
+                world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+            }
+            gathered.push(buffer);
+        }
+        Ok(gathered)
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets.
+    pub fn project_with_many<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_with_many_mpi(parameters, subsets, mc_evaluator, &world);
+            }
+        }
+        self.project_with_many_local(parameters, subsets, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -2244,6 +2361,61 @@ impl PyNLL {
                 mc_evaluator.map(|pyeval| pyeval.0.clone()),
             )?;
             Ok(PyArray1::from_slice(py, projection.as_slice()))
+        }
+    }
+
+    /// Project the model over the Monte Carlo dataset for multiple isolated amplitude subsets.
+    ///
+    /// Parameters
+    /// ----------
+    /// parameters : list of float
+    ///     The values to use for the free parameters
+    /// subsets : list of list of str
+    ///     Each inner list is an isolated amplitude subset
+    /// mc_evaluator: Evaluator, optional
+    ///     Project using the given Evaluator or use the stored ``accmc`` if None
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// result : array_like
+    ///     2D array of shape ``(len(subsets), n_events)``
+    #[pyo3(signature = (parameters, subsets, *, mc_evaluator = None, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
+    fn project_with_many<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: Vec<f64>,
+        subsets: Vec<Vec<String>>,
+        mc_evaluator: Option<PyEvaluator>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        #[cfg(feature = "rayon")]
+        {
+            let projection = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| {
+                    self.0.project_with_many(
+                        &parameters,
+                        &subsets,
+                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
+                    )
+                })
+                .map_err(PyErr::from)?;
+            Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let projection = self.0.project_with_many(
+                &parameters,
+                &subsets,
+                mc_evaluator.map(|pyeval| pyeval.0.clone()),
+            )?;
+            Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
         }
     }
 
@@ -4719,6 +4891,43 @@ mod tests {
         let err = nll
             .project_with_local::<&str>(&params, &["missing_amplitude"], None)
             .unwrap_err();
+        assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
+    }
+
+    #[test]
+    fn nll_project_with_many_matches_repeated_project_with_calls() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_a".to_string()],
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+        ];
+        let batched = nll
+            .project_with_many_local(&params, &subsets, None)
+            .expect("batched projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_with_local(&params, subset, None)
+                    .expect("single subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn nll_project_with_many_reports_missing_amplitude_error() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![vec!["amp_a".to_string()], vec!["missing".to_string()]];
+        let err = nll
+            .project_with_many_local(&params, &subsets, None)
+            .expect_err("missing amplitude should fail");
         assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
     }
 
