@@ -4423,6 +4423,33 @@ mod tests {
     }
 
     #[test]
+    fn nll_value_matches_mixed_scale_weighted_closed_form() {
+        let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
+        let expr = amp.norm_sqr();
+        let data = dataset_with_weights(&[1.0e12, 1.0e-12, 3.5, 7.25e4, 2.0e-3]);
+        let mc = dataset_with_weights(&[4.0e9, 9.0e-6, 1.25, 2.5e2, 8.0e-4]);
+        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let params = vec![1.125];
+
+        let intensity: f64 = params[0] * params[0];
+        let data_weight_sum = data
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum::<f64>();
+        let mc_weight_sum = mc
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum::<f64>();
+        let n_mc = mc.n_events_weighted();
+        let expected = -2.0 * (data_weight_sum * intensity.ln() - mc_weight_sum * intensity / n_mc);
+
+        let value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(value, expected, epsilon = 1e-9, max_relative = 1e-12);
+    }
+
+    #[test]
     fn nll_project_returns_weighted_intensity() {
         let (nll, params) = make_constant_nll();
         let projection = nll.project_local(&params, None).unwrap();
