@@ -69,6 +69,7 @@ enum IrNode {
 pub(super) struct ExpressionIR {
     nodes: Vec<IrNode>,
     root: IrValueId,
+    dependence_annotations: Vec<DependenceClass>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -202,7 +203,11 @@ impl ExpressionIR {
 
         let mut nodes = Vec::new();
         let root = lower(node, &mut nodes);
-        Self { nodes, root }
+        Self {
+            nodes,
+            root,
+            dependence_annotations: Vec::new(),
+        }
     }
 
     pub(super) fn node_count(&self) -> usize {
@@ -213,18 +218,14 @@ impl ExpressionIR {
         if self.nodes.is_empty() {
             return DependenceClass::ParameterOnly;
         }
-        let mut dependencies = vec![DependenceClass::ParameterOnly; self.nodes.len()];
-        for (node_index, node) in self.nodes.iter().enumerate() {
-            dependencies[node_index] = match *node {
-                IrNode::Constant(_) => DependenceClass::ParameterOnly,
-                IrNode::Amp(_) => DependenceClass::Mixed,
-                IrNode::Unary { op, input } => dependencies[input].apply_unary(op),
-                IrNode::Binary { op, left, right } => {
-                    dependencies[left].apply_binary(op, dependencies[right])
-                }
-            };
+        if self.dependence_annotations.len() == self.nodes.len() {
+            return self.dependence_annotations[self.root];
         }
-        dependencies[self.root]
+        DependenceAnnotatePass::compute_annotations(&self.nodes)[self.root]
+    }
+
+    pub(super) fn node_dependence_annotations(&self) -> &[DependenceClass] {
+        &self.dependence_annotations
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -440,6 +441,7 @@ pub(super) fn compile_expression_ir(
         .cse()
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
+        .dependence_annotate()
         .run(&mut ir);
     let _expression_dependence = ir.root_dependence();
     ir
@@ -558,6 +560,7 @@ enum IrPassKind {
     Cse,
     ConstantFold,
     ActivationSpecialize(Vec<bool>),
+    DependenceAnnotate,
 }
 
 struct ExpressionIrPipeline {
@@ -585,6 +588,11 @@ impl ExpressionIrPipeline {
         self
     }
 
+    fn dependence_annotate(mut self) -> Self {
+        self.passes.push(IrPassKind::DependenceAnnotate);
+        self
+    }
+
     fn run(&self, ir: &mut ExpressionIR) {
         for pass in &self.passes {
             match pass {
@@ -594,8 +602,32 @@ impl ExpressionIrPipeline {
                     active_amplitudes: active_amplitudes.clone(),
                 }
                 .run(ir),
+                IrPassKind::DependenceAnnotate => DependenceAnnotatePass.run(ir),
             }
         }
+    }
+}
+
+struct DependenceAnnotatePass;
+
+impl DependenceAnnotatePass {
+    fn compute_annotations(nodes: &[IrNode]) -> Vec<DependenceClass> {
+        let mut annotations = vec![DependenceClass::ParameterOnly; nodes.len()];
+        for (node_index, node) in nodes.iter().enumerate() {
+            annotations[node_index] = match *node {
+                IrNode::Constant(_) => DependenceClass::ParameterOnly,
+                IrNode::Amp(_) => DependenceClass::Mixed,
+                IrNode::Unary { op, input } => annotations[input].apply_unary(op),
+                IrNode::Binary { op, left, right } => {
+                    annotations[left].apply_binary(op, annotations[right])
+                }
+            };
+        }
+        annotations
+    }
+
+    fn run(&self, ir: &mut ExpressionIR) {
+        ir.dependence_annotations = Self::compute_annotations(&ir.nodes);
     }
 }
 
@@ -698,5 +730,46 @@ mod tests {
         );
         let ir = ExpressionIR::from_expression_node(&tree);
         assert_eq!(ir.root_dependence(), DependenceClass::Mixed);
+    }
+
+    #[test]
+    fn test_dependence_annotation_pass_marks_each_node() {
+        let tree = ExpressionNode::Add(
+            Box::new(ExpressionNode::One),
+            Box::new(ExpressionNode::Amp(0)),
+        );
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .dependence_annotate()
+            .run(&mut ir);
+        assert_eq!(ir.node_dependence_annotations().len(), ir.node_count());
+        assert_eq!(
+            ir.node_dependence_annotations()[0],
+            DependenceClass::ParameterOnly
+        );
+        assert_eq!(ir.node_dependence_annotations()[1], DependenceClass::Mixed);
+        assert_eq!(
+            ir.node_dependence_annotations()[ir.root],
+            DependenceClass::Mixed
+        );
+    }
+
+    #[test]
+    fn test_dependence_annotation_after_specialization_and_fold() {
+        let tree = ExpressionNode::Add(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::One),
+        );
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .activation_specialize(vec![false])
+            .constant_fold()
+            .dependence_annotate()
+            .run(&mut ir);
+        assert!(ir
+            .node_dependence_annotations()
+            .iter()
+            .all(|class| *class == DependenceClass::ParameterOnly));
+        assert_eq!(ir.root_dependence(), DependenceClass::ParameterOnly);
     }
 }
