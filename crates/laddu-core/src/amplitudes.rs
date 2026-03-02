@@ -80,6 +80,20 @@ pub struct PrecomputedCachedIntegral {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug, PartialEq)]
+/// Parameter-gradient contribution for a load-time precomputed cached integral term.
+pub struct PrecomputedCachedIntegralGradientTerm {
+    /// Node index of the separable multiplication term.
+    pub mul_node_index: usize,
+    /// Node index of the parameter-dependent factor.
+    pub parameter_node_index: usize,
+    /// Node index of the cache-dependent factor.
+    pub cache_node_index: usize,
+    /// Gradient contribution `(d/dp parameter_factor) * weighted_cache_sum`.
+    pub weighted_gradient: DVector<Complex64>,
+}
+
+#[cfg(feature = "expression-ir")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CachedIntegralCacheKey {
     active_mask: Vec<bool>,
@@ -1607,6 +1621,80 @@ impl Evaluator {
             values: values.clone(),
         });
         values
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Derivative rules for cached separable terms evaluated at the given parameter point.
+    ///
+    /// Each returned term corresponds to a cached separable descriptor and contributes
+    /// `weighted_gradient` to `d(normalization)/dp` prior to residual-term combination.
+    pub fn expression_precomputed_cached_integral_gradient_terms(
+        &self,
+        parameters: &[f64],
+    ) -> Vec<PrecomputedCachedIntegralGradientTerm> {
+        let cached_integrals = self.expression_precomputed_cached_integrals();
+        if cached_integrals.is_empty() {
+            return Vec::new();
+        }
+
+        let resources = self.resources.read();
+        let Some(cache) = resources.caches.first() else {
+            return cached_integrals
+                .into_iter()
+                .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
+                    mul_node_index: descriptor.mul_node_index,
+                    parameter_node_index: descriptor.parameter_node_index,
+                    cache_node_index: descriptor.cache_node_index,
+                    weighted_gradient: DVector::zeros(parameters.len()),
+                })
+                .collect();
+        };
+
+        let parameter_values = Parameters::new(parameters, &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; self.amplitudes.len()];
+        self.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameter_values,
+            cache,
+        );
+        let mut amplitude_gradients = (0..self.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        self.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &resources.active,
+            &parameter_values,
+            cache,
+        );
+        let mut value_slots = vec![Complex64::ZERO; self.expression_ir.node_count()];
+        let mut gradient_slots = (0..self.expression_ir.node_count())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        let _ = self.evaluate_expression_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+        );
+
+        cached_integrals
+            .into_iter()
+            .map(|descriptor| {
+                let parameter_gradient = gradient_slots
+                    .get(descriptor.parameter_node_index)
+                    .cloned()
+                    .unwrap_or_else(|| DVector::zeros(parameters.len()));
+                let weighted_gradient =
+                    parameter_gradient.map(|value| value * descriptor.weighted_cache_sum);
+                PrecomputedCachedIntegralGradientTerm {
+                    mul_node_index: descriptor.mul_node_index,
+                    parameter_node_index: descriptor.parameter_node_index,
+                    cache_node_index: descriptor.cache_node_index,
+                    weighted_gradient,
+                }
+            })
+            .collect()
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -3250,6 +3338,46 @@ mod tests {
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].weighted_cache_sum, Complex64::ZERO);
         assert!(before[0].weighted_cache_sum != after[0].weighted_cache_sum);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_precomputed_cached_integral_gradient_terms_scale_by_cache_integrals() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+        let gradient_terms =
+            evaluator.expression_precomputed_cached_integral_gradient_terms(&[1.25]);
+        assert_eq!(gradient_terms.len(), 1);
+        assert_eq!(gradient_terms[0].weighted_gradient.len(), 1);
+        assert_relative_eq!(
+            gradient_terms[0].weighted_gradient[0].re,
+            cached_integrals[0].weighted_cache_sum.re,
+            epsilon = 1e-6
+        );
+        assert_relative_eq!(
+            gradient_terms[0].weighted_gradient[0].im,
+            cached_integrals[0].weighted_cache_sum.im,
+            epsilon = 1e-6
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_precomputed_cached_integral_gradient_terms_empty_when_not_separable() {
+        let expr = TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator
+            .expression_precomputed_cached_integral_gradient_terms(&[0.1, -0.2])
+            .is_empty());
     }
 
     #[cfg(feature = "expression-ir")]
