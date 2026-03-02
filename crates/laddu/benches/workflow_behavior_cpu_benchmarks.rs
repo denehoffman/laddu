@@ -238,6 +238,55 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     );
     group.finish();
 
+    // Bench how throughput scales with the number of isolated subsets requested per
+    // projection call. Compare repeated single-subset calls against one batched call.
+    let subset_templates: Vec<Vec<&str>> = vec![
+        vec!["S0+", "Z00+", "f0(1500)"],
+        vec!["D2+", "Z22+", "f2(1525)"],
+        vec!["S0+", "D2+"],
+        vec!["Z00+", "Z22+"],
+    ];
+    let subset_cardinalities = [1usize, 2, 4, 8];
+    let mut subset_group = c.benchmark_group("projection_subset_cardinality_small_sample");
+    for subset_count in subset_cardinalities {
+        let subsets: Vec<Vec<&str>> = (0..subset_count)
+            .map(|index| subset_templates[index % subset_templates.len()].clone())
+            .collect();
+        subset_group.throughput(Throughput::Elements(
+            (n_data_events as usize * subset_count) as u64,
+        ));
+        subset_group.bench_with_input(
+            BenchmarkId::new("repeated_single_subset_calls", subset_count),
+            &subsets,
+            |b, subsets| {
+                b.iter(|| {
+                    let projection = subsets
+                        .iter()
+                        .map(|subset| nll.project_weights_subset(black_box(&params), subset, None))
+                        .collect::<Result<Vec<_>, _>>()
+                        .expect("subset projection should succeed");
+                    black_box(projection)
+                })
+            },
+        );
+        subset_group.throughput(Throughput::Elements(
+            (n_data_events as usize * subset_count) as u64,
+        ));
+        subset_group.bench_with_input(
+            BenchmarkId::new("batched_subsets_single_call", subset_count),
+            &subsets,
+            |b, subsets| {
+                b.iter(|| {
+                    black_box(
+                        nll.project_weights_subsets(black_box(&params), subsets, None)
+                            .expect("batched subset projection should succeed"),
+                    )
+                })
+            },
+        );
+    }
+    subset_group.finish();
+
     let mass = Mass::new(["kshort1", "kshort2"]);
     let data_binned = ds_data
         .bin_by(mass.clone(), PARTIAL_WAVE_BIN_COUNT, (1.0, 2.0))
