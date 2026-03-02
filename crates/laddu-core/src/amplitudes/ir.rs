@@ -71,6 +71,14 @@ pub(super) struct ExpressionIR {
     root: IrValueId,
     dependence_annotations: Vec<DependenceClass>,
     dependence_warnings: Vec<String>,
+    separable_mul_candidates: Vec<SeparableMulCandidate>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SeparableMulCandidate {
+    pub node_index: usize,
+    pub left_dependence: DependenceClass,
+    pub right_dependence: DependenceClass,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -209,6 +217,7 @@ impl ExpressionIR {
             root,
             dependence_annotations: Vec::new(),
             dependence_warnings: Vec::new(),
+            separable_mul_candidates: Vec::new(),
         }
     }
 
@@ -232,6 +241,10 @@ impl ExpressionIR {
 
     pub(super) fn dependence_warnings(&self) -> &[String] {
         &self.dependence_warnings
+    }
+
+    pub(super) fn separable_mul_candidates(&self) -> &[SeparableMulCandidate] {
+        &self.separable_mul_candidates
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -456,6 +469,8 @@ pub(super) fn compile_expression_ir(
         amplitude_dependencies,
         expression_dependence,
     );
+    ir.separable_mul_candidates =
+        collect_separable_mul_candidates(&ir.nodes, &ir.dependence_annotations);
     ir
 }
 
@@ -509,6 +524,44 @@ fn collect_dependence_warnings(
         );
     }
     warnings
+}
+
+fn collect_separable_mul_candidates(
+    nodes: &[IrNode],
+    dependencies: &[DependenceClass],
+) -> Vec<SeparableMulCandidate> {
+    let mut candidates = Vec::new();
+    for (node_index, node) in nodes.iter().enumerate() {
+        let IrNode::Binary {
+            op: IrBinaryOp::Mul,
+            left,
+            right,
+        } = *node
+        else {
+            continue;
+        };
+        let left_dependence = dependencies
+            .get(left)
+            .copied()
+            .unwrap_or(DependenceClass::Mixed);
+        let right_dependence = dependencies
+            .get(right)
+            .copied()
+            .unwrap_or(DependenceClass::Mixed);
+        let is_separable = matches!(
+            (left_dependence, right_dependence),
+            (DependenceClass::ParameterOnly, DependenceClass::CacheOnly)
+                | (DependenceClass::CacheOnly, DependenceClass::ParameterOnly)
+        );
+        if is_separable {
+            candidates.push(SeparableMulCandidate {
+                node_index,
+                left_dependence,
+                right_dependence,
+            });
+        }
+    }
+    candidates
 }
 
 struct ConstantFoldPass;
@@ -875,5 +928,50 @@ mod tests {
             .dependence_warnings()
             .iter()
             .any(|warning: &String| warning.contains("missing dependence hints")));
+    }
+
+    #[test]
+    fn test_separable_mul_candidate_detects_parameter_times_cache() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert_eq!(ir.separable_mul_candidates().len(), 1);
+        let candidate = ir.separable_mul_candidates()[0];
+        assert_eq!(candidate.left_dependence, DependenceClass::ParameterOnly);
+        assert_eq!(candidate.right_dependence, DependenceClass::CacheOnly);
+    }
+
+    #[test]
+    fn test_separable_mul_candidate_ignores_mixed_inputs() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::CacheOnly],
+        );
+        assert!(ir.separable_mul_candidates().is_empty());
+    }
+
+    #[test]
+    fn test_separable_mul_candidate_stable_under_specialization() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, false],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert!(ir.separable_mul_candidates().is_empty());
     }
 }
