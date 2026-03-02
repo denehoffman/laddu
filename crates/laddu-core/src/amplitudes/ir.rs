@@ -84,7 +84,7 @@ pub(super) struct SeparableMulCandidate {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct NormalizationPlan {
-    pub cached_terms: Vec<usize>,
+    pub cached_separable_nodes: Vec<usize>,
     pub residual_terms: Vec<usize>,
 }
 
@@ -93,7 +93,7 @@ pub(super) struct NormalizationPlanExplain {
     pub root_dependence: DependenceClass,
     pub warnings: Vec<String>,
     pub separable_mul_candidates: Vec<SeparableMulCandidate>,
-    pub cached_terms: Vec<usize>,
+    pub cached_separable_nodes: Vec<usize>,
     pub residual_terms: Vec<usize>,
 }
 
@@ -273,7 +273,7 @@ impl ExpressionIR {
             root_dependence: self.root_dependence(),
             warnings: self.dependence_warnings.clone(),
             separable_mul_candidates: self.separable_mul_candidates.clone(),
-            cached_terms: self.normalization_plan.cached_terms.clone(),
+            cached_separable_nodes: self.normalization_plan.cached_separable_nodes.clone(),
             residual_terms: self.normalization_plan.residual_terms.clone(),
         }
     }
@@ -626,21 +626,21 @@ fn build_normalization_plan(
     }
 
     let contributing = collect_contributing(nodes, root);
-    let mut cached_terms = separable_mul_candidates
+    let mut cached_separable_nodes = separable_mul_candidates
         .iter()
         .map(|candidate| candidate.node_index)
         .filter(|index| contributing.contains(index))
         .collect::<Vec<_>>();
-    cached_terms.sort_unstable();
-    cached_terms.dedup();
+    cached_separable_nodes.sort_unstable();
+    cached_separable_nodes.dedup();
 
     let mut residual_terms = contributing
         .into_iter()
-        .filter(|index| cached_terms.binary_search(index).is_err())
+        .filter(|index| cached_separable_nodes.binary_search(index).is_err())
         .collect::<Vec<_>>();
     residual_terms.sort_unstable();
     NormalizationPlan {
-        cached_terms,
+        cached_separable_nodes,
         residual_terms,
     }
 }
@@ -1067,9 +1067,10 @@ mod tests {
             &[true, true],
             &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
         );
-        assert_eq!(ir.normalization_plan().cached_terms.len(), 1);
-        let cached = ir.normalization_plan().cached_terms[0];
+        assert_eq!(ir.normalization_plan().cached_separable_nodes.len(), 1);
+        let cached = ir.normalization_plan().cached_separable_nodes[0];
         assert_eq!(cached, ir.root);
+        assert_eq!(ir.normalization_plan().cached_separable_nodes, vec![cached]);
         assert!(ir
             .normalization_plan()
             .residual_terms
@@ -1088,7 +1089,7 @@ mod tests {
             &[true, true],
             &[DependenceClass::Mixed, DependenceClass::CacheOnly],
         );
-        assert!(ir.normalization_plan().cached_terms.is_empty());
+        assert!(ir.normalization_plan().cached_separable_nodes.is_empty());
         assert!(ir.normalization_plan().residual_terms.contains(&ir.root));
     }
 
@@ -1103,7 +1104,7 @@ mod tests {
             &[true, false],
             &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
         );
-        assert!(ir.normalization_plan().cached_terms.is_empty());
+        assert!(ir.normalization_plan().cached_separable_nodes.is_empty());
         assert!(ir.normalization_plan().residual_terms.contains(&ir.root));
     }
 
@@ -1121,7 +1122,7 @@ mod tests {
         let explain = ir.normalization_plan_explain();
         assert_eq!(explain.root_dependence, DependenceClass::Mixed);
         assert_eq!(explain.separable_mul_candidates.len(), 1);
-        assert_eq!(explain.cached_terms, vec![ir.root]);
+        assert_eq!(explain.cached_separable_nodes, vec![ir.root]);
         assert!(explain.residual_terms.iter().all(|index| *index != ir.root));
     }
 
@@ -1138,7 +1139,41 @@ mod tests {
         );
         let explain = ir.normalization_plan_explain();
         assert!(explain.separable_mul_candidates.is_empty());
-        assert!(explain.cached_terms.is_empty());
+        assert!(explain.cached_separable_nodes.is_empty());
         assert!(explain.residual_terms.contains(&ir.root));
+    }
+
+    #[test]
+    fn test_cached_separable_nodes_match_candidates_for_mixed_tree() {
+        let tree = ExpressionNode::Add(
+            Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(2)),
+                Box::new(ExpressionNode::Amp(3)),
+            )),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true, true, true],
+            &[
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+                DependenceClass::Mixed,
+                DependenceClass::CacheOnly,
+            ],
+        );
+        let mut candidate_nodes = ir
+            .separable_mul_candidates()
+            .iter()
+            .map(|candidate| candidate.node_index)
+            .collect::<Vec<_>>();
+        candidate_nodes.sort_unstable();
+        assert_eq!(
+            ir.normalization_plan().cached_separable_nodes,
+            candidate_nodes
+        );
     }
 }

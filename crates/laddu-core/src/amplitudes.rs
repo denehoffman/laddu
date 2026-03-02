@@ -59,8 +59,8 @@ pub struct NormalizationPlanExplain {
     pub warnings: Vec<String>,
     /// Candidate multiply node indices identified as separable.
     pub separable_mul_candidate_nodes: Vec<usize>,
-    /// Node indices planned for cached normalization terms.
-    pub cached_terms: Vec<usize>,
+    /// Candidate separable node indices selected for caching.
+    pub cached_separable_nodes: Vec<usize>,
     /// Node indices planned for residual per-event evaluation.
     pub residual_terms: Vec<usize>,
 }
@@ -76,7 +76,7 @@ impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
                 .into_iter()
                 .map(|candidate| candidate.node_index)
                 .collect(),
-            cached_terms: value.cached_terms,
+            cached_separable_nodes: value.cached_separable_nodes,
             residual_terms: value.residual_terms,
         }
     }
@@ -3009,7 +3009,10 @@ mod tests {
         let explain = evaluator.expression_normalization_plan_explain();
         assert_eq!(explain.root_dependence, ExpressionDependence::Mixed);
         assert_eq!(explain.separable_mul_candidate_nodes.len(), 1);
-        assert_eq!(explain.cached_terms.len(), 1);
+        assert_eq!(
+            explain.cached_separable_nodes,
+            explain.separable_mul_candidate_nodes
+        );
         assert!(explain.residual_terms.iter().all(|index| {
             !explain
                 .separable_mul_candidate_nodes
