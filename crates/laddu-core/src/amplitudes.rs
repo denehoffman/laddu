@@ -50,6 +50,39 @@ impl From<ir::DependenceClass> for ExpressionDependence {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Explain/debug view of the IR normalization planning decomposition.
+pub struct NormalizationPlanExplain {
+    /// Dependence classification at the expression root.
+    pub root_dependence: ExpressionDependence,
+    /// Warning-level diagnostics collected during planning.
+    pub warnings: Vec<String>,
+    /// Candidate multiply node indices identified as separable.
+    pub separable_mul_candidate_nodes: Vec<usize>,
+    /// Node indices planned for cached normalization terms.
+    pub cached_terms: Vec<usize>,
+    /// Node indices planned for residual per-event evaluation.
+    pub residual_terms: Vec<usize>,
+}
+
+#[cfg(feature = "expression-ir")]
+impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
+    fn from(value: ir::NormalizationPlanExplain) -> Self {
+        Self {
+            root_dependence: value.root_dependence.into(),
+            warnings: value.warnings,
+            separable_mul_candidate_nodes: value
+                .separable_mul_candidates
+                .into_iter()
+                .map(|candidate| candidate.node_index)
+                .collect(),
+            cached_terms: value.cached_terms,
+            residual_terms: value.residual_terms,
+        }
+    }
+}
+
+#[cfg(feature = "expression-ir")]
 impl From<ExpressionDependence> for ir::DependenceClass {
     fn from(value: ExpressionDependence) -> Self {
         match value {
@@ -1417,6 +1450,12 @@ impl Evaluator {
     /// Warning-level diagnostics for potentially inconsistent dependence hints.
     pub fn expression_dependence_warnings(&self) -> Vec<String> {
         self.expression_ir.dependence_warnings().to_vec()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Explain/debug view of IR normalization planning decomposition.
+    pub fn expression_normalization_plan_explain(&self) -> NormalizationPlanExplain {
+        self.expression_ir.normalization_plan_explain().into()
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -2958,6 +2997,25 @@ mod tests {
             .expression_dependence_warnings()
             .iter()
             .any(|warning| warning.contains("both ParameterOnly and CacheOnly")));
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_normalization_plan_explain_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let explain = evaluator.expression_normalization_plan_explain();
+        assert_eq!(explain.root_dependence, ExpressionDependence::Mixed);
+        assert_eq!(explain.separable_mul_candidate_nodes.len(), 1);
+        assert_eq!(explain.cached_terms.len(), 1);
+        assert!(explain.residual_terms.iter().all(|index| {
+            !explain
+                .separable_mul_candidate_nodes
+                .iter()
+                .any(|candidate| candidate == index)
+        }));
     }
 
     #[test]

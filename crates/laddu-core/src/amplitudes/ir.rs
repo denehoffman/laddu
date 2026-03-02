@@ -88,6 +88,15 @@ pub(super) struct NormalizationPlan {
     pub residual_terms: Vec<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct NormalizationPlanExplain {
+    pub root_dependence: DependenceClass,
+    pub warnings: Vec<String>,
+    pub separable_mul_candidates: Vec<SeparableMulCandidate>,
+    pub cached_terms: Vec<usize>,
+    pub residual_terms: Vec<usize>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum IrNodeKey {
     Constant {
@@ -257,6 +266,16 @@ impl ExpressionIR {
 
     pub(super) fn normalization_plan(&self) -> &NormalizationPlan {
         &self.normalization_plan
+    }
+
+    pub(super) fn normalization_plan_explain(&self) -> NormalizationPlanExplain {
+        NormalizationPlanExplain {
+            root_dependence: self.root_dependence(),
+            warnings: self.dependence_warnings.clone(),
+            separable_mul_candidates: self.separable_mul_candidates.clone(),
+            cached_terms: self.normalization_plan.cached_terms.clone(),
+            residual_terms: self.normalization_plan.residual_terms.clone(),
+        }
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -1086,5 +1105,40 @@ mod tests {
         );
         assert!(ir.normalization_plan().cached_terms.is_empty());
         assert!(ir.normalization_plan().residual_terms.contains(&ir.root));
+    }
+
+    #[test]
+    fn test_normalization_plan_explain_for_separable_case() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        let explain = ir.normalization_plan_explain();
+        assert_eq!(explain.root_dependence, DependenceClass::Mixed);
+        assert_eq!(explain.separable_mul_candidates.len(), 1);
+        assert_eq!(explain.cached_terms, vec![ir.root]);
+        assert!(explain.residual_terms.iter().all(|index| *index != ir.root));
+    }
+
+    #[test]
+    fn test_normalization_plan_explain_for_non_separable_case() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+        let explain = ir.normalization_plan_explain();
+        assert!(explain.separable_mul_candidates.is_empty());
+        assert!(explain.cached_terms.is_empty());
+        assert!(explain.residual_terms.contains(&ir.root));
     }
 }
