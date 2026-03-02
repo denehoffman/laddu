@@ -78,12 +78,22 @@ pub(super) struct ExpressionIR {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SeparableMulCandidate {
     pub node_index: usize,
+    pub left_node_index: usize,
+    pub right_node_index: usize,
     pub left_dependence: DependenceClass,
     pub right_dependence: DependenceClass,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CachedIntegralDescriptor {
+    pub mul_node_index: usize,
+    pub parameter_node_index: usize,
+    pub cache_node_index: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct NormalizationPlan {
+    pub cached_integral_descriptors: Vec<CachedIntegralDescriptor>,
     pub cached_separable_nodes: Vec<usize>,
     pub residual_terms: Vec<usize>,
 }
@@ -93,6 +103,7 @@ pub(super) struct NormalizationPlanExplain {
     pub root_dependence: DependenceClass,
     pub warnings: Vec<String>,
     pub separable_mul_candidates: Vec<SeparableMulCandidate>,
+    pub cached_integral_descriptors: Vec<CachedIntegralDescriptor>,
     pub cached_separable_nodes: Vec<usize>,
     pub residual_terms: Vec<usize>,
 }
@@ -268,11 +279,19 @@ impl ExpressionIR {
         &self.normalization_plan
     }
 
+    pub(super) fn cached_integral_descriptors(&self) -> &[CachedIntegralDescriptor] {
+        &self.normalization_plan.cached_integral_descriptors
+    }
+
     pub(super) fn normalization_plan_explain(&self) -> NormalizationPlanExplain {
         NormalizationPlanExplain {
             root_dependence: self.root_dependence(),
             warnings: self.dependence_warnings.clone(),
             separable_mul_candidates: self.separable_mul_candidates.clone(),
+            cached_integral_descriptors: self
+                .normalization_plan
+                .cached_integral_descriptors
+                .clone(),
             cached_separable_nodes: self.normalization_plan.cached_separable_nodes.clone(),
             residual_terms: self.normalization_plan.residual_terms.clone(),
         }
@@ -589,6 +608,8 @@ fn collect_separable_mul_candidates(
         if is_separable {
             candidates.push(SeparableMulCandidate {
                 node_index,
+                left_node_index: left,
+                right_node_index: right,
                 left_dependence,
                 right_dependence,
             });
@@ -602,6 +623,72 @@ fn build_normalization_plan(
     root: usize,
     separable_mul_candidates: &[SeparableMulCandidate],
 ) -> NormalizationPlan {
+    #[derive(Clone, Copy)]
+    enum ParentPosition {
+        Left,
+        Right,
+        Unary,
+    }
+
+    fn build_parent_edges(nodes: &[IrNode]) -> Vec<Vec<(usize, ParentPosition)>> {
+        let mut parents = vec![Vec::new(); nodes.len()];
+        for (parent_index, node) in nodes.iter().enumerate() {
+            match *node {
+                IrNode::Unary { input, .. } => {
+                    parents[input].push((parent_index, ParentPosition::Unary));
+                }
+                IrNode::Binary { left, right, .. } => {
+                    parents[left].push((parent_index, ParentPosition::Left));
+                    parents[right].push((parent_index, ParentPosition::Right));
+                }
+                IrNode::Constant(_) | IrNode::Amp(_) => {}
+            }
+        }
+        parents
+    }
+
+    fn descriptor_is_globally_extractable(
+        mul_node_index: usize,
+        root: usize,
+        nodes: &[IrNode],
+        parents: &[Vec<(usize, ParentPosition)>],
+    ) -> bool {
+        let mut stack = vec![mul_node_index];
+        let mut visited = vec![false; nodes.len()];
+        while let Some(node_index) = stack.pop() {
+            if node_index == root {
+                continue;
+            }
+            if visited[node_index] {
+                continue;
+            }
+            visited[node_index] = true;
+            let Some(node_parents) = parents.get(node_index) else {
+                return false;
+            };
+            if node_parents.is_empty() {
+                return false;
+            }
+            for (parent_index, _position) in node_parents {
+                let parent_is_supported = matches!(
+                    nodes[*parent_index],
+                    IrNode::Binary {
+                        op: IrBinaryOp::Add | IrBinaryOp::Sub,
+                        ..
+                    } | IrNode::Unary {
+                        op: IrUnaryOp::Neg,
+                        ..
+                    }
+                );
+                if !parent_is_supported {
+                    return false;
+                }
+                stack.push(*parent_index);
+            }
+        }
+        true
+    }
+
     fn collect_contributing(nodes: &[IrNode], root: usize) -> Vec<usize> {
         let mut seen = vec![false; nodes.len()];
         let mut stack = vec![root];
@@ -626,10 +713,38 @@ fn build_normalization_plan(
     }
 
     let contributing = collect_contributing(nodes, root);
-    let mut cached_separable_nodes = separable_mul_candidates
+    let parent_edges = build_parent_edges(nodes);
+    let mut cached_integral_descriptors = separable_mul_candidates
         .iter()
-        .map(|candidate| candidate.node_index)
-        .filter(|index| contributing.contains(index))
+        .filter(|candidate| contributing.contains(&candidate.node_index))
+        .filter(|candidate| {
+            descriptor_is_globally_extractable(candidate.node_index, root, nodes, &parent_edges)
+        })
+        .filter_map(
+            |candidate| match (candidate.left_dependence, candidate.right_dependence) {
+                (DependenceClass::ParameterOnly, DependenceClass::CacheOnly) => {
+                    Some(CachedIntegralDescriptor {
+                        mul_node_index: candidate.node_index,
+                        parameter_node_index: candidate.left_node_index,
+                        cache_node_index: candidate.right_node_index,
+                    })
+                }
+                (DependenceClass::CacheOnly, DependenceClass::ParameterOnly) => {
+                    Some(CachedIntegralDescriptor {
+                        mul_node_index: candidate.node_index,
+                        parameter_node_index: candidate.right_node_index,
+                        cache_node_index: candidate.left_node_index,
+                    })
+                }
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    cached_integral_descriptors.sort_unstable_by_key(|descriptor| descriptor.mul_node_index);
+    cached_integral_descriptors.dedup_by_key(|descriptor| descriptor.mul_node_index);
+    let mut cached_separable_nodes = cached_integral_descriptors
+        .iter()
+        .map(|descriptor| descriptor.mul_node_index)
         .collect::<Vec<_>>();
     cached_separable_nodes.sort_unstable();
     cached_separable_nodes.dedup();
@@ -640,6 +755,7 @@ fn build_normalization_plan(
         .collect::<Vec<_>>();
     residual_terms.sort_unstable();
     NormalizationPlan {
+        cached_integral_descriptors,
         cached_separable_nodes,
         residual_terms,
     }
@@ -1175,5 +1291,58 @@ mod tests {
             ir.normalization_plan().cached_separable_nodes,
             candidate_nodes
         );
+    }
+
+    #[test]
+    fn test_cached_integral_descriptors_include_parameter_and_cache_nodes() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert_eq!(ir.cached_integral_descriptors().len(), 1);
+        let descriptor = ir.cached_integral_descriptors()[0];
+        assert_eq!(descriptor.mul_node_index, ir.root);
+        assert_eq!(descriptor.parameter_node_index, 0);
+        assert_eq!(descriptor.cache_node_index, 1);
+    }
+
+    #[test]
+    fn test_cached_integral_descriptors_empty_for_non_separable_tree() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::CacheOnly],
+        );
+        assert!(ir.cached_integral_descriptors().is_empty());
+    }
+
+    #[test]
+    fn test_cached_integral_descriptors_require_global_extractability() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(2)),
+            Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true, true],
+            &[
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+                DependenceClass::Mixed,
+            ],
+        );
+        assert!(ir.cached_integral_descriptors().is_empty());
     }
 }
