@@ -1245,8 +1245,9 @@ impl NLL {
             evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
                 f64::ln(l.re)
             });
-        let mc_term =
-            evaluate_weighted_expression_sum_local(&self.accmc_evaluator, parameters, |l| l.re);
+        let mc_term = self
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(parameters);
         (data_term, mc_term)
     }
 
@@ -1274,20 +1275,12 @@ impl NLL {
     fn evaluate_gradient_terms_local(&self, parameters: &[f64]) -> (DVector<f64>, DVector<f64>) {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.accmc_evaluator.resources.read();
-        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.data_evaluator.amplitudes.len(),
             n_expression_slots: self.data_evaluator.expression_slot_count(),
-        };
-        #[cfg(feature = "rayon")]
-        let mc_scratch_key = GradientScratchKey {
-            n_parameters,
-            n_amplitudes: self.accmc_evaluator.amplitudes.len(),
-            n_expression_slots: self.accmc_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
@@ -1324,43 +1317,6 @@ impl NLL {
                     },
                 )
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
-            n_parameters,
-        );
-        #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = sum_dvectors_parallel(
-            self.accmc_evaluator
-                .dataset
-                .events_local()
-                .par_iter()
-                .zip(mc_resources.caches.par_iter())
-                .map_init(
-                    || acquire_gradient_scratch(mc_scratch_key),
-                    |scratch, (event, cache)| {
-                        let workspace = scratch.workspace_mut();
-                        let amp_vals = &mut workspace.amplitude_values;
-                        let grad_vals = &mut workspace.gradient_values;
-                        for (idx, amp) in self.accmc_evaluator.amplitudes.iter().enumerate() {
-                            if mc_resources.active[idx] {
-                                grad_vals[idx].fill(Complex64::ZERO);
-                                amp.compute_gradient(&mc_parameters, cache, &mut grad_vals[idx]);
-                                amp_vals[idx] = amp.compute(&mc_parameters, cache);
-                            } else {
-                                grad_vals[idx].fill(Complex64::ZERO);
-                                amp_vals[idx] = Complex64::ZERO;
-                            }
-                        }
-                        let (_, gradient) = self
-                            .accmc_evaluator
-                            .evaluate_expression_value_gradient_with_scratch(
-                                amp_vals,
-                                grad_vals,
-                                &mut workspace.value_slots,
-                                &mut workspace.gradient_slots,
-                            );
-                        (event.weight, gradient)
-                    },
-                )
-                .map(|(w, g)| w * g.map(|gi| gi.re)),
             n_parameters,
         );
         #[cfg(not(feature = "rayon"))]
@@ -1401,46 +1357,9 @@ impl NLL {
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
         };
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = {
-            let mut amp_vals = vec![Complex64::ZERO; self.accmc_evaluator.amplitudes.len()];
-            let mut grad_vals =
-                vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-            let mut value_slots =
-                vec![Complex64::ZERO; self.accmc_evaluator.expression_slot_count()];
-            let mut gradient_slots = vec![
-                DVector::zeros(parameters.len());
-                self.accmc_evaluator.expression_slot_count()
-            ];
-            self.accmc_evaluator
-                .dataset
-                .events_local()
-                .iter()
-                .zip(mc_resources.caches.iter())
-                .map(|(event, cache)| {
-                    for (idx, amp) in self.accmc_evaluator.amplitudes.iter().enumerate() {
-                        if mc_resources.active[idx] {
-                            grad_vals[idx].fill(Complex64::ZERO);
-                            amp.compute_gradient(&mc_parameters, cache, &mut grad_vals[idx]);
-                            amp_vals[idx] = amp.compute(&mc_parameters, cache);
-                        } else {
-                            grad_vals[idx].fill(Complex64::ZERO);
-                            amp_vals[idx] = Complex64::ZERO;
-                        }
-                    }
-                    let (_, gradient) = self
-                        .accmc_evaluator
-                        .evaluate_expression_value_gradient_with_scratch(
-                            &amp_vals,
-                            &grad_vals,
-                            &mut value_slots,
-                            &mut gradient_slots,
-                        );
-                    (event.weight, gradient)
-                })
-                .map(|(w, g)| w * g.map(|gi| gi.re))
-                .sum()
-        };
+        let mc_term = self
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(parameters);
         (data_term, mc_term)
     }
 
@@ -1647,7 +1566,10 @@ impl StochasticNLL {
             .nll
             .data_evaluator
             .evaluate_batch_local(parameters, indices);
-        let mc_result = self.nll.accmc_evaluator.evaluate_local(parameters);
+        let mc_term = self
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(parameters);
         #[cfg(feature = "rayon")]
         {
             let data_term: f64 = indices
@@ -1657,11 +1579,6 @@ impl StochasticNLL {
                     let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .parallel_sum_with_accumulator::<Klein<f64>>();
-            let mc_term: f64 = mc_result
-                .par_iter()
-                .zip(self.nll.accmc_evaluator.dataset.events_local().par_iter())
-                .map(|(l, e)| e.weight * l.re)
                 .parallel_sum_with_accumulator::<Klein<f64>>();
             (data_term, mc_term)
         }
@@ -1674,11 +1591,6 @@ impl StochasticNLL {
                     let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .sum_with_accumulator::<Klein<f64>>();
-            let mc_term: f64 = mc_result
-                .iter()
-                .zip(self.nll.accmc_evaluator.dataset.events_local().iter())
-                .map(|(l, e)| e.weight * l.re)
                 .sum_with_accumulator::<Klein<f64>>();
             (data_term, mc_term)
         }
@@ -1717,20 +1629,12 @@ impl StochasticNLL {
     ) -> (DVector<f64>, DVector<f64>) {
         let data_resources = self.nll.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.nll.accmc_evaluator.resources.read();
-        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {
             n_parameters,
             n_amplitudes: self.nll.data_evaluator.amplitudes.len(),
             n_expression_slots: self.nll.data_evaluator.expression_slot_count(),
-        };
-        #[cfg(feature = "rayon")]
-        let mc_scratch_key = GradientScratchKey {
-            n_parameters,
-            n_amplitudes: self.nll.accmc_evaluator.amplitudes.len(),
-            n_expression_slots: self.nll.accmc_evaluator.expression_slot_count(),
         };
         #[cfg(feature = "rayon")]
         let data_term: DVector<f64> = sum_dvectors_parallel(
@@ -1774,50 +1678,6 @@ impl StochasticNLL {
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
             n_parameters,
         );
-        #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = sum_dvectors_parallel(
-            self.nll
-                .accmc_evaluator
-                .dataset
-                .events_local()
-                .par_iter()
-                .zip(mc_resources.caches.par_iter())
-                .map_init(
-                    || acquire_gradient_scratch(mc_scratch_key),
-                    |scratch, (event, cache)| {
-                        let workspace = scratch.workspace_mut();
-                        let amp_vals = &mut workspace.amplitude_values;
-                        let grad_vals = &mut workspace.gradient_values;
-                        for (amp_idx, amp) in self.nll.accmc_evaluator.amplitudes.iter().enumerate()
-                        {
-                            if mc_resources.active[amp_idx] {
-                                grad_vals[amp_idx].fill(Complex64::ZERO);
-                                amp.compute_gradient(
-                                    &mc_parameters,
-                                    cache,
-                                    &mut grad_vals[amp_idx],
-                                );
-                                amp_vals[amp_idx] = amp.compute(&mc_parameters, cache);
-                            } else {
-                                grad_vals[amp_idx].fill(Complex64::ZERO);
-                                amp_vals[amp_idx] = Complex64::ZERO;
-                            }
-                        }
-                        let (_, gradient) = self
-                            .nll
-                            .accmc_evaluator
-                            .evaluate_expression_value_gradient_with_scratch(
-                                amp_vals,
-                                grad_vals,
-                                &mut workspace.value_slots,
-                                &mut workspace.gradient_slots,
-                            );
-                        (event.weight, gradient)
-                    },
-                )
-                .map(|(w, g)| w * g.map(|gi| gi.re)),
-            n_parameters,
-        );
         #[cfg(not(feature = "rayon"))]
         let data_term: DVector<f64> = {
             let mut amp_vals = vec![Complex64::ZERO; self.nll.data_evaluator.amplitudes.len()];
@@ -1858,48 +1718,10 @@ impl StochasticNLL {
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
         };
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = {
-            let mut amp_vals = vec![Complex64::ZERO; self.nll.accmc_evaluator.amplitudes.len()];
-            let mut grad_vals =
-                vec![DVector::zeros(parameters.len()); self.nll.accmc_evaluator.amplitudes.len()];
-            let mut value_slots =
-                vec![Complex64::ZERO; self.nll.accmc_evaluator.expression_slot_count()];
-            let mut gradient_slots = vec![
-                DVector::zeros(parameters.len());
-                self.nll.accmc_evaluator.expression_slot_count()
-            ];
-            self.nll
-                .accmc_evaluator
-                .dataset
-                .events_local()
-                .iter()
-                .zip(mc_resources.caches.iter())
-                .map(|(event, cache)| {
-                    for (amp_idx, amp) in self.nll.accmc_evaluator.amplitudes.iter().enumerate() {
-                        if mc_resources.active[amp_idx] {
-                            grad_vals[amp_idx].fill(Complex64::ZERO);
-                            amp.compute_gradient(&mc_parameters, cache, &mut grad_vals[amp_idx]);
-                            amp_vals[amp_idx] = amp.compute(&mc_parameters, cache);
-                        } else {
-                            grad_vals[amp_idx].fill(Complex64::ZERO);
-                            amp_vals[amp_idx] = Complex64::ZERO;
-                        }
-                    }
-                    let (_, gradient) = self
-                        .nll
-                        .accmc_evaluator
-                        .evaluate_expression_value_gradient_with_scratch(
-                            &amp_vals,
-                            &grad_vals,
-                            &mut value_slots,
-                            &mut gradient_slots,
-                        );
-                    (event.weight, gradient)
-                })
-                .map(|(w, g)| w * g.map(|gi| gi.re))
-                .sum()
-        };
+        let mc_term = self
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(parameters);
         (data_term, mc_term)
     }
 

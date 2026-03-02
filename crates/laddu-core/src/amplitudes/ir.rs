@@ -89,6 +89,7 @@ pub(super) struct CachedIntegralDescriptor {
     pub mul_node_index: usize,
     pub parameter_node_index: usize,
     pub cache_node_index: usize,
+    pub coefficient: i32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -327,6 +328,45 @@ impl ExpressionIR {
         }
     }
 
+    fn fill_values_with_zeroed_nodes(
+        &self,
+        amplitude_values: &[Complex64],
+        slots: &mut [Complex64],
+        zeroed_nodes: &[bool],
+    ) {
+        debug_assert!(slots.len() >= self.nodes.len());
+        for (node_index, node) in self.nodes.iter().enumerate() {
+            if zeroed_nodes.get(node_index).copied().unwrap_or(false) {
+                slots[node_index] = Complex64::ZERO;
+                continue;
+            }
+            slots[node_index] = match *node {
+                IrNode::Constant(value) => value,
+                IrNode::Amp(amp_idx) => amplitude_values.get(amp_idx).copied().unwrap_or_default(),
+                IrNode::Unary { op, input } => {
+                    let value = slots[input];
+                    match op {
+                        IrUnaryOp::Neg => -value,
+                        IrUnaryOp::Real => Complex64::new(value.re, 0.0),
+                        IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
+                        IrUnaryOp::Conj => value.conj(),
+                        IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+                    }
+                }
+                IrNode::Binary { op, left, right } => {
+                    let left_value = slots[left];
+                    let right_value = slots[right];
+                    match op {
+                        IrBinaryOp::Add => left_value + right_value,
+                        IrBinaryOp::Sub => left_value - right_value,
+                        IrBinaryOp::Mul => left_value * right_value,
+                        IrBinaryOp::Div => left_value / right_value,
+                    }
+                }
+            };
+        }
+    }
+
     pub(super) fn evaluate_into(
         &self,
         amplitude_values: &[Complex64],
@@ -342,6 +382,19 @@ impl ExpressionIR {
     pub(super) fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
         let mut value_slots = vec![Complex64::ZERO; self.nodes.len()];
         self.evaluate_into(amplitude_values, &mut value_slots)
+    }
+
+    pub(super) fn evaluate_into_with_zeroed_nodes(
+        &self,
+        amplitude_values: &[Complex64],
+        value_slots: &mut [Complex64],
+        zeroed_nodes: &[bool],
+    ) -> Complex64 {
+        if self.nodes.is_empty() {
+            return Complex64::ZERO;
+        }
+        self.fill_values_with_zeroed_nodes(amplitude_values, value_slots, zeroed_nodes);
+        value_slots[self.root]
     }
 
     pub(super) fn evaluate_gradient_into(
@@ -499,6 +552,129 @@ impl ExpressionIR {
             &mut gradient_slots,
         )
     }
+
+    pub(super) fn evaluate_gradient_into_with_zeroed_nodes(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+        zeroed_nodes: &[bool],
+    ) -> DVector<Complex64> {
+        if self.nodes.is_empty() {
+            let grad_dim = amplitude_gradients.first().map(|g| g.len()).unwrap_or(0);
+            return DVector::zeros(grad_dim);
+        }
+        self.fill_values_with_zeroed_nodes(amplitude_values, value_slots, zeroed_nodes);
+        for (node_index, node) in self.nodes.iter().enumerate() {
+            let (before, tail) = gradient_slots.split_at_mut(node_index);
+            let (dst_grad, _) = tail
+                .split_first_mut()
+                .expect("destination gradient slot should exist");
+            if zeroed_nodes.get(node_index).copied().unwrap_or(false) {
+                dst_grad.fill(Complex64::ZERO);
+                continue;
+            }
+            match *node {
+                IrNode::Constant(_) => {
+                    dst_grad.fill(Complex64::ZERO);
+                }
+                IrNode::Amp(amp_idx) => {
+                    if let Some(source) = amplitude_gradients.get(amp_idx) {
+                        dst_grad.clone_from(source);
+                    } else {
+                        dst_grad.fill(Complex64::ZERO);
+                    }
+                }
+                IrNode::Unary { op, input } => {
+                    let input_grad = &before[input];
+                    match op {
+                        IrUnaryOp::Neg => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = -*input_item;
+                            }
+                        }
+                        IrUnaryOp::Real => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = Complex64::new(input_item.re, 0.0);
+                            }
+                        }
+                        IrUnaryOp::Imag => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = Complex64::new(input_item.im, 0.0);
+                            }
+                        }
+                        IrUnaryOp::Conj => {
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item = input_item.conj();
+                            }
+                        }
+                        IrUnaryOp::NormSqr => {
+                            let conj_input = value_slots[input].conj();
+                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
+                            {
+                                *dst_item =
+                                    Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
+                            }
+                        }
+                    }
+                }
+                IrNode::Binary { op, left, right } => {
+                    let left_grad = &before[left];
+                    let right_grad = &before[right];
+                    match op {
+                        IrBinaryOp::Add => {
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item + *right_item;
+                            }
+                        }
+                        IrBinaryOp::Sub => {
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item - *right_item;
+                            }
+                        }
+                        IrBinaryOp::Mul => {
+                            let left_value = value_slots[left];
+                            let right_value = value_slots[right];
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item = *left_item * right_value + *right_item * left_value;
+                            }
+                        }
+                        IrBinaryOp::Div => {
+                            let left_value = value_slots[left];
+                            let right_value = value_slots[right];
+                            let denom = right_value * right_value;
+                            for ((dst_item, left_item), right_item) in dst_grad
+                                .iter_mut()
+                                .zip(left_grad.iter())
+                                .zip(right_grad.iter())
+                            {
+                                *dst_item =
+                                    (*left_item * right_value - *right_item * left_value) / denom;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        gradient_slots[self.root].clone()
+    }
 }
 
 pub(super) fn compile_expression_ir(
@@ -647,46 +823,64 @@ fn build_normalization_plan(
         parents
     }
 
-    fn descriptor_is_globally_extractable(
+    fn descriptor_extractable_coefficient(
         mul_node_index: usize,
         root: usize,
         nodes: &[IrNode],
         parents: &[Vec<(usize, ParentPosition)>],
-    ) -> bool {
-        let mut stack = vec![mul_node_index];
-        let mut visited = vec![false; nodes.len()];
-        while let Some(node_index) = stack.pop() {
+    ) -> Option<i32> {
+        fn coefficient_to_root(
+            node_index: usize,
+            root: usize,
+            nodes: &[IrNode],
+            parents: &[Vec<(usize, ParentPosition)>],
+            memo: &mut [Option<Option<i32>>],
+        ) -> Option<i32> {
             if node_index == root {
-                continue;
+                return Some(1);
             }
-            if visited[node_index] {
-                continue;
+            if let Some(cached) = memo[node_index] {
+                return cached;
             }
-            visited[node_index] = true;
-            let Some(node_parents) = parents.get(node_index) else {
-                return false;
-            };
+            let node_parents = parents.get(node_index)?;
             if node_parents.is_empty() {
-                return false;
+                memo[node_index] = Some(None);
+                return None;
             }
-            for (parent_index, _position) in node_parents {
-                let parent_is_supported = matches!(
-                    nodes[*parent_index],
+            let mut coefficient_sum = 0_i32;
+            for (parent_index, position) in node_parents {
+                let parent_coefficient =
+                    coefficient_to_root(*parent_index, root, nodes, parents, memo)?;
+                let edge_sign = match nodes[*parent_index] {
                     IrNode::Binary {
-                        op: IrBinaryOp::Add | IrBinaryOp::Sub,
+                        op: IrBinaryOp::Add,
                         ..
-                    } | IrNode::Unary {
-                        op: IrUnaryOp::Neg,
+                    } => 1,
+                    IrNode::Binary {
+                        op: IrBinaryOp::Sub,
                         ..
-                    }
-                );
-                if !parent_is_supported {
-                    return false;
-                }
-                stack.push(*parent_index);
+                    } => match position {
+                        ParentPosition::Left => 1,
+                        ParentPosition::Right => -1,
+                        ParentPosition::Unary => return None,
+                    },
+                    IrNode::Unary {
+                        op: IrUnaryOp::Neg, ..
+                    } => -1,
+                    _ => return None,
+                };
+                coefficient_sum += edge_sign * parent_coefficient;
             }
+            let result = Some(coefficient_sum);
+            memo[node_index] = Some(result);
+            result
         }
-        true
+
+        if mul_node_index >= nodes.len() {
+            return None;
+        }
+        let mut memo = vec![None; nodes.len()];
+        coefficient_to_root(mul_node_index, root, nodes, parents, &mut memo)
     }
 
     fn collect_contributing(nodes: &[IrNode], root: usize) -> Vec<usize> {
@@ -717,23 +911,40 @@ fn build_normalization_plan(
     let mut cached_integral_descriptors = separable_mul_candidates
         .iter()
         .filter(|candidate| contributing.contains(&candidate.node_index))
-        .filter(|candidate| {
-            descriptor_is_globally_extractable(candidate.node_index, root, nodes, &parent_edges)
-        })
         .filter_map(
             |candidate| match (candidate.left_dependence, candidate.right_dependence) {
                 (DependenceClass::ParameterOnly, DependenceClass::CacheOnly) => {
+                    let coefficient = descriptor_extractable_coefficient(
+                        candidate.node_index,
+                        root,
+                        nodes,
+                        &parent_edges,
+                    )?;
+                    if coefficient == 0 {
+                        return None;
+                    }
                     Some(CachedIntegralDescriptor {
                         mul_node_index: candidate.node_index,
                         parameter_node_index: candidate.left_node_index,
                         cache_node_index: candidate.right_node_index,
+                        coefficient,
                     })
                 }
                 (DependenceClass::CacheOnly, DependenceClass::ParameterOnly) => {
+                    let coefficient = descriptor_extractable_coefficient(
+                        candidate.node_index,
+                        root,
+                        nodes,
+                        &parent_edges,
+                    )?;
+                    if coefficient == 0 {
+                        return None;
+                    }
                     Some(CachedIntegralDescriptor {
                         mul_node_index: candidate.node_index,
                         parameter_node_index: candidate.right_node_index,
                         cache_node_index: candidate.left_node_index,
+                        coefficient,
                     })
                 }
                 _ => None,
@@ -1309,6 +1520,7 @@ mod tests {
         assert_eq!(descriptor.mul_node_index, ir.root);
         assert_eq!(descriptor.parameter_node_index, 0);
         assert_eq!(descriptor.cache_node_index, 1);
+        assert_eq!(descriptor.coefficient, 1);
     }
 
     #[test]
@@ -1344,5 +1556,38 @@ mod tests {
             ],
         );
         assert!(ir.cached_integral_descriptors().is_empty());
+    }
+
+    #[test]
+    fn test_cached_integral_descriptors_capture_subtraction_sign() {
+        let tree = ExpressionNode::Sub(
+            Box::new(ExpressionNode::One),
+            Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert_eq!(ir.cached_integral_descriptors().len(), 1);
+        assert_eq!(ir.cached_integral_descriptors()[0].coefficient, -1);
+    }
+
+    #[test]
+    fn test_cached_integral_descriptors_capture_negation_sign() {
+        let tree = ExpressionNode::Neg(Box::new(ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        )));
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert_eq!(ir.cached_integral_descriptors().len(), 1);
+        assert_eq!(ir.cached_integral_descriptors()[0].coefficient, -1);
     }
 }

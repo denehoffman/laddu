@@ -75,6 +75,8 @@ pub struct PrecomputedCachedIntegral {
     pub parameter_node_index: usize,
     /// Node index of the cache-dependent factor.
     pub cache_node_index: usize,
+    /// Signed extraction coefficient induced by Add/Sub/Neg ancestry to the root.
+    pub coefficient: i32,
     /// Weighted sum over local events of the cache-dependent factor.
     pub weighted_cache_sum: Complex64,
 }
@@ -89,6 +91,8 @@ pub struct PrecomputedCachedIntegralGradientTerm {
     pub parameter_node_index: usize,
     /// Node index of the cache-dependent factor.
     pub cache_node_index: usize,
+    /// Signed extraction coefficient induced by Add/Sub/Neg ancestry to the root.
+    pub coefficient: i32,
     /// Gradient contribution `(d/dp parameter_factor) * weighted_cache_sum`.
     pub weighted_gradient: DVector<Complex64>,
 }
@@ -107,6 +111,7 @@ struct CachedIntegralCacheKey {
 #[derive(Clone, Debug)]
 struct CachedIntegralCacheState {
     key: CachedIntegralCacheKey,
+    expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
 }
 
@@ -1235,10 +1240,11 @@ impl Expression {
             expression: self.tree.clone(),
             expression_program: ExpressionProgram::from_node(&self.tree),
             #[cfg(feature = "expression-ir")]
-            expression_ir,
+            expression_ir: expression_ir.clone(),
             #[cfg(feature = "expression-ir")]
             cached_integrals: Arc::new(RwLock::new(Some(CachedIntegralCacheState {
                 key: cached_integral_key,
+                expression_ir,
                 values: cached_integrals,
             }))),
             registry: self.registry.clone(),
@@ -1428,6 +1434,7 @@ impl Evaluator {
                     mul_node_index: descriptor.mul_node_index,
                     parameter_node_index: descriptor.parameter_node_index,
                     cache_node_index: descriptor.cache_node_index,
+                    coefficient: descriptor.coefficient,
                     weighted_cache_sum,
                 },
             )
@@ -1560,6 +1567,34 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn ensure_cached_integral_cache_state(
+        &self,
+        resources: &Resources,
+    ) -> CachedIntegralCacheState {
+        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
+        if let Some(state) = self.cached_integrals.read().as_ref() {
+            if state.key == key {
+                return state.clone();
+            }
+        }
+        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
+        let values = Self::precompute_cached_integrals_at_load(
+            &expression_ir,
+            &self.amplitudes,
+            resources,
+            &self.dataset,
+            self.parameter_manager.n_free_parameters(),
+        );
+        let state = CachedIntegralCacheState {
+            key,
+            expression_ir,
+            values,
+        };
+        *self.cached_integrals.write() = Some(state.clone());
+        state
+    }
+
+    #[cfg(feature = "expression-ir")]
     /// Dependence classification for the compiled expression root.
     pub fn expression_root_dependence(&self) -> ExpressionDependence {
         let resources = self.resources.read();
@@ -1602,25 +1637,7 @@ impl Evaluator {
     /// Cached integral terms precomputed at evaluator load.
     pub fn expression_precomputed_cached_integrals(&self) -> Vec<PrecomputedCachedIntegral> {
         let resources = self.resources.read();
-        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
-        if let Some(state) = self.cached_integrals.read().as_ref() {
-            if state.key == key {
-                return state.values.clone();
-            }
-        }
-        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
-        let values = Self::precompute_cached_integrals_at_load(
-            &expression_ir,
-            &self.amplitudes,
-            &resources,
-            &self.dataset,
-            self.parameter_manager.n_free_parameters(),
-        );
-        *self.cached_integrals.write() = Some(CachedIntegralCacheState {
-            key,
-            values: values.clone(),
-        });
-        values
+        self.ensure_cached_integral_cache_state(&resources).values
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1632,19 +1649,21 @@ impl Evaluator {
         &self,
         parameters: &[f64],
     ) -> Vec<PrecomputedCachedIntegralGradientTerm> {
-        let cached_integrals = self.expression_precomputed_cached_integrals();
-        if cached_integrals.is_empty() {
+        let resources = self.resources.read();
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        if state.values.is_empty() {
             return Vec::new();
         }
 
-        let resources = self.resources.read();
         let Some(cache) = resources.caches.first() else {
-            return cached_integrals
+            return state
+                .values
                 .into_iter()
                 .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
                     mul_node_index: descriptor.mul_node_index,
                     parameter_node_index: descriptor.parameter_node_index,
                     cache_node_index: descriptor.cache_node_index,
+                    coefficient: descriptor.coefficient,
                     weighted_gradient: DVector::zeros(parameters.len()),
                 })
                 .collect();
@@ -1667,34 +1686,357 @@ impl Evaluator {
             &parameter_values,
             cache,
         );
-        let mut value_slots = vec![Complex64::ZERO; self.expression_ir.node_count()];
-        let mut gradient_slots = (0..self.expression_ir.node_count())
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let mut gradient_slots = (0..state.expression_ir.node_count())
             .map(|_| DVector::zeros(parameters.len()))
             .collect::<Vec<_>>();
-        let _ = self.evaluate_expression_gradient_with_scratch(
+        let _ = state.expression_ir.evaluate_gradient_into(
             &amplitude_values,
             &amplitude_gradients,
             &mut value_slots,
             &mut gradient_slots,
         );
 
-        cached_integrals
+        state
+            .values
             .into_iter()
             .map(|descriptor| {
                 let parameter_gradient = gradient_slots
                     .get(descriptor.parameter_node_index)
                     .cloned()
                     .unwrap_or_else(|| DVector::zeros(parameters.len()));
-                let weighted_gradient =
-                    parameter_gradient.map(|value| value * descriptor.weighted_cache_sum);
+                let weighted_gradient = parameter_gradient.map(|value| {
+                    value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
+                });
                 PrecomputedCachedIntegralGradientTerm {
                     mul_node_index: descriptor.mul_node_index,
                     parameter_node_index: descriptor.parameter_node_index,
                     cache_node_index: descriptor.cache_node_index,
+                    coefficient: descriptor.coefficient,
                     weighted_gradient,
                 }
             })
             .collect()
+    }
+
+    /// Weighted sum over local events of the real expression value.
+    ///
+    /// This returns `sum_e(weight_e * Re(L_e))`.
+    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> f64 {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        #[cfg(feature = "expression-ir")]
+        let zeroed_nodes = {
+            let mut nodes = vec![false; state.expression_ir.node_count()];
+            for descriptor in &state.values {
+                if descriptor.mul_node_index < nodes.len() {
+                    nodes[descriptor.mul_node_index] = true;
+                }
+            }
+            nodes
+        };
+        #[cfg(feature = "expression-ir")]
+        let slot_count = state.expression_ir.node_count();
+        #[cfg(not(feature = "expression-ir"))]
+        let slot_count = self.expression_slot_count();
+
+        #[cfg(feature = "expression-ir")]
+        let cached_value_sum = {
+            if let Some(cache) = resources.caches.first() {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                self.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    cache,
+                );
+                let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+                let _ = state
+                    .expression_ir
+                    .evaluate_into(&amplitude_values, &mut value_slots);
+                state
+                    .values
+                    .iter()
+                    .map(|descriptor| {
+                        let parameter_factor = value_slots[descriptor.parameter_node_index];
+                        (parameter_factor
+                            * descriptor.weighted_cache_sum
+                            * descriptor.coefficient as f64)
+                            .re
+                    })
+                    .sum::<f64>()
+            } else {
+                0.0
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        let residual_sum: f64 = {
+            resources
+                .caches
+                .par_iter()
+                .zip(self.dataset.events_local().par_iter())
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                        )
+                    },
+                    |(amplitude_values, value_slots), (cache, event)| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            cache,
+                        );
+                        #[cfg(feature = "expression-ir")]
+                        {
+                            let value = state.expression_ir.evaluate_into_with_zeroed_nodes(
+                                amplitude_values,
+                                value_slots,
+                                &zeroed_nodes,
+                            );
+                            event.weight * value.re
+                        }
+                        #[cfg(not(feature = "expression-ir"))]
+                        {
+                            let value = self.evaluate_expression_value_with_scratch(
+                                amplitude_values,
+                                value_slots,
+                            );
+                            event.weight * value.re
+                        }
+                    },
+                )
+                .sum()
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let residual_sum: f64 = {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            resources
+                .caches
+                .iter()
+                .zip(self.dataset.events_local().iter())
+                .map(|(cache, event)| {
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
+                    #[cfg(feature = "expression-ir")]
+                    {
+                        let value = state.expression_ir.evaluate_into_with_zeroed_nodes(
+                            &amplitude_values,
+                            &mut value_slots,
+                            &zeroed_nodes,
+                        );
+                        event.weight * value.re
+                    }
+                    #[cfg(not(feature = "expression-ir"))]
+                    {
+                        let value = self.evaluate_expression_value_with_scratch(
+                            &amplitude_values,
+                            &mut value_slots,
+                        );
+                        event.weight * value.re
+                    }
+                })
+                .sum()
+        };
+
+        #[cfg(feature = "expression-ir")]
+        {
+            return residual_sum + cached_value_sum;
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            residual_sum
+        }
+    }
+
+    /// Weighted sum over local events of the real gradient of the expression.
+    ///
+    /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
+    pub fn evaluate_weighted_gradient_sum_local(&self, parameters: &[f64]) -> DVector<f64> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        #[cfg(feature = "expression-ir")]
+        let zeroed_nodes = {
+            let mut nodes = vec![false; state.expression_ir.node_count()];
+            for descriptor in &state.values {
+                if descriptor.mul_node_index < nodes.len() {
+                    nodes[descriptor.mul_node_index] = true;
+                }
+            }
+            nodes
+        };
+        #[cfg(feature = "expression-ir")]
+        let slot_count = state.expression_ir.node_count();
+        #[cfg(not(feature = "expression-ir"))]
+        let slot_count = self.expression_slot_count();
+
+        #[cfg(feature = "expression-ir")]
+        let cached_term_sum = {
+            if let Some(cache) = resources.caches.first() {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                self.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &active_indices,
+                    &parameters,
+                    cache,
+                );
+                let mut amplitude_gradients = (0..amplitude_len)
+                    .map(|_| DVector::zeros(grad_dim))
+                    .collect::<Vec<_>>();
+                self.fill_amplitude_gradients(
+                    &mut amplitude_gradients,
+                    &resources.active,
+                    &parameters,
+                    cache,
+                );
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+                let _ = state.expression_ir.evaluate_gradient_into(
+                    &amplitude_values,
+                    &amplitude_gradients,
+                    &mut value_slots,
+                    &mut gradient_slots,
+                );
+                state
+                    .values
+                    .iter()
+                    .fold(DVector::zeros(grad_dim), |mut accum, descriptor| {
+                        let parameter_gradient = &gradient_slots[descriptor.parameter_node_index];
+                        let coefficient = descriptor.coefficient as f64;
+                        for (accum_item, gradient_item) in
+                            accum.iter_mut().zip(parameter_gradient.iter())
+                        {
+                            *accum_item +=
+                                (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
+                        }
+                        accum
+                    })
+            } else {
+                DVector::zeros(grad_dim)
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        let residual_sum = {
+            resources
+                .caches
+                .par_iter()
+                .zip(self.dataset.events_local().par_iter())
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![DVector::zeros(grad_dim); slot_count],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                     (cache, event)| {
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        #[cfg(feature = "expression-ir")]
+                        let gradient = state
+                            .expression_ir
+                            .evaluate_gradient_into_with_zeroed_nodes(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                &zeroed_nodes,
+                            );
+                        #[cfg(not(feature = "expression-ir"))]
+                        let gradient = self.evaluate_expression_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        );
+                        gradient.map(|value| value.re).scale(event.weight)
+                    },
+                )
+                .reduce(
+                    || DVector::zeros(grad_dim),
+                    |mut accum, value| {
+                        accum += value;
+                        accum
+                    },
+                )
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let residual_sum = {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            resources
+                .caches
+                .iter()
+                .zip(self.dataset.events_local().iter())
+                .map(|(cache, event)| {
+                    self.fill_amplitude_values_and_gradients(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    );
+                    #[cfg(feature = "expression-ir")]
+                    let gradient = state
+                        .expression_ir
+                        .evaluate_gradient_into_with_zeroed_nodes(
+                            &amplitude_values,
+                            &gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            &zeroed_nodes,
+                        );
+                    #[cfg(not(feature = "expression-ir"))]
+                    let gradient = self.evaluate_expression_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                    );
+                    gradient.map(|value| value.re).scale(event.weight)
+                })
+                .sum()
+        };
+
+        #[cfg(feature = "expression-ir")]
+        {
+            return residual_sum + cached_term_sum;
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            residual_sum
+        }
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -3378,6 +3720,118 @@ mod tests {
         assert!(evaluator
             .expression_precomputed_cached_integral_gradient_terms(&[0.1, -0.2])
             .is_empty());
+    }
+
+    #[test]
+    fn test_evaluate_weighted_gradient_sum_local_matches_eventwise_baseline() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        #[cfg(feature = "expression-ir")]
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+        let expected = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_evaluate_weighted_value_sum_local_matches_eventwise_baseline() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        #[cfg(feature = "expression-ir")]
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+        let expected = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(actual, expected, epsilon = 1e-10);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_evaluate_weighted_gradient_sum_local_respects_signed_cached_terms() {
+        let expr = Expression::one()
+            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+                * &CacheOnlyScalar::new("k").unwrap());
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            -1
+        );
+        let params = vec![0.75];
+        let expected = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_evaluate_weighted_value_sum_local_respects_signed_cached_terms() {
+        let expr = Expression::one()
+            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+                * &CacheOnlyScalar::new("k").unwrap());
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            -1
+        );
+        let params = vec![0.75];
+        let expected = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(actual, expected, epsilon = 1e-10);
     }
 
     #[cfg(feature = "expression-ir")]
