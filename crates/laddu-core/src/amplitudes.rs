@@ -1409,8 +1409,6 @@ impl Evaluator {
         if descriptors.is_empty() {
             return Vec::new();
         }
-        debug_assert_eq!(resources.caches.len(), dataset.n_events_local());
-        debug_assert_eq!(resources.caches.len(), dataset.events_local().len());
         let seed_parameters = vec![0.0; n_free_parameters];
         let parameters = Parameters::new(&seed_parameters, &resources.constants);
         let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
@@ -1721,10 +1719,7 @@ impl Evaluator {
             .collect()
     }
 
-    /// Weighted sum over local events of the real expression value.
-    ///
-    /// This returns `sum_e(weight_e * Re(L_e))`.
-    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> f64 {
+    fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
@@ -1856,18 +1851,56 @@ impl Evaluator {
 
         #[cfg(feature = "expression-ir")]
         {
-            return residual_sum + cached_value_sum;
+            (residual_sum, cached_value_sum)
         }
         #[cfg(not(feature = "expression-ir"))]
         {
-            residual_sum
+            (residual_sum, 0.0)
         }
+    }
+
+    /// Weighted sum over local events of the real expression value.
+    ///
+    /// This returns `sum_e(weight_e * Re(L_e))`.
+    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> f64 {
+        let (residual_sum, cached_value_sum) =
+            self.evaluate_weighted_value_sum_local_components(parameters);
+        residual_sum + cached_value_sum
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Weighted sum over all ranks of the real expression value.
+    ///
+    /// This returns `sum_{r,e}(weight_{r,e} * Re(L_{r,e}))`.
+    pub fn evaluate_weighted_value_sum_mpi(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> f64 {
+        let (residual_sum_local, cached_value_sum_local) =
+            self.evaluate_weighted_value_sum_local_components(parameters);
+        let mut residual_sum = 0.0;
+        world.all_reduce_into(
+            &residual_sum_local,
+            &mut residual_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut cached_value_sum = 0.0;
+        world.all_reduce_into(
+            &cached_value_sum_local,
+            &mut cached_value_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        residual_sum + cached_value_sum
     }
 
     /// Weighted sum over local events of the real gradient of the expression.
     ///
     /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
-    pub fn evaluate_weighted_gradient_sum_local(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_weighted_gradient_sum_local_components(
+        &self,
+        parameters: &[f64],
+    ) -> (DVector<f64>, DVector<f64>) {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
@@ -2033,12 +2066,49 @@ impl Evaluator {
 
         #[cfg(feature = "expression-ir")]
         {
-            return residual_sum + cached_term_sum;
+            (residual_sum, cached_term_sum)
         }
         #[cfg(not(feature = "expression-ir"))]
         {
-            residual_sum
+            (residual_sum, DVector::zeros(grad_dim))
         }
+    }
+
+    /// Weighted sum over local events of the real gradient of the expression.
+    ///
+    /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
+    pub fn evaluate_weighted_gradient_sum_local(&self, parameters: &[f64]) -> DVector<f64> {
+        let (residual_sum, cached_term_sum) =
+            self.evaluate_weighted_gradient_sum_local_components(parameters);
+        residual_sum + cached_term_sum
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Weighted sum over all ranks of the real gradient of the expression.
+    ///
+    /// This returns `sum_{r,e}(weight_{r,e} * Re(dL_{r,e}/dp))`.
+    pub fn evaluate_weighted_gradient_sum_mpi(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> DVector<f64> {
+        let (residual_sum_local, cached_term_sum_local) =
+            self.evaluate_weighted_gradient_sum_local_components(parameters);
+        let mut residual_sum = vec![0.0; residual_sum_local.len()];
+        world.all_reduce_into(
+            residual_sum_local.as_slice(),
+            &mut residual_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut cached_term_sum = vec![0.0; cached_term_sum_local.len()];
+        world.all_reduce_into(
+            cached_term_sum_local.as_slice(),
+            &mut cached_term_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut total = DVector::from_vec(residual_sum);
+        total += DVector::from_vec(cached_term_sum);
+        total
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -4262,6 +4332,115 @@ mod tests {
                 "cached integral should remain rank-local before MPI reduction"
             );
         }
+        finalize_mpi();
+    }
+
+    #[cfg(all(feature = "mpi", feature = "expression-ir"))]
+    #[test]
+    fn test_expression_ir_weighted_sum_mpi_matches_global_eventwise_baseline() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+        use mpi::{collective::SystemOperation, traits::*};
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: -1.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 0.75,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 4.0)],
+                aux: vec![],
+                weight: 1.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 2.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 6.0)],
+                aux: vec![],
+                weight: -0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 7.0)],
+                aux: vec![],
+                weight: 3.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 8.0)],
+                aux: vec![],
+                weight: 1.25,
+            }),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+
+        let local_expected_value = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let mut global_expected_value = 0.0;
+        world.all_reduce_into(
+            &local_expected_value,
+            &mut global_expected_value,
+            SystemOperation::sum(),
+        );
+        let mpi_value = evaluator.evaluate_weighted_value_sum_mpi(&params, &world);
+        assert_relative_eq!(mpi_value, global_expected_value, epsilon = 1e-10);
+
+        let local_expected_gradient = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let mut global_expected_gradient = vec![0.0; local_expected_gradient.len()];
+        world.all_reduce_into(
+            local_expected_gradient.as_slice(),
+            &mut global_expected_gradient,
+            SystemOperation::sum(),
+        );
+        let mpi_gradient = evaluator.evaluate_weighted_gradient_sum_mpi(&params, &world);
+        for (actual, expected) in mpi_gradient.iter().zip(global_expected_gradient.iter()) {
+            assert_relative_eq!(*actual, *expected, epsilon = 1e-10);
+        }
+
         finalize_mpi();
     }
 
