@@ -80,6 +80,23 @@ pub struct PrecomputedCachedIntegral {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CachedIntegralCacheKey {
+    active_mask: Vec<bool>,
+    n_events_local: usize,
+    events_local_len: usize,
+    weighted_sum_bits: u64,
+    events_ptr: usize,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug)]
+struct CachedIntegralCacheState {
+    key: CachedIntegralCacheKey,
+    values: Vec<PrecomputedCachedIntegral>,
+}
+
+#[cfg(feature = "expression-ir")]
 impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
     fn from(value: ir::NormalizationPlanExplain) -> Self {
         Self {
@@ -1194,6 +1211,9 @@ impl Expression {
             dataset,
             parameter_manager.n_free_parameters(),
         );
+        #[cfg(feature = "expression-ir")]
+        let cached_integral_key =
+            Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
@@ -1203,7 +1223,10 @@ impl Expression {
             #[cfg(feature = "expression-ir")]
             expression_ir,
             #[cfg(feature = "expression-ir")]
-            cached_integrals,
+            cached_integrals: Arc::new(RwLock::new(Some(CachedIntegralCacheState {
+                key: cached_integral_key,
+                values: cached_integrals,
+            }))),
             registry: self.registry.clone(),
             parameter_manager,
         })
@@ -1333,13 +1356,27 @@ pub struct Evaluator {
     #[cfg(feature = "expression-ir")]
     expression_ir: ir::ExpressionIR,
     #[cfg(feature = "expression-ir")]
-    cached_integrals: Vec<PrecomputedCachedIntegral>,
+    cached_integrals: Arc<RwLock<Option<CachedIntegralCacheState>>>,
     registry: ExpressionRegistry,
     parameter_manager: ParameterManager,
 }
 
 #[allow(missing_docs)]
 impl Evaluator {
+    #[cfg(feature = "expression-ir")]
+    fn cached_integral_cache_key(
+        active_mask: Vec<bool>,
+        dataset: &Dataset,
+    ) -> CachedIntegralCacheKey {
+        CachedIntegralCacheKey {
+            active_mask,
+            n_events_local: dataset.n_events_local(),
+            events_local_len: dataset.events_local().len(),
+            weighted_sum_bits: dataset.n_events_weighted_local().to_bits(),
+            events_ptr: dataset.events_local().as_ptr() as usize,
+        }
+    }
+
     #[cfg(feature = "expression-ir")]
     fn precompute_cached_integrals_at_load(
         expression_ir: &ir::ExpressionIR,
@@ -1550,7 +1587,26 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     /// Cached integral terms precomputed at evaluator load.
     pub fn expression_precomputed_cached_integrals(&self) -> Vec<PrecomputedCachedIntegral> {
-        self.cached_integrals.clone()
+        let resources = self.resources.read();
+        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
+        if let Some(state) = self.cached_integrals.read().as_ref() {
+            if state.key == key {
+                return state.values.clone();
+            }
+        }
+        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
+        let values = Self::precompute_cached_integrals_at_load(
+            &expression_ir,
+            &self.amplitudes,
+            &resources,
+            &self.dataset,
+            self.parameter_manager.n_free_parameters(),
+        );
+        *self.cached_integrals.write() = Some(CachedIntegralCacheState {
+            key,
+            values: values.clone(),
+        });
+        values
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -3156,6 +3212,44 @@ mod tests {
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_recompute_on_activation_change() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+
+        evaluator.isolate_many(&["p"]);
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+
+        evaluator.activate_many(&["k"]);
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_recompute_on_dataset_change() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let before = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(before.len(), 1);
+
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+        let after = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].weighted_cache_sum, Complex64::ZERO);
+        assert!(before[0].weighted_cache_sum != after[0].weighted_cache_sum);
     }
 
     #[cfg(feature = "expression-ir")]
