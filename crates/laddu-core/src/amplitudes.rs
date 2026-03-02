@@ -1409,6 +1409,8 @@ impl Evaluator {
         if descriptors.is_empty() {
             return Vec::new();
         }
+        debug_assert_eq!(resources.caches.len(), dataset.n_events_local());
+        debug_assert_eq!(resources.caches.len(), dataset.events_local().len());
         let seed_parameters = vec![0.0; n_free_parameters];
         let parameters = Parameters::new(&seed_parameters, &resources.constants);
         let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
@@ -4171,6 +4173,95 @@ mod tests {
             cache_len, local_events,
             "cache length must match local event count under MPI"
         );
+        finalize_mpi();
+    }
+
+    #[cfg(all(feature = "mpi", feature = "expression-ir"))]
+    #[test]
+    fn test_expression_ir_cached_integrals_are_rank_local_in_mpi() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+        use mpi::{collective::SystemOperation, topology::Communicator, traits::*};
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 1.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 4.0)],
+                aux: vec![],
+                weight: 2.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 2.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 6.0)],
+                aux: vec![],
+                weight: 3.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 7.0)],
+                aux: vec![],
+                weight: 3.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 8.0)],
+                aux: vec![],
+                weight: 4.0,
+            }),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+
+        let local_expected = dataset.events_local().iter().fold(0.0, |acc, event| {
+            acc + event.weight() * event.data().p4s[0].e()
+        });
+        let cached_local = cached_integrals[0].weighted_cache_sum;
+        assert_relative_eq!(cached_local.re, local_expected, epsilon = 1e-12);
+        assert_relative_eq!(cached_local.im, 0.0, epsilon = 1e-12);
+
+        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&[2.0]);
+        assert_relative_eq!(weighted_value_sum, 2.0 * local_expected, epsilon = 1e-10);
+
+        let mut global_expected = 0.0;
+        world.all_reduce_into(
+            &local_expected,
+            &mut global_expected,
+            SystemOperation::sum(),
+        );
+        if world.size() > 1 {
+            assert!(
+                (cached_local.re - global_expected).abs() > 1e-12,
+                "cached integral should remain rank-local before MPI reduction"
+            );
+        }
         finalize_mpi();
     }
 
