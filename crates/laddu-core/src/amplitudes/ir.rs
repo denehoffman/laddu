@@ -6,6 +6,34 @@ use std::collections::HashMap;
 type IrValueId = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum DependenceClass {
+    ParameterOnly,
+    CacheOnly,
+    Mixed,
+}
+
+impl DependenceClass {
+    pub(super) fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Mixed, _) | (_, Self::Mixed) => Self::Mixed,
+            (Self::ParameterOnly, Self::ParameterOnly) => Self::ParameterOnly,
+            (Self::CacheOnly, Self::CacheOnly) => Self::CacheOnly,
+            (Self::ParameterOnly, Self::CacheOnly) | (Self::CacheOnly, Self::ParameterOnly) => {
+                Self::Mixed
+            }
+        }
+    }
+
+    fn apply_unary(self, _op: IrUnaryOp) -> Self {
+        self
+    }
+
+    fn apply_binary(self, _op: IrBinaryOp, rhs: Self) -> Self {
+        self.merge(rhs)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum IrUnaryOp {
     Neg,
     Real,
@@ -179,6 +207,24 @@ impl ExpressionIR {
 
     pub(super) fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub(super) fn root_dependence(&self) -> DependenceClass {
+        if self.nodes.is_empty() {
+            return DependenceClass::ParameterOnly;
+        }
+        let mut dependencies = vec![DependenceClass::ParameterOnly; self.nodes.len()];
+        for (node_index, node) in self.nodes.iter().enumerate() {
+            dependencies[node_index] = match *node {
+                IrNode::Constant(_) => DependenceClass::ParameterOnly,
+                IrNode::Amp(_) => DependenceClass::Mixed,
+                IrNode::Unary { op, input } => dependencies[input].apply_unary(op),
+                IrNode::Binary { op, left, right } => {
+                    dependencies[left].apply_binary(op, dependencies[right])
+                }
+            };
+        }
+        dependencies[self.root]
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -395,6 +441,7 @@ pub(super) fn compile_expression_ir(
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
         .run(&mut ir);
+    let _expression_dependence = ir.root_dependence();
     ir
 }
 
@@ -556,7 +603,7 @@ impl ExpressionIrPipeline {
 mod tests {
     use num::complex::Complex64;
 
-    use super::{ExpressionIR, ExpressionIrPipeline};
+    use super::{DependenceClass, ExpressionIR, ExpressionIrPipeline};
     use crate::amplitudes::ExpressionNode;
 
     #[test]
@@ -609,5 +656,47 @@ mod tests {
         ExpressionIrPipeline::new().cse().run(&mut ir);
         let after = ir.node_count();
         assert!(after < before);
+    }
+
+    #[test]
+    fn test_dependence_class_merge_rules() {
+        assert_eq!(
+            DependenceClass::ParameterOnly.merge(DependenceClass::ParameterOnly),
+            DependenceClass::ParameterOnly
+        );
+        assert_eq!(
+            DependenceClass::CacheOnly.merge(DependenceClass::CacheOnly),
+            DependenceClass::CacheOnly
+        );
+        assert_eq!(
+            DependenceClass::ParameterOnly.merge(DependenceClass::CacheOnly),
+            DependenceClass::Mixed
+        );
+        assert_eq!(
+            DependenceClass::CacheOnly.merge(DependenceClass::ParameterOnly),
+            DependenceClass::Mixed
+        );
+        assert_eq!(
+            DependenceClass::Mixed.merge(DependenceClass::CacheOnly),
+            DependenceClass::Mixed
+        );
+    }
+
+    #[test]
+    fn test_root_dependence_for_constant_expression() {
+        let tree =
+            ExpressionNode::Add(Box::new(ExpressionNode::One), Box::new(ExpressionNode::One));
+        let ir = ExpressionIR::from_expression_node(&tree);
+        assert_eq!(ir.root_dependence(), DependenceClass::ParameterOnly);
+    }
+
+    #[test]
+    fn test_root_dependence_for_amplitude_expression_is_mixed() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::One),
+        );
+        let ir = ExpressionIR::from_expression_node(&tree);
+        assert_eq!(ir.root_dependence(), DependenceClass::Mixed);
     }
 }
