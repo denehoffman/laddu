@@ -1430,15 +1430,29 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn compile_expression_ir_for_active_mask(&self, active_mask: &[bool]) -> ir::ExpressionIR {
+        let amplitude_dependencies = self
+            .amplitudes
+            .iter()
+            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .collect::<Vec<_>>();
+        ir::compile_expression_ir(&self.expression, active_mask, &amplitude_dependencies)
+    }
+
+    #[cfg(feature = "expression-ir")]
     /// Dependence classification for the compiled expression root.
     pub fn expression_root_dependence(&self) -> ExpressionDependence {
-        self.expression_ir.root_dependence().into()
+        let resources = self.resources.read();
+        self.compile_expression_ir_for_active_mask(&resources.active)
+            .root_dependence()
+            .into()
     }
 
     #[cfg(feature = "expression-ir")]
     /// Dependence classification for each compiled expression node.
     pub fn expression_node_dependence_annotations(&self) -> Vec<ExpressionDependence> {
-        self.expression_ir
+        let resources = self.resources.read();
+        self.compile_expression_ir_for_active_mask(&resources.active)
             .node_dependence_annotations()
             .iter()
             .copied()
@@ -1449,13 +1463,19 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     /// Warning-level diagnostics for potentially inconsistent dependence hints.
     pub fn expression_dependence_warnings(&self) -> Vec<String> {
-        self.expression_ir.dependence_warnings().to_vec()
+        let resources = self.resources.read();
+        self.compile_expression_ir_for_active_mask(&resources.active)
+            .dependence_warnings()
+            .to_vec()
     }
 
     #[cfg(feature = "expression-ir")]
     /// Explain/debug view of IR normalization planning decomposition.
     pub fn expression_normalization_plan_explain(&self) -> NormalizationPlanExplain {
-        self.expression_ir.normalization_plan_explain().into()
+        let resources = self.resources.read();
+        self.compile_expression_ir_for_active_mask(&resources.active)
+            .normalization_plan_explain()
+            .into()
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -3019,6 +3039,39 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate == index)
         }));
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_diagnostics_follow_activation_changes() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let all_active = evaluator.expression_normalization_plan_explain();
+        assert_eq!(all_active.cached_separable_nodes.len(), 1);
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
+
+        evaluator.isolate_many(&["p"]);
+        let param_only = evaluator.expression_normalization_plan_explain();
+        assert!(param_only.cached_separable_nodes.is_empty());
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::ParameterOnly
+        );
+
+        evaluator.activate_many(&["k", "m"]);
+        let restored = evaluator.expression_normalization_plan_explain();
+        assert_eq!(restored.cached_separable_nodes.len(), 1);
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
     }
 
     #[test]
