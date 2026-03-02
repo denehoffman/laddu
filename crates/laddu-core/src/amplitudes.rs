@@ -27,6 +27,29 @@ fn next_amplitude_id() -> u64 {
 #[allow(dead_code)]
 mod ir;
 
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Dependence classification used by expression-IR diagnostics.
+pub enum ExpressionDependence {
+    /// Depends only on fixed/free parameter values.
+    ParameterOnly,
+    /// Depends only on event-local cached values.
+    CacheOnly,
+    /// Depends on both parameter values and cached event values.
+    Mixed,
+}
+
+#[cfg(feature = "expression-ir")]
+impl From<ir::DependenceClass> for ExpressionDependence {
+    fn from(value: ir::DependenceClass) -> Self {
+        match value {
+            ir::DependenceClass::ParameterOnly => Self::ParameterOnly,
+            ir::DependenceClass::CacheOnly => Self::CacheOnly,
+            ir::DependenceClass::Mixed => Self::Mixed,
+        }
+    }
+}
+
 use crate::{
     data::{Dataset, DatasetMetadata, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
@@ -1351,6 +1374,23 @@ impl Evaluator {
         {
             self.expression_program.slot_count()
         }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Dependence classification for the compiled expression root.
+    pub fn expression_root_dependence(&self) -> ExpressionDependence {
+        self.expression_ir.root_dependence().into()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Dependence classification for each compiled expression node.
+    pub fn expression_node_dependence_annotations(&self) -> Vec<ExpressionDependence> {
+        self.expression_ir
+            .node_dependence_annotations()
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect()
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -2751,6 +2791,25 @@ mod tests {
             assert_relative_eq!(ir.re, program.re);
             assert_relative_eq!(ir.im, program.im);
         }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_dependence_diagnostics_surface() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let annotations = evaluator.expression_node_dependence_annotations();
+        assert_eq!(annotations.len(), evaluator.expression_slot_count());
+        assert!(annotations
+            .iter()
+            .all(|dependence| *dependence == ExpressionDependence::Mixed));
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
     }
 
     #[test]
