@@ -351,7 +351,7 @@ impl NLL {
         self.projection_active_mask_cache.lock().clear();
     }
 
-    fn project_with_many_from_masks_local(
+    fn project_weights_subsets_from_masks_local(
         &self,
         evaluator: &Evaluator,
         resolved_masks: &[Vec<bool>],
@@ -606,8 +606,8 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
-    pub fn project_local(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights`] instead.
+    pub fn project_weights_local(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -648,9 +648,9 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_mpi(
+    pub fn project_weights_mpi(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -661,7 +661,7 @@ impl NLL {
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projection = self.project_local(parameters, mc_evaluator)?;
+        let local_projection = self.project_weights_local(parameters, mc_evaluator)?;
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
@@ -686,7 +686,7 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project(
+    pub fn project_weights(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -694,10 +694,10 @@ impl NLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_mpi(parameters, mc_evaluator, &world);
+                return self.project_weights_mpi(parameters, mc_evaluator, &world);
             }
         }
-        self.project_local(parameters, mc_evaluator)
+        self.project_weights_local(parameters, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -707,8 +707,8 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
-    pub fn project_gradient_local(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_and_gradients`] instead.
+    pub fn project_weights_and_gradients_local(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -766,9 +766,9 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_and_gradients`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_gradient_mpi(
+    pub fn project_weights_and_gradients_mpi(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -780,7 +780,7 @@ impl NLL {
             .dataset
             .n_events();
         let (local_projection, local_gradient_projection) =
-            self.project_gradient_local(parameters, mc_evaluator)?;
+            self.project_weights_and_gradients_local(parameters, mc_evaluator)?;
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
@@ -821,7 +821,7 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_gradient(
+    pub fn project_weights_and_gradients(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
@@ -829,22 +829,22 @@ impl NLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_gradient_mpi(parameters, mc_evaluator, &world);
+                return self.project_weights_and_gradients_mpi(parameters, mc_evaluator, &world);
             }
         }
-        self.project_gradient_local(parameters, mc_evaluator)
+        self.project_weights_and_gradients_local(parameters, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
-    pub fn project_with_local<T: AsRef<str>>(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
+    pub fn project_weights_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -900,15 +900,15 @@ impl NLL {
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_with_mpi<T: AsRef<str>>(
+    pub fn project_weights_subset_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -920,7 +920,8 @@ impl NLL {
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projection = self.project_with_local(parameters, names, mc_evaluator)?;
+        let local_projection =
+            self.project_weights_subset_local(parameters, names, mc_evaluator)?;
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
@@ -933,7 +934,7 @@ impl NLL {
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
@@ -947,7 +948,7 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_with<T: AsRef<str>>(
+    pub fn project_weights_subset<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -956,14 +957,14 @@ impl NLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_with_mpi(parameters, names, mc_evaluator, &world);
+                return self.project_weights_subset_mpi(parameters, names, mc_evaluator, &world);
             }
         }
-        self.project_with_local(parameters, names, mc_evaluator)
+        self.project_weights_subset_local(parameters, names, mc_evaluator)
     }
 
     /// Project the stored model over multiple isolated amplitude subsets (non-MPI version).
-    pub fn project_with_many_local<T: AsRef<str>>(
+    pub fn project_weights_subsets_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         subsets: &[Vec<T>],
@@ -985,13 +986,17 @@ impl NLL {
                 resolved_masks.push(mc_evaluator.active_mask());
             }
             mc_evaluator.set_active_mask(&current_active_mc)?;
-            Ok(self.project_with_many_from_masks_local(mc_evaluator, &resolved_masks, parameters))
+            Ok(self.project_weights_subsets_from_masks_local(
+                mc_evaluator,
+                &resolved_masks,
+                parameters,
+            ))
         } else {
             let mut resolved_masks = Vec::with_capacity(subsets.len());
             for names in subsets {
                 resolved_masks.push(self.get_or_build_projection_active_mask(names)?);
             }
-            Ok(self.project_with_many_from_masks_local(
+            Ok(self.project_weights_subsets_from_masks_local(
                 &self.accmc_evaluator,
                 &resolved_masks,
                 parameters,
@@ -1001,7 +1006,7 @@ impl NLL {
 
     /// Project the stored model over multiple isolated amplitude subsets (MPI-compatible version).
     #[cfg(feature = "mpi")]
-    pub fn project_with_many_mpi<T: AsRef<str>>(
+    pub fn project_weights_subsets_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         subsets: &[Vec<T>],
@@ -1013,7 +1018,8 @@ impl NLL {
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projections = self.project_with_many_local(parameters, subsets, mc_evaluator)?;
+        let local_projections =
+            self.project_weights_subsets_local(parameters, subsets, mc_evaluator)?;
         let (counts, displs) = world.get_counts_displs(n_events);
         let mut gathered = Vec::with_capacity(local_projections.len());
         for local_projection in local_projections {
@@ -1029,7 +1035,7 @@ impl NLL {
     }
 
     /// Project the stored model over multiple isolated amplitude subsets.
-    pub fn project_with_many<T: AsRef<str>>(
+    pub fn project_weights_subsets<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         subsets: &[Vec<T>],
@@ -1038,23 +1044,23 @@ impl NLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_with_many_mpi(parameters, subsets, mc_evaluator, &world);
+                return self.project_weights_subsets_mpi(parameters, subsets, mc_evaluator, &world);
             }
         }
-        self.project_with_many_local(parameters, subsets, mc_evaluator)
+        self.project_weights_subsets_local(parameters, subsets, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
-    pub fn project_gradient_with_local<T: AsRef<str>>(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
+    pub fn project_weights_and_gradients_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -1147,15 +1153,15 @@ impl NLL {
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_gradient_with_mpi<T: AsRef<str>>(
+    pub fn project_weights_and_gradients_subset_mpi<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -1168,7 +1174,7 @@ impl NLL {
             .dataset
             .n_events();
         let (local_projection, local_gradient_projection) =
-            self.project_gradient_with_local(parameters, names, mc_evaluator)?;
+            self.project_weights_and_gradients_subset_local(parameters, names, mc_evaluator)?;
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
@@ -1199,7 +1205,7 @@ impl NLL {
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project_gradient`] in that it first
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project_weights_and_gradients`] in that it first
     /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
     /// the [`NLL`] to its prior state after calculation.
     ///
@@ -1214,7 +1220,7 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_gradient_with<T: AsRef<str>>(
+    pub fn project_weights_and_gradients_subset<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
@@ -1223,10 +1229,15 @@ impl NLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_gradient_with_mpi(parameters, names, mc_evaluator, &world);
+                return self.project_weights_and_gradients_subset_mpi(
+                    parameters,
+                    names,
+                    mc_evaluator,
+                    &world,
+                );
             }
         }
-        self.project_gradient_with_local(parameters, names, mc_evaluator)
+        self.project_weights_and_gradients_subset_local(parameters, names, mc_evaluator)
     }
 
     fn evaluate_terms_local(&self, parameters: &[f64]) -> (f64, f64) {
@@ -2282,7 +2293,7 @@ impl PyNLL {
     ///
     #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
     #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
-    fn project<'py>(
+    fn project_weights<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
@@ -2298,7 +2309,7 @@ impl PyNLL {
                 .map_err(LadduError::from)?
                 .install(|| {
                     self.0
-                        .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
+                        .project_weights(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
                 })
                 .map_err(PyErr::from)?;
             Ok(PyArray1::from_slice(py, projection.as_slice()))
@@ -2307,7 +2318,7 @@ impl PyNLL {
         {
             let projection = self
                 .0
-                .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))?;
+                .project_weights(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))?;
             Ok(PyArray1::from_slice(py, projection.as_slice()))
         }
     }
@@ -2351,7 +2362,7 @@ impl PyNLL {
     ///
     #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
     #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
-    fn project_with<'py>(
+    fn project_weights_subset<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
@@ -2377,7 +2388,7 @@ impl PyNLL {
                 .build()
                 .map_err(LadduError::from)?
                 .install(|| {
-                    self.0.project_with(
+                    self.0.project_weights_subset(
                         &parameters,
                         &names,
                         mc_evaluator.map(|pyeval| pyeval.0.clone()),
@@ -2388,7 +2399,7 @@ impl PyNLL {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let projection = self.0.project_with(
+            let projection = self.0.project_weights_subset(
                 &parameters,
                 &names,
                 mc_evaluator.map(|pyeval| pyeval.0.clone()),
@@ -2416,7 +2427,7 @@ impl PyNLL {
     ///     2D array of shape ``(len(subsets), n_events)``
     #[pyo3(signature = (parameters, subsets, *, mc_evaluator = None, threads=None))]
     #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
-    fn project_with_many<'py>(
+    fn project_weights_subsets<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
@@ -2432,7 +2443,7 @@ impl PyNLL {
                 .build()
                 .map_err(LadduError::from)?
                 .install(|| {
-                    self.0.project_with_many(
+                    self.0.project_weights_subsets(
                         &parameters,
                         &subsets,
                         mc_evaluator.map(|pyeval| pyeval.0.clone()),
@@ -2443,12 +2454,92 @@ impl PyNLL {
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let projection = self.0.project_with_many(
+            let projection = self.0.project_weights_subsets(
                 &parameters,
                 &subsets,
                 mc_evaluator.map(|pyeval| pyeval.0.clone()),
             )?;
             Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
+        }
+    }
+
+    /// Project the model and gradients over the Monte Carlo dataset while isolating selected terms.
+    ///
+    /// Parameters
+    /// ----------
+    /// parameters : list of float
+    ///     The values to use for the free parameters
+    /// arg : str or list of str
+    ///     Names of Amplitudes to be isolated
+    /// mc_evaluator: Evaluator, optional
+    ///     Project using the given Evaluator or use the stored ``accmc`` if None
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///
+    /// Returns
+    /// -------
+    /// tuple
+    ///     ``(weights, gradients)`` where ``weights`` has shape ``(n_events,)`` and
+    ///     ``gradients`` has shape ``(n_events, n_parameters)``
+    #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
+    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
+    fn project_weights_and_gradients_subset<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: Vec<f64>,
+        arg: &Bound<'_, PyAny>,
+        mc_evaluator: Option<PyEvaluator>,
+        threads: Option<usize>,
+    ) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>)> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        let names = if let Ok(string_arg) = arg.extract::<String>() {
+            vec![string_arg]
+        } else if let Ok(list_arg) = arg.cast::<PyList>() {
+            let vec: Vec<String> = list_arg.extract()?;
+            vec
+        } else {
+            return Err(PyTypeError::new_err(
+                "Argument must be either a string or a list of strings",
+            ));
+        };
+        #[cfg(feature = "rayon")]
+        {
+            let (weights, gradients) = ThreadPoolBuilder::new()
+                .num_threads(threads.unwrap_or(0))
+                .build()
+                .map_err(LadduError::from)?
+                .install(|| {
+                    self.0.project_weights_and_gradients_subset(
+                        &parameters,
+                        &names,
+                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
+                    )
+                })
+                .map_err(PyErr::from)?;
+            let gradients = gradients
+                .iter()
+                .map(|gradient| gradient.as_slice().to_vec())
+                .collect::<Vec<_>>();
+            Ok((
+                PyArray1::from_slice(py, weights.as_slice()),
+                PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+            ))
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let (weights, gradients) = self.0.project_weights_and_gradients_subset(
+                &parameters,
+                &names,
+                mc_evaluator.map(|pyeval| pyeval.0.clone()),
+            )?;
+            let gradients = gradients
+                .iter()
+                .map(|gradient| gradient.as_slice().to_vec())
+                .collect::<Vec<_>>();
+            Ok((
+                PyArray1::from_slice(py, weights.as_slice()),
+                PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+            ))
         }
     }
 
@@ -4602,21 +4693,26 @@ mod tests {
     }
 
     fn case_nll_project_short(nll: &NLL) -> LadduResult<()> {
-        nll.project(&[], None).map(|_| ())
+        nll.project_weights(&[], None).map(|_| ())
     }
 
-    fn case_nll_project_gradient_long(nll: &NLL) -> LadduResult<()> {
-        nll.project_gradient(&[1.0, 2.0], None).map(|_| ())
-    }
-
-    fn case_nll_project_with_short(nll: &NLL) -> LadduResult<()> {
-        nll.project_with_local::<&str>(&[], &["missing_amplitude"], None)
+    fn case_nll_project_weights_and_gradients_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_and_gradients(&[1.0, 2.0], None)
             .map(|_| ())
     }
 
-    fn case_nll_project_gradient_with_long(nll: &NLL) -> LadduResult<()> {
-        nll.project_gradient_with_local::<&str>(&[1.0, 2.0], &["missing_amplitude"], None)
+    fn case_nll_project_weights_subset_short(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_subset_local::<&str>(&[], &["missing_amplitude"], None)
             .map(|_| ())
+    }
+
+    fn case_nll_project_weights_and_gradients_subset_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_and_gradients_subset_local::<&str>(
+            &[1.0, 2.0],
+            &["missing_amplitude"],
+            None,
+        )
+        .map(|_| ())
     }
 
     #[cfg(feature = "mpi")]
@@ -4689,18 +4785,21 @@ mod tests {
                 "nll.evaluate_gradient long",
                 case_nll_evaluate_gradient_long(nll.as_ref()),
             ),
-            ("nll.project short", case_nll_project_short(nll.as_ref())),
             (
-                "nll.project_gradient long",
-                case_nll_project_gradient_long(nll.as_ref()),
+                "nll.project_weights short",
+                case_nll_project_short(nll.as_ref()),
             ),
             (
-                "nll.project_with short",
-                case_nll_project_with_short(nll.as_ref()),
+                "nll.project_weights_and_gradients long",
+                case_nll_project_weights_and_gradients_long(nll.as_ref()),
             ),
             (
-                "nll.project_gradient_with long",
-                case_nll_project_gradient_with_long(nll.as_ref()),
+                "nll.project_weights_subset short",
+                case_nll_project_weights_subset_short(nll.as_ref()),
+            ),
+            (
+                "nll.project_weights_and_gradients_subset long",
+                case_nll_project_weights_and_gradients_subset_long(nll.as_ref()),
             ),
             (
                 "likelihood.evaluate short",
@@ -4738,14 +4837,18 @@ mod tests {
                 nll.isolate_strict("missing_amplitude"),
             ),
             (
-                "project_with unknown",
-                nll.project_with_local::<&str>(&params, &["missing_amplitude"], None)
+                "project_weights_subset unknown",
+                nll.project_weights_subset_local::<&str>(&params, &["missing_amplitude"], None)
                     .map(|_| ()),
             ),
             (
-                "project_gradient_with unknown",
-                nll.project_gradient_with_local::<&str>(&params, &["missing_amplitude"], None)
-                    .map(|_| ()),
+                "project_weights_and_gradients_subset unknown",
+                nll.project_weights_and_gradients_subset_local::<&str>(
+                    &params,
+                    &["missing_amplitude"],
+                    None,
+                )
+                .map(|_| ()),
             ),
         ];
         for (label, result) in cases {
@@ -4899,7 +5002,7 @@ mod tests {
     #[test]
     fn nll_project_returns_weighted_intensity() {
         let (nll, params) = make_constant_nll();
-        let projection = nll.project_local(&params, None).unwrap();
+        let projection = nll.project_weights_local(&params, None).unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
     }
@@ -4907,7 +5010,7 @@ mod tests {
     #[test]
     fn nll_project_reports_structured_length_error() {
         let (nll, _) = make_constant_nll();
-        let err = nll.project(&[], None).unwrap_err();
+        let err = nll.project_weights(&[], None).unwrap_err();
         assert!(matches!(
             err,
             LadduError::LengthMismatch {
@@ -4919,16 +5022,16 @@ mod tests {
     }
 
     #[test]
-    fn nll_project_with_reports_structured_missing_amplitude_error() {
+    fn nll_project_weights_subset_reports_structured_missing_amplitude_error() {
         let (nll, params) = make_constant_nll();
         let err = nll
-            .project_with_local::<&str>(&params, &["missing_amplitude"], None)
+            .project_weights_subset_local::<&str>(&params, &["missing_amplitude"], None)
             .unwrap_err();
         assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
     }
 
     #[test]
-    fn nll_project_with_many_matches_repeated_project_with_calls() {
+    fn nll_project_weights_subsets_matches_repeated_project_weights_subset_calls() {
         let (nll, params) = make_two_parameter_nll();
         let subsets = vec![
             vec!["amp_a".to_string()],
@@ -4936,12 +5039,12 @@ mod tests {
             vec!["amp_a".to_string(), "amp_b".to_string()],
         ];
         let batched = nll
-            .project_with_many_local(&params, &subsets, None)
+            .project_weights_subsets_local(&params, &subsets, None)
             .expect("batched projection should evaluate");
         let repeated = subsets
             .iter()
             .map(|subset| {
-                nll.project_with_local(&params, subset, None)
+                nll.project_weights_subset_local(&params, subset, None)
                     .expect("single subset projection should evaluate")
             })
             .collect::<Vec<_>>();
@@ -4955,11 +5058,11 @@ mod tests {
     }
 
     #[test]
-    fn nll_project_with_many_handles_empty_and_duplicate_subsets() {
+    fn nll_project_weights_subsets_handles_empty_and_duplicate_subsets() {
         let (nll, params) = make_two_parameter_nll();
         let empty: Vec<Vec<String>> = Vec::new();
         let empty_projection = nll
-            .project_with_many_local(&params, &empty, None)
+            .project_weights_subsets_local(&params, &empty, None)
             .expect("empty subset list should evaluate");
         assert!(empty_projection.is_empty());
 
@@ -4971,12 +5074,12 @@ mod tests {
             vec!["amp_b".to_string()],
         ];
         let batched = nll
-            .project_with_many_local(&params, &subsets, None)
+            .project_weights_subsets_local(&params, &subsets, None)
             .expect("batched projection should evaluate");
         let repeated = subsets
             .iter()
             .map(|subset| {
-                nll.project_with_local(&params, subset, None)
+                nll.project_weights_subset_local(&params, subset, None)
                     .expect("single subset projection should evaluate")
             })
             .collect::<Vec<_>>();
@@ -4990,13 +5093,40 @@ mod tests {
     }
 
     #[test]
-    fn nll_project_with_many_reports_missing_amplitude_error() {
+    fn nll_project_weights_subsets_reports_missing_amplitude_error() {
         let (nll, params) = make_two_parameter_nll();
         let subsets = vec![vec!["amp_a".to_string()], vec!["missing".to_string()]];
         let err = nll
-            .project_with_many_local(&params, &subsets, None)
+            .project_weights_subsets_local(&params, &subsets, None)
             .expect_err("missing amplitude should fail");
         assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
+    }
+
+    #[test]
+    fn nll_project_weights_and_gradients_subset_matches_repeated_calls() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+        ];
+        for subset in subsets {
+            let (weights_local, gradients_local) = nll
+                .project_weights_and_gradients_subset_local(&params, &subset, None)
+                .expect("local gradient projection should evaluate");
+            let (weights_auto, gradients_auto) = nll
+                .project_weights_and_gradients_subset(&params, &subset, None)
+                .expect("auto gradient projection should evaluate");
+            assert_eq!(weights_local.len(), weights_auto.len());
+            assert_eq!(gradients_local.len(), gradients_auto.len());
+            for (lhs, rhs) in weights_local.iter().zip(weights_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            for (lhs, rhs) in gradients_local.iter().zip(gradients_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+        }
     }
 
     #[test]
@@ -5005,7 +5135,7 @@ mod tests {
         assert!(nll.projection_active_mask_cache.lock().is_empty());
 
         let _ = nll
-            .project_with_local::<&str>(&params, &["amp"], None)
+            .project_weights_subset_local::<&str>(&params, &["amp"], None)
             .unwrap();
         assert!(!nll.projection_active_mask_cache.lock().is_empty());
 
@@ -5013,17 +5143,17 @@ mod tests {
         assert!(nll.projection_active_mask_cache.lock().is_empty());
 
         let projection = nll
-            .project_with_local::<&str>(&params, &["amp"], None)
+            .project_weights_subset_local::<&str>(&params, &["amp"], None)
             .unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
     }
 
     #[test]
-    fn nll_project_with_validates_length_before_isolation() {
+    fn nll_project_weights_subset_validates_length_before_isolation() {
         let (nll, _) = make_constant_nll();
         let err = nll
-            .project_with_local::<&str>(&[], &["missing_amplitude"], None)
+            .project_weights_subset_local::<&str>(&[], &["missing_amplitude"], None)
             .unwrap_err();
         assert!(matches!(
             err,
@@ -5036,10 +5166,14 @@ mod tests {
     }
 
     #[test]
-    fn nll_project_gradient_with_validates_length_before_isolation() {
+    fn nll_project_weights_and_gradients_subset_validates_length_before_isolation() {
         let (nll, _) = make_constant_nll();
         let err = nll
-            .project_gradient_with_local::<&str>(&[1.0, 2.0], &["missing_amplitude"], None)
+            .project_weights_and_gradients_subset_local::<&str>(
+                &[1.0, 2.0],
+                &["missing_amplitude"],
+                None,
+            )
             .unwrap_err();
         assert!(matches!(
             err,
@@ -5136,7 +5270,7 @@ mod tests {
         };
         let (nll, params) = make_constant_nll();
 
-        let err_len = nll.project_mpi(&[], None, &world).unwrap_err();
+        let err_len = nll.project_weights_mpi(&[], None, &world).unwrap_err();
         assert!(matches!(
             err_len,
             LadduError::LengthMismatch {
@@ -5147,7 +5281,7 @@ mod tests {
         ));
 
         let err_amp = nll
-            .project_with_mpi::<&str>(&params, &["missing_amplitude"], None, &world)
+            .project_weights_subset_mpi::<&str>(&params, &["missing_amplitude"], None, &world)
             .unwrap_err();
         assert!(matches!(err_amp, LadduError::AmplitudeNotFoundError { .. }));
         finalize_mpi();
@@ -5237,10 +5371,10 @@ mod tests {
         let (nll, params) = make_constant_nll();
 
         let local_projection = nll
-            .project_local(&params, None)
+            .project_weights_local(&params, None)
             .expect("local projection should evaluate");
         let gathered_projection = nll
-            .project_mpi(&params, None, &world)
+            .project_weights_mpi(&params, None, &world)
             .expect("mpi projection should gather global projection");
         let local_len = nll.accmc_evaluator.dataset.n_events_local();
         let total_len = nll.accmc_evaluator.dataset.n_events();
@@ -5257,10 +5391,10 @@ mod tests {
         );
 
         let (local_weights, local_gradients) = nll
-            .project_gradient_local(&params, None)
+            .project_weights_and_gradients_local(&params, None)
             .expect("local projection gradient should evaluate");
         let (gathered_weights, gathered_gradients) = nll
-            .project_gradient_mpi(&params, None, &world)
+            .project_weights_and_gradients_mpi(&params, None, &world)
             .expect("mpi projection gradient should gather global projection");
         assert_eq!(local_weights.len(), local_len);
         assert_eq!(local_gradients.len(), local_len);
@@ -5277,7 +5411,7 @@ mod tests {
 
     #[cfg(feature = "mpi")]
     #[test]
-    fn mpi_project_with_many_matches_repeated_project_with_mpi() {
+    fn mpi_project_weights_subsets_matches_repeated_project_weights_subset_mpi() {
         use_mpi(true);
         let Some(world) = get_world() else {
             finalize_mpi();
@@ -5291,12 +5425,12 @@ mod tests {
             vec!["amp_a".to_string()],
         ];
         let batched = nll
-            .project_with_many_mpi(&params, &subsets, None, &world)
+            .project_weights_subsets_mpi(&params, &subsets, None, &world)
             .expect("batched mpi projection should evaluate");
         let repeated = subsets
             .iter()
             .map(|subset| {
-                nll.project_with_mpi(&params, subset, None, &world)
+                nll.project_weights_subset_mpi(&params, subset, None, &world)
                     .expect("single mpi subset projection should evaluate")
             })
             .collect::<Vec<_>>();
@@ -5305,6 +5439,40 @@ mod tests {
             assert_eq!(lhs.len(), rhs.len());
             for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
                 assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_project_weights_and_gradients_subset_matches_repeated_project_weights_and_gradients_subset_mpi(
+    ) {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+        ];
+        for subset in subsets {
+            let (weights_mpi, gradients_mpi) = nll
+                .project_weights_and_gradients_subset_mpi(&params, &subset, None, &world)
+                .expect("mpi gradient projection should evaluate");
+            let (weights_auto, gradients_auto) = nll
+                .project_weights_and_gradients_subset(&params, &subset, None)
+                .expect("auto gradient projection should evaluate");
+            assert_eq!(weights_mpi.len(), weights_auto.len());
+            assert_eq!(gradients_mpi.len(), gradients_auto.len());
+            for (lhs, rhs) in weights_mpi.iter().zip(weights_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            for (lhs, rhs) in gradients_mpi.iter().zip(gradients_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
             }
         }
         finalize_mpi();

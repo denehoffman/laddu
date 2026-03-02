@@ -140,7 +140,9 @@ impl LikelihoodTerm for BinnedGuideTerm {
             .zip(self.error_sets.iter())
             .zip(self.amplitude_sets.iter())
         {
-            let weights = self.nll.project_with(parameters, amplitudes, None)?;
+            let weights = self
+                .nll
+                .project_weights_subset(parameters, amplitudes, None)?;
             let eval_hist = histogram(&self.values, self.bins, self.range, Some(&weights));
             // TODO: handle entries where e == 0
             let chisqr: f64 = eval_hist
@@ -174,7 +176,7 @@ impl LikelihoodTerm for BinnedGuideTerm {
         {
             let (weights, weights_gradient) = self
                 .nll
-                .project_gradient_with(parameters, amplitudes, None)?;
+                .project_weights_and_gradients_subset(parameters, amplitudes, None)?;
             let mut eval_counts = vec![0.0; self.bins];
             let mut eval_count_gradient: Vec<DVector<f64>> =
                 vec![DVector::zeros(parameters.len()); self.bins];

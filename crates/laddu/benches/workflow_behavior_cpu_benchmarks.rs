@@ -189,16 +189,20 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     });
     group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("projection_total_small_sample", |b| {
-        b.iter(|| black_box(nll.project(black_box(&params), None)))
+        b.iter(|| black_box(nll.project_weights(black_box(&params), None)))
     });
     group.throughput(Throughput::Elements(1));
     group.bench_function("projection_total_with_gradient_small_sample", |b| {
-        b.iter(|| black_box(nll.project_gradient(black_box(&params), None)))
+        b.iter(|| black_box(nll.project_weights_and_gradients(black_box(&params), None)))
     });
     group.throughput(Throughput::Elements(n_data_events));
     group.bench_function("projection_component_s_wave_small_sample", |b| {
         b.iter(|| {
-            black_box(nll.project_with(black_box(&params), &["S0+", "Z00+", "f0(1500)"], None))
+            black_box(nll.project_weights_subset(
+                black_box(&params),
+                &["S0+", "Z00+", "f0(1500)"],
+                None,
+            ))
         })
     });
     group.throughput(Throughput::Elements(1));
@@ -206,7 +210,7 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
         "projection_component_s_wave_with_gradient_small_sample",
         |b| {
             b.iter(|| {
-                black_box(nll.project_gradient_with(
+                black_box(nll.project_weights_and_gradients_subset(
                     black_box(&params),
                     &["S0+", "Z00+", "f0(1500)"],
                     None,
@@ -216,14 +220,19 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
     );
     group.throughput(Throughput::Elements(n_gen_events));
     group.bench_function("projection_total_generated_mc_small_sample", |b| {
-        b.iter(|| black_box(nll.project(black_box(&params), Some(gen_evaluator.clone()))))
+        b.iter(|| black_box(nll.project_weights(black_box(&params), Some(gen_evaluator.clone()))))
     });
     group.throughput(Throughput::Elements(1));
     group.bench_function(
         "projection_total_generated_mc_with_gradient_small_sample",
         |b| {
             b.iter(|| {
-                black_box(nll.project_gradient(black_box(&params), Some(gen_evaluator.clone())))
+                black_box(
+                    nll.project_weights_and_gradients(
+                        black_box(&params),
+                        Some(gen_evaluator.clone()),
+                    ),
+                )
             })
         },
     );

@@ -254,14 +254,14 @@ class NLL:
         parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project(
+    def project_weights(
         self,
         parameters: list[float] | npt.ArrayLike,
         *,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project_with(
+    def project_weights_subset(
         self,
         parameters: list[float] | npt.ArrayLike,
         name: str | list[str],
@@ -269,7 +269,7 @@ class NLL:
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project_with_many(
+    def project_weights_subsets(
         self,
         parameters: list[float] | npt.ArrayLike,
         subsets: list[list[str]],
@@ -277,6 +277,14 @@ class NLL:
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
+    def project_weights_and_gradients_subset(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        name: str | list[str],
+        *,
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
     def minimize(
         self,
         p0: list[float] | npt.ArrayLike,

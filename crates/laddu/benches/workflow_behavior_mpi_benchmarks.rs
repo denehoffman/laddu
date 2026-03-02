@@ -235,19 +235,19 @@ mod mpi_benches {
             |b, &_rank_count| {
                 b.iter_batched(
                     || params.clone(),
-                    |parameters| black_box(nll.project(&parameters, None)),
+                    |parameters| black_box(nll.project_weights(&parameters, None)),
                     BatchSize::SmallInput,
                 )
             },
         );
         group.throughput(Throughput::Elements(n_events));
         group.bench_with_input(
-            BenchmarkId::new("project_gradient", rank_count),
+            BenchmarkId::new("project_weights_and_gradients", rank_count),
             &rank_count,
             |b, &_rank_count| {
                 b.iter_batched(
                     || params.clone(),
-                    |parameters| black_box(nll.project_gradient(&parameters, None)),
+                    |parameters| black_box(nll.project_weights_and_gradients(&parameters, None)),
                     BatchSize::SmallInput,
                 )
             },

@@ -55,12 +55,20 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
         s0s = []
         d2s = []
         for i_walker in range(status.dimension[0]):
-            tot.append(np.sum(self.nll.project(latest_step[i_walker])))
+            tot.append(np.sum(self.nll.project_weights(latest_step[i_walker])))
             s0s.append(
-                np.sum(self.nll.project_with(latest_step[i_walker], ['Z00+', 'S0+']))
+                np.sum(
+                    self.nll.project_weights_subset(
+                        latest_step[i_walker], ['Z00+', 'S0+']
+                    )
+                )
             )
             d2s.append(
-                np.sum(self.nll.project_with(latest_step[i_walker], ['Z22+', 'D2+']))
+                np.sum(
+                    self.nll.project_weights_subset(
+                        latest_step[i_walker], ['Z22+', 'D2+']
+                    )
+                )
             )
         self.tot.append(tot)
         self.s0s.append(s0s)
@@ -170,16 +178,20 @@ def main() -> None:
         best = fit['best']
         bootstraps = fit['bootstraps']
         nll = ld.NLL(model, data_ds_binned[ibin], accmc_ds_binned[ibin])
-        tot_fit = np.sum(nll.project(best.x))
-        s0_fit = np.sum(nll.project_with(best.x, ['Z00+', 'S0+']))
-        d2_fit = np.sum(nll.project_with(best.x, ['Z22+', 'D2+']))
+        tot_fit = np.sum(nll.project_weights(best.x))
+        s0_fit = np.sum(nll.project_weights_subset(best.x, ['Z00+', 'S0+']))
+        d2_fit = np.sum(nll.project_weights_subset(best.x, ['Z22+', 'D2+']))
         tot_boot = []
         s0_boot = []
         d2_boot = []
         for bootstrap in bootstraps:
-            tot_boot.append(np.sum(nll.project(best.x)))
-            s0_boot.append(np.sum(nll.project_with(bootstrap.x, ['Z00+', 'S0+'])))
-            d2_boot.append(np.sum(nll.project_with(bootstrap.x, ['Z22+', 'D2+'])))
+            tot_boot.append(np.sum(nll.project_weights(best.x)))
+            s0_boot.append(
+                np.sum(nll.project_weights_subset(bootstrap.x, ['Z00+', 'S0+']))
+            )
+            d2_boot.append(
+                np.sum(nll.project_weights_subset(bootstrap.x, ['Z22+', 'D2+']))
+            )
 
         tot_ci_boot = np.quantile(tot_boot, [0.16, 0.84])
         s0s_ci_boot = np.quantile(s0_boot, [0.16, 0.84])
@@ -202,9 +214,9 @@ def main() -> None:
             s0s = []
             d2s = []
             for position in flat_chain:
-                tot.append(np.sum(nll.project(position)))
-                s0s.append(np.sum(nll.project_with(position, ['Z00+', 'S0+'])))
-                d2s.append(np.sum(nll.project_with(position, ['Z22+', 'D2+'])))
+                tot.append(np.sum(nll.project_weights(position)))
+                s0s.append(np.sum(nll.project_weights_subset(position, ['Z00+', 'S0+'])))
+                d2s.append(np.sum(nll.project_weights_subset(position, ['Z22+', 'D2+'])))
         else:
             p0 = best.x + np.random.normal(0, scale=0.01, size=(100, len(best.x)))
             nll_clone = nll
