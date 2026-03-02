@@ -72,6 +72,7 @@ pub(super) struct ExpressionIR {
     dependence_annotations: Vec<DependenceClass>,
     dependence_warnings: Vec<String>,
     separable_mul_candidates: Vec<SeparableMulCandidate>,
+    normalization_plan: NormalizationPlan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +80,12 @@ pub(super) struct SeparableMulCandidate {
     pub node_index: usize,
     pub left_dependence: DependenceClass,
     pub right_dependence: DependenceClass,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct NormalizationPlan {
+    pub cached_terms: Vec<usize>,
+    pub residual_terms: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -218,6 +225,7 @@ impl ExpressionIR {
             dependence_annotations: Vec::new(),
             dependence_warnings: Vec::new(),
             separable_mul_candidates: Vec::new(),
+            normalization_plan: NormalizationPlan::default(),
         }
     }
 
@@ -245,6 +253,10 @@ impl ExpressionIR {
 
     pub(super) fn separable_mul_candidates(&self) -> &[SeparableMulCandidate] {
         &self.separable_mul_candidates
+    }
+
+    pub(super) fn normalization_plan(&self) -> &NormalizationPlan {
+        &self.normalization_plan
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -471,6 +483,8 @@ pub(super) fn compile_expression_ir(
     );
     ir.separable_mul_candidates =
         collect_separable_mul_candidates(&ir.nodes, &ir.dependence_annotations);
+    ir.normalization_plan =
+        build_normalization_plan(&ir.nodes, ir.root, &ir.separable_mul_candidates);
     ir
 }
 
@@ -562,6 +576,54 @@ fn collect_separable_mul_candidates(
         }
     }
     candidates
+}
+
+fn build_normalization_plan(
+    nodes: &[IrNode],
+    root: usize,
+    separable_mul_candidates: &[SeparableMulCandidate],
+) -> NormalizationPlan {
+    fn collect_contributing(nodes: &[IrNode], root: usize) -> Vec<usize> {
+        let mut seen = vec![false; nodes.len()];
+        let mut stack = vec![root];
+        while let Some(node_index) = stack.pop() {
+            if seen.get(node_index).copied().unwrap_or(true) {
+                continue;
+            }
+            seen[node_index] = true;
+            match nodes[node_index] {
+                IrNode::Unary { input, .. } => stack.push(input),
+                IrNode::Binary { left, right, .. } => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                IrNode::Constant(_) | IrNode::Amp(_) => {}
+            }
+        }
+        seen.iter()
+            .enumerate()
+            .filter_map(|(index, used)| used.then_some(index))
+            .collect()
+    }
+
+    let contributing = collect_contributing(nodes, root);
+    let mut cached_terms = separable_mul_candidates
+        .iter()
+        .map(|candidate| candidate.node_index)
+        .filter(|index| contributing.contains(index))
+        .collect::<Vec<_>>();
+    cached_terms.sort_unstable();
+    cached_terms.dedup();
+
+    let mut residual_terms = contributing
+        .into_iter()
+        .filter(|index| cached_terms.binary_search(index).is_err())
+        .collect::<Vec<_>>();
+    residual_terms.sort_unstable();
+    NormalizationPlan {
+        cached_terms,
+        residual_terms,
+    }
 }
 
 struct ConstantFoldPass;
@@ -973,5 +1035,56 @@ mod tests {
             &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
         );
         assert!(ir.separable_mul_candidates().is_empty());
+    }
+
+    #[test]
+    fn test_normalization_plan_partitions_separable_terms() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert_eq!(ir.normalization_plan().cached_terms.len(), 1);
+        let cached = ir.normalization_plan().cached_terms[0];
+        assert_eq!(cached, ir.root);
+        assert!(ir
+            .normalization_plan()
+            .residual_terms
+            .iter()
+            .all(|index| *index != cached));
+    }
+
+    #[test]
+    fn test_normalization_plan_non_separable_is_residual_only() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::CacheOnly],
+        );
+        assert!(ir.normalization_plan().cached_terms.is_empty());
+        assert!(ir.normalization_plan().residual_terms.contains(&ir.root));
+    }
+
+    #[test]
+    fn test_normalization_plan_stable_under_specialization() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, false],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert!(ir.normalization_plan().cached_terms.is_empty());
+        assert!(ir.normalization_plan().residual_terms.contains(&ir.root));
     }
 }
