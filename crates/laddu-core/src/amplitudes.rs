@@ -27,7 +27,6 @@ fn next_amplitude_id() -> u64 {
 #[allow(dead_code)]
 mod ir;
 
-#[cfg(feature = "expression-ir")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Dependence classification used by expression-IR diagnostics.
 pub enum ExpressionDependence {
@@ -46,6 +45,17 @@ impl From<ir::DependenceClass> for ExpressionDependence {
             ir::DependenceClass::ParameterOnly => Self::ParameterOnly,
             ir::DependenceClass::CacheOnly => Self::CacheOnly,
             ir::DependenceClass::Mixed => Self::Mixed,
+        }
+    }
+}
+
+#[cfg(feature = "expression-ir")]
+impl From<ExpressionDependence> for ir::DependenceClass {
+    fn from(value: ExpressionDependence) -> Self {
+        match value {
+            ExpressionDependence::ParameterOnly => Self::ParameterOnly,
+            ExpressionDependence::CacheOnly => Self::CacheOnly,
+            ExpressionDependence::Mixed => Self::Mixed,
         }
     }
 }
@@ -165,6 +175,12 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// depend on metadata.
     fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
         Ok(())
+    }
+    /// Optional dependence hint used by expression-IR diagnostics/planning.
+    ///
+    /// The default returns [`ExpressionDependence::Mixed`] for backward compatibility.
+    fn dependence_hint(&self) -> ExpressionDependence {
+        ExpressionDependence::Mixed
     }
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on event data,
@@ -1117,7 +1133,11 @@ impl Expression {
             for &index in resources.active_indices() {
                 active_amplitudes[index] = true;
             }
-            ir::compile_expression_ir(&self.tree, &active_amplitudes)
+            let amplitude_dependencies = amplitudes
+                .iter()
+                .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+                .collect::<Vec<_>>();
+            ir::compile_expression_ir(&self.tree, &active_amplitudes, &amplitude_dependencies)
         };
         Ok(Evaluator {
             amplitudes,
@@ -2614,7 +2634,7 @@ mod tests {
     use crate::data::{test_dataset, test_event, DatasetMetadata};
 
     use super::*;
-    use crate::resources::{Cache, ParameterID, Parameters, Resources};
+    use crate::resources::{Cache, ParameterID, Parameters, Resources, ScalarID};
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
 
@@ -2665,6 +2685,79 @@ mod tests {
             if let ParameterID::Parameter(ind) = self.pid_im {
                 gradient[ind] = Complex64::I;
             }
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct ParameterOnlyScalar {
+        name: String,
+        value: ParameterLike,
+        pid: ParameterID,
+    }
+
+    impl ParameterOnlyScalar {
+        #[allow(clippy::new_ret_no_self)]
+        pub fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                value,
+                pid: Default::default(),
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for ParameterOnlyScalar {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.pid = resources.register_parameter(&self.value)?;
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::ParameterOnly
+        }
+
+        fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+            Complex64::new(parameters.get(self.pid), 0.0)
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct CacheOnlyScalar {
+        name: String,
+        beam_energy: ScalarID,
+    }
+
+    impl CacheOnlyScalar {
+        #[allow(clippy::new_ret_no_self)]
+        pub fn new(name: &str) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                beam_energy: Default::default(),
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CacheOnlyScalar {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.beam_energy =
+                resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::CacheOnly
+        }
+
+        fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.beam_energy, event.p4_at(0).e());
+        }
+
+        fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(cache.get_scalar(self.beam_energy), 0.0)
         }
     }
 
@@ -2809,6 +2902,42 @@ mod tests {
         assert_eq!(
             evaluator.expression_root_dependence(),
             ExpressionDependence::Mixed
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_default_dependence_hint_is_mixed() {
+        let expr = ComplexScalar::new("c", parameter("cr"), parameter("ci")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_parameter_only_dependence_hint_propagates() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::ParameterOnly
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_cache_only_dependence_hint_propagates() {
+        let expr = CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::CacheOnly
         );
     }
 
