@@ -70,6 +70,7 @@ pub(super) struct ExpressionIR {
     nodes: Vec<IrNode>,
     root: IrValueId,
     dependence_annotations: Vec<DependenceClass>,
+    dependence_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -207,6 +208,7 @@ impl ExpressionIR {
             nodes,
             root,
             dependence_annotations: Vec::new(),
+            dependence_warnings: Vec::new(),
         }
     }
 
@@ -226,6 +228,10 @@ impl ExpressionIR {
 
     pub(super) fn node_dependence_annotations(&self) -> &[DependenceClass] {
         &self.dependence_annotations
+    }
+
+    pub(super) fn dependence_warnings(&self) -> &[String] {
+        &self.dependence_warnings
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -444,8 +450,65 @@ pub(super) fn compile_expression_ir(
         .constant_fold()
         .dependence_annotate(amplitude_dependencies.to_vec())
         .run(&mut ir);
-    let _expression_dependence = ir.root_dependence();
+    let expression_dependence = ir.root_dependence();
+    ir.dependence_warnings = collect_dependence_warnings(
+        active_amplitudes,
+        amplitude_dependencies,
+        expression_dependence,
+    );
     ir
+}
+
+fn collect_dependence_warnings(
+    active_amplitudes: &[bool],
+    amplitude_dependencies: &[DependenceClass],
+    root_dependence: DependenceClass,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let has_active_parameter_only = active_amplitudes.iter().enumerate().any(|(index, active)| {
+        *active
+            && matches!(
+                amplitude_dependencies.get(index),
+                Some(DependenceClass::ParameterOnly)
+            )
+    });
+    let has_active_cache_only = active_amplitudes.iter().enumerate().any(|(index, active)| {
+        *active
+            && matches!(
+                amplitude_dependencies.get(index),
+                Some(DependenceClass::CacheOnly)
+            )
+    });
+    let has_unknown_active_hint = active_amplitudes
+        .iter()
+        .enumerate()
+        .any(|(index, active)| *active && amplitude_dependencies.get(index).is_none());
+
+    if root_dependence == DependenceClass::ParameterOnly && has_active_cache_only {
+        warnings.push(
+            "root dependence is ParameterOnly while active CacheOnly amplitude hints exist"
+                .to_string(),
+        );
+    }
+    if root_dependence == DependenceClass::CacheOnly && has_active_parameter_only {
+        warnings.push(
+            "root dependence is CacheOnly while active ParameterOnly amplitude hints exist"
+                .to_string(),
+        );
+    }
+    if has_active_parameter_only && has_active_cache_only {
+        warnings.push(
+            "both ParameterOnly and CacheOnly amplitude hints are active; expression dependence may be Mixed"
+                .to_string(),
+        );
+    }
+    if has_unknown_active_hint {
+        warnings.push(
+            "one or more active amplitudes are missing dependence hints; defaulting to Mixed"
+                .to_string(),
+        );
+    }
+    warnings
 }
 
 struct ConstantFoldPass;
@@ -649,7 +712,7 @@ impl DependenceAnnotatePass {
 mod tests {
     use num::complex::Complex64;
 
-    use super::{DependenceClass, ExpressionIR, ExpressionIrPipeline};
+    use super::{compile_expression_ir, DependenceClass, ExpressionIR, ExpressionIrPipeline};
     use crate::amplitudes::ExpressionNode;
 
     #[test]
@@ -785,5 +848,32 @@ mod tests {
             .iter()
             .all(|class| *class == DependenceClass::ParameterOnly));
         assert_eq!(ir.root_dependence(), DependenceClass::ParameterOnly);
+    }
+
+    #[test]
+    fn test_dependence_warning_when_parameter_and_cache_hints_are_both_active() {
+        let tree = ExpressionNode::Add(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        assert!(ir
+            .dependence_warnings()
+            .iter()
+            .any(|warning: &String| warning.contains("both ParameterOnly and CacheOnly")));
+    }
+
+    #[test]
+    fn test_dependence_warning_when_active_hint_is_missing() {
+        let tree = ExpressionNode::Amp(0);
+        let ir = compile_expression_ir(&tree, &[true], &[]);
+        assert!(ir
+            .dependence_warnings()
+            .iter()
+            .any(|warning: &String| warning.contains("missing dependence hints")));
     }
 }

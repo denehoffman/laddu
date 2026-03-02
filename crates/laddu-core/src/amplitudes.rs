@@ -1413,6 +1413,12 @@ impl Evaluator {
             .collect()
     }
 
+    #[cfg(feature = "expression-ir")]
+    /// Warning-level diagnostics for potentially inconsistent dependence hints.
+    pub fn expression_dependence_warnings(&self) -> Vec<String> {
+        self.expression_ir.dependence_warnings().to_vec()
+    }
+
     pub fn evaluate_expression_value_with_scratch(
         &self,
         amplitude_values: &[Complex64],
@@ -2939,6 +2945,19 @@ mod tests {
             evaluator.expression_root_dependence(),
             ExpressionDependence::CacheOnly
         );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_dependence_warnings_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            + &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator
+            .expression_dependence_warnings()
+            .iter()
+            .any(|warning| warning.contains("both ParameterOnly and CacheOnly")));
     }
 
     #[test]
