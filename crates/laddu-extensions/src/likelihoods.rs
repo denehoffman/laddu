@@ -4450,6 +4450,17 @@ mod tests {
         fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid), 0.0) * cache.get_scalar(self.sid)
         }
+
+        fn compute_gradient(
+            &self,
+            _parameters: &Parameters,
+            cache: &Cache,
+            gradient: &mut DVector<Complex64>,
+        ) {
+            if let ParameterID::Parameter(index) = self.pid {
+                gradient[index] = Complex64::new(cache.get_scalar(self.sid), 0.0);
+            }
+        }
     }
 
     fn dataset_with_weights(weights: &[f64]) -> Arc<Dataset> {
@@ -4819,6 +4830,32 @@ mod tests {
 
         let value = nll.evaluate(&params).unwrap();
         assert_relative_eq!(value, expected, epsilon = 1e-9, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn nll_evaluate_and_gradient_match_hardcoded_weighted_reference() {
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("alpha"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("beta"), 1).unwrap();
+        let expr = (&amp_a + &amp_b).norm_sqr();
+        let data = dataset_with_two_p4_and_weights(
+            &[(1.0, 0.8), (2.5, 1.7), (4.0, 2.4), (3.3, 1.1)],
+            &[0.7, 1.2, 0.9, 1.5],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[(1.5, 1.0), (3.0, 2.1), (5.5, 2.9), (2.0, 1.2), (4.2, 1.8)],
+            &[0.8, 1.4, 0.6, 1.1, 0.75],
+        );
+        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let params = vec![0.6, 1.1];
+        assert_eq!(nll.free_parameters(), vec!["alpha", "beta"]);
+
+        let value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(value, 12.242296380697244, epsilon = 1e-12);
+
+        let gradient = nll.evaluate_gradient(&params).unwrap();
+        assert_eq!(gradient.len(), 2);
+        assert_relative_eq!(gradient[0], 37.78259267741666, epsilon = 1e-12);
+        assert_relative_eq!(gradient[1], 21.8538272590435, epsilon = 1e-12);
     }
 
     #[test]

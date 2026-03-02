@@ -3257,10 +3257,11 @@ impl Amplitude for TestAmplitude {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::{test_dataset, test_event, DatasetMetadata};
+    use crate::data::{test_dataset, test_event, DatasetMetadata, EventData};
 
     use super::*;
     use crate::resources::{Cache, ParameterID, Parameters, Resources, ScalarID};
+    use crate::utils::vectors::Vec4;
     use approx::assert_relative_eq;
     use serde::{Deserialize, Serialize};
 
@@ -3778,6 +3779,57 @@ mod tests {
         assert_relative_eq!(actual, expected, epsilon = 1e-10);
     }
 
+    #[test]
+    fn test_weighted_sums_match_hardcoded_reference_values() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+
+        let metadata = Arc::new(DatasetMetadata::default());
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                    aux: vec![],
+                    weight: 0.5,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                    aux: vec![],
+                    weight: -1.25,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                    aux: vec![],
+                    weight: 2.0,
+                }),
+            ],
+            metadata,
+        ));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![0.7, -1.1, 0.9, -0.4];
+
+        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(weighted_value_sum, 22.7725, epsilon = 1e-12);
+
+        let weighted_gradient_sum = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        let free_parameters = evaluator
+            .free_parameters()
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(free_parameters, vec!["p1", "p2", "m1r", "m1i"]);
+        let expected_gradient = [43.925, 7.25, 28.525, 0.0];
+        assert_eq!(weighted_gradient_sum.len(), expected_gradient.len());
+        for (actual, expected) in weighted_gradient_sum.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(*actual, *expected, epsilon = 1e-9);
+        }
+    }
+
     #[cfg(feature = "expression-ir")]
     #[test]
     fn test_evaluate_weighted_gradient_sum_local_respects_signed_cached_terms() {
@@ -3865,6 +3917,78 @@ mod tests {
             evaluator.expression_root_dependence(),
             ExpressionDependence::Mixed
         );
+    }
+
+    #[test]
+    fn test_weighted_sums_match_baseline_after_activation_changes() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+
+        let expected_value = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        assert_relative_eq!(
+            evaluator.evaluate_weighted_value_sum_local(&params),
+            expected_value,
+            epsilon = 1e-10
+        );
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+
+        evaluator.isolate_many(&["p1", "c1", "m1", "c3"]);
+
+        let expected_value = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        assert_relative_eq!(
+            evaluator.evaluate_weighted_value_sum_local(&params),
+            expected_value,
+            epsilon = 1e-10
+        );
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
     }
 
     #[test]
