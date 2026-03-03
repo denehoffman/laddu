@@ -3473,6 +3473,9 @@ mod tests {
         parameters: Vec<f64>,
     }
 
+    const DETERMINISTIC_STRICT_ABS_TOL: f64 = 1e-12;
+    const DETERMINISTIC_STRICT_REL_TOL: f64 = 1e-10;
+
     fn deterministic_fixture_dataset() -> Arc<Dataset> {
         let metadata = Arc::new(DatasetMetadata::default());
         let events = vec![
@@ -3567,9 +3570,19 @@ mod tests {
             );
         let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
         let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
-        assert_relative_eq!(actual_value, expected_value, epsilon = 1e-10);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
         for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
         }
     }
 

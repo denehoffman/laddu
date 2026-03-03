@@ -4579,6 +4579,63 @@ mod tests {
         parameters: Vec<f64>,
     }
 
+    const DETERMINISTIC_STRICT_ABS_TOL: f64 = 1e-12;
+    const DETERMINISTIC_STRICT_REL_TOL: f64 = 1e-10;
+
+    fn assert_nll_fixture_matches_weighted_baseline(fixture: &DeterministicNllFixture) {
+        let expected_value = super::evaluate_weighted_expression_sum_local(
+            &fixture.nll.data_evaluator,
+            &fixture.parameters,
+            |l| f64::ln(l.re),
+        );
+        let expected_mc_term = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters);
+        let n_mc = fixture.nll.accmc_evaluator.dataset.n_events_weighted();
+        let expected_value = -2.0 * (expected_value - expected_mc_term / n_mc);
+
+        let expected_data_gradient = fixture
+            .nll
+            .evaluate_data_gradient_term_local(&fixture.parameters);
+        let expected_mc_gradient = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let expected_gradient = -2.0 * (expected_data_gradient - expected_mc_gradient / n_mc);
+
+        let actual_value = fixture
+            .nll
+            .evaluate(&fixture.parameters)
+            .expect("fixture NLL value should evaluate");
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let actual_gradient = fixture
+            .nll
+            .evaluate_gradient(&fixture.parameters)
+            .expect("fixture NLL gradient should evaluate");
+        assert_eq!(
+            actual_gradient.len(),
+            expected_gradient.len(),
+            "fixture NLL gradient length mismatch (actual={}, expected={})",
+            actual_gradient.len(),
+            expected_gradient.len()
+        );
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
     fn make_deterministic_nll_fixture(kind: DeterministicModelKind) -> DeterministicNllFixture {
         let data = dataset_with_two_p4_and_weights(
             &[
@@ -4942,18 +4999,7 @@ mod tests {
         let non_separable = make_deterministic_nll_fixture(DeterministicModelKind::NonSeparable);
 
         for fixture in [separable, partial, non_separable] {
-            let value = fixture
-                .nll
-                .evaluate(&fixture.parameters)
-                .expect("fixture NLL value should evaluate");
-            assert!(value.is_finite());
-
-            let gradient = fixture
-                .nll
-                .evaluate_gradient(&fixture.parameters)
-                .expect("fixture NLL gradient should evaluate");
-            assert_eq!(gradient.len(), fixture.parameters.len());
-            assert!(gradient.iter().all(|item| item.is_finite()));
+            assert_nll_fixture_matches_weighted_baseline(&fixture);
         }
     }
 
