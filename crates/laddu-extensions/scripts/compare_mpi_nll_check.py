@@ -11,22 +11,31 @@ from dataclasses import dataclass
 @dataclass
 class CheckResult:
     mode: str
+    case: str
     value: float
     gradient: list[float]
 
 
-def parse_json_line(output: str, mode: str) -> CheckResult:
+def parse_json_lines(output: str, mode: str) -> dict[str, CheckResult]:
+    cases: dict[str, CheckResult] = {}
     for line in output.splitlines():
         line = line.strip()
         if not line.startswith('{'):
             continue
         obj = json.loads(line)
-        if obj.get('mode') == mode:
-            return CheckResult(
-                mode=mode, value=float(obj['value']), gradient=list(obj['gradient'])
-            )
-    msg = f"did not find JSON output for mode '{mode}'"
-    raise RuntimeError(msg)
+        if obj.get('mode') != mode:
+            continue
+        case = str(obj['case'])
+        cases[case] = CheckResult(
+            mode=mode,
+            case=case,
+            value=float(obj['value']),
+            gradient=list(obj['gradient']),
+        )
+    if not cases:
+        msg = f"did not find JSON output for mode '{mode}'"
+        raise RuntimeError(msg)
+    return cases
 
 
 def run_command(cmd: list[str]) -> str:
@@ -38,29 +47,50 @@ def close(a: float, b: float, rel_tol: float, abs_tol: float) -> bool:
     return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
 
 
-def compare(local: CheckResult, mpi: CheckResult, rel_tol: float, abs_tol: float) -> None:
-    if len(local.gradient) != len(mpi.gradient):
-        msg = (
-            f'gradient length mismatch: local={len(local.gradient)} '
-            f'mpi={len(mpi.gradient)}'
-        )
+def compare(
+    local_cases: dict[str, CheckResult],
+    mpi_cases: dict[str, CheckResult],
+    rel_tol: float,
+    abs_tol: float,
+) -> None:
+    local_names = sorted(local_cases.keys())
+    mpi_names = sorted(mpi_cases.keys())
+    if local_names != mpi_names:
+        msg = f'case mismatch: local={local_names} mpi={mpi_names}'
         raise RuntimeError(msg)
 
-    if not close(local.value, mpi.value, rel_tol, abs_tol):
-        msg = f'value mismatch: local={local.value} mpi={mpi.value}'
-        raise RuntimeError(msg)
-
-    for i, (lv, mv) in enumerate(zip(local.gradient, mpi.gradient)):
-        if not close(lv, mv, rel_tol, abs_tol):
-            msg = f'gradient[{i}] mismatch: local={lv} mpi={mv}'
+    for name in local_names:
+        local = local_cases[name]
+        mpi = mpi_cases[name]
+        if len(local.gradient) != len(mpi.gradient):
+            msg = (
+                f"gradient length mismatch for case '{name}': "
+                f'local={len(local.gradient)} mpi={len(mpi.gradient)}'
+            )
             raise RuntimeError(msg)
+        if not close(local.value, mpi.value, rel_tol, abs_tol):
+            msg = f"value mismatch for case '{name}': local={local.value} mpi={mpi.value}"
+            raise RuntimeError(msg)
+        for i, (lv, mv) in enumerate(zip(local.gradient, mpi.gradient)):
+            if not close(lv, mv, rel_tol, abs_tol):
+                msg = f"gradient[{i}] mismatch for case '{name}': local={lv} mpi={mv}"
+                raise RuntimeError(msg)
 
 
 def main() -> int:
     rel_tol = 1e-8
     abs_tol = 1e-10
 
-    local_cmd = ['cargo', 'run', '-p', 'laddu-extensions', '--bin', 'mpi_nll_check']
+    local_cmd = [
+        'cargo',
+        'run',
+        '-p',
+        'laddu-extensions',
+        '--features',
+        'laddu-core/expression-ir',
+        '--bin',
+        'mpi_nll_check',
+    ]
     mpi_cmd = [
         'mpirun',
         '-n',
@@ -70,7 +100,7 @@ def main() -> int:
         '-p',
         'laddu-extensions',
         '--features',
-        'mpi',
+        'mpi,laddu-core/expression-ir',
         '--bin',
         'mpi_nll_check',
     ]
@@ -78,13 +108,18 @@ def main() -> int:
     local_output = run_command(local_cmd)
     mpi_output = run_command(mpi_cmd)
 
-    local = parse_json_line(local_output, 'local')
-    mpi = parse_json_line(mpi_output, 'mpi')
-    compare(local, mpi, rel_tol=rel_tol, abs_tol=abs_tol)
+    local_cases = parse_json_lines(local_output, 'local')
+    mpi_cases = parse_json_lines(mpi_output, 'mpi')
+    compare(local_cases, mpi_cases, rel_tol=rel_tol, abs_tol=abs_tol)
 
     print('mpi_nll_check comparison passed')
-    print(f'local value={local.value:.17e}')
-    print(f'mpi value={mpi.value:.17e}')
+    for case in sorted(local_cases.keys()):
+        local = local_cases[case]
+        mpi = mpi_cases[case]
+        print(
+            f'{case}: local={local.value:.17e} mpi={mpi.value:.17e} '
+            f'grad_dim={len(local.gradient)}'
+        )
     return 0
 
 
