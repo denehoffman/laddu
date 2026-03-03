@@ -4364,7 +4364,7 @@ mod tests {
         Expression, LadduError, LadduResult,
     };
     #[cfg(feature = "mpi")]
-    use mpi::topology::Communicator;
+    use mpi::topology::{Communicator, SimpleCommunicator};
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
@@ -4604,10 +4604,7 @@ mod tests {
             .evaluate_weighted_gradient_sum_local(&fixture.parameters);
         let expected_gradient = -2.0 * (expected_data_gradient - expected_mc_gradient / n_mc);
 
-        let actual_value = fixture
-            .nll
-            .evaluate(&fixture.parameters)
-            .expect("fixture NLL value should evaluate");
+        let actual_value = fixture.nll.evaluate_local(&fixture.parameters);
         assert_relative_eq!(
             actual_value,
             expected_value,
@@ -4615,10 +4612,7 @@ mod tests {
             max_relative = DETERMINISTIC_STRICT_REL_TOL
         );
 
-        let actual_gradient = fixture
-            .nll
-            .evaluate_gradient(&fixture.parameters)
-            .expect("fixture NLL gradient should evaluate");
+        let actual_gradient = fixture.nll.evaluate_gradient_local(&fixture.parameters);
         assert_eq!(
             actual_gradient.len(),
             expected_gradient.len(),
@@ -4627,6 +4621,62 @@ mod tests {
             expected_gradient.len()
         );
         for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn assert_nll_fixture_matches_mpi_reduced_baseline(
+        fixture: &DeterministicNllFixture,
+        world: &SimpleCommunicator,
+    ) {
+        let data_term_local = super::evaluate_weighted_expression_sum_local(
+            &fixture.nll.data_evaluator,
+            &fixture.parameters,
+            |l| f64::ln(l.re),
+        );
+        let mc_term_local = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters);
+        let n_mc = fixture.nll.accmc_evaluator.dataset.n_events_weighted();
+        let data_term = super::reduce_scalar(world, data_term_local);
+        let mc_term = super::reduce_scalar(world, mc_term_local);
+        let expected_value = -2.0 * (data_term - mc_term / n_mc);
+        let mpi_value = fixture.nll.evaluate_mpi_value(&fixture.parameters, world);
+        assert_relative_eq!(
+            mpi_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let data_gradient_local = fixture
+            .nll
+            .evaluate_data_gradient_term_local(&fixture.parameters);
+        let mc_gradient_local = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let data_gradient = super::reduce_gradient(world, &data_gradient_local);
+        let mc_gradient = super::reduce_gradient(world, &mc_gradient_local);
+        let expected_gradient = -2.0 * (data_gradient - mc_gradient / n_mc);
+        let mpi_gradient = fixture
+            .nll
+            .evaluate_mpi_gradient(&fixture.parameters, world);
+        assert_eq!(
+            mpi_gradient.len(),
+            expected_gradient.len(),
+            "fixture MPI gradient length mismatch (actual={}, expected={})",
+            mpi_gradient.len(),
+            expected_gradient.len()
+        );
+        for (actual_item, expected_item) in mpi_gradient.iter().zip(expected_gradient.iter()) {
             assert_relative_eq!(
                 *actual_item,
                 *expected_item,
@@ -5004,6 +5054,18 @@ mod tests {
     }
 
     #[test]
+    fn nll_deterministic_fixture_matches_baseline_across_activation_toggles() {
+        let fixture = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+
+        fixture.nll.isolate_many(&["p", "c"]);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+
+        fixture.nll.activate_all();
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+    }
+
+    #[test]
     fn nll_project_returns_weighted_intensity() {
         let (nll, params) = make_constant_nll();
         let projection = nll.project_weights_local(&params, None).unwrap();
@@ -5324,6 +5386,30 @@ mod tests {
         let expected_gradient = -2.0 * (data_gradient - mc_gradient / n_mc);
         let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
         assert_relative_eq!(mpi_gradient, expected_gradient);
+
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn mpi_deterministic_fixture_matches_local_and_reduced_baselines_across_activation_toggles() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let fixture = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
+
+        fixture.nll.isolate_many(&["p", "c"]);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
+
+        fixture.nll.activate_all();
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
 
         finalize_mpi();
     }

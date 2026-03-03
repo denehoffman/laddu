@@ -3587,6 +3587,125 @@ mod tests {
     }
 
     #[test]
+    fn test_deterministic_fixture_weighted_sums_stable_across_activation_mask_toggle() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let original_mask = evaluator.active_mask();
+
+        let expected_value = evaluator
+            .evaluate_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(
+                DVector::zeros(fixture.parameters.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+
+        evaluator.isolate_many(&["p", "c"]);
+        let expected_value = evaluator
+            .evaluate_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(
+                DVector::zeros(fixture.parameters.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+
+        evaluator
+            .set_active_mask(&original_mask)
+            .expect("original fixture active mask should restore");
+        let expected_value = evaluator
+            .evaluate_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(
+                DVector::zeros(fixture.parameters.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
+    #[test]
     fn test_deterministic_fixtures_match_eventwise_weighted_sums() {
         let separable = make_deterministic_fixture(DeterministicFixtureKind::Separable);
         let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
