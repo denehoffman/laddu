@@ -3460,6 +3460,167 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum DeterministicFixtureKind {
+        Separable,
+        Partial,
+        NonSeparable,
+    }
+
+    struct DeterministicFixture {
+        expression: Expression,
+        dataset: Arc<Dataset>,
+        parameters: Vec<f64>,
+    }
+
+    fn deterministic_fixture_dataset() -> Arc<Dataset> {
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: -1.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 2.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 0.75,
+            }),
+        ];
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    fn make_deterministic_fixture(kind: DeterministicFixtureKind) -> DeterministicFixture {
+        let dataset = deterministic_fixture_dataset();
+        match kind {
+            DeterministicFixtureKind::Separable => {
+                let p1 = ParameterOnlyScalar::new("p1", parameter("p1"))
+                    .expect("separable p1 should build");
+                let p2 = ParameterOnlyScalar::new("p2", parameter("p2"))
+                    .expect("separable p2 should build");
+                let c1 = CacheOnlyScalar::new("c1").expect("separable c1 should build");
+                let c2 = CacheOnlyScalar::new("c2").expect("separable c2 should build");
+                DeterministicFixture {
+                    expression: (&p1 * &c1) + &(&p2 * &c2),
+                    dataset,
+                    parameters: vec![0.4, -0.3],
+                }
+            }
+            DeterministicFixtureKind::Partial => {
+                let p =
+                    ParameterOnlyScalar::new("p", parameter("p")).expect("partial p should build");
+                let c = CacheOnlyScalar::new("c").expect("partial c should build");
+                let m = TestAmplitude::new("m", parameter("mr"), parameter("mi"))
+                    .expect("partial m should build");
+                DeterministicFixture {
+                    expression: (&p * &c) + &m,
+                    dataset,
+                    parameters: vec![0.55, 0.2, -0.15],
+                }
+            }
+            DeterministicFixtureKind::NonSeparable => {
+                let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i"))
+                    .expect("non-separable m1 should build");
+                let m2 = TestAmplitude::new("m2", parameter("m2r"), parameter("m2i"))
+                    .expect("non-separable m2 should build");
+                DeterministicFixture {
+                    expression: &m1 * &m2,
+                    dataset,
+                    parameters: vec![0.25, -0.4, 0.6, 0.1],
+                }
+            }
+        }
+    }
+
+    fn assert_weighted_sum_matches_eventwise_baseline(fixture: &DeterministicFixture) {
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let expected_value = evaluator
+            .evaluate_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(
+                DVector::zeros(fixture.parameters.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        assert_relative_eq!(actual_value, expected_value, epsilon = 1e-10);
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_deterministic_fixtures_match_eventwise_weighted_sums() {
+        let separable = make_deterministic_fixture(DeterministicFixtureKind::Separable);
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let non_separable = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+
+        assert_weighted_sum_matches_eventwise_baseline(&separable);
+        assert_weighted_sum_matches_eventwise_baseline(&partial);
+        assert_weighted_sum_matches_eventwise_baseline(&non_separable);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_deterministic_fixtures_cover_separable_partial_non_separable_models() {
+        let separable = make_deterministic_fixture(DeterministicFixtureKind::Separable);
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let non_separable = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+
+        let separable_evaluator = separable
+            .expression
+            .load(&separable.dataset)
+            .expect("separable evaluator should load");
+        let partial_evaluator = partial
+            .expression
+            .load(&partial.dataset)
+            .expect("partial evaluator should load");
+        let non_separable_evaluator = non_separable
+            .expression
+            .load(&non_separable.dataset)
+            .expect("non-separable evaluator should load");
+
+        assert_eq!(
+            separable_evaluator
+                .expression_precomputed_cached_integrals()
+                .len(),
+            2
+        );
+        assert_eq!(
+            partial_evaluator
+                .expression_precomputed_cached_integrals()
+                .len(),
+            1
+        );
+        assert!(non_separable_evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+    }
+
     #[test]
     fn test_batch_evaluation() {
         let expr = TestAmplitude::new("test", parameter("real"), parameter("imag")).unwrap();

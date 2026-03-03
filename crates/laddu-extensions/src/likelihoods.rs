@@ -4357,9 +4357,9 @@ mod tests {
     #[cfg(feature = "mpi")]
     use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
     use laddu_core::{
-        amplitudes::{parameter, Amplitude, AmplitudeID, ParameterLike},
+        amplitudes::{parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike},
         data::{Dataset, DatasetMetadata, EventData},
-        resources::{Cache, ParameterID, Parameters, Resources},
+        resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
         utils::vectors::Vec4,
         Expression, LadduError, LadduResult,
     };
@@ -4399,6 +4399,10 @@ mod tests {
             resources.register_amplitude(&self.name)
         }
 
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::ParameterOnly
+        }
+
         fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid), 0.0)
         }
@@ -4420,7 +4424,7 @@ mod tests {
         name: String,
         parameter: ParameterLike,
         pid: ParameterID,
-        sid: laddu_core::resources::ScalarID,
+        sid: ScalarID,
         p4_index: usize,
     }
 
@@ -4431,7 +4435,7 @@ mod tests {
                 name: name.to_string(),
                 parameter,
                 pid: ParameterID::default(),
-                sid: laddu_core::resources::ScalarID::default(),
+                sid: ScalarID::default(),
                 p4_index,
             }
             .into_expression()
@@ -4444,6 +4448,10 @@ mod tests {
             self.pid = resources.register_parameter(&self.parameter)?;
             self.sid = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
             resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::Mixed
         }
 
         fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
@@ -4463,6 +4471,45 @@ mod tests {
             if let ParameterID::Parameter(index) = self.pid {
                 gradient[index] = Complex64::new(cache.get_scalar(self.sid), 0.0);
             }
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct CacheOnlyBeamAmplitude {
+        name: String,
+        sid: ScalarID,
+        p4_index: usize,
+    }
+
+    impl CacheOnlyBeamAmplitude {
+        #[allow(clippy::new_ret_no_self)]
+        fn new(name: &str, p4_index: usize) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                sid: ScalarID::default(),
+                p4_index,
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CacheOnlyBeamAmplitude {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.sid = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::CacheOnly
+        }
+
+        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
+        }
+
+        fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(cache.get_scalar(self.sid), 0.0)
         }
     }
 
@@ -4518,6 +4565,82 @@ mod tests {
         let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
         let nll = NLL::new(&expr, &data, &mc).unwrap();
         (nll, vec![0.75, -1.25])
+    }
+
+    #[derive(Clone, Copy)]
+    enum DeterministicModelKind {
+        Separable,
+        Partial,
+        NonSeparable,
+    }
+
+    struct DeterministicNllFixture {
+        nll: Box<NLL>,
+        parameters: Vec<f64>,
+    }
+
+    fn make_deterministic_nll_fixture(kind: DeterministicModelKind) -> DeterministicNllFixture {
+        let data = dataset_with_two_p4_and_weights(
+            &[
+                (1.0, 0.8),
+                (2.5, 1.7),
+                (4.0, 2.4),
+                (3.3, 1.1),
+                (5.2, 2.8),
+                (1.7, 0.9),
+            ],
+            &[0.7, 1.2, 0.9, 1.5, 0.8, 1.1],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[
+                (1.5, 1.0),
+                (3.0, 2.1),
+                (5.5, 2.9),
+                (2.0, 1.2),
+                (4.2, 1.8),
+                (2.8, 1.4),
+            ],
+            &[0.8, 1.4, 0.6, 1.1, 0.75, 1.25],
+        );
+
+        match kind {
+            DeterministicModelKind::Separable => {
+                let p1 = ConstantAmplitude::new("p1", parameter("p1"))
+                    .expect("separable p1 should build");
+                let p2 = ConstantAmplitude::new("p2", parameter("p2"))
+                    .expect("separable p2 should build");
+                let c1 = CacheOnlyBeamAmplitude::new("c1", 0).expect("separable c1 should build");
+                let c2 = CacheOnlyBeamAmplitude::new("c2", 1).expect("separable c2 should build");
+                let expression = (&p1 * &c1) + &(&p2 * &c2);
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc).expect("separable NLL should build"),
+                    parameters: vec![0.4, 0.2],
+                }
+            }
+            DeterministicModelKind::Partial => {
+                let p =
+                    ConstantAmplitude::new("p", parameter("p")).expect("partial p should build");
+                let c = CacheOnlyBeamAmplitude::new("c", 0).expect("partial c should build");
+                let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+                    .expect("partial m should build");
+                let expression = (&p * &c) + &m;
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc).expect("partial NLL should build"),
+                    parameters: vec![0.35, 0.25],
+                }
+            }
+            DeterministicModelKind::NonSeparable => {
+                let m1 = CachedBeamScaleAmplitude::new("m1", parameter("m1"), 0)
+                    .expect("non-separable m1 should build");
+                let m2 = CachedBeamScaleAmplitude::new("m2", parameter("m2"), 1)
+                    .expect("non-separable m2 should build");
+                let expression = &m1 * &m2;
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc).expect("non-separable NLL should build"),
+                    parameters: vec![0.2, 0.15],
+                }
+            }
+        }
     }
 
     fn case_nll_evaluate_short(nll: &NLL) -> LadduResult<()> {
@@ -4810,6 +4933,28 @@ mod tests {
         assert_eq!(gradient.len(), 2);
         assert_relative_eq!(gradient[0], 37.78259267741666, epsilon = 1e-12);
         assert_relative_eq!(gradient[1], 21.8538272590435, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_deterministic_fixtures_cover_separable_partial_and_non_separable_models() {
+        let separable = make_deterministic_nll_fixture(DeterministicModelKind::Separable);
+        let partial = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        let non_separable = make_deterministic_nll_fixture(DeterministicModelKind::NonSeparable);
+
+        for fixture in [separable, partial, non_separable] {
+            let value = fixture
+                .nll
+                .evaluate(&fixture.parameters)
+                .expect("fixture NLL value should evaluate");
+            assert!(value.is_finite());
+
+            let gradient = fixture
+                .nll
+                .evaluate_gradient(&fixture.parameters)
+                .expect("fixture NLL gradient should evaluate");
+            assert_eq!(gradient.len(), fixture.parameters.len());
+            assert!(gradient.iter().all(|item| item.is_finite()));
+        }
     }
 
     #[test]
