@@ -71,6 +71,7 @@ pub(super) struct ExpressionIR {
     root: IrValueId,
     dependence_annotations: Vec<DependenceClass>,
     dependence_warnings: Vec<String>,
+    rewrite_diagnostics: Vec<String>,
     separable_mul_candidates: Vec<SeparableMulCandidate>,
     normalization_plan: NormalizationPlan,
 }
@@ -125,6 +126,78 @@ enum IrNodeKey {
         left: IrValueId,
         right: IrValueId,
     },
+}
+
+fn key_for_ir_node(node: &IrNode) -> IrNodeKey {
+    match *node {
+        IrNode::Constant(value) => IrNodeKey::Constant {
+            re_bits: value.re.to_bits(),
+            im_bits: value.im.to_bits(),
+        },
+        IrNode::Amp(idx) => IrNodeKey::Amp(idx),
+        IrNode::Unary { op, input } => IrNodeKey::Unary { op, input },
+        IrNode::Binary { op, left, right } => IrNodeKey::Binary { op, left, right },
+    }
+}
+
+fn intern_ir_node(
+    node: IrNode,
+    nodes: &mut Vec<IrNode>,
+    interned: &mut HashMap<IrNodeKey, IrValueId>,
+) -> IrValueId {
+    let key = key_for_ir_node(&node);
+    if let Some(&existing) = interned.get(&key) {
+        return existing;
+    }
+    let id = nodes.len();
+    nodes.push(node);
+    interned.insert(key, id);
+    id
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RewriteLimits {
+    max_iterations: usize,
+    max_expansions: usize,
+    max_nodes_multiplier: usize,
+    max_nodes_additive: usize,
+}
+
+impl Default for RewriteLimits {
+    fn default() -> Self {
+        Self {
+            max_iterations: 4,
+            max_expansions: 128,
+            max_nodes_multiplier: 4,
+            max_nodes_additive: 32,
+        }
+    }
+}
+
+impl RewriteLimits {
+    fn node_cap(self, baseline_nodes: usize) -> usize {
+        baseline_nodes
+            .saturating_mul(self.max_nodes_multiplier)
+            .max(baseline_nodes.saturating_add(self.max_nodes_additive))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct IrPassReport {
+    changed: bool,
+    rewrites: usize,
+    saturated: bool,
+}
+
+struct IrPassContext<'a> {
+    amplitude_dependencies: &'a [DependenceClass],
+    rewrite_limits: RewriteLimits,
+    diagnostics: Vec<String>,
+}
+
+trait IrPass {
+    fn name(&self) -> &'static str;
+    fn run(&self, ir: &mut ExpressionIR, ctx: &mut IrPassContext<'_>) -> IrPassReport;
 }
 
 impl ExpressionIR {
@@ -245,6 +318,7 @@ impl ExpressionIR {
             root,
             dependence_annotations: Vec::new(),
             dependence_warnings: Vec::new(),
+            rewrite_diagnostics: Vec::new(),
             separable_mul_candidates: Vec::new(),
             normalization_plan: NormalizationPlan::default(),
         }
@@ -270,6 +344,10 @@ impl ExpressionIR {
 
     pub(super) fn dependence_warnings(&self) -> &[String] {
         &self.dependence_warnings
+    }
+
+    pub(super) fn rewrite_diagnostics(&self) -> &[String] {
+        &self.rewrite_diagnostics
     }
 
     pub(super) fn separable_mul_candidates(&self) -> &[SeparableMulCandidate] {
@@ -683,13 +761,12 @@ pub(super) fn compile_expression_ir(
     amplitude_dependencies: &[DependenceClass],
 ) -> ExpressionIR {
     let mut ir = ExpressionIR::from_expression_node(tree);
-    ExpressionIrPipeline::new()
+    ir.rewrite_diagnostics = ExpressionIrPipeline::new()
+        .with_rewrite_limits(RewriteLimits::default())
         .cse()
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
-        .rewrite_algebraic_normalization()
-        .constant_fold()
-        .cse()
+        .rewrite_fixed_point(amplitude_dependencies.to_vec())
         .dependence_annotate(amplitude_dependencies.to_vec())
         .run(&mut ir);
     let expression_dependence = ir.root_dependence();
@@ -978,34 +1055,7 @@ fn build_normalization_plan(
 struct AlgebraicNormalizePass;
 
 impl AlgebraicNormalizePass {
-    fn run(&self, ir: &mut ExpressionIR) {
-        fn key_for(node: &IrNode) -> IrNodeKey {
-            match *node {
-                IrNode::Constant(value) => IrNodeKey::Constant {
-                    re_bits: value.re.to_bits(),
-                    im_bits: value.im.to_bits(),
-                },
-                IrNode::Amp(idx) => IrNodeKey::Amp(idx),
-                IrNode::Unary { op, input } => IrNodeKey::Unary { op, input },
-                IrNode::Binary { op, left, right } => IrNodeKey::Binary { op, left, right },
-            }
-        }
-
-        fn intern_node(
-            node: IrNode,
-            nodes: &mut Vec<IrNode>,
-            interned: &mut HashMap<IrNodeKey, IrValueId>,
-        ) -> IrValueId {
-            let key = key_for(&node);
-            if let Some(&existing) = interned.get(&key) {
-                return existing;
-            }
-            let id = nodes.len();
-            nodes.push(node);
-            interned.insert(key, id);
-            id
-        }
-
+    fn apply(&self, ir: &mut ExpressionIR) -> bool {
         fn rewrite_node(
             node_index: usize,
             conj_context: bool,
@@ -1023,7 +1073,7 @@ impl AlgebraicNormalizePass {
             ) -> IrValueId {
                 let left = rewrite_node(input, false, old_nodes, new_nodes, interned, memo);
                 let right = rewrite_node(input, true, old_nodes, new_nodes, interned, memo);
-                intern_node(
+                intern_ir_node(
                     IrNode::Binary {
                         op: IrBinaryOp::Mul,
                         left,
@@ -1050,7 +1100,7 @@ impl AlgebraicNormalizePass {
                 } else {
                     rewrite_node(input, false, old_nodes, new_nodes, interned, memo)
                 };
-                intern_node(
+                intern_ir_node(
                     IrNode::Unary {
                         op: IrUnaryOp::Real,
                         input: normalized_input,
@@ -1067,12 +1117,12 @@ impl AlgebraicNormalizePass {
             let rewritten = match old_nodes[node_index] {
                 IrNode::Constant(value) => {
                     let folded = if conj_context { value.conj() } else { value };
-                    intern_node(IrNode::Constant(folded), new_nodes, interned)
+                    intern_ir_node(IrNode::Constant(folded), new_nodes, interned)
                 }
                 IrNode::Amp(amp_idx) => {
                     if conj_context {
-                        let base = intern_node(IrNode::Amp(amp_idx), new_nodes, interned);
-                        intern_node(
+                        let base = intern_ir_node(IrNode::Amp(amp_idx), new_nodes, interned);
+                        intern_ir_node(
                             IrNode::Unary {
                                 op: IrUnaryOp::Conj,
                                 input: base,
@@ -1081,7 +1131,7 @@ impl AlgebraicNormalizePass {
                             interned,
                         )
                     } else {
-                        intern_node(IrNode::Amp(amp_idx), new_nodes, interned)
+                        intern_ir_node(IrNode::Amp(amp_idx), new_nodes, interned)
                     }
                 }
                 IrNode::Unary { op, input } => match (conj_context, op) {
@@ -1097,7 +1147,7 @@ impl AlgebraicNormalizePass {
                     (false, _) => {
                         let rewritten_input =
                             rewrite_node(input, false, old_nodes, new_nodes, interned, memo);
-                        intern_node(
+                        intern_ir_node(
                             IrNode::Unary {
                                 op,
                                 input: rewritten_input,
@@ -1112,7 +1162,7 @@ impl AlgebraicNormalizePass {
                     (true, IrUnaryOp::Neg) => {
                         let rewritten_input =
                             rewrite_node(input, true, old_nodes, new_nodes, interned, memo);
-                        intern_node(
+                        intern_ir_node(
                             IrNode::Unary {
                                 op: IrUnaryOp::Neg,
                                 input: rewritten_input,
@@ -1124,7 +1174,7 @@ impl AlgebraicNormalizePass {
                     (true, _) => {
                         let base =
                             rewrite_node(node_index, false, old_nodes, new_nodes, interned, memo);
-                        intern_node(
+                        intern_ir_node(
                             IrNode::Unary {
                                 op: IrUnaryOp::Conj,
                                 input: base,
@@ -1144,7 +1194,7 @@ impl AlgebraicNormalizePass {
                         rewrite_node(left, left_conj, old_nodes, new_nodes, interned, memo);
                     let rewritten_right =
                         rewrite_node(right, right_conj, old_nodes, new_nodes, interned, memo);
-                    intern_node(
+                    intern_ir_node(
                         IrNode::Binary {
                             op,
                             left: rewritten_left,
@@ -1161,9 +1211,10 @@ impl AlgebraicNormalizePass {
         }
 
         if ir.nodes.is_empty() {
-            return;
+            return false;
         }
 
+        let old_root = ir.root;
         let old_nodes = ir.nodes.clone();
         let mut new_nodes = Vec::with_capacity(old_nodes.len());
         let mut interned = HashMap::new();
@@ -1178,13 +1229,466 @@ impl AlgebraicNormalizePass {
         );
         ir.nodes = new_nodes;
         ir.root = root;
+        ir.root != old_root || ir.nodes != old_nodes
+    }
+}
+
+impl IrPass for AlgebraicNormalizePass {
+    fn name(&self) -> &'static str {
+        "rewrite-algebraic-normalization"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, _ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
+        }
+    }
+}
+
+struct ControlledExpansionPass {
+    max_expansions_override: Option<usize>,
+    max_nodes_override: Option<usize>,
+}
+
+impl ControlledExpansionPass {
+    fn new() -> Self {
+        Self {
+            max_expansions_override: None,
+            max_nodes_override: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_limits(max_expansions: usize, max_nodes: usize) -> Self {
+        Self {
+            max_expansions_override: Some(max_expansions),
+            max_nodes_override: Some(max_nodes),
+        }
+    }
+
+    fn apply(
+        &self,
+        ir: &mut ExpressionIR,
+        amplitude_dependencies: &[DependenceClass],
+        rewrite_limits: RewriteLimits,
+    ) -> (bool, usize, bool) {
+        fn is_separable_mul(left: DependenceClass, right: DependenceClass) -> bool {
+            matches!(
+                (left, right),
+                (DependenceClass::ParameterOnly, DependenceClass::CacheOnly)
+                    | (DependenceClass::CacheOnly, DependenceClass::ParameterOnly)
+            )
+        }
+
+        fn sum_terms(node_index: usize, nodes: &[IrNode]) -> Option<(IrBinaryOp, usize, usize)> {
+            match nodes.get(node_index)? {
+                IrNode::Binary {
+                    op: IrBinaryOp::Add,
+                    left,
+                    right,
+                } => Some((IrBinaryOp::Add, *left, *right)),
+                IrNode::Binary {
+                    op: IrBinaryOp::Sub,
+                    left,
+                    right,
+                } => Some((IrBinaryOp::Sub, *left, *right)),
+                _ => None,
+            }
+        }
+
+        #[derive(Clone, Copy)]
+        enum ExpansionCandidate {
+            Left {
+                sum_op: IrBinaryOp,
+                term_a: usize,
+                term_b: usize,
+                factor: usize,
+            },
+            Right {
+                factor: usize,
+                sum_op: IrBinaryOp,
+                term_a: usize,
+                term_b: usize,
+            },
+        }
+
+        fn maybe_expansion_candidate(
+            left: usize,
+            right: usize,
+            nodes: &[IrNode],
+            dependencies: &[DependenceClass],
+        ) -> Option<ExpansionCandidate> {
+            let left_dep = dependencies
+                .get(left)
+                .copied()
+                .unwrap_or(DependenceClass::Mixed);
+            let right_dep = dependencies
+                .get(right)
+                .copied()
+                .unwrap_or(DependenceClass::Mixed);
+            let base = if is_separable_mul(left_dep, right_dep) {
+                1_i32
+            } else {
+                0_i32
+            };
+
+            let left_gain = sum_terms(left, nodes).map(|(sum_op, term_a, term_b)| {
+                let dep_a = dependencies
+                    .get(term_a)
+                    .copied()
+                    .unwrap_or(DependenceClass::Mixed);
+                let dep_b = dependencies
+                    .get(term_b)
+                    .copied()
+                    .unwrap_or(DependenceClass::Mixed);
+                let after = i32::from(is_separable_mul(dep_a, right_dep))
+                    + i32::from(is_separable_mul(dep_b, right_dep));
+                (
+                    after - base,
+                    ExpansionCandidate::Left {
+                        sum_op,
+                        term_a,
+                        term_b,
+                        factor: right,
+                    },
+                )
+            });
+
+            let right_gain = sum_terms(right, nodes).map(|(sum_op, term_a, term_b)| {
+                let dep_a = dependencies
+                    .get(term_a)
+                    .copied()
+                    .unwrap_or(DependenceClass::Mixed);
+                let dep_b = dependencies
+                    .get(term_b)
+                    .copied()
+                    .unwrap_or(DependenceClass::Mixed);
+                let after = i32::from(is_separable_mul(left_dep, dep_a))
+                    + i32::from(is_separable_mul(left_dep, dep_b));
+                (
+                    after - base,
+                    ExpansionCandidate::Right {
+                        factor: left,
+                        sum_op,
+                        term_a,
+                        term_b,
+                    },
+                )
+            });
+
+            match (left_gain, right_gain) {
+                (Some((left_score, left_candidate)), Some((right_score, right_candidate))) => {
+                    if left_score <= 0 && right_score <= 0 {
+                        None
+                    } else if left_score >= right_score {
+                        Some(left_candidate)
+                    } else {
+                        Some(right_candidate)
+                    }
+                }
+                (Some((left_score, left_candidate)), None) if left_score > 0 => {
+                    Some(left_candidate)
+                }
+                (None, Some((right_score, right_candidate))) if right_score > 0 => {
+                    Some(right_candidate)
+                }
+                _ => None,
+            }
+        }
+
+        fn rewrite_node(
+            node_index: usize,
+            old_nodes: &[IrNode],
+            dependencies: &[DependenceClass],
+            new_nodes: &mut Vec<IrNode>,
+            interned: &mut HashMap<IrNodeKey, IrValueId>,
+            memo: &mut HashMap<usize, IrValueId>,
+            expansions_used: &mut usize,
+            max_expansions: usize,
+            max_nodes: usize,
+        ) -> IrValueId {
+            fn rewrite_binary_mul(
+                left: usize,
+                right: usize,
+                old_nodes: &[IrNode],
+                dependencies: &[DependenceClass],
+                new_nodes: &mut Vec<IrNode>,
+                interned: &mut HashMap<IrNodeKey, IrValueId>,
+                memo: &mut HashMap<usize, IrValueId>,
+                expansions_used: &mut usize,
+                max_expansions: usize,
+                max_nodes: usize,
+            ) -> IrValueId {
+                if *expansions_used < max_expansions
+                    && new_nodes.len().saturating_add(2) <= max_nodes
+                {
+                    if let Some(candidate) =
+                        maybe_expansion_candidate(left, right, old_nodes, dependencies)
+                    {
+                        *expansions_used = expansions_used.saturating_add(1);
+                        match candidate {
+                            ExpansionCandidate::Left {
+                                sum_op,
+                                term_a,
+                                term_b,
+                                factor,
+                            } => {
+                                let expanded_left = rewrite_binary_mul(
+                                    term_a,
+                                    factor,
+                                    old_nodes,
+                                    dependencies,
+                                    new_nodes,
+                                    interned,
+                                    memo,
+                                    expansions_used,
+                                    max_expansions,
+                                    max_nodes,
+                                );
+                                let expanded_right = rewrite_binary_mul(
+                                    term_b,
+                                    factor,
+                                    old_nodes,
+                                    dependencies,
+                                    new_nodes,
+                                    interned,
+                                    memo,
+                                    expansions_used,
+                                    max_expansions,
+                                    max_nodes,
+                                );
+                                return intern_ir_node(
+                                    IrNode::Binary {
+                                        op: sum_op,
+                                        left: expanded_left,
+                                        right: expanded_right,
+                                    },
+                                    new_nodes,
+                                    interned,
+                                );
+                            }
+                            ExpansionCandidate::Right {
+                                factor,
+                                sum_op,
+                                term_a,
+                                term_b,
+                            } => {
+                                let expanded_left = rewrite_binary_mul(
+                                    factor,
+                                    term_a,
+                                    old_nodes,
+                                    dependencies,
+                                    new_nodes,
+                                    interned,
+                                    memo,
+                                    expansions_used,
+                                    max_expansions,
+                                    max_nodes,
+                                );
+                                let expanded_right = rewrite_binary_mul(
+                                    factor,
+                                    term_b,
+                                    old_nodes,
+                                    dependencies,
+                                    new_nodes,
+                                    interned,
+                                    memo,
+                                    expansions_used,
+                                    max_expansions,
+                                    max_nodes,
+                                );
+                                return intern_ir_node(
+                                    IrNode::Binary {
+                                        op: sum_op,
+                                        left: expanded_left,
+                                        right: expanded_right,
+                                    },
+                                    new_nodes,
+                                    interned,
+                                );
+                            }
+                        }
+                    }
+                }
+
+                let rewritten_left = rewrite_node(
+                    left,
+                    old_nodes,
+                    dependencies,
+                    new_nodes,
+                    interned,
+                    memo,
+                    expansions_used,
+                    max_expansions,
+                    max_nodes,
+                );
+                let rewritten_right = rewrite_node(
+                    right,
+                    old_nodes,
+                    dependencies,
+                    new_nodes,
+                    interned,
+                    memo,
+                    expansions_used,
+                    max_expansions,
+                    max_nodes,
+                );
+                intern_ir_node(
+                    IrNode::Binary {
+                        op: IrBinaryOp::Mul,
+                        left: rewritten_left,
+                        right: rewritten_right,
+                    },
+                    new_nodes,
+                    interned,
+                )
+            }
+
+            if let Some(&cached) = memo.get(&node_index) {
+                return cached;
+            }
+
+            let rewritten = match old_nodes[node_index] {
+                IrNode::Constant(value) => {
+                    intern_ir_node(IrNode::Constant(value), new_nodes, interned)
+                }
+                IrNode::Amp(amp_idx) => intern_ir_node(IrNode::Amp(amp_idx), new_nodes, interned),
+                IrNode::Unary { op, input } => {
+                    let rewritten_input = rewrite_node(
+                        input,
+                        old_nodes,
+                        dependencies,
+                        new_nodes,
+                        interned,
+                        memo,
+                        expansions_used,
+                        max_expansions,
+                        max_nodes,
+                    );
+                    intern_ir_node(
+                        IrNode::Unary {
+                            op,
+                            input: rewritten_input,
+                        },
+                        new_nodes,
+                        interned,
+                    )
+                }
+                IrNode::Binary { op, left, right } => {
+                    if op == IrBinaryOp::Mul {
+                        rewrite_binary_mul(
+                            left,
+                            right,
+                            old_nodes,
+                            dependencies,
+                            new_nodes,
+                            interned,
+                            memo,
+                            expansions_used,
+                            max_expansions,
+                            max_nodes,
+                        )
+                    } else {
+                        let rewritten_left = rewrite_node(
+                            left,
+                            old_nodes,
+                            dependencies,
+                            new_nodes,
+                            interned,
+                            memo,
+                            expansions_used,
+                            max_expansions,
+                            max_nodes,
+                        );
+                        let rewritten_right = rewrite_node(
+                            right,
+                            old_nodes,
+                            dependencies,
+                            new_nodes,
+                            interned,
+                            memo,
+                            expansions_used,
+                            max_expansions,
+                            max_nodes,
+                        );
+                        intern_ir_node(
+                            IrNode::Binary {
+                                op,
+                                left: rewritten_left,
+                                right: rewritten_right,
+                            },
+                            new_nodes,
+                            interned,
+                        )
+                    }
+                }
+            };
+
+            memo.insert(node_index, rewritten);
+            rewritten
+        }
+
+        if ir.nodes.is_empty() {
+            return (false, 0, false);
+        }
+
+        let old_root = ir.root;
+        let old_nodes = ir.nodes.clone();
+        let dependencies =
+            DependenceAnnotatePass::compute_annotations(&old_nodes, amplitude_dependencies);
+        let max_expansions = self
+            .max_expansions_override
+            .unwrap_or(rewrite_limits.max_expansions);
+        let max_nodes = self
+            .max_nodes_override
+            .unwrap_or_else(|| rewrite_limits.node_cap(old_nodes.len()));
+        let mut new_nodes = Vec::with_capacity(old_nodes.len());
+        let mut interned = HashMap::new();
+        let mut memo = HashMap::new();
+        let mut expansions_used = 0usize;
+        let root = rewrite_node(
+            ir.root,
+            &old_nodes,
+            &dependencies,
+            &mut new_nodes,
+            &mut interned,
+            &mut memo,
+            &mut expansions_used,
+            max_expansions,
+            max_nodes,
+        );
+        ir.nodes = new_nodes;
+        ir.root = root;
+        let changed = ir.root != old_root || ir.nodes != old_nodes;
+        let saturated = expansions_used >= max_expansions || ir.nodes.len() >= max_nodes;
+        (changed, expansions_used, saturated)
+    }
+}
+
+impl IrPass for ControlledExpansionPass {
+    fn name(&self) -> &'static str {
+        "rewrite-controlled-expansion"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let (changed, rewrites, saturated) =
+            self.apply(ir, ctx.amplitude_dependencies, ctx.rewrite_limits);
+        IrPassReport {
+            changed,
+            rewrites,
+            saturated,
+        }
     }
 }
 
 struct ConstantFoldPass;
 
 impl ConstantFoldPass {
-    fn run(&self, ir: &mut ExpressionIR) {
+    fn apply(&self, ir: &mut ExpressionIR) -> bool {
+        let mut changed = false;
         let mut constants: Vec<Option<Complex64>> = vec![None; ir.nodes.len()];
         for index in 0..ir.nodes.len() {
             let folded = match ir.nodes[index].clone() {
@@ -1208,9 +1712,28 @@ impl ConstantFoldPass {
                 },
             };
             if let Some(value) = folded {
-                ir.nodes[index] = IrNode::Constant(value);
+                if !matches!(ir.nodes[index], IrNode::Constant(existing) if existing == value) {
+                    ir.nodes[index] = IrNode::Constant(value);
+                    changed = true;
+                }
                 constants[index] = Some(value);
             }
+        }
+        changed
+    }
+}
+
+impl IrPass for ConstantFoldPass {
+    fn name(&self) -> &'static str {
+        "constant-fold"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, _ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
         }
     }
 }
@@ -1220,7 +1743,8 @@ struct ActivationSpecializePass {
 }
 
 impl ActivationSpecializePass {
-    fn run(&self, ir: &mut ExpressionIR) {
+    fn apply(&self, ir: &mut ExpressionIR) -> bool {
+        let mut changed = false;
         for node in &mut ir.nodes {
             if let IrNode::Amp(amp_idx) = node {
                 let active = self
@@ -1230,8 +1754,25 @@ impl ActivationSpecializePass {
                     .unwrap_or(false);
                 if !active {
                     *node = IrNode::Constant(Complex64::ZERO);
+                    changed = true;
                 }
             }
+        }
+        changed
+    }
+}
+
+impl IrPass for ActivationSpecializePass {
+    fn name(&self) -> &'static str {
+        "activation-specialize"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, _ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
         }
     }
 }
@@ -1239,19 +1780,7 @@ impl ActivationSpecializePass {
 struct CsePass;
 
 impl CsePass {
-    fn run(&self, ir: &mut ExpressionIR) {
-        fn key_for(node: &IrNode) -> IrNodeKey {
-            match *node {
-                IrNode::Constant(value) => IrNodeKey::Constant {
-                    re_bits: value.re.to_bits(),
-                    im_bits: value.im.to_bits(),
-                },
-                IrNode::Amp(idx) => IrNodeKey::Amp(idx),
-                IrNode::Unary { op, input } => IrNodeKey::Unary { op, input },
-                IrNode::Binary { op, left, right } => IrNodeKey::Binary { op, left, right },
-            }
-        }
-
+    fn apply(&self, ir: &mut ExpressionIR) -> bool {
         fn remap_node(node: &IrNode, remap: &[IrValueId]) -> IrNode {
             match *node {
                 IrNode::Constant(value) => IrNode::Constant(value),
@@ -1271,10 +1800,12 @@ impl CsePass {
         let mut remap = vec![0usize; ir.nodes.len()];
         let mut interned: HashMap<IrNodeKey, IrValueId> = HashMap::new();
         let mut compacted: Vec<IrNode> = Vec::with_capacity(ir.nodes.len());
+        let old_root = ir.root;
+        let old_len = ir.nodes.len();
 
         for (old_id, node) in ir.nodes.iter().enumerate() {
             let remapped = remap_node(node, &remap);
-            let key = key_for(&remapped);
+            let key = key_for_ir_node(&remapped);
             if let Some(&existing) = interned.get(&key) {
                 remap[old_id] = existing;
             } else {
@@ -1287,75 +1818,172 @@ impl CsePass {
 
         ir.root = remap[ir.root];
         ir.nodes = compacted;
+        ir.root != old_root || ir.nodes.len() != old_len
     }
 }
 
-enum IrPassKind {
-    Cse,
-    ConstantFold,
-    ActivationSpecialize(Vec<bool>),
-    RewriteAlgebraicNormalization,
-    DependenceAnnotate(Vec<DependenceClass>),
+impl IrPass for CsePass {
+    fn name(&self) -> &'static str {
+        "cse"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, _ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
+        }
+    }
+}
+
+struct FixedPointRewritePass {
+    passes: Vec<Box<dyn IrPass>>,
+}
+
+impl FixedPointRewritePass {
+    fn new() -> Self {
+        Self {
+            passes: vec![
+                Box::new(AlgebraicNormalizePass),
+                Box::new(ConstantFoldPass),
+                Box::new(CsePass),
+                Box::new(ControlledExpansionPass::new()),
+                Box::new(ConstantFoldPass),
+                Box::new(CsePass),
+            ],
+        }
+    }
+}
+
+impl IrPass for FixedPointRewritePass {
+    fn name(&self) -> &'static str {
+        "rewrite-fixed-point"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let baseline_nodes = ir.nodes.len();
+        let node_cap = ctx.rewrite_limits.node_cap(baseline_nodes);
+        let max_iterations = ctx.rewrite_limits.max_iterations;
+        let mut changed_any = false;
+        let mut rewrites = 0usize;
+        let mut saturated = false;
+
+        for iteration in 0..max_iterations {
+            let mut changed_iteration = false;
+            for pass in &self.passes {
+                let report = pass.run(ir, ctx);
+                changed_iteration |= report.changed;
+                rewrites = rewrites.saturating_add(report.rewrites);
+                saturated |= report.saturated;
+            }
+
+            if ir.nodes.len() > node_cap {
+                saturated = true;
+                ctx.diagnostics.push(format!(
+                    "{} stopped at iteration {} due to node-growth cap ({} > {})",
+                    self.name(),
+                    iteration + 1,
+                    ir.nodes.len(),
+                    node_cap
+                ));
+                break;
+            }
+
+            if !changed_iteration {
+                return IrPassReport {
+                    changed: changed_any,
+                    rewrites,
+                    saturated,
+                };
+            }
+            changed_any = true;
+        }
+
+        if changed_any {
+            saturated = true;
+            ctx.diagnostics.push(format!(
+                "{} reached iteration cap ({})",
+                self.name(),
+                max_iterations
+            ));
+        }
+
+        IrPassReport {
+            changed: changed_any,
+            rewrites,
+            saturated,
+        }
+    }
 }
 
 struct ExpressionIrPipeline {
-    passes: Vec<IrPassKind>,
+    passes: Vec<Box<dyn IrPass>>,
+    rewrite_limits: RewriteLimits,
+    amplitude_dependencies: Vec<DependenceClass>,
 }
 
 impl ExpressionIrPipeline {
     fn new() -> Self {
-        Self { passes: Vec::new() }
+        Self {
+            passes: Vec::new(),
+            rewrite_limits: RewriteLimits::default(),
+            amplitude_dependencies: Vec::new(),
+        }
+    }
+
+    fn with_rewrite_limits(mut self, rewrite_limits: RewriteLimits) -> Self {
+        self.rewrite_limits = rewrite_limits;
+        self
     }
 
     fn cse(mut self) -> Self {
-        self.passes.push(IrPassKind::Cse);
+        self.passes.push(Box::new(CsePass));
         self
     }
 
     fn constant_fold(mut self) -> Self {
-        self.passes.push(IrPassKind::ConstantFold);
+        self.passes.push(Box::new(ConstantFoldPass));
         self
     }
 
     fn activation_specialize(mut self, active_amplitudes: Vec<bool>) -> Self {
         self.passes
-            .push(IrPassKind::ActivationSpecialize(active_amplitudes));
+            .push(Box::new(ActivationSpecializePass { active_amplitudes }));
         self
     }
 
     fn rewrite_algebraic_normalization(mut self) -> Self {
-        self.passes.push(IrPassKind::RewriteAlgebraicNormalization);
+        self.passes.push(Box::new(AlgebraicNormalizePass));
+        self
+    }
+
+    fn rewrite_fixed_point(mut self, amplitude_dependencies: Vec<DependenceClass>) -> Self {
+        self.amplitude_dependencies = amplitude_dependencies;
+        self.passes.push(Box::new(FixedPointRewritePass::new()));
         self
     }
 
     fn dependence_annotate(mut self, amplitude_dependencies: Vec<DependenceClass>) -> Self {
-        self.passes
-            .push(IrPassKind::DependenceAnnotate(amplitude_dependencies));
+        self.amplitude_dependencies = amplitude_dependencies;
+        self.passes.push(Box::new(DependenceAnnotatePass));
         self
     }
 
-    fn run(&self, ir: &mut ExpressionIR) {
+    fn run(&self, ir: &mut ExpressionIR) -> Vec<String> {
+        let mut ctx = IrPassContext {
+            amplitude_dependencies: &self.amplitude_dependencies,
+            rewrite_limits: self.rewrite_limits,
+            diagnostics: Vec::new(),
+        };
         for pass in &self.passes {
-            match pass {
-                IrPassKind::Cse => CsePass.run(ir),
-                IrPassKind::ConstantFold => ConstantFoldPass.run(ir),
-                IrPassKind::ActivationSpecialize(active_amplitudes) => ActivationSpecializePass {
-                    active_amplitudes: active_amplitudes.clone(),
-                }
-                .run(ir),
-                IrPassKind::RewriteAlgebraicNormalization => AlgebraicNormalizePass.run(ir),
-                IrPassKind::DependenceAnnotate(amplitude_dependencies) => DependenceAnnotatePass {
-                    amplitude_dependencies: amplitude_dependencies.clone(),
-                }
-                .run(ir),
-            }
+            let _ = pass.run(ir, &mut ctx);
         }
+        ctx.diagnostics
     }
 }
 
-struct DependenceAnnotatePass {
-    amplitude_dependencies: Vec<DependenceClass>,
-}
+struct DependenceAnnotatePass;
 
 impl DependenceAnnotatePass {
     fn compute_annotations(
@@ -1379,9 +2007,26 @@ impl DependenceAnnotatePass {
         annotations
     }
 
-    fn run(&self, ir: &mut ExpressionIR) {
-        ir.dependence_annotations =
-            Self::compute_annotations(&ir.nodes, &self.amplitude_dependencies);
+    fn apply(&self, ir: &mut ExpressionIR, amplitude_dependencies: &[DependenceClass]) -> bool {
+        let new_annotations = Self::compute_annotations(&ir.nodes, amplitude_dependencies);
+        let changed = ir.dependence_annotations != new_annotations;
+        ir.dependence_annotations = new_annotations;
+        changed
+    }
+}
+
+impl IrPass for DependenceAnnotatePass {
+    fn name(&self) -> &'static str {
+        "dependence-annotate"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir, ctx.amplitude_dependencies);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
+        }
     }
 }
 
@@ -1389,7 +2034,10 @@ impl DependenceAnnotatePass {
 mod tests {
     use num::complex::Complex64;
 
-    use super::{compile_expression_ir, DependenceClass, ExpressionIR, ExpressionIrPipeline};
+    use super::{
+        compile_expression_ir, ControlledExpansionPass, DependenceClass, ExpressionIR,
+        ExpressionIrPipeline,
+    };
     use crate::amplitudes::ExpressionNode;
 
     #[test]
@@ -1537,6 +2185,190 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_controlled_expansion_distributes_when_separable_yield_improves() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Amp(2)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true, true],
+            &[
+                DependenceClass::ParameterOnly,
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+            ],
+        );
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Binary {
+                op: super::IrBinaryOp::Add,
+                ..
+            }
+        ));
+        assert_eq!(ir.cached_integral_descriptors().len(), 2);
+        assert!(!ir.nodes.iter().any(|node| {
+            matches!(
+                node,
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Mul,
+                    left,
+                    right
+                } if matches!(
+                    ir.nodes[*left],
+                    super::IrNode::Binary {
+                        op: super::IrBinaryOp::Add | super::IrBinaryOp::Sub,
+                        ..
+                    }
+                ) || matches!(
+                    ir.nodes[*right],
+                    super::IrNode::Binary {
+                        op: super::IrBinaryOp::Add | super::IrBinaryOp::Sub,
+                        ..
+                    }
+                )
+            )
+        }));
+    }
+
+    #[test]
+    fn test_controlled_expansion_skips_when_separable_yield_does_not_improve() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Amp(2)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true, true],
+            &[
+                DependenceClass::Mixed,
+                DependenceClass::Mixed,
+                DependenceClass::CacheOnly,
+            ],
+        );
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Binary {
+                op: super::IrBinaryOp::Mul,
+                left,
+                right,
+            } if matches!(
+                ir.nodes[left],
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Add,
+                    ..
+                }
+            ) || matches!(
+                ir.nodes[right],
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Add,
+                    ..
+                }
+            )
+        ));
+        assert!(ir.cached_integral_descriptors().is_empty());
+    }
+
+    #[test]
+    fn test_controlled_expansion_honors_expansion_budget() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Amp(2)),
+        );
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        let pass = ControlledExpansionPass::with_limits(0, 100);
+        let mut ctx = super::IrPassContext {
+            amplitude_dependencies: &[
+                DependenceClass::ParameterOnly,
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+            ],
+            rewrite_limits: super::RewriteLimits::default(),
+            diagnostics: Vec::new(),
+        };
+        super::IrPass::run(&pass, &mut ir, &mut ctx);
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Binary {
+                op: super::IrBinaryOp::Mul,
+                left,
+                right,
+            } if matches!(
+                ir.nodes[left],
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Add,
+                    ..
+                }
+            ) || matches!(
+                ir.nodes[right],
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Add,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn test_rewrite_fixed_point_reports_iteration_cap() {
+        let tree = ExpressionNode::NormSqr(Box::new(ExpressionNode::Amp(0)));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        let diagnostics = ExpressionIrPipeline::new()
+            .with_rewrite_limits(super::RewriteLimits {
+                max_iterations: 1,
+                max_expansions: 128,
+                max_nodes_multiplier: 4,
+                max_nodes_additive: 32,
+            })
+            .rewrite_fixed_point(vec![DependenceClass::Mixed])
+            .run(&mut ir);
+        assert!(diagnostics
+            .iter()
+            .any(|message| message.contains("reached iteration cap")));
+    }
+
+    #[test]
+    fn test_rewrite_fixed_point_reports_node_growth_cap() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(2)),
+                Box::new(ExpressionNode::Amp(3)),
+            )),
+        );
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        let diagnostics = ExpressionIrPipeline::new()
+            .with_rewrite_limits(super::RewriteLimits {
+                max_iterations: 4,
+                max_expansions: 128,
+                max_nodes_multiplier: 1,
+                max_nodes_additive: 0,
+            })
+            .rewrite_fixed_point(vec![
+                DependenceClass::ParameterOnly,
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+                DependenceClass::CacheOnly,
+            ])
+            .run(&mut ir);
+        assert!(diagnostics
+            .iter()
+            .any(|message| message.contains("node-growth cap")));
     }
 
     #[test]
