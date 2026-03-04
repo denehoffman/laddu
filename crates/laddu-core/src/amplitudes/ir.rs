@@ -74,6 +74,7 @@ pub(super) struct ExpressionIR {
     rewrite_diagnostics: Vec<String>,
     separable_mul_candidates: Vec<SeparableMulCandidate>,
     normalization_plan: NormalizationPlan,
+    normalization_execution_sets: NormalizationExecutionSets,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +99,13 @@ pub(super) struct NormalizationPlan {
     pub cached_integral_descriptors: Vec<CachedIntegralDescriptor>,
     pub cached_separable_nodes: Vec<usize>,
     pub residual_terms: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct NormalizationExecutionSets {
+    pub cached_parameter_amplitudes: Vec<usize>,
+    pub cached_cache_amplitudes: Vec<usize>,
+    pub residual_amplitudes: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -321,6 +329,7 @@ impl ExpressionIR {
             rewrite_diagnostics: Vec::new(),
             separable_mul_candidates: Vec::new(),
             normalization_plan: NormalizationPlan::default(),
+            normalization_execution_sets: NormalizationExecutionSets::default(),
         }
     }
 
@@ -356,6 +365,10 @@ impl ExpressionIR {
 
     pub(super) fn normalization_plan(&self) -> &NormalizationPlan {
         &self.normalization_plan
+    }
+
+    pub(super) fn normalization_execution_sets(&self) -> &NormalizationExecutionSets {
+        &self.normalization_execution_sets
     }
 
     pub(super) fn cached_integral_descriptors(&self) -> &[CachedIntegralDescriptor] {
@@ -779,6 +792,8 @@ pub(super) fn compile_expression_ir(
         collect_separable_mul_candidates(&ir.nodes, &ir.dependence_annotations);
     ir.normalization_plan =
         build_normalization_plan(&ir.nodes, ir.root, &ir.separable_mul_candidates);
+    ir.normalization_execution_sets =
+        build_normalization_execution_sets(&ir.nodes, ir.root, &ir.normalization_plan);
     ir
 }
 
@@ -1049,6 +1064,76 @@ fn build_normalization_plan(
         cached_integral_descriptors,
         cached_separable_nodes,
         residual_terms,
+    }
+}
+
+fn collect_reachable_amplitudes(
+    nodes: &[IrNode],
+    roots: &[usize],
+    cut_nodes: Option<&[bool]>,
+) -> Vec<usize> {
+    if nodes.is_empty() || roots.is_empty() {
+        return Vec::new();
+    }
+    let mut visited = vec![false; nodes.len()];
+    let mut stack = roots.to_vec();
+    let mut amplitudes = Vec::new();
+    while let Some(node_index) = stack.pop() {
+        if node_index >= nodes.len() || visited[node_index] {
+            continue;
+        }
+        visited[node_index] = true;
+        if cut_nodes
+            .and_then(|nodes| nodes.get(node_index))
+            .copied()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        match nodes[node_index] {
+            IrNode::Amp(amplitude_index) => amplitudes.push(amplitude_index),
+            IrNode::Unary { input, .. } => stack.push(input),
+            IrNode::Binary { left, right, .. } => {
+                stack.push(left);
+                stack.push(right);
+            }
+            IrNode::Constant(_) => {}
+        }
+    }
+    amplitudes.sort_unstable();
+    amplitudes.dedup();
+    amplitudes
+}
+
+fn build_normalization_execution_sets(
+    nodes: &[IrNode],
+    root: usize,
+    normalization_plan: &NormalizationPlan,
+) -> NormalizationExecutionSets {
+    let parameter_roots = normalization_plan
+        .cached_integral_descriptors
+        .iter()
+        .map(|descriptor| descriptor.parameter_node_index)
+        .collect::<Vec<_>>();
+    let cache_roots = normalization_plan
+        .cached_integral_descriptors
+        .iter()
+        .map(|descriptor| descriptor.cache_node_index)
+        .collect::<Vec<_>>();
+    let mut zeroed_nodes = vec![false; nodes.len()];
+    for &node_index in &normalization_plan.cached_separable_nodes {
+        if let Some(node) = zeroed_nodes.get_mut(node_index) {
+            *node = true;
+        }
+    }
+    NormalizationExecutionSets {
+        cached_parameter_amplitudes: collect_reachable_amplitudes(nodes, &parameter_roots, None),
+        cached_cache_amplitudes: collect_reachable_amplitudes(nodes, &cache_roots, None),
+        residual_amplitudes: collect_reachable_amplitudes(
+            nodes,
+            std::slice::from_ref(&root),
+            Some(&zeroed_nodes),
+        ),
     }
 }
 
@@ -2646,6 +2731,64 @@ mod tests {
         assert!(explain.separable_mul_candidates.is_empty());
         assert!(explain.cached_separable_nodes.is_empty());
         assert!(explain.residual_terms.contains(&ir.root));
+    }
+
+    #[test]
+    fn test_normalization_execution_sets_for_fully_separable_term() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::ParameterOnly, DependenceClass::CacheOnly],
+        );
+        let sets = ir.normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert!(sets.residual_amplitudes.is_empty());
+    }
+
+    #[test]
+    fn test_normalization_execution_sets_for_partial_factorization() {
+        let tree = ExpressionNode::Add(
+            Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Amp(1)),
+            )),
+            Box::new(ExpressionNode::Amp(2)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true, true],
+            &[
+                DependenceClass::ParameterOnly,
+                DependenceClass::CacheOnly,
+                DependenceClass::Mixed,
+            ],
+        );
+        let sets = ir.normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert_eq!(sets.residual_amplitudes, vec![2]);
+    }
+
+    #[test]
+    fn test_normalization_execution_sets_for_non_separable_term() {
+        let tree = ExpressionNode::Mul(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        );
+        let ir = compile_expression_ir(
+            &tree,
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::CacheOnly],
+        );
+        let sets = ir.normalization_execution_sets();
+        assert!(sets.cached_parameter_amplitudes.is_empty());
+        assert!(sets.cached_cache_amplitudes.is_empty());
+        assert_eq!(sets.residual_amplitudes, vec![0, 1]);
     }
 
     #[test]

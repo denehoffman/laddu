@@ -66,6 +66,18 @@ pub struct NormalizationPlanExplain {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Explain/debug view of amplitude execution sets used by normalization evaluation.
+pub struct NormalizationExecutionSetsExplain {
+    /// Amplitudes required to evaluate parameter factors for cached separable terms.
+    pub cached_parameter_amplitudes: Vec<usize>,
+    /// Amplitudes required to evaluate cache factors for cached separable terms.
+    pub cached_cache_amplitudes: Vec<usize>,
+    /// Amplitudes required for residual (non-cached) normalization evaluation.
+    pub residual_amplitudes: Vec<usize>,
+}
+
+#[cfg(feature = "expression-ir")]
 #[derive(Clone, Debug, PartialEq)]
 /// Load-time precomputed integral metadata for a separable cached term.
 pub struct PrecomputedCachedIntegral {
@@ -113,6 +125,7 @@ struct CachedIntegralCacheState {
     key: CachedIntegralCacheKey,
     expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
+    execution_sets: ir::NormalizationExecutionSets,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -128,6 +141,17 @@ impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
                 .collect(),
             cached_separable_nodes: value.cached_separable_nodes,
             residual_terms: value.residual_terms,
+        }
+    }
+}
+
+#[cfg(feature = "expression-ir")]
+impl From<ir::NormalizationExecutionSets> for NormalizationExecutionSetsExplain {
+    fn from(value: ir::NormalizationExecutionSets) -> Self {
+        Self {
+            cached_parameter_amplitudes: value.cached_parameter_amplitudes,
+            cached_cache_amplitudes: value.cached_cache_amplitudes,
+            residual_amplitudes: value.residual_amplitudes,
         }
     }
 }
@@ -1231,6 +1255,8 @@ impl Expression {
             parameter_manager.n_free_parameters(),
         );
         #[cfg(feature = "expression-ir")]
+        let execution_sets = expression_ir.normalization_execution_sets().clone();
+        #[cfg(feature = "expression-ir")]
         let cached_integral_key =
             Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
         Ok(Evaluator {
@@ -1246,6 +1272,7 @@ impl Expression {
                 key: cached_integral_key,
                 expression_ir,
                 values: cached_integrals,
+                execution_sets,
             }))),
             registry: self.registry.clone(),
             parameter_manager,
@@ -1409,14 +1436,22 @@ impl Evaluator {
         if descriptors.is_empty() {
             return Vec::new();
         }
+        let execution_sets = expression_ir.normalization_execution_sets();
         let seed_parameters = vec![0.0; n_free_parameters];
         let parameters = Parameters::new(&seed_parameters, &resources.constants);
         let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
         let mut value_slots = vec![Complex64::ZERO; expression_ir.node_count()];
-        let active_indices = resources.active_indices().to_vec();
+        let active_set = resources.active_indices();
+        let cache_active_indices = execution_sets
+            .cached_cache_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
         let mut weighted_cache_sums = vec![Complex64::ZERO; descriptors.len()];
         for (cache, event) in resources.caches.iter().zip(dataset.events_local().iter()) {
-            for &amp_idx in &active_indices {
+            amplitude_values.fill(Complex64::ZERO);
+            for &amp_idx in &cache_active_indices {
                 amplitude_values[amp_idx] = amplitudes[amp_idx].compute(&parameters, cache);
             }
             expression_ir.evaluate_into(&amplitude_values, &mut value_slots);
@@ -1449,6 +1484,7 @@ impl Evaluator {
         parameters: &Parameters,
         cache: &Cache,
     ) {
+        amplitude_values.fill(Complex64::ZERO);
         for &amp_idx in active_indices {
             amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, cache);
         }
@@ -1585,10 +1621,12 @@ impl Evaluator {
             &self.dataset,
             self.parameter_manager.n_free_parameters(),
         );
+        let execution_sets = expression_ir.normalization_execution_sets().clone();
         let state = CachedIntegralCacheState {
             key,
             expression_ir,
             values,
+            execution_sets,
         };
         *self.cached_integrals.write() = Some(state.clone());
         state
@@ -1630,6 +1668,16 @@ impl Evaluator {
         let resources = self.resources.read();
         self.compile_expression_ir_for_active_mask(&resources.active)
             .normalization_plan_explain()
+            .into()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Explain/debug view of amplitude execution sets used by normalization evaluation.
+    pub fn expression_normalization_execution_sets(&self) -> NormalizationExecutionSetsExplain {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .execution_sets
+            .clone()
             .into()
     }
 
@@ -1723,6 +1771,7 @@ impl Evaluator {
         let resources = self.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
+        #[cfg(not(feature = "expression-ir"))]
         let active_indices = resources.active_indices().to_vec();
         #[cfg(feature = "expression-ir")]
         let state = self.ensure_cached_integral_cache_state(&resources);
@@ -1737,6 +1786,26 @@ impl Evaluator {
             nodes
         };
         #[cfg(feature = "expression-ir")]
+        let active_index_set = resources.active_indices();
+        #[cfg(feature = "expression-ir")]
+        let cached_parameter_indices = state
+            .execution_sets
+            .cached_parameter_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        #[cfg(feature = "expression-ir")]
+        let residual_active_indices = state
+            .execution_sets
+            .residual_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        #[cfg(not(feature = "expression-ir"))]
+        let residual_active_indices = active_indices.clone();
+        #[cfg(feature = "expression-ir")]
         let slot_count = state.expression_ir.node_count();
         #[cfg(not(feature = "expression-ir"))]
         let slot_count = self.expression_slot_count();
@@ -1747,7 +1816,7 @@ impl Evaluator {
                 let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
                 self.fill_amplitude_values(
                     &mut amplitude_values,
-                    &active_indices,
+                    &cached_parameter_indices,
                     &parameters,
                     cache,
                 );
@@ -1787,7 +1856,7 @@ impl Evaluator {
                     |(amplitude_values, value_slots), (cache, event)| {
                         self.fill_amplitude_values(
                             amplitude_values,
-                            &active_indices,
+                            &residual_active_indices,
                             &parameters,
                             cache,
                         );
@@ -1824,7 +1893,7 @@ impl Evaluator {
                 .map(|(cache, event)| {
                     self.fill_amplitude_values(
                         &mut amplitude_values,
-                        &active_indices,
+                        &residual_active_indices,
                         &parameters,
                         cache,
                     );
@@ -1905,6 +1974,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
+        #[cfg(not(feature = "expression-ir"))]
         let active_indices = resources.active_indices().to_vec();
         #[cfg(feature = "expression-ir")]
         let state = self.ensure_cached_integral_cache_state(&resources);
@@ -1919,6 +1989,40 @@ impl Evaluator {
             nodes
         };
         #[cfg(feature = "expression-ir")]
+        let active_index_set = resources.active_indices();
+        #[cfg(feature = "expression-ir")]
+        let cached_parameter_indices = state
+            .execution_sets
+            .cached_parameter_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        #[cfg(feature = "expression-ir")]
+        let residual_active_indices = state
+            .execution_sets
+            .residual_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        #[cfg(not(feature = "expression-ir"))]
+        let residual_active_indices = active_indices.clone();
+        #[cfg(feature = "expression-ir")]
+        let mut cached_parameter_mask = vec![false; amplitude_len];
+        #[cfg(feature = "expression-ir")]
+        for &index in &cached_parameter_indices {
+            cached_parameter_mask[index] = true;
+        }
+        #[cfg(feature = "expression-ir")]
+        let mut residual_active_mask = vec![false; amplitude_len];
+        #[cfg(feature = "expression-ir")]
+        for &index in &residual_active_indices {
+            residual_active_mask[index] = true;
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        let residual_active_mask = resources.active.clone();
+        #[cfg(feature = "expression-ir")]
         let slot_count = state.expression_ir.node_count();
         #[cfg(not(feature = "expression-ir"))]
         let slot_count = self.expression_slot_count();
@@ -1929,7 +2033,7 @@ impl Evaluator {
                 let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
                 self.fill_amplitude_values(
                     &mut amplitude_values,
-                    &active_indices,
+                    &cached_parameter_indices,
                     &parameters,
                     cache,
                 );
@@ -1938,7 +2042,7 @@ impl Evaluator {
                     .collect::<Vec<_>>();
                 self.fill_amplitude_gradients(
                     &mut amplitude_gradients,
-                    &resources.active,
+                    &cached_parameter_mask,
                     &parameters,
                     cache,
                 );
@@ -1989,8 +2093,8 @@ impl Evaluator {
                         self.fill_amplitude_values_and_gradients(
                             amplitude_values,
                             gradient_values,
-                            &active_indices,
-                            &resources.active,
+                            &residual_active_indices,
+                            &residual_active_mask,
                             &parameters,
                             cache,
                         );
@@ -2037,8 +2141,8 @@ impl Evaluator {
                     self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &active_indices,
-                        &resources.active,
+                        &residual_active_indices,
+                        &residual_active_mask,
                         &parameters,
                         cache,
                     );
@@ -3966,6 +4070,33 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate == index)
         }));
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_normalization_execution_sets_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let sets = evaluator.expression_normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert!(sets.residual_amplitudes.is_empty());
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_normalization_execution_sets_partial_surface() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let sets = evaluator.expression_normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert_eq!(sets.residual_amplitudes, vec![2]);
     }
 
     #[cfg(feature = "expression-ir")]
