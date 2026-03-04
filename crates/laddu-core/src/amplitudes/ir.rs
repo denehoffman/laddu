@@ -687,6 +687,9 @@ pub(super) fn compile_expression_ir(
         .cse()
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
+        .rewrite_algebraic_normalization()
+        .constant_fold()
+        .cse()
         .dependence_annotate(amplitude_dependencies.to_vec())
         .run(&mut ir);
     let expression_dependence = ir.root_dependence();
@@ -972,6 +975,212 @@ fn build_normalization_plan(
     }
 }
 
+struct AlgebraicNormalizePass;
+
+impl AlgebraicNormalizePass {
+    fn run(&self, ir: &mut ExpressionIR) {
+        fn key_for(node: &IrNode) -> IrNodeKey {
+            match *node {
+                IrNode::Constant(value) => IrNodeKey::Constant {
+                    re_bits: value.re.to_bits(),
+                    im_bits: value.im.to_bits(),
+                },
+                IrNode::Amp(idx) => IrNodeKey::Amp(idx),
+                IrNode::Unary { op, input } => IrNodeKey::Unary { op, input },
+                IrNode::Binary { op, left, right } => IrNodeKey::Binary { op, left, right },
+            }
+        }
+
+        fn intern_node(
+            node: IrNode,
+            nodes: &mut Vec<IrNode>,
+            interned: &mut HashMap<IrNodeKey, IrValueId>,
+        ) -> IrValueId {
+            let key = key_for(&node);
+            if let Some(&existing) = interned.get(&key) {
+                return existing;
+            }
+            let id = nodes.len();
+            nodes.push(node);
+            interned.insert(key, id);
+            id
+        }
+
+        fn rewrite_node(
+            node_index: usize,
+            conj_context: bool,
+            old_nodes: &[IrNode],
+            new_nodes: &mut Vec<IrNode>,
+            interned: &mut HashMap<IrNodeKey, IrValueId>,
+            memo: &mut HashMap<(usize, bool), IrValueId>,
+        ) -> IrValueId {
+            fn rewrite_normsqr(
+                input: usize,
+                old_nodes: &[IrNode],
+                new_nodes: &mut Vec<IrNode>,
+                interned: &mut HashMap<IrNodeKey, IrValueId>,
+                memo: &mut HashMap<(usize, bool), IrValueId>,
+            ) -> IrValueId {
+                let left = rewrite_node(input, false, old_nodes, new_nodes, interned, memo);
+                let right = rewrite_node(input, true, old_nodes, new_nodes, interned, memo);
+                intern_node(
+                    IrNode::Binary {
+                        op: IrBinaryOp::Mul,
+                        left,
+                        right,
+                    },
+                    new_nodes,
+                    interned,
+                )
+            }
+
+            fn rewrite_real_with_conj_simplify(
+                input: usize,
+                old_nodes: &[IrNode],
+                new_nodes: &mut Vec<IrNode>,
+                interned: &mut HashMap<IrNodeKey, IrValueId>,
+                memo: &mut HashMap<(usize, bool), IrValueId>,
+            ) -> IrValueId {
+                let normalized_input = if let IrNode::Unary {
+                    op: IrUnaryOp::Conj,
+                    input: inner,
+                } = old_nodes[input]
+                {
+                    rewrite_node(inner, false, old_nodes, new_nodes, interned, memo)
+                } else {
+                    rewrite_node(input, false, old_nodes, new_nodes, interned, memo)
+                };
+                intern_node(
+                    IrNode::Unary {
+                        op: IrUnaryOp::Real,
+                        input: normalized_input,
+                    },
+                    new_nodes,
+                    interned,
+                )
+            }
+
+            if let Some(&cached) = memo.get(&(node_index, conj_context)) {
+                return cached;
+            }
+
+            let rewritten = match old_nodes[node_index] {
+                IrNode::Constant(value) => {
+                    let folded = if conj_context { value.conj() } else { value };
+                    intern_node(IrNode::Constant(folded), new_nodes, interned)
+                }
+                IrNode::Amp(amp_idx) => {
+                    if conj_context {
+                        let base = intern_node(IrNode::Amp(amp_idx), new_nodes, interned);
+                        intern_node(
+                            IrNode::Unary {
+                                op: IrUnaryOp::Conj,
+                                input: base,
+                            },
+                            new_nodes,
+                            interned,
+                        )
+                    } else {
+                        intern_node(IrNode::Amp(amp_idx), new_nodes, interned)
+                    }
+                }
+                IrNode::Unary { op, input } => match (conj_context, op) {
+                    (false, IrUnaryOp::Conj) => {
+                        rewrite_node(input, true, old_nodes, new_nodes, interned, memo)
+                    }
+                    (_, IrUnaryOp::NormSqr) => {
+                        rewrite_normsqr(input, old_nodes, new_nodes, interned, memo)
+                    }
+                    (_, IrUnaryOp::Real) => {
+                        rewrite_real_with_conj_simplify(input, old_nodes, new_nodes, interned, memo)
+                    }
+                    (false, _) => {
+                        let rewritten_input =
+                            rewrite_node(input, false, old_nodes, new_nodes, interned, memo);
+                        intern_node(
+                            IrNode::Unary {
+                                op,
+                                input: rewritten_input,
+                            },
+                            new_nodes,
+                            interned,
+                        )
+                    }
+                    (true, IrUnaryOp::Conj) => {
+                        rewrite_node(input, false, old_nodes, new_nodes, interned, memo)
+                    }
+                    (true, IrUnaryOp::Neg) => {
+                        let rewritten_input =
+                            rewrite_node(input, true, old_nodes, new_nodes, interned, memo);
+                        intern_node(
+                            IrNode::Unary {
+                                op: IrUnaryOp::Neg,
+                                input: rewritten_input,
+                            },
+                            new_nodes,
+                            interned,
+                        )
+                    }
+                    (true, _) => {
+                        let base =
+                            rewrite_node(node_index, false, old_nodes, new_nodes, interned, memo);
+                        intern_node(
+                            IrNode::Unary {
+                                op: IrUnaryOp::Conj,
+                                input: base,
+                            },
+                            new_nodes,
+                            interned,
+                        )
+                    }
+                },
+                IrNode::Binary { op, left, right } => {
+                    let (left_conj, right_conj) = if conj_context {
+                        (true, true)
+                    } else {
+                        (false, false)
+                    };
+                    let rewritten_left =
+                        rewrite_node(left, left_conj, old_nodes, new_nodes, interned, memo);
+                    let rewritten_right =
+                        rewrite_node(right, right_conj, old_nodes, new_nodes, interned, memo);
+                    intern_node(
+                        IrNode::Binary {
+                            op,
+                            left: rewritten_left,
+                            right: rewritten_right,
+                        },
+                        new_nodes,
+                        interned,
+                    )
+                }
+            };
+
+            memo.insert((node_index, conj_context), rewritten);
+            rewritten
+        }
+
+        if ir.nodes.is_empty() {
+            return;
+        }
+
+        let old_nodes = ir.nodes.clone();
+        let mut new_nodes = Vec::with_capacity(old_nodes.len());
+        let mut interned = HashMap::new();
+        let mut memo = HashMap::new();
+        let root = rewrite_node(
+            ir.root,
+            false,
+            &old_nodes,
+            &mut new_nodes,
+            &mut interned,
+            &mut memo,
+        );
+        ir.nodes = new_nodes;
+        ir.root = root;
+    }
+}
+
 struct ConstantFoldPass;
 
 impl ConstantFoldPass {
@@ -1085,6 +1294,7 @@ enum IrPassKind {
     Cse,
     ConstantFold,
     ActivationSpecialize(Vec<bool>),
+    RewriteAlgebraicNormalization,
     DependenceAnnotate(Vec<DependenceClass>),
 }
 
@@ -1113,6 +1323,11 @@ impl ExpressionIrPipeline {
         self
     }
 
+    fn rewrite_algebraic_normalization(mut self) -> Self {
+        self.passes.push(IrPassKind::RewriteAlgebraicNormalization);
+        self
+    }
+
     fn dependence_annotate(mut self, amplitude_dependencies: Vec<DependenceClass>) -> Self {
         self.passes
             .push(IrPassKind::DependenceAnnotate(amplitude_dependencies));
@@ -1128,6 +1343,7 @@ impl ExpressionIrPipeline {
                     active_amplitudes: active_amplitudes.clone(),
                 }
                 .run(ir),
+                IrPassKind::RewriteAlgebraicNormalization => AlgebraicNormalizePass.run(ir),
                 IrPassKind::DependenceAnnotate(amplitude_dependencies) => DependenceAnnotatePass {
                     amplitude_dependencies: amplitude_dependencies.clone(),
                 }
@@ -1190,6 +1406,136 @@ mod tests {
         assert!(matches!(
             ir.nodes.get(ir.root),
             Some(super::IrNode::Constant(value)) if *value == Complex64::new(2.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn test_algebraic_normalize_rewrites_normsqr_to_mul_conj() {
+        let tree = ExpressionNode::NormSqr(Box::new(ExpressionNode::Amp(0)));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .rewrite_algebraic_normalization()
+            .run(&mut ir);
+        assert!(!ir.nodes.iter().any(|node| matches!(
+            node,
+            super::IrNode::Unary {
+                op: super::IrUnaryOp::NormSqr,
+                ..
+            }
+        )));
+        assert!(ir.nodes.iter().any(|node| {
+            matches!(
+                node,
+                super::IrNode::Binary {
+                    op: super::IrBinaryOp::Mul,
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn test_algebraic_normalize_pushes_conj_through_add() {
+        let tree = ExpressionNode::Conj(Box::new(ExpressionNode::Add(
+            Box::new(ExpressionNode::Amp(0)),
+            Box::new(ExpressionNode::Amp(1)),
+        )));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .rewrite_algebraic_normalization()
+            .cse()
+            .run(&mut ir);
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Binary {
+                op: super::IrBinaryOp::Add,
+                ..
+            }
+        ));
+        assert!(!ir.nodes.iter().any(|node| {
+            matches!(
+                node,
+                super::IrNode::Unary {
+                    op: super::IrUnaryOp::Conj,
+                    input,
+                } if matches!(
+                    ir.nodes[*input],
+                    super::IrNode::Binary {
+                        op: super::IrBinaryOp::Add
+                            | super::IrBinaryOp::Sub
+                            | super::IrBinaryOp::Mul
+                            | super::IrBinaryOp::Div,
+                        ..
+                    }
+                )
+            )
+        }));
+    }
+
+    #[test]
+    fn test_algebraic_normalize_simplifies_double_conj() {
+        let tree = ExpressionNode::Conj(Box::new(ExpressionNode::Conj(Box::new(
+            ExpressionNode::Amp(0),
+        ))));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .rewrite_algebraic_normalization()
+            .run(&mut ir);
+        assert!(matches!(ir.nodes[ir.root], super::IrNode::Amp(0)));
+    }
+
+    #[test]
+    fn test_algebraic_normalize_simplifies_real_conj_identities() {
+        let tree = ExpressionNode::Real(Box::new(ExpressionNode::Conj(Box::new(
+            ExpressionNode::Amp(0),
+        ))));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .rewrite_algebraic_normalization()
+            .run(&mut ir);
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Unary {
+                op: super::IrUnaryOp::Real,
+                input
+            } if matches!(ir.nodes[input], super::IrNode::Amp(0))
+        ));
+
+        let tree = ExpressionNode::Conj(Box::new(ExpressionNode::Real(Box::new(
+            ExpressionNode::Amp(0),
+        ))));
+        let mut ir = ExpressionIR::from_expression_node(&tree);
+        ExpressionIrPipeline::new()
+            .rewrite_algebraic_normalization()
+            .run(&mut ir);
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Unary {
+                op: super::IrUnaryOp::Real,
+                input
+            } if matches!(ir.nodes[input], super::IrNode::Amp(0))
+        ));
+    }
+
+    #[test]
+    fn test_compile_expression_ir_applies_algebraic_normalization_rules() {
+        let tree = ExpressionNode::Conj(Box::new(ExpressionNode::NormSqr(Box::new(
+            ExpressionNode::Amp(0),
+        ))));
+        let ir = compile_expression_ir(&tree, &[true], &[DependenceClass::Mixed]);
+        assert!(!ir.nodes.iter().any(|node| matches!(
+            node,
+            super::IrNode::Unary {
+                op: super::IrUnaryOp::NormSqr,
+                ..
+            }
+        )));
+        assert!(matches!(
+            ir.nodes[ir.root],
+            super::IrNode::Binary {
+                op: super::IrBinaryOp::Mul,
+                ..
+            }
         ));
     }
 
