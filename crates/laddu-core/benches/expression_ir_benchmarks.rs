@@ -19,7 +19,8 @@ const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
 const PARAMS: [f64; 2] = [1.25, -0.75];
 const SAMPLE_EVENTS: usize = 512;
-const NORMALIZATION_BENCH_EVENTS: usize = 4096;
+const NORMALIZATION_BENCH_EVENTS_SMALL: usize = 4096;
+const NORMALIZATION_BENCH_EVENTS_LARGE: usize = 32768;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct ParameterOnlyScalar {
@@ -276,43 +277,60 @@ fn expression_backend_benchmarks(c: &mut Criterion) {
 }
 
 fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
-    let dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS);
-    let cases = [
-        build_scenario(&dataset, ScenarioKind::Separable),
-        build_scenario(&dataset, ScenarioKind::Partial),
-        build_scenario(&dataset, ScenarioKind::NonSeparable),
+    let datasets = [
+        (
+            "n4k",
+            synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL),
+        ),
+        (
+            "n32k",
+            synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_LARGE),
+        ),
     ];
 
     let mut value_group = c.benchmark_group("expression_ir_factorization_weighted_value_sum");
     value_group.sample_size(50);
     value_group.warm_up_time(Duration::from_secs(2));
     value_group.measurement_time(Duration::from_secs(8));
-    for case in &cases {
-        value_group.throughput(Throughput::Elements(case.n_events as u64));
-        value_group.bench_with_input(
-            BenchmarkId::new("optimized", case.label),
-            case,
-            |b, case| {
-                b.iter(|| {
-                    black_box(
-                        case.evaluator
-                            .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
-                    )
-                })
-            },
-        );
-        value_group.bench_with_input(
-            BenchmarkId::new("eventwise_baseline", case.label),
-            case,
-            |b, case| {
-                b.iter(|| {
-                    black_box(eventwise_weighted_value_sum(
-                        &case.evaluator,
-                        black_box(&case.parameters),
-                    ))
-                })
-            },
-        );
+    for (tier_label, dataset) in &datasets {
+        let cases = [
+            build_scenario(dataset, ScenarioKind::Separable),
+            build_scenario(dataset, ScenarioKind::Partial),
+            build_scenario(dataset, ScenarioKind::NonSeparable),
+        ];
+        for case in &cases {
+            value_group.throughput(Throughput::Elements(case.n_events as u64));
+            value_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("optimized/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| {
+                        black_box(
+                            case.evaluator
+                                .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
+                        )
+                    })
+                },
+            );
+            value_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("eventwise_baseline/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| {
+                        black_box(eventwise_weighted_value_sum(
+                            &case.evaluator,
+                            black_box(&case.parameters),
+                        ))
+                    })
+                },
+            );
+        }
     }
     value_group.finish();
 
@@ -320,32 +338,45 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
     gradient_group.sample_size(50);
     gradient_group.warm_up_time(Duration::from_secs(2));
     gradient_group.measurement_time(Duration::from_secs(8));
-    for case in &cases {
-        gradient_group.throughput(Throughput::Elements(case.n_events as u64));
-        gradient_group.bench_with_input(
-            BenchmarkId::new("optimized", case.label),
-            case,
-            |b, case| {
-                b.iter(|| {
-                    black_box(
-                        case.evaluator
-                            .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
-                    )
-                })
-            },
-        );
-        gradient_group.bench_with_input(
-            BenchmarkId::new("eventwise_baseline", case.label),
-            case,
-            |b, case| {
-                b.iter(|| {
-                    black_box(eventwise_weighted_gradient_sum(
-                        &case.evaluator,
-                        black_box(&case.parameters),
-                    ))
-                })
-            },
-        );
+    for (tier_label, dataset) in &datasets {
+        let cases = [
+            build_scenario(dataset, ScenarioKind::Separable),
+            build_scenario(dataset, ScenarioKind::Partial),
+            build_scenario(dataset, ScenarioKind::NonSeparable),
+        ];
+        for case in &cases {
+            gradient_group.throughput(Throughput::Elements(case.n_events as u64));
+            gradient_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("optimized/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| {
+                        black_box(
+                            case.evaluator
+                                .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
+                        )
+                    })
+                },
+            );
+            gradient_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("eventwise_baseline/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| {
+                        black_box(eventwise_weighted_gradient_sum(
+                            &case.evaluator,
+                            black_box(&case.parameters),
+                        ))
+                    })
+                },
+            );
+        }
     }
     gradient_group.finish();
 
@@ -353,27 +384,40 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
     control_group.sample_size(40);
     control_group.warm_up_time(Duration::from_secs(2));
     control_group.measurement_time(Duration::from_secs(6));
-    for case in &cases {
-        control_group.throughput(Throughput::Elements(case.n_events as u64));
-        control_group.bench_with_input(
-            BenchmarkId::new("evaluate_local", case.label),
-            case,
-            |b, case| {
-                b.iter(|| black_box(case.evaluator.evaluate_local(black_box(&case.parameters))))
-            },
-        );
-        control_group.bench_with_input(
-            BenchmarkId::new("evaluate_gradient_local", case.label),
-            case,
-            |b, case| {
-                b.iter(|| {
-                    black_box(
-                        case.evaluator
-                            .evaluate_gradient_local(black_box(&case.parameters)),
-                    )
-                })
-            },
-        );
+    for (tier_label, dataset) in &datasets {
+        let cases = [
+            build_scenario(dataset, ScenarioKind::Separable),
+            build_scenario(dataset, ScenarioKind::Partial),
+            build_scenario(dataset, ScenarioKind::NonSeparable),
+        ];
+        for case in &cases {
+            control_group.throughput(Throughput::Elements(case.n_events as u64));
+            control_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("evaluate_local/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| black_box(case.evaluator.evaluate_local(black_box(&case.parameters))))
+                },
+            );
+            control_group.bench_with_input(
+                BenchmarkId::new(
+                    format!("evaluate_gradient_local/{}", tier_label),
+                    format!("{}@{}", case.label, case.n_events),
+                ),
+                case,
+                |b, case| {
+                    b.iter(|| {
+                        black_box(
+                            case.evaluator
+                                .evaluate_gradient_local(black_box(&case.parameters)),
+                        )
+                    })
+                },
+            );
+        }
     }
     control_group.finish();
 }
