@@ -380,9 +380,14 @@ impl PyParquetChunkIter {
     }
 }
 
-#[pyclass(name = "DatasetIter", module = "laddu")]
+#[pyclass(name = "DatasetIter", module = "laddu", unsendable)]
 struct PyDatasetIter {
-    iterator: DatasetArcIter,
+    kind: PyDatasetIterKind,
+}
+
+enum PyDatasetIterKind {
+    Local { dataset: Arc<Dataset>, index: usize },
+    Global(DatasetArcIter),
 }
 
 #[pymethods]
@@ -392,7 +397,14 @@ impl PyDatasetIter {
     }
 
     fn __next__(&mut self) -> Option<PyEvent> {
-        let event = self.iterator.next()?;
+        let event = match &mut self.kind {
+            PyDatasetIterKind::Local { dataset, index } => {
+                let event = dataset.events_local().get(*index)?.clone();
+                *index += 1;
+                event
+            }
+            PyDatasetIterKind::Global(iterator) => iterator.next()?,
+        };
         Some(PyEvent {
             event,
             has_metadata: true,
@@ -467,8 +479,30 @@ impl PyDataset {
         self.0.n_events()
     }
     fn __iter__(&self) -> PyDatasetIter {
+        self.iter_local()
+    }
+    /// Iterate over the events owned by the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is disabled, this iterates over the full Dataset.
+    /// When MPI is enabled, this iterates only over events stored on the current rank.
+    fn iter_local(&self) -> PyDatasetIter {
         PyDatasetIter {
-            iterator: Dataset::shared_iter(self.0.clone()),
+            kind: PyDatasetIterKind::Local {
+                dataset: self.0.clone(),
+                index: 0,
+            },
+        }
+    }
+    /// Iterate over all events in the Dataset.
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this performs explicit cross-rank event fetches as needed.
+    fn iter_global(&self) -> PyDatasetIter {
+        PyDatasetIter {
+            kind: PyDatasetIterKind::Global(Dataset::shared_iter(self.0.clone())),
         }
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
@@ -550,8 +584,9 @@ impl PyDataset {
     /// Notes
     /// -----
     /// When MPI is enabled, this returns only the events local to the current rank.
-    /// Use Python iteration (`for event in dataset`, `list(dataset)`, etc.) to
-    /// traverse all events across ranks.
+    /// Use `dataset.iter_global()` to traverse all events across ranks.
+    /// The default iterator (`for event in dataset`, `list(dataset)`, etc.)
+    /// iterates only over local events when MPI is enabled.
     ///
     /// Returns
     /// -------

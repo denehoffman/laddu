@@ -634,6 +634,37 @@ def test_dataset_iteration() -> None:
     assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
 
 
+def test_dataset_iteration_modes() -> None:
+    dataset = Dataset(
+        [
+            make_test_event(),
+            Event(
+                list(make_test_event().p4s.values()),
+                list(make_test_event().aux.values()),
+                1.25,
+                p4_names=P4_NAMES,
+                aux_names=AUX_NAMES,
+            ),
+        ],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+    )
+
+    default_events = list(dataset)
+    local_events = list(dataset.iter_local())
+    global_events = list(dataset.iter_global())
+    stored_events = dataset.events
+
+    assert len(default_events) == dataset.n_events
+    assert len(local_events) == dataset.n_events
+    assert len(global_events) == dataset.n_events
+    assert len(stored_events) == dataset.n_events
+
+    for actual in (local_events, global_events, stored_events):
+        for expected_event, actual_event in zip(default_events, actual, strict=True):
+            _assert_events_close(expected_event, actual_event, P4_NAMES, AUX_NAMES)
+
+
 def test_dataset_boost() -> None:
     dataset = make_test_dataset()
     rest_frame = ['proton', 'kshort1', 'kshort2']
