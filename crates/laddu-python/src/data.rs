@@ -8,7 +8,7 @@ use laddu_core::{
         read_parquet as core_read_parquet,
         read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
         read_root as core_read_root, write_parquet as core_write_parquet,
-        write_root as core_write_root, BinnedDataset, Dataset, DatasetMetadata,
+        write_root as core_write_root, BinnedDataset, Dataset, DatasetArcIter, DatasetMetadata,
         DatasetWriteOptions, Event, EventData, FloatPrecision,
     },
     utils::variables::IntoP4Selection,
@@ -382,9 +382,7 @@ impl PyParquetChunkIter {
 
 #[pyclass(name = "DatasetIter", module = "laddu")]
 struct PyDatasetIter {
-    dataset: Arc<Dataset>,
-    index: usize,
-    total: usize,
+    iterator: DatasetArcIter,
 }
 
 #[pymethods]
@@ -394,11 +392,7 @@ impl PyDatasetIter {
     }
 
     fn __next__(&mut self) -> Option<PyEvent> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = self.dataset.get_event(self.index)?;
-        self.index += 1;
+        let event = self.iterator.next()?;
         Some(PyEvent {
             event,
             has_metadata: true,
@@ -474,9 +468,7 @@ impl PyDataset {
     }
     fn __iter__(&self) -> PyDatasetIter {
         PyDatasetIter {
-            dataset: self.0.clone(),
-            index: 0,
-            total: self.0.n_events(),
+            iterator: Dataset::shared_iter(self.0.clone()),
         }
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {

@@ -1371,6 +1371,7 @@ impl FromF64 for f32 {
 
 struct SharedEventFetcher {
     dataset: Arc<Dataset>,
+    #[cfg_attr(not(feature = "mpi"), allow(dead_code))]
     world: Option<WorldHandle>,
     total: usize,
     branch_count: usize,
@@ -1387,7 +1388,7 @@ impl SharedEventFetcher {
         world: Option<WorldHandle>,
         total: usize,
         branch_count: usize,
-        fetch_chunk_size: Option<usize>,
+        #[cfg_attr(not(feature = "mpi"), allow(unused_variables))] fetch_chunk_size: Option<usize>,
     ) -> Self {
         Self {
             dataset,

@@ -679,6 +679,24 @@ impl IntoIterator for Dataset {
 }
 
 impl Dataset {
+    /// Build an iterator over a shared [`Arc<Dataset>`] without cloning the dataset contents.
+    pub fn shared_iter(dataset: Arc<Self>) -> DatasetArcIter {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                let total = dataset.n_events();
+                return DatasetArcIter::Mpi(DatasetArcMpiIter {
+                    dataset,
+                    world,
+                    index: 0,
+                    total,
+                    cursor: MpiEventChunkCursor::for_iteration(total),
+                });
+            }
+        }
+        DatasetArcIter::Local { dataset, index: 0 }
+    }
+
     /// Borrow locally stored events.
     pub fn events_local(&self) -> &[Event] {
         &self.events
@@ -867,6 +885,36 @@ impl Iterator for DatasetIntoIter {
     }
 }
 
+/// Iterator over a shared [`Arc<Dataset>`].
+pub enum DatasetArcIter {
+    /// Iterator over locally available events from a shared dataset handle.
+    Local {
+        /// Shared dataset handle.
+        dataset: Arc<Dataset>,
+        /// Next local event index to read.
+        index: usize,
+    },
+    #[cfg(feature = "mpi")]
+    /// Iterator that fetches events across MPI ranks from a shared dataset handle.
+    Mpi(DatasetArcMpiIter),
+}
+
+impl Iterator for DatasetArcIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DatasetArcIter::Local { dataset, index } => {
+                let event = dataset.events.get(*index).cloned();
+                *index += 1;
+                event
+            }
+            #[cfg(feature = "mpi")]
+            DatasetArcIter::Mpi(iter) => iter.next(),
+        }
+    }
+}
+
 #[cfg(feature = "mpi")]
 /// Iterator over a [`Dataset`] that fetches events across MPI ranks.
 pub struct DatasetMpiIter<'a> {
@@ -977,6 +1025,29 @@ impl<'a> Iterator for DatasetMpiIter<'a> {
         let event =
             self.cursor
                 .event_for_dataset(self.dataset, self.index, &self.world, self.total);
+        self.index += 1;
+        event
+    }
+}
+
+#[cfg(feature = "mpi")]
+/// Iterator over a shared [`Arc<Dataset>`] that fetches events across MPI ranks.
+pub struct DatasetArcMpiIter {
+    dataset: Arc<Dataset>,
+    world: SimpleCommunicator,
+    index: usize,
+    total: usize,
+    cursor: MpiEventChunkCursor,
+}
+
+#[cfg(feature = "mpi")]
+impl Iterator for DatasetArcMpiIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event =
+            self.cursor
+                .event_for_dataset(&self.dataset, self.index, &self.world, self.total);
         self.index += 1;
         event
     }
@@ -2577,6 +2648,16 @@ mod tests {
     }
 
     #[test]
+    fn test_dataset_arc_into_iter_returns_events() {
+        let dataset = Arc::new(test_dataset());
+        let weights: Vec<f64> = Dataset::shared_iter(dataset)
+            .map(|event| event.weight())
+            .collect();
+        assert_eq!(weights.len(), 1);
+        assert_relative_eq!(weights[0], test_event().weight);
+    }
+
+    #[test]
     fn test_dataset_get_event_local_reuses_underlying_data() {
         let dataset = test_dataset();
         let first = dataset.get_event(0).expect("event should exist");
@@ -2692,6 +2773,42 @@ mod tests {
 
         for _ in 0..80 {
             let current: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+            assert_eq!(current.len(), baseline.len());
+            for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
+                assert_relative_eq!(*current_weight, *expected_weight);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_dataset_arc_into_iter_stress_mpi_repeated_passes() {
+        use_mpi(true);
+        if get_world().is_none() {
+            finalize_mpi();
+            return;
+        }
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Arc::new(Dataset::new_with_metadata(events, metadata));
+        let baseline: Vec<f64> = Dataset::shared_iter(dataset.clone())
+            .map(|event| event.weight())
+            .collect();
+
+        for _ in 0..80 {
+            let current: Vec<f64> = Dataset::shared_iter(dataset.clone())
+                .map(|event| event.weight())
+                .collect();
             assert_eq!(current.len(), baseline.len());
             for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
                 assert_relative_eq!(*current_weight, *expected_weight);
