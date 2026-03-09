@@ -667,6 +667,7 @@ impl IntoIterator for Dataset {
                     world,
                     index: 0,
                     total,
+                    cursor: MpiEventChunkCursor::default(),
                 });
             }
         }
@@ -696,6 +697,7 @@ impl Dataset {
                     world,
                     index: 0,
                     total: self.n_events(),
+                    cursor: MpiEventChunkCursor::default(),
                 });
             }
         }
@@ -868,10 +870,10 @@ pub struct DatasetMpiIter<'a> {
     world: SimpleCommunicator,
     index: usize,
     total: usize,
+    cursor: MpiEventChunkCursor,
 }
 
 #[cfg(feature = "mpi")]
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct MpiEventChunkCursor {
     chunk_start: usize,
@@ -880,7 +882,6 @@ pub(crate) struct MpiEventChunkCursor {
 }
 
 #[cfg(feature = "mpi")]
-#[allow(dead_code)]
 impl Default for MpiEventChunkCursor {
     fn default() -> Self {
         Self::new(DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE)
@@ -888,7 +889,6 @@ impl Default for MpiEventChunkCursor {
 }
 
 #[cfg(feature = "mpi")]
-#[allow(dead_code)]
 impl MpiEventChunkCursor {
     pub(crate) fn new(chunk_size: usize) -> Self {
         Self {
@@ -955,12 +955,11 @@ impl<'a> Iterator for DatasetMpiIter<'a> {
     type Item = Event;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = fetch_event_mpi(self.dataset, self.index, &self.world, self.total);
+        let event =
+            self.cursor
+                .event_for_dataset(self.dataset, self.index, &self.world, self.total);
         self.index += 1;
-        Some(event)
+        event
     }
 }
 
@@ -972,6 +971,7 @@ pub struct DatasetMpiIntoIter {
     world: SimpleCommunicator,
     index: usize,
     total: usize,
+    cursor: MpiEventChunkCursor,
 }
 
 #[cfg(feature = "mpi")]
@@ -979,10 +979,7 @@ impl Iterator for DatasetMpiIntoIter {
     type Item = Event;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = fetch_event_mpi_from_events(
+        let event = self.cursor.event_for_events(
             &self.events,
             &self.metadata,
             self.index,
@@ -990,7 +987,7 @@ impl Iterator for DatasetMpiIntoIter {
             self.total,
         );
         self.index += 1;
-        Some(event)
+        event
     }
 }
 
@@ -1011,20 +1008,6 @@ fn fetch_event_mpi(
 }
 
 #[cfg(feature = "mpi")]
-fn fetch_event_mpi_from_events(
-    events: &[Event],
-    metadata: &Arc<DatasetMetadata>,
-    global_index: usize,
-    world: &SimpleCommunicator,
-    total: usize,
-) -> Event {
-    fetch_event_mpi_generic(global_index, total, world, metadata, |local_index| {
-        &events[local_index]
-    })
-}
-
-#[cfg(feature = "mpi")]
-#[allow(dead_code)]
 fn fetch_event_chunk_mpi(
     dataset: &Dataset,
     start: usize,
@@ -1038,7 +1021,6 @@ fn fetch_event_chunk_mpi(
 }
 
 #[cfg(feature = "mpi")]
-#[allow(dead_code)]
 fn fetch_event_chunk_mpi_from_events(
     events: &[Event],
     metadata: &Arc<DatasetMetadata>,

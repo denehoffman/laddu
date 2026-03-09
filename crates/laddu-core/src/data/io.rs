@@ -1349,6 +1349,8 @@ struct SharedEventFetcher {
     current_index: Option<usize>,
     current_event: Option<Event>,
     remaining: usize,
+    #[cfg(feature = "mpi")]
+    cursor: MpiEventChunkCursor,
 }
 
 impl SharedEventFetcher {
@@ -1366,6 +1368,8 @@ impl SharedEventFetcher {
             current_index: None,
             current_event: None,
             remaining: 0,
+            #[cfg(feature = "mpi")]
+            cursor: MpiEventChunkCursor::default(),
         }
     }
 
@@ -1378,8 +1382,21 @@ impl SharedEventFetcher {
             Some(current) => current != index || self.remaining == 0,
         };
         if refresh_needed {
-            let event =
-                fetch_event_for_index(&self.dataset, index, self.total, self.world.as_ref());
+            let event = {
+                #[cfg(feature = "mpi")]
+                {
+                    if let Some(world) = self.world.as_ref() {
+                        self.cursor
+                            .event_for_dataset(&self.dataset, index, world, self.total)
+                    } else {
+                        Some(self.dataset.index_local(index).clone())
+                    }
+                }
+                #[cfg(not(feature = "mpi"))]
+                {
+                    Some(self.dataset.index_local(index).clone())
+                }
+            }?;
             self.current_index = Some(index);
             self.remaining = self.branch_count;
             self.current_event = Some(event);
@@ -1502,21 +1519,4 @@ where
             let _ = iterator.next();
         }
     }
-}
-
-fn fetch_event_for_index(
-    dataset: &Dataset,
-    index: usize,
-    total: usize,
-    world: Option<&WorldHandle>,
-) -> Event {
-    let _ = total;
-    let _ = world;
-    #[cfg(feature = "mpi")]
-    {
-        if let Some(world) = world {
-            return fetch_event_mpi(dataset, index, world, total);
-        }
-    }
-    dataset.index_local(index).clone()
 }
