@@ -18,6 +18,10 @@ type WorldHandle = SimpleCommunicator;
 #[cfg(not(feature = "mpi"))]
 type WorldHandle = ();
 
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+const DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE: usize = 256;
+
 use crate::utils::get_bin_edges;
 use crate::{
     utils::{
@@ -867,6 +871,86 @@ pub struct DatasetMpiIter<'a> {
 }
 
 #[cfg(feature = "mpi")]
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct MpiEventChunkCursor {
+    chunk_start: usize,
+    chunk_size: usize,
+    events: Vec<Event>,
+}
+
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+impl Default for MpiEventChunkCursor {
+    fn default() -> Self {
+        Self::new(DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE)
+    }
+}
+
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+impl MpiEventChunkCursor {
+    pub(crate) fn new(chunk_size: usize) -> Self {
+        Self {
+            chunk_start: 0,
+            chunk_size: chunk_size.max(1),
+            events: Vec::new(),
+        }
+    }
+
+    fn chunk_end(&self) -> usize {
+        self.chunk_start + self.events.len()
+    }
+
+    fn contains(&self, global_index: usize) -> bool {
+        global_index >= self.chunk_start && global_index < self.chunk_end()
+    }
+
+    pub(crate) fn event_for_dataset(
+        &mut self,
+        dataset: &Dataset,
+        global_index: usize,
+        world: &SimpleCommunicator,
+        total: usize,
+    ) -> Option<Event> {
+        if global_index >= total {
+            return None;
+        }
+        if !self.contains(global_index) {
+            self.chunk_start = global_index;
+            self.events =
+                fetch_event_chunk_mpi(dataset, global_index, self.chunk_size, world, total);
+        }
+        self.events.get(global_index - self.chunk_start).cloned()
+    }
+
+    pub(crate) fn event_for_events(
+        &mut self,
+        events: &[Event],
+        metadata: &Arc<DatasetMetadata>,
+        global_index: usize,
+        world: &SimpleCommunicator,
+        total: usize,
+    ) -> Option<Event> {
+        if global_index >= total {
+            return None;
+        }
+        if !self.contains(global_index) {
+            self.chunk_start = global_index;
+            self.events = fetch_event_chunk_mpi_from_events(
+                events,
+                metadata,
+                global_index,
+                self.chunk_size,
+                world,
+                total,
+            );
+        }
+        self.events.get(global_index - self.chunk_start).cloned()
+    }
+}
+
+#[cfg(feature = "mpi")]
 impl<'a> Iterator for DatasetMpiIter<'a> {
     type Item = Event;
 
@@ -940,6 +1024,35 @@ fn fetch_event_mpi_from_events(
 }
 
 #[cfg(feature = "mpi")]
+#[allow(dead_code)]
+fn fetch_event_chunk_mpi(
+    dataset: &Dataset,
+    start: usize,
+    len: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Vec<Event> {
+    fetch_event_chunk_mpi_generic(start, len, total, world, &dataset.metadata, |local_index| {
+        dataset.index_local(local_index)
+    })
+}
+
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+fn fetch_event_chunk_mpi_from_events(
+    events: &[Event],
+    metadata: &Arc<DatasetMetadata>,
+    start: usize,
+    len: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Vec<Event> {
+    fetch_event_chunk_mpi_generic(start, len, total, world, metadata, |local_index| {
+        &events[local_index]
+    })
+}
+
+#[cfg(feature = "mpi")]
 fn fetch_event_mpi_generic<'a, F>(
     global_index: usize,
     total: usize,
@@ -976,6 +1089,84 @@ where
             bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
         Event::new(Arc::new(event), metadata.clone())
     }
+}
+
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+fn fetch_event_chunk_mpi_generic<'a, F>(
+    start: usize,
+    len: usize,
+    total: usize,
+    world: &SimpleCommunicator,
+    metadata: &Arc<DatasetMetadata>,
+    local_event: F,
+) -> Vec<Event>
+where
+    F: Fn(usize) -> &'a Event,
+{
+    if len == 0 || start >= total {
+        return Vec::new();
+    }
+
+    let end = (start + len).min(total);
+    let partition = world.partition(total);
+    let local_range = partition.range_for_rank(world.rank() as usize);
+    let owned_start = start.max(local_range.start);
+    let owned_end = end.min(local_range.end);
+    let local_indices = if owned_start < owned_end {
+        (owned_start - local_range.start)..(owned_end - local_range.start)
+    } else {
+        0..0
+    };
+
+    let local_events: Vec<EventData> = local_indices
+        .map(|local_index| local_event(local_index).data().clone())
+        .collect();
+    let local_event_count = local_events.len() as i32;
+
+    let config = bincode::config::standard();
+    let serialized_local = if local_events.is_empty() {
+        Vec::new()
+    } else {
+        bincode::serde::encode_to_vec(&local_events, config).unwrap()
+    };
+    let local_byte_count = serialized_local.len() as i32;
+
+    let mut gathered_event_counts = vec![0_i32; world.size() as usize];
+    let mut gathered_byte_counts = vec![0_i32; world.size() as usize];
+    world.all_gather_into(&local_event_count, &mut gathered_event_counts);
+    world.all_gather_into(&local_byte_count, &mut gathered_byte_counts);
+
+    let mut gathered_byte_displs = vec![0_i32; gathered_byte_counts.len()];
+    for index in 1..gathered_byte_displs.len() {
+        gathered_byte_displs[index] =
+            gathered_byte_displs[index - 1] + gathered_byte_counts[index - 1];
+    }
+    let gathered_bytes = world.all_gather_with_counts(
+        &serialized_local,
+        &gathered_byte_counts,
+        &gathered_byte_displs,
+    );
+
+    let mut events = Vec::with_capacity(end - start);
+    for rank in 0..world.size() as usize {
+        if gathered_event_counts[rank] == 0 {
+            continue;
+        }
+        let byte_start = gathered_byte_displs[rank] as usize;
+        let byte_end = byte_start + gathered_byte_counts[rank] as usize;
+        let (decoded, _): (Vec<EventData>, usize) =
+            bincode::serde::decode_from_slice(&gathered_bytes[byte_start..byte_end], config)
+                .unwrap();
+        debug_assert_eq!(decoded.len(), gathered_event_counts[rank] as usize);
+        events.extend(
+            decoded
+                .into_iter()
+                .map(|event| Event::new(Arc::new(event), metadata.clone())),
+        );
+    }
+
+    events
 }
 
 impl Dataset {
@@ -1805,6 +1996,24 @@ mod tests {
         dir
     }
 
+    #[cfg(feature = "mpi")]
+    fn mpi_chunk_test_dataset(n_events: usize) -> Dataset {
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let events = (0..n_events)
+            .map(|index| {
+                let mut event = base.clone();
+                event.p4s[0] =
+                    Vec3::new(index as f64 * 0.1, 0.0, 8.747 + index as f64 * 0.01).with_mass(0.0);
+                event.aux[0] += index as f64;
+                event.aux[1] += index as f64 * 0.5;
+                event.weight = 1.0 + index as f64;
+                Arc::new(event)
+            })
+            .collect();
+        Dataset::new_with_metadata(events, metadata)
+    }
+
     fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
         for name in p4_names {
             let lp4 = left
@@ -2486,6 +2695,91 @@ mod tests {
             for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
                 assert_relative_eq!(*current_weight, *expected_weight);
             }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = mpi_chunk_test_dataset(8);
+        let chunk = fetch_event_chunk_mpi(&dataset, 1, 5, &world, dataset.n_events());
+
+        assert_eq!(chunk.len(), 5);
+        for (offset, event) in chunk.iter().enumerate() {
+            let baseline = dataset
+                .event(1 + offset)
+                .expect("chunk baseline event should exist");
+            assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+
+        assert!(
+            fetch_event_chunk_mpi(&dataset, dataset.n_events(), 4, &world, dataset.n_events())
+                .is_empty()
+        );
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = mpi_chunk_test_dataset(8);
+        let chunk = fetch_event_chunk_mpi(&dataset, 6, 10, &world, dataset.n_events());
+
+        assert_eq!(chunk.len(), 2);
+        for (offset, event) in chunk.iter().enumerate() {
+            let baseline = dataset
+                .event(6 + offset)
+                .expect("truncated chunk baseline event should exist");
+            assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = mpi_chunk_test_dataset(9);
+        let total = dataset.n_events();
+        let metadata = dataset.metadata_arc();
+
+        let mut dataset_cursor = MpiEventChunkCursor::new(3);
+        for index in 0..total {
+            let actual = dataset_cursor
+                .event_for_dataset(&dataset, index, &world, total)
+                .expect("dataset cursor event should exist");
+            let expected = dataset.event(index).expect("baseline event should exist");
+            assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        assert!(dataset_cursor
+            .event_for_dataset(&dataset, total, &world, total)
+            .is_none());
+
+        let mut events_cursor = MpiEventChunkCursor::new(4);
+        for index in 0..total {
+            let actual = events_cursor
+                .event_for_events(dataset.events_local(), &metadata, index, &world, total)
+                .expect("events cursor event should exist");
+            let expected = dataset.event(index).expect("baseline event should exist");
+            assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
         }
         finalize_mpi();
     }
