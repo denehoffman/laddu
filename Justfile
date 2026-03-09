@@ -19,13 +19,13 @@ build-python-cpu: create-venv
     rm -f target/release/deps/libladdu_cpu.so
     uvx --with "maturin[patchelf]" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
 
-# Build the laddu-mpi wheel
+# Build the laddu-mpi source distribution
 build-python-mpi: create-venv
     rm -rf target/maturin
     rm -f target/release/deps/libladdu_mpi.so
-    uvx --with "maturin[patchelf]" maturin build --manifest-path py-laddu-mpi/Cargo.toml --release -o py-laddu-mpi/dist
+    uvx --with "maturin[patchelf]" maturin sdist --manifest-path py-laddu-mpi/Cargo.toml -o py-laddu-mpi/dist
 
-# Build both laddu-cpu and laddu-mpi wheels
+# Build the laddu-cpu wheel and laddu-mpi source distribution
 build-python: build-python-cpu build-python-mpi
 
 # Install laddu (Python, CPU)
@@ -41,18 +41,20 @@ develop-tests: build-python-cpu
     uv pip install --no-cache-dir -e "py-laddu[tests]"
 
 # Install laddu (Python, CPU, MPI)
-develop-mpi: build-python
+develop-mpi: build-python-cpu
     uv pip uninstall laddu laddu-cpu laddu-mpi || true
     uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    uv pip install --no-cache-dir --find-links py-laddu-mpi/dist laddu-mpi
-    uv pip install --no-cache-dir -e "py-laddu[mpi]"
+    . "{{venv}}/bin/activate"
+    uvx --with "maturin[patchelf]" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
+    uv pip install --no-cache-dir -e py-laddu
 
 # Install laddu (Python, CPU, MPI, tests)
-develop-tests-mpi: build-python
+develop-tests-mpi: build-python-cpu
     uv pip uninstall laddu laddu-cpu laddu-mpi || true
     uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
-    uv pip install --no-cache-dir --find-links py-laddu-mpi/dist laddu-mpi
-    uv pip install --no-cache-dir -e "py-laddu[tests,mpi]"
+    . "{{venv}}/bin/activate"
+    uvx --with "maturin[patchelf]" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
+    uv pip install --no-cache-dir -e "py-laddu[tests]"
 
 # Test Python library (CPU)
 test-python: develop-tests
@@ -61,6 +63,7 @@ test-python: develop-tests
 # Test Python library (MPI)
 test-python-mpi: develop-tests-mpi
     LADDU_BACKEND="MPI" {{bin}}/pytest
+    LADDU_BACKEND="MPI" mpirun -n 2 {{bin}}/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py
 
 # Benchmark Python ingestion readers
 bench-python-ingest *args: develop-tests

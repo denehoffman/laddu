@@ -283,12 +283,21 @@ test_build_workflow = Workflow(
             )
             for tj in TARGET_JOBS_CPU
         },
-        **{
-            f'{tj.short_name}-mpi': create_build_job(
-                tj.job_name, tj.short_name, tj.targets, mpi=True, upload=False
-            )
-            for tj in TARGET_JOBS_MPI
-        },
+        'sdist-mpi': Job(
+            steps=[
+                Checkout(),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-mpi/Cargo.toml',
+                ),
+                UploadArtifact(path='dist', artifact_name='mpi-sdist'),
+            ],
+            name='Build MPI Source Distribution',
+            runs_on='ubuntu-22.04',
+            condition=context.github.ref.startswith('refs/tags/')
+            | (context.github.event_name == 'workflow_dispatch'),
+        ),
     },
 )
 
@@ -320,10 +329,14 @@ python_release_workflow = Workflow(
                     'uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist',
                     'uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu',
                     'uv pip install --no-cache-dir -e "py-laddu[tests]"',
+                    'uvx --with "maturin[patchelf]>=1.7,<2" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release',
                 ),
                 script('uvx ruff check . --extend-exclude=.yamloom.py'),
                 script('uvx ty check . --exclude=.yamloom.py'),
                 script('uv run pytest'),
+                script(
+                    'LADDU_BACKEND=MPI mpirun -n 2 .venv/bin/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py'
+                ),
             ],
             runs_on='ubuntu-latest',
         ),
@@ -336,16 +349,6 @@ python_release_workflow = Workflow(
                 mpi=False,
             )
             for tj in TARGET_JOBS_CPU
-        },
-        **{
-            f'{tj.short_name}-mpi': create_build_job(
-                tj.job_name,
-                tj.short_name,
-                tj.targets,
-                needs=['build-check-test'],
-                mpi=True,
-            )
-            for tj in TARGET_JOBS_MPI
         },
         'sdist-cpu': Job(
             steps=[
@@ -385,11 +388,7 @@ python_release_workflow = Workflow(
                 DownloadArtifact(),
                 SetupUV(),
                 script(
-                    'uv publish --trusted-publishing always cpu-*/*',
-                    permissions=Permissions(id_token='write', contents='write'),
-                ),
-                script(
-                    'uv publish --trusted-publishing always mpi-*/*',
+                    'uv publish --trusted-publishing always cpu-*/* cpu-sdist/* mpi-sdist/*',
                     permissions=Permissions(id_token='write', contents='write'),
                 ),
                 script(
@@ -404,7 +403,6 @@ python_release_workflow = Workflow(
             | (context.github.event_name == 'workflow_dispatch'),
             needs=[
                 *[f'{tj.short_name}-cpu' for tj in TARGET_JOBS_CPU],
-                *[f'{tj.short_name}-mpi' for tj in TARGET_JOBS_MPI],
                 'sdist-cpu',
                 'sdist-mpi',
             ],
