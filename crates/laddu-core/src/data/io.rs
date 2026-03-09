@@ -604,6 +604,17 @@ pub fn write_root(
     dataset.write_root_impl(path, options)
 }
 
+#[cfg(test)]
+pub(crate) fn write_root_with_chunk_size_for_test(
+    dataset: &Dataset,
+    file_path: &str,
+    options: &DatasetWriteOptions,
+    fetch_chunk_size: usize,
+) -> LadduResult<()> {
+    let path = expand_output_path(file_path)?;
+    dataset.write_root_impl_with_chunk_size(path, options, Some(fetch_chunk_size.max(1)))
+}
+
 impl DatasetStorage {
     pub(super) fn write_parquet_impl(
         &self,
@@ -801,6 +812,15 @@ impl Dataset {
         file_path: PathBuf,
         options: &DatasetWriteOptions,
     ) -> LadduResult<()> {
+        self.write_root_impl_with_chunk_size(file_path, options, None)
+    }
+
+    fn write_root_impl_with_chunk_size(
+        &self,
+        file_path: PathBuf,
+        options: &DatasetWriteOptions,
+        fetch_chunk_size: Option<usize>,
+    ) -> LadduResult<()> {
         let tree_name = options.tree.clone().unwrap_or_else(|| "events".to_string());
         let branch_count = self.metadata.p4_names.len() * 4 + self.metadata.aux_names.len() + 1;
 
@@ -828,6 +848,7 @@ impl Dataset {
                 &tree_name,
                 branch_count,
                 total_events,
+                fetch_chunk_size,
             ),
             FloatPrecision::F32 => self.write_root_with_type::<f32>(
                 dataset_arc,
@@ -837,6 +858,7 @@ impl Dataset {
                 &tree_name,
                 branch_count,
                 total_events,
+                fetch_chunk_size,
             ),
         }
     }
@@ -851,12 +873,18 @@ impl Dataset {
         tree_name: &str,
         branch_count: usize,
         total_events: usize,
+        fetch_chunk_size: Option<usize>,
     ) -> LadduResult<()>
     where
         T: FromF64 + oxyroot::Marshaler + 'static,
     {
-        let mut iterators =
-            build_root_column_iterators::<T>(dataset, world, branch_count, total_events);
+        let mut iterators = build_root_column_iterators::<T>(
+            dataset,
+            world,
+            branch_count,
+            total_events,
+            fetch_chunk_size,
+        );
 
         if is_root {
             let mut file = RootFile::create(file_path).map_err(|err| {
@@ -1359,6 +1387,7 @@ impl SharedEventFetcher {
         world: Option<WorldHandle>,
         total: usize,
         branch_count: usize,
+        fetch_chunk_size: Option<usize>,
     ) -> Self {
         Self {
             dataset,
@@ -1369,7 +1398,10 @@ impl SharedEventFetcher {
             current_event: None,
             remaining: 0,
             #[cfg(feature = "mpi")]
-            cursor: MpiEventChunkCursor::default(),
+            cursor: fetch_chunk_size.map_or_else(
+                || MpiEventChunkCursor::for_root_writing(total, branch_count),
+                MpiEventChunkCursor::new,
+            ),
         }
     }
 
@@ -1466,6 +1498,7 @@ fn build_root_column_iterators<T>(
     world: Option<WorldHandle>,
     branch_count: usize,
     total: usize,
+    fetch_chunk_size: Option<usize>,
 ) -> Vec<(String, ColumnIterator<T>)>
 where
     T: FromF64,
@@ -1475,6 +1508,7 @@ where
         world,
         total,
         branch_count,
+        fetch_chunk_size,
     )));
     let p4_names: Vec<String> = fetcher.borrow().dataset.metadata.p4_names.clone();
     let aux_names: Vec<String> = fetcher.borrow().dataset.metadata.aux_names.clone();

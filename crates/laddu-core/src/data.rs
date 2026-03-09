@@ -19,8 +19,11 @@ type WorldHandle = SimpleCommunicator;
 type WorldHandle = ();
 
 #[cfg(feature = "mpi")]
-#[allow(dead_code)]
-const DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE: usize = 256;
+// Chosen from local two-rank probes: 512 matched or beat smaller chunks
+// while keeping the fetched-event cache modest.
+const DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE: usize = 512;
+#[cfg(feature = "mpi")]
+const MPI_EVENT_FETCH_CHUNK_SIZE_ENV: &str = "LADDU_MPI_EVENT_FETCH_CHUNK_SIZE";
 
 use crate::utils::get_bin_edges;
 use crate::{
@@ -667,7 +670,7 @@ impl IntoIterator for Dataset {
                     world,
                     index: 0,
                     total,
-                    cursor: MpiEventChunkCursor::default(),
+                    cursor: MpiEventChunkCursor::for_iteration(total),
                 });
             }
         }
@@ -692,12 +695,13 @@ impl Dataset {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
+                let total = self.n_events();
                 return DatasetIter::Mpi(DatasetMpiIter {
                     dataset: self,
                     world,
                     index: 0,
-                    total: self.n_events(),
-                    cursor: MpiEventChunkCursor::default(),
+                    total,
+                    cursor: MpiEventChunkCursor::for_iteration(total),
                 });
             }
         }
@@ -882,9 +886,24 @@ pub(crate) struct MpiEventChunkCursor {
 }
 
 #[cfg(feature = "mpi")]
-impl Default for MpiEventChunkCursor {
-    fn default() -> Self {
-        Self::new(DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE)
+fn resolve_mpi_event_fetch_chunk_size(total: usize) -> usize {
+    let clamped_total = total.max(1);
+    if let Some(raw) = std::env::var_os(MPI_EVENT_FETCH_CHUNK_SIZE_ENV) {
+        if let Some(parsed) = raw.to_str().and_then(|value| value.parse::<usize>().ok()) {
+            return parsed.max(1).min(clamped_total);
+        }
+    }
+    DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE.min(clamped_total)
+}
+
+#[cfg(feature = "mpi")]
+impl MpiEventChunkCursor {
+    pub(crate) fn for_iteration(total: usize) -> Self {
+        Self::new(resolve_mpi_event_fetch_chunk_size(total))
+    }
+
+    pub(crate) fn for_root_writing(total: usize, _branch_count: usize) -> Self {
+        Self::new(resolve_mpi_event_fetch_chunk_size(total))
     }
 }
 
@@ -2762,6 +2781,92 @@ mod tests {
                 .expect("events cursor event should exist");
             let expected = dataset.event(index).expect("baseline event should exist");
             assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    #[ignore = "developer probe for MPI iteration chunk-size tuning"]
+    fn probe_mpi_iteration_chunk_size() {
+        use std::time::Instant;
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = mpi_chunk_test_dataset(32_768);
+        let total = dataset.n_events();
+        let chunk_sizes = [64_usize, 128, 256, 512, 1024];
+        if world.rank() == 0 {
+            println!("probe=iteration");
+        }
+        for chunk_size in chunk_sizes {
+            let started = Instant::now();
+            let mut checksum = 0.0;
+            for _ in 0..8 {
+                let mut cursor = MpiEventChunkCursor::new(chunk_size);
+                for index in 0..total {
+                    let event = cursor
+                        .event_for_dataset(&dataset, index, &world, total)
+                        .expect("cursor event should exist");
+                    checksum += event.weight() + event.p4("beam").expect("beam should exist").e();
+                }
+            }
+            if world.rank() == 0 {
+                println!(
+                    "probe=iteration chunk_size={} elapsed_sec={:.6} checksum={:.6}",
+                    chunk_size,
+                    started.elapsed().as_secs_f64(),
+                    checksum,
+                );
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    #[ignore = "developer probe for MPI ROOT write chunk-size tuning"]
+    fn probe_mpi_root_write_chunk_size() {
+        use std::time::Instant;
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = Arc::new(mpi_chunk_test_dataset(32_768));
+        let chunk_sizes = [64_usize, 128, 256, 512, 1024];
+        if world.rank() == 0 {
+            println!("probe=root_write");
+        }
+        for chunk_size in chunk_sizes {
+            let dir = make_temp_dir();
+            let path = dir.join(format!("mpi_chunk_probe_{chunk_size}.root"));
+            let path_str = path.to_str().expect("probe path should be valid UTF-8");
+            let started = Instant::now();
+            for _ in 0..4 {
+                io::write_root_with_chunk_size_for_test(
+                    &dataset,
+                    path_str,
+                    &DatasetWriteOptions::default(),
+                    chunk_size,
+                )
+                .expect("probe root write should succeed");
+            }
+
+            if world.rank() == 0 {
+                println!(
+                    "probe=root_write chunk_size={} elapsed_sec={:.6}",
+                    chunk_size,
+                    started.elapsed().as_secs_f64(),
+                );
+                fs::remove_dir_all(&dir).expect("probe temp dir cleanup should succeed");
+            }
         }
         finalize_mpi();
     }
