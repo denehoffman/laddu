@@ -479,7 +479,12 @@ impl PyDataset {
         self.0.n_events()
     }
     fn __iter__(&self) -> PyDatasetIter {
-        self.iter_local()
+        self.iter_global()
+    }
+    /// Get the number of events owned by the current rank.
+    #[getter]
+    fn n_events_local(&self) -> usize {
+        self.0.n_events_local()
     }
     /// Iterate over the events owned by the current rank.
     ///
@@ -499,6 +504,7 @@ impl PyDataset {
     ///
     /// Notes
     /// -----
+    /// This is the default iterator used by ``for event in dataset``.
     /// When MPI is enabled, this performs explicit cross-rank event fetches as needed.
     fn iter_global(&self) -> PyDatasetIter {
         PyDatasetIter {
@@ -537,6 +543,10 @@ impl PyDataset {
     }
     /// Get the number of Events in the Dataset
     ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global event count.
+    ///
     /// Returns
     /// -------
     /// n_events : int
@@ -568,25 +578,51 @@ impl PyDataset {
     fn n_events_weighted(&self) -> f64 {
         self.0.n_events_weighted()
     }
+    /// Get the weighted number of local Events in the Dataset
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the sum of the current rank's Event
+    /// weights.
+    ///
+    /// Returns
+    /// -------
+    /// n_events : float
+    ///     The sum of the current rank's Event weights
+    ///
+    #[getter]
+    fn n_events_weighted_local(&self) -> f64 {
+        self.0.n_events_weighted_local()
+    }
     /// The weights associated with the Dataset
     ///
     /// Returns
     /// -------
     /// weights : array_like
-    ///     A ``numpy`` array of Event weights
+    ///     A ``numpy`` array of global Event weights
     ///
     #[getter]
     fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights())
     }
+    /// The weights associated with the Dataset on the current rank.
+    ///
+    /// Returns
+    /// -------
+    /// weights : array_like
+    ///     A ``numpy`` array of rank-local Event weights
+    ///
+    #[getter]
+    fn weights_local<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.0.weights_local())
+    }
     /// The internal list of Events stored in the Dataset
     ///
     /// Notes
     /// -----
-    /// When MPI is enabled, this returns only the events local to the current rank.
-    /// Use `dataset.iter_global()` to traverse all events across ranks.
-    /// The default iterator (`for event in dataset`, `list(dataset)`, etc.)
-    /// iterates only over local events when MPI is enabled.
+    /// When MPI is enabled, this returns the full global event list.
+    /// Use ``events_local`` or ``iter_local()`` to access only the current rank's
+    /// event ownership.
     ///
     /// Returns
     /// -------
@@ -595,6 +631,20 @@ impl PyDataset {
     ///
     #[getter]
     fn events(&self) -> Vec<PyEvent> {
+        Dataset::shared_iter(self.0.clone())
+            .map(|rust_event| PyEvent {
+                event: rust_event,
+                has_metadata: true,
+            })
+            .collect()
+    }
+    /// The list of Events stored on the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// This is the explicit rank-local counterpart to ``events``.
+    #[getter]
+    fn events_local(&self) -> Vec<PyEvent> {
         self.0
             .events_local()
             .iter()

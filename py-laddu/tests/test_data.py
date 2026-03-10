@@ -654,13 +654,23 @@ def test_dataset_iteration_modes() -> None:
     local_events = list(dataset.iter_local())
     global_events = list(dataset.iter_global())
     stored_events = dataset.events
+    stored_local_events = dataset.events_local
 
     assert len(default_events) == dataset.n_events
+    assert dataset.n_events_local == dataset.n_events
+    assert dataset.n_events_weighted_local == dataset.n_events_weighted
     assert len(local_events) == dataset.n_events
     assert len(global_events) == dataset.n_events
     assert len(stored_events) == dataset.n_events
+    assert len(stored_local_events) == dataset.n_events_local
+    assert np.allclose(dataset.weights_local, dataset.weights)
 
-    for actual in (local_events, global_events, stored_events):
+    for actual in (
+        local_events,
+        global_events,
+        stored_events,
+        stored_local_events,
+    ):
         for expected_event, actual_event in zip(default_events, actual, strict=True):
             _assert_events_close(expected_event, actual_event, P4_NAMES, AUX_NAMES)
 

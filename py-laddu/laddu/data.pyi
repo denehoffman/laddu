@@ -39,9 +39,13 @@ class Event:
 
 class Dataset(Sequence[Event]):
     events: list[Event]
+    events_local: list[Event]
     n_events: int
+    n_events_local: int
     n_events_weighted: float
+    n_events_weighted_local: float
     weights: NDArray[np.float64]
+    weights_local: NDArray[np.float64]
     p4_names: list[str]
     aux_names: list[str]
 
