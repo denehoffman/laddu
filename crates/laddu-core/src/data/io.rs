@@ -878,6 +878,11 @@ impl Dataset {
     where
         T: FromF64 + oxyroot::Marshaler + 'static,
     {
+        if world.is_none() {
+            let columns = build_root_local_column_buffers::<T>(&self.columnar);
+            return write_root_file_from_local_columns(columns, file_path, tree_name);
+        }
+
         let mut iterators = build_root_column_iterators::<T>(
             dataset,
             world,
@@ -1353,7 +1358,7 @@ fn build_parquet_schema(metadata: &DatasetMetadata, precision: FloatPrecision) -
     Schema::new(fields)
 }
 
-pub(super) trait FromF64 {
+pub(crate) trait FromF64 {
     fn from_f64(value: f64) -> Self;
 }
 
@@ -1367,6 +1372,89 @@ impl FromF64 for f32 {
     fn from_f64(value: f64) -> Self {
         value as f32
     }
+}
+
+pub(crate) fn build_root_local_column_buffers<T>(storage: &DatasetStorage) -> Vec<(String, Vec<T>)>
+where
+    T: FromF64,
+{
+    let metadata = storage.metadata();
+    let mut columns =
+        Vec::with_capacity(metadata.p4_names().len() * 4 + metadata.aux_names().len() + 1);
+    for (p4_index, name) in metadata.p4_names().iter().enumerate() {
+        let p4 = &storage.p4[p4_index];
+        columns.push((
+            format!("{name}_px"),
+            p4.px.iter().map(|value| T::from_f64(*value)).collect(),
+        ));
+        columns.push((
+            format!("{name}_py"),
+            p4.py.iter().map(|value| T::from_f64(*value)).collect(),
+        ));
+        columns.push((
+            format!("{name}_pz"),
+            p4.pz.iter().map(|value| T::from_f64(*value)).collect(),
+        ));
+        columns.push((
+            format!("{name}_e"),
+            p4.e.iter().map(|value| T::from_f64(*value)).collect(),
+        ));
+    }
+    for (aux_index, name) in metadata.aux_names().iter().enumerate() {
+        columns.push((
+            name.clone(),
+            storage.aux[aux_index]
+                .iter()
+                .map(|value| T::from_f64(*value))
+                .collect(),
+        ));
+    }
+    columns.push((
+        "weight".to_string(),
+        storage
+            .weights
+            .iter()
+            .map(|value| T::from_f64(*value))
+            .collect(),
+    ));
+    columns
+}
+
+fn write_root_file_from_local_columns<T>(
+    columns: Vec<(String, Vec<T>)>,
+    file_path: &Path,
+    tree_name: &str,
+) -> LadduResult<()>
+where
+    T: oxyroot::Marshaler + 'static,
+{
+    let mut file = RootFile::create(file_path).map_err(|err| {
+        LadduError::Custom(format!(
+            "Failed to create ROOT file '{}': {err}",
+            file_path.display()
+        ))
+    })?;
+
+    let mut tree = WriterTree::new(tree_name);
+    for (name, values) in columns {
+        tree.new_branch(name, values.into_iter());
+    }
+
+    tree.write(&mut file).map_err(|err| {
+        LadduError::Custom(format!(
+            "Failed to write ROOT tree '{tree_name}' to '{}': {err}",
+            file_path.display()
+        ))
+    })?;
+
+    file.close().map_err(|err| {
+        LadduError::Custom(format!(
+            "Failed to close ROOT file '{}': {err}",
+            file_path.display()
+        ))
+    })?;
+
+    Ok(())
 }
 
 struct SharedEventFetcher {

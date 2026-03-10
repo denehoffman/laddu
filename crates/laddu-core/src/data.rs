@@ -3150,6 +3150,87 @@ mod tests {
     }
 
     #[test]
+    fn test_root_local_column_buffers_match_columnar_storage() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let buffers = io::build_root_local_column_buffers::<f64>(&dataset.columnar);
+        let expected_names = dataset
+            .p4_names()
+            .iter()
+            .flat_map(|name| {
+                io::P4_COMPONENT_SUFFIXES
+                    .iter()
+                    .map(move |suffix| format!("{name}{suffix}"))
+            })
+            .chain(dataset.aux_names().iter().cloned())
+            .chain(std::iter::once("weight".to_string()))
+            .collect::<Vec<_>>();
+        let expected_values = dataset
+            .columnar
+            .p4
+            .iter()
+            .flat_map(|p4| [p4.px.clone(), p4.py.clone(), p4.pz.clone(), p4.e.clone()])
+            .chain(dataset.columnar.aux.clone())
+            .chain(std::iter::once(dataset.columnar.weights.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            buffers
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            expected_names
+        );
+        assert_eq!(
+            buffers
+                .into_iter()
+                .map(|(_, values)| values)
+                .collect::<Vec<_>>(),
+            expected_values
+        );
+    }
+
+    #[test]
+    fn test_root_local_column_buffers_convert_precision() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let buffers = io::build_root_local_column_buffers::<f32>(&dataset.columnar);
+        let expected_values = dataset
+            .columnar
+            .p4
+            .iter()
+            .flat_map(|p4| {
+                [
+                    p4.px.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.py.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.pz.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.e.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                ]
+            })
+            .chain(
+                dataset
+                    .columnar
+                    .aux
+                    .iter()
+                    .map(|aux| aux.iter().map(|value| *value as f32).collect::<Vec<_>>()),
+            )
+            .chain(std::iter::once(
+                dataset
+                    .columnar
+                    .weights
+                    .iter()
+                    .map(|value| *value as f32)
+                    .collect::<Vec<_>>(),
+            ))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            buffers
+                .into_iter()
+                .map(|(_, values)| values)
+                .collect::<Vec<_>>(),
+            expected_values
+        );
+    }
+
+    #[test]
     fn test_parquet_chunk_iterator_matches_full_read() {
         let path = test_data_path("data_f32.parquet");
         let path_str = path.to_str().expect("path should be valid UTF-8");
