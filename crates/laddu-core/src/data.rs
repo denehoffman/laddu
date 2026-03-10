@@ -3110,6 +3110,53 @@ mod tests {
         assert_dataset_columnar_close(&first, &second);
     }
 
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_root_storage_reads_rank_local_entry_ranges_under_mpi() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let full = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("full root columnar load should work");
+        let total = full.n_events();
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let partition = world.partition(total);
+        let local_range = partition.range_for_rank(world.rank() as usize);
+
+        let local = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("rank-local root columnar load should work");
+        assert_eq!(local.n_events(), local_range.len());
+
+        for (local_index, global_index) in local_range.clone().enumerate() {
+            for p4_index in 0..full.metadata().p4_names().len() {
+                let expected = full.p4(global_index, p4_index);
+                let actual = local.p4(local_index, p4_index);
+                assert_relative_eq!(actual.px(), expected.px(), epsilon = 1e-12);
+                assert_relative_eq!(actual.py(), expected.py(), epsilon = 1e-12);
+                assert_relative_eq!(actual.pz(), expected.pz(), epsilon = 1e-12);
+                assert_relative_eq!(actual.e(), expected.e(), epsilon = 1e-12);
+            }
+            for aux_index in 0..full.metadata().aux_names().len() {
+                assert_relative_eq!(
+                    local.aux(local_index, aux_index),
+                    full.aux(global_index, aux_index),
+                    epsilon = 1e-12
+                );
+            }
+            assert_relative_eq!(
+                local.weight(local_index),
+                full.weight(global_index),
+                epsilon = 1e-12
+            );
+        }
+
+        let local_dataset = local.to_dataset();
+        assert_eq!(local_dataset.n_events_local(), local_range.len());
+        assert_eq!(local_dataset.n_events(), total);
+        finalize_mpi();
+    }
+
     #[test]
     fn test_root_roundtrip_to_tempfile() {
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
@@ -3226,21 +3273,23 @@ mod tests {
         world.barrier();
         finalize_mpi();
 
-        let cpu_dir = make_temp_dir();
-        let cpu_path = cpu_dir.join("laddu_root_cpu_reference.root");
-        let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
-        write_root(&cpu_dataset, cpu_path_str, &DatasetWriteOptions::default())
-            .expect("non-mpi root write should succeed");
+        if is_root {
+            let cpu_dir = make_temp_dir();
+            let cpu_path = cpu_dir.join("laddu_root_cpu_reference.root");
+            let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
+            write_root(&cpu_dataset, cpu_path_str, &DatasetWriteOptions::default())
+                .expect("non-mpi root write should succeed");
 
-        let cpu_output = read_root_storage(cpu_path_str, &DatasetReadOptions::new())
-            .expect("non-mpi root output should reopen");
-        let mpi_output = read_root_storage(mpi_path_str, &DatasetReadOptions::new())
-            .expect("mpi root output should reopen");
-        assert_dataset_columnar_close(&cpu_output, &mpi_output);
+            let cpu_output = read_root_storage(cpu_path_str, &DatasetReadOptions::new())
+                .expect("non-mpi root output should reopen");
+            let mpi_output = read_root_storage(mpi_path_str, &DatasetReadOptions::new())
+                .expect("mpi root output should reopen");
+            assert_dataset_columnar_close(&cpu_output, &mpi_output);
 
-        fs::remove_dir_all(&cpu_dir).expect("root comparison temp dir cleanup should succeed");
-        if is_root && mpi_path.exists() {
-            fs::remove_file(&mpi_path).expect("root comparison cleanup should succeed");
+            fs::remove_dir_all(&cpu_dir).expect("root comparison temp dir cleanup should succeed");
+            if mpi_path.exists() {
+                fs::remove_file(&mpi_path).expect("root comparison cleanup should succeed");
+            }
         }
     }
 

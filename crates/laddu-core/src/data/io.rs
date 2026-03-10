@@ -9,6 +9,8 @@ use arrow::{
     record_batch::RecordBatch,
 };
 #[cfg(feature = "mpi")]
+use mpi::topology::SimpleCommunicator;
+#[cfg(feature = "mpi")]
 use mpi::traits::Equivalence;
 use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
@@ -18,6 +20,7 @@ use parquet::file::metadata::ParquetMetaData;
 use std::{cell::RefCell, rc::Rc};
 use std::{
     fs::File,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -478,6 +481,12 @@ struct RootReadColumns {
     weight_values: Vec<f64>,
 }
 
+#[cfg(feature = "mpi")]
+fn root_entry_range(total_entries: usize, world: &SimpleCommunicator) -> Range<usize> {
+    let partition = world.partition(total_entries);
+    partition.range_for_rank(world.rank() as usize)
+}
+
 fn read_root_columns(
     file_path: &str,
     options: &DatasetReadOptions,
@@ -507,6 +516,31 @@ fn read_root_columns(
     let column_names: Vec<&str> = lookup.keys().copied().collect();
     let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
+    let total_entries = tree.entries().max(0) as usize;
+    let entry_range = {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                root_entry_range(total_entries, &world)
+            } else {
+                0..total_entries
+            }
+        }
+        #[cfg(not(feature = "mpi"))]
+        {
+            0..total_entries
+        }
+    };
+    let expected_entries = entry_range.len();
+    if total_entries == 0 || expected_entries == 0 {
+        return Ok(RootReadColumns {
+            metadata,
+            p4_columns: Vec::new(),
+            aux_columns: Vec::new(),
+            weight_values: Vec::new(),
+        });
+    }
+
     // Keep ROOT reads sequential for now: oxyroot branch handles are not `Sync`,
     // so sharing this lookup across worker threads is unsound.
     let p4_columns = metadata
@@ -517,21 +551,25 @@ fn read_root_columns(
                 &lookup,
                 &component_candidates(name, "px"),
                 &format!("{name}_px"),
+                &entry_range,
             )?;
             let py = read_branch_values_from_candidates(
                 &lookup,
                 &component_candidates(name, "py"),
                 &format!("{name}_py"),
+                &entry_range,
             )?;
             let pz = read_branch_values_from_candidates(
                 &lookup,
                 &component_candidates(name, "pz"),
                 &format!("{name}_pz"),
+                &entry_range,
             )?;
             let e = read_branch_values_from_candidates(
                 &lookup,
                 &component_candidates(name, "e"),
                 &format!("{name}_e"),
+                &entry_range,
             )?;
             Ok(RootP4Columns { px, py, pz, e })
         })
@@ -540,33 +578,55 @@ fn read_root_columns(
     let aux_columns = metadata
         .aux_names
         .iter()
-        .map(|name| read_branch_values(&lookup, name))
+        .map(|name| read_branch_values(&lookup, name, &entry_range))
         .collect::<LadduResult<Vec<_>>>()?;
 
-    let n_events = if let Some(first) = p4_columns.first() {
-        first.px.len()
-    } else if let Some(first) = aux_columns.first() {
-        first.len()
-    } else {
+    if p4_columns.is_empty() && aux_columns.is_empty() {
         return Err(LadduError::Custom(
             "Unable to determine event count; dataset has no four-momentum or auxiliary columns"
                 .to_string(),
         ));
-    };
+    }
 
-    let weight_values = match read_branch_values_optional(&lookup, "weight")? {
+    let weight_values = match read_branch_values_optional(&lookup, "weight", &entry_range)? {
         Some(values) => {
-            if values.len() != n_events {
+            if values.len() != expected_entries {
                 return Err(LadduError::LengthMismatch {
                     context: "Column 'weight'".to_string(),
-                    expected: n_events,
+                    expected: expected_entries,
                     actual: values.len(),
                 });
             }
             values
         }
-        None => vec![1.0; n_events],
+        None => vec![1.0; expected_entries],
     };
+
+    for (name, columns) in metadata.p4_names.iter().zip(p4_columns.iter()) {
+        for (component, values) in [
+            ("px", &columns.px),
+            ("py", &columns.py),
+            ("pz", &columns.pz),
+            ("e", &columns.e),
+        ] {
+            if values.len() != expected_entries {
+                return Err(LadduError::LengthMismatch {
+                    context: format!("Column '{name}_{component}'"),
+                    expected: expected_entries,
+                    actual: values.len(),
+                });
+            }
+        }
+    }
+    for (name, values) in metadata.aux_names.iter().zip(aux_columns.iter()) {
+        if values.len() != expected_entries {
+            return Err(LadduError::LengthMismatch {
+                context: format!("Column '{name}'"),
+                expected: expected_entries,
+                actual: values.len(),
+            });
+        }
+    }
 
     Ok(RootReadColumns {
         metadata,
@@ -1097,7 +1157,11 @@ fn branch_scalar_kind(branch: &Branch) -> Option<RootScalarKind> {
     }
 }
 
-fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> LadduResult<Vec<f64>> {
+fn read_branch_values<'a>(
+    lookup: &BranchLookup<'a>,
+    column_name: &str,
+    range: &Range<usize>,
+) -> LadduResult<Vec<f64>> {
     let (kind, branch) =
         lookup
             .get(column_name)
@@ -1105,15 +1169,27 @@ fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> Laddu
             .ok_or_else(|| LadduError::MissingColumn {
                 name: column_name.to_string(),
             })?;
+    let total_entries = branch.entries().max(0) as usize;
+    if range.end > total_entries {
+        return Err(LadduError::LengthMismatch {
+            context: format!("Column '{column_name}'"),
+            expected: total_entries,
+            actual: range.end,
+        });
+    }
     let values = match kind {
         RootScalarKind::F32 => branch
             .as_iter::<f32>()
             .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
+            .skip(range.start)
+            .take(range.len())
             .map(|value| value as f64)
             .collect(),
         RootScalarKind::F64 => branch
             .as_iter::<f64>()
             .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
+            .skip(range.start)
+            .take(range.len())
             .collect(),
     };
     Ok(values)
@@ -1122,9 +1198,10 @@ fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> Laddu
 fn read_branch_values_optional<'a>(
     lookup: &BranchLookup<'a>,
     column_name: &str,
+    range: &Range<usize>,
 ) -> LadduResult<Option<Vec<f64>>> {
     if lookup.contains_key(column_name) {
-        read_branch_values(lookup, column_name).map(Some)
+        read_branch_values(lookup, column_name, range).map(Some)
     } else {
         Ok(None)
     }
@@ -1134,10 +1211,11 @@ fn read_branch_values_from_candidates<'a>(
     lookup: &BranchLookup<'a>,
     candidates: &[String],
     logical_name: &str,
+    range: &Range<usize>,
 ) -> LadduResult<Vec<f64>> {
     for candidate in candidates {
         if lookup.contains_key(candidate.as_str()) {
-            return read_branch_values(lookup, candidate);
+            return read_branch_values(lookup, candidate, range);
         }
     }
     Err(LadduError::MissingColumn {
