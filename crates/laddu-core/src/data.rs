@@ -949,10 +949,6 @@ impl MpiEventChunkCursor {
     pub(crate) fn for_iteration(total: usize) -> Self {
         Self::new(resolve_mpi_event_fetch_chunk_size(total))
     }
-
-    pub(crate) fn for_root_writing(total: usize, _branch_count: usize) -> Self {
-        Self::new(resolve_mpi_event_fetch_chunk_size(total))
-    }
 }
 
 #[cfg(feature = "mpi")]
@@ -3147,6 +3143,39 @@ mod tests {
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_root_roundtrip_to_tempfile_mpi() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let path = env::temp_dir().join("laddu_mpi_root_roundtrip.root");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        if world.is_root() && path.exists() {
+            fs::remove_file(&path).expect("stale mpi root file cleanup should succeed");
+        }
+        world.barrier();
+
+        write_root(&dataset, path_str, &DatasetWriteOptions::default())
+            .expect("writing root with mpi should succeed");
+        world.barrier();
+
+        let reopened =
+            read_root(path_str, &DatasetReadOptions::new()).expect("root roundtrip should reopen");
+        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+
+        world.barrier();
+        if world.is_root() && path.exists() {
+            fs::remove_file(&path).expect("mpi root roundtrip cleanup should succeed");
+        }
+        finalize_mpi();
     }
 
     #[test]

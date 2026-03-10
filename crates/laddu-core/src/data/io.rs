@@ -8,15 +8,17 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
+#[cfg(feature = "mpi")]
+use mpi::traits::Equivalence;
 use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
 use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
 #[cfg(feature = "mpi")]
 use parquet::file::metadata::ParquetMetaData;
+#[cfg(feature = "mpi")]
+use std::{cell::RefCell, rc::Rc};
 use std::{
-    cell::RefCell,
     fs::File,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
@@ -822,7 +824,6 @@ impl Dataset {
         fetch_chunk_size: Option<usize>,
     ) -> LadduResult<()> {
         let tree_name = options.tree.clone().unwrap_or_else(|| "events".to_string());
-        let branch_count = self.metadata.p4_names.len() * 4 + self.metadata.aux_names.len() + 1;
 
         #[cfg(feature = "mpi")]
         let mut world_opt = crate::mpi::get_world();
@@ -846,7 +847,6 @@ impl Dataset {
                 is_root,
                 &file_path,
                 &tree_name,
-                branch_count,
                 total_events,
                 fetch_chunk_size,
             ),
@@ -856,7 +856,6 @@ impl Dataset {
                 is_root,
                 &file_path,
                 &tree_name,
-                branch_count,
                 total_events,
                 fetch_chunk_size,
             ),
@@ -871,58 +870,85 @@ impl Dataset {
         is_root: bool,
         file_path: &Path,
         tree_name: &str,
-        branch_count: usize,
         total_events: usize,
         fetch_chunk_size: Option<usize>,
     ) -> LadduResult<()>
     where
-        T: FromF64 + oxyroot::Marshaler + 'static,
+        T: RootWriteValue,
     {
         if world.is_none() {
             let columns = build_root_local_column_buffers::<T>(&self.columnar);
             return write_root_file_from_local_columns(columns, file_path, tree_name);
         }
 
-        let mut iterators = build_root_column_iterators::<T>(
-            dataset,
-            world,
-            branch_count,
-            total_events,
-            fetch_chunk_size,
-        );
-
-        if is_root {
-            let mut file = RootFile::create(file_path).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to create ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            let mut tree = WriterTree::new(tree_name);
-            for (name, iterator) in iterators {
-                tree.new_branch(name, iterator);
-            }
-
-            tree.write(&mut file).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to write ROOT tree '{tree_name}' to '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            file.close().map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to close ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-        } else {
-            drain_column_iterators(&mut iterators, total_events);
+        #[cfg(feature = "mpi")]
+        {
+            return write_root_with_type_mpi::<T>(
+                dataset,
+                world.expect("MPI world should exist for distributed ROOT writing"),
+                is_root,
+                file_path,
+                tree_name,
+                total_events,
+                fetch_chunk_size,
+            );
         }
 
-        Ok(())
+        #[cfg(not(feature = "mpi"))]
+        {
+            let _ = (dataset, is_root, total_events, fetch_chunk_size);
+            Ok(())
+        }
     }
+}
+
+#[cfg(feature = "mpi")]
+fn write_root_with_type_mpi<T>(
+    dataset: Arc<Dataset>,
+    world: WorldHandle,
+    is_root: bool,
+    file_path: &Path,
+    tree_name: &str,
+    total_events: usize,
+    fetch_chunk_size: Option<usize>,
+) -> LadduResult<()>
+where
+    T: RootWriteValue,
+{
+    let mut iterators =
+        build_root_column_iterators::<T>(dataset, world, total_events, fetch_chunk_size);
+
+    if is_root {
+        let mut file = RootFile::create(file_path).map_err(|err| {
+            LadduError::Custom(format!(
+                "Failed to create ROOT file '{}': {err}",
+                file_path.display()
+            ))
+        })?;
+
+        let mut tree = WriterTree::new(tree_name);
+        for (name, iterator) in iterators {
+            tree.new_branch(name, iterator);
+        }
+
+        tree.write(&mut file).map_err(|err| {
+            LadduError::Custom(format!(
+                "Failed to write ROOT tree '{tree_name}' to '{}': {err}",
+                file_path.display()
+            ))
+        })?;
+
+        file.close().map_err(|err| {
+            LadduError::Custom(format!(
+                "Failed to close ROOT file '{}': {err}",
+                file_path.display()
+            ))
+        })?;
+    } else {
+        drain_column_iterators(&mut iterators, total_events);
+    }
+
+    Ok(())
 }
 
 /// Canonical four-momentum component suffixes used for column discovery.
@@ -1374,6 +1400,24 @@ impl FromF64 for f32 {
     }
 }
 
+#[cfg(feature = "mpi")]
+pub(super) trait RootWriteValue:
+    FromF64 + oxyroot::Marshaler + Equivalence + Default + Clone + 'static
+{
+}
+
+#[cfg(feature = "mpi")]
+impl<T> RootWriteValue for T where
+    T: FromF64 + oxyroot::Marshaler + Equivalence + Default + Clone + 'static
+{
+}
+
+#[cfg(not(feature = "mpi"))]
+pub(super) trait RootWriteValue: FromF64 + oxyroot::Marshaler + 'static {}
+
+#[cfg(not(feature = "mpi"))]
+impl<T> RootWriteValue for T where T: FromF64 + oxyroot::Marshaler + 'static {}
+
 pub(crate) fn build_root_local_column_buffers<T>(storage: &DatasetStorage) -> Vec<(String, Vec<T>)>
 where
     T: FromF64,
@@ -1457,185 +1501,168 @@ where
     Ok(())
 }
 
-struct SharedEventFetcher {
-    dataset: Arc<Dataset>,
-    #[cfg_attr(not(feature = "mpi"), allow(dead_code))]
-    world: Option<WorldHandle>,
+#[cfg(feature = "mpi")]
+struct SharedColumnChunkFetcher<T> {
+    columns: Vec<(String, Vec<T>)>,
+    world: WorldHandle,
     total: usize,
-    branch_count: usize,
-    current_index: Option<usize>,
-    current_event: Option<Event>,
-    remaining: usize,
-    #[cfg(feature = "mpi")]
-    cursor: MpiEventChunkCursor,
+    chunk_size: usize,
+    chunk_start: usize,
+    chunk_end: usize,
+    gathered_columns: Vec<Vec<T>>,
 }
 
-impl SharedEventFetcher {
+#[cfg(feature = "mpi")]
+impl<T> SharedColumnChunkFetcher<T>
+where
+    T: Equivalence + Default + Clone,
+{
     fn new(
-        dataset: Arc<Dataset>,
-        world: Option<WorldHandle>,
+        columns: Vec<(String, Vec<T>)>,
+        world: WorldHandle,
         total: usize,
-        branch_count: usize,
-        #[cfg_attr(not(feature = "mpi"), allow(unused_variables))] fetch_chunk_size: Option<usize>,
+        fetch_chunk_size: Option<usize>,
     ) -> Self {
+        let chunk_size = fetch_chunk_size
+            .map(|size| size.max(1))
+            .unwrap_or_else(|| resolve_mpi_event_fetch_chunk_size(total));
         Self {
-            dataset,
+            columns,
             world,
             total,
-            branch_count,
-            current_index: None,
-            current_event: None,
-            remaining: 0,
-            #[cfg(feature = "mpi")]
-            cursor: fetch_chunk_size.map_or_else(
-                || MpiEventChunkCursor::for_root_writing(total, branch_count),
-                MpiEventChunkCursor::new,
-            ),
+            chunk_size,
+            chunk_start: 0,
+            chunk_end: 0,
+            gathered_columns: Vec::new(),
         }
     }
 
-    fn event_for_index(&mut self, index: usize) -> Option<Event> {
-        if index >= self.total {
+    fn value_for_index(&mut self, column_index: usize, global_index: usize) -> Option<T> {
+        if global_index >= self.total {
             return None;
         }
-        let refresh_needed = match self.current_index {
-            None => true,
-            Some(current) => current != index || self.remaining == 0,
+        if global_index < self.chunk_start || global_index >= self.chunk_end {
+            self.refresh_chunk(global_index);
+        }
+        self.gathered_columns
+            .get(column_index)?
+            .get(global_index - self.chunk_start)
+            .cloned()
+    }
+
+    fn refresh_chunk(&mut self, chunk_start: usize) {
+        let chunk_end = (chunk_start + self.chunk_size).min(self.total);
+        let chunk_range = chunk_start..chunk_end;
+        let partition = self.world.partition(self.total);
+        let this_rank = self.world.rank() as usize;
+        let this_range = partition.range_for_rank(this_rank);
+        let local_start = chunk_range.start.max(this_range.start);
+        let local_end = chunk_range.end.min(this_range.end);
+        let local_slice = if local_start < local_end {
+            Some((local_start - this_range.start)..(local_end - this_range.start))
+        } else {
+            None
         };
-        if refresh_needed {
-            let event = {
-                #[cfg(feature = "mpi")]
-                {
-                    if let Some(world) = self.world.as_ref() {
-                        self.cursor
-                            .event_for_dataset(&self.dataset, index, world, self.total)
-                    } else {
-                        Some(self.dataset.index_local(index).clone())
-                    }
-                }
-                #[cfg(not(feature = "mpi"))]
-                {
-                    Some(self.dataset.index_local(index).clone())
-                }
-            }?;
-            self.current_index = Some(index);
-            self.remaining = self.branch_count;
-            self.current_event = Some(event);
+
+        let mut counts = Vec::with_capacity(partition.n_ranks());
+        let mut displs = Vec::with_capacity(partition.n_ranks());
+        let mut offset = 0_i32;
+        for rank in 0..partition.n_ranks() {
+            let rank_range = partition.range_for_rank(rank);
+            let overlap_start = chunk_range.start.max(rank_range.start);
+            let overlap_end = chunk_range.end.min(rank_range.end);
+            let count = overlap_end.saturating_sub(overlap_start) as i32;
+            counts.push(count);
+            displs.push(offset);
+            offset += count;
         }
-        let event = self.current_event.as_ref().cloned();
-        if self.remaining > 0 {
-            self.remaining -= 1;
-        }
-        if self.remaining == 0 {
-            self.current_event = None;
-        }
-        event
+
+        self.gathered_columns = self
+            .columns
+            .iter()
+            .map(|(_, column)| {
+                let local_values = local_slice
+                    .as_ref()
+                    .map(|indices| &column[indices.clone()])
+                    .unwrap_or(&[]);
+                self.world
+                    .all_gather_with_counts(local_values, &counts, &displs)
+            })
+            .collect();
+        self.chunk_start = chunk_start;
+        self.chunk_end = chunk_end;
     }
 }
 
-enum ColumnKind {
-    Px(usize),
-    Py(usize),
-    Pz(usize),
-    E(usize),
-    Aux(usize),
-    Weight,
-}
-
+#[cfg(feature = "mpi")]
 struct ColumnIterator<T> {
-    fetcher: Rc<RefCell<SharedEventFetcher>>,
+    fetcher: Rc<RefCell<SharedColumnChunkFetcher<T>>>,
     index: usize,
-    kind: ColumnKind,
-    _marker: std::marker::PhantomData<T>,
+    column_index: usize,
 }
 
+#[cfg(feature = "mpi")]
 impl<T> ColumnIterator<T> {
-    fn new(fetcher: Rc<RefCell<SharedEventFetcher>>, kind: ColumnKind) -> Self {
+    fn new(fetcher: Rc<RefCell<SharedColumnChunkFetcher<T>>>, column_index: usize) -> Self {
         Self {
             fetcher,
             index: 0,
-            kind,
-            _marker: std::marker::PhantomData,
+            column_index,
         }
     }
 }
 
+#[cfg(feature = "mpi")]
 impl<T> Iterator for ColumnIterator<T>
 where
-    T: FromF64,
+    T: Equivalence + Default + Clone,
 {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut fetcher = self.fetcher.borrow_mut();
-        let event = fetcher.event_for_index(self.index)?;
+        let value = self
+            .fetcher
+            .borrow_mut()
+            .value_for_index(self.column_index, self.index)?;
         self.index += 1;
-
-        match self.kind {
-            ColumnKind::Px(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.x)),
-            ColumnKind::Py(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.y)),
-            ColumnKind::Pz(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.z)),
-            ColumnKind::E(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.t)),
-            ColumnKind::Aux(idx) => event.aux.get(idx).map(|value| T::from_f64(*value)),
-            ColumnKind::Weight => Some(T::from_f64(event.weight)),
-        }
+        Some(value)
     }
 }
 
+#[cfg(feature = "mpi")]
 fn build_root_column_iterators<T>(
     dataset: Arc<Dataset>,
-    world: Option<WorldHandle>,
-    branch_count: usize,
+    world: WorldHandle,
     total: usize,
     fetch_chunk_size: Option<usize>,
 ) -> Vec<(String, ColumnIterator<T>)>
 where
-    T: FromF64,
+    T: FromF64 + Equivalence + Default + Clone,
 {
-    let fetcher = Rc::new(RefCell::new(SharedEventFetcher::new(
-        dataset,
+    let columns = build_root_local_column_buffers::<T>(&dataset.columnar);
+    let fetcher = Rc::new(RefCell::new(SharedColumnChunkFetcher::new(
+        columns,
         world,
         total,
-        branch_count,
         fetch_chunk_size,
     )));
-    let p4_names: Vec<String> = fetcher.borrow().dataset.metadata.p4_names.clone();
-    let aux_names: Vec<String> = fetcher.borrow().dataset.metadata.aux_names.clone();
-    let mut iterators = Vec::new();
-    for (idx, name) in p4_names.iter().enumerate() {
-        iterators.push((
-            format!("{name}_px"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Px(idx)),
-        ));
-        iterators.push((
-            format!("{name}_py"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Py(idx)),
-        ));
-        iterators.push((
-            format!("{name}_pz"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Pz(idx)),
-        ));
-        iterators.push((
-            format!("{name}_e"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::E(idx)),
-        ));
-    }
-    for (idx, name) in aux_names.iter().enumerate() {
-        iterators.push((
-            name.clone(),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Aux(idx)),
-        ));
-    }
-    iterators.push((
-        "weight".to_string(),
-        ColumnIterator::new(fetcher, ColumnKind::Weight),
-    ));
-    iterators
+    let column_names = fetcher
+        .borrow()
+        .columns
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    column_names
+        .into_iter()
+        .enumerate()
+        .map(|(column_index, name)| (name, ColumnIterator::new(fetcher.clone(), column_index)))
+        .collect()
 }
 
+#[cfg(feature = "mpi")]
 fn drain_column_iterators<T>(iterators: &mut [(String, ColumnIterator<T>)], n_events: usize)
 where
-    T: FromF64,
+    T: Equivalence + Default + Clone,
 {
     for _ in 0..n_events {
         for (_name, iterator) in iterators.iter_mut() {
