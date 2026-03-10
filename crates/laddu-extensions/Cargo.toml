@@ -45,6 +45,7 @@ mpi = ["dep:mpi", "laddu-core/mpi"]
 
 [dev-dependencies]
 approx = { workspace = true }
+mpi_test = { workspace = true }
 serde = { workspace = true }
 typetag = { workspace = true }
 

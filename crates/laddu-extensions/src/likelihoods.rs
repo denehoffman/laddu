@@ -4365,6 +4365,8 @@ mod tests {
     };
     #[cfg(feature = "mpi")]
     use mpi::topology::{Communicator, SimpleCommunicator};
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
@@ -5327,13 +5329,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_negative_paths_report_structured_errors() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let (nll, params) = make_constant_nll();
 
         let err_len = nll.project_weights_mpi(&[], None, &world).unwrap_err();
@@ -5354,13 +5353,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_value_and_gradient_match_total_non_mpi() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let (nll, params) = make_constant_nll();
         let data_term_local =
             super::evaluate_weighted_expression_sum_local(&nll.data_evaluator, &params, |l| {
@@ -5391,13 +5387,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_deterministic_fixture_matches_local_and_reduced_baselines_across_activation_toggles() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let fixture = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
         assert_nll_fixture_matches_weighted_baseline(&fixture);
@@ -5415,13 +5408,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_mixed_scale_value_matches_local_evaluate() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("scale_a"), 0).unwrap();
         let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("scale_b"), 1).unwrap();
         let expr = (amp_a + amp_b).norm_sqr();
@@ -5458,13 +5448,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_projection_paths_are_explicit_global_gathers() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let (nll, params) = make_constant_nll();
 
         let local_projection = nll
@@ -5507,13 +5494,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_project_weights_subsets_matches_repeated_project_weights_subset_mpi() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let (nll, params) = make_two_parameter_nll();
         let subsets = vec![
             vec!["amp_b".to_string()],
@@ -5542,14 +5526,11 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn mpi_project_weights_and_gradients_subset_matches_repeated_project_weights_and_gradients_subset_mpi(
     ) {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
         let (nll, params) = make_two_parameter_nll();
         let subsets = vec![
             vec!["amp_b".to_string()],

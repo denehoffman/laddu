@@ -3439,6 +3439,8 @@ mod tests {
     use crate::resources::{Cache, ParameterID, Parameters, Resources, ScalarID};
     use crate::utils::vectors::Vec4;
     use approx::assert_relative_eq;
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Serialize, Deserialize)]
@@ -4633,15 +4635,12 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_load_reserves_local_cache_size_in_mpi() {
         use crate::mpi::{finalize_mpi, get_world, use_mpi};
 
         use_mpi(true);
-        let Some(_world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        assert!(get_world().is_some(), "MPI world should be initialized");
 
         let expr = ComplexScalar::new(
             "constant",
@@ -4671,16 +4670,13 @@ mod tests {
     }
 
     #[cfg(all(feature = "mpi", feature = "expression-ir"))]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_expression_ir_cached_integrals_are_rank_local_in_mpi() {
         use crate::mpi::{finalize_mpi, get_world, use_mpi};
         use mpi::{collective::SystemOperation, topology::Communicator, traits::*};
 
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
@@ -4760,16 +4756,13 @@ mod tests {
     }
 
     #[cfg(all(feature = "mpi", feature = "expression-ir"))]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_expression_ir_weighted_sum_mpi_matches_global_eventwise_baseline() {
         use crate::mpi::{finalize_mpi, get_world, use_mpi};
         use mpi::{collective::SystemOperation, traits::*};
 
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
         let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();

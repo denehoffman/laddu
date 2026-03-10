@@ -2030,6 +2030,8 @@ mod tests {
     use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
     use fastrand;
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use serde::{Deserialize, Serialize};
     use std::{
         env, fs,
@@ -2694,13 +2696,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_dataset_event_mpi_repeated_access_is_stable() {
         use_mpi(true);
-        if get_world().is_none() {
-            finalize_mpi();
-            return;
-        }
+        assert!(get_world().is_some(), "MPI world should be initialized");
 
         let dataset = test_dataset();
         for _ in 0..32 {
@@ -2712,13 +2711,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_dataset_event_stress_mpi_repeated_access() {
         use_mpi(true);
-        if get_world().is_none() {
-            finalize_mpi();
-            return;
-        }
+        assert!(get_world().is_some(), "MPI world should be initialized");
 
         let metadata = test_dataset().metadata_arc();
         let base = test_event();
@@ -2746,13 +2742,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_dataset_iter_stress_mpi_repeated_passes() {
         use_mpi(true);
-        if get_world().is_none() {
-            finalize_mpi();
-            return;
-        }
+        assert!(get_world().is_some(), "MPI world should be initialized");
 
         let metadata = test_dataset().metadata_arc();
         let base = test_event();
@@ -2778,13 +2771,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_dataset_arc_into_iter_stress_mpi_repeated_passes() {
         use_mpi(true);
-        if get_world().is_none() {
-            finalize_mpi();
-            return;
-        }
+        assert!(get_world().is_some(), "MPI world should be initialized");
 
         let metadata = test_dataset().metadata_arc();
         let base = test_event();
@@ -2814,13 +2804,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let dataset = mpi_chunk_test_dataset(8);
         let chunk = fetch_event_chunk_mpi(&dataset, 1, 5, &world, dataset.n_events());
@@ -2841,13 +2828,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let dataset = mpi_chunk_test_dataset(8);
         let chunk = fetch_event_chunk_mpi(&dataset, 6, 10, &world, dataset.n_events());
@@ -2863,13 +2847,10 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let dataset = mpi_chunk_test_dataset(9);
         let total = dataset.n_events();
@@ -3146,13 +3127,12 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_root_roundtrip_to_tempfile_mpi() {
+        let reference = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
+        let is_root = world.is_root();
 
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let path = env::temp_dir().join("laddu_mpi_root_roundtrip.root");
@@ -3166,26 +3146,24 @@ mod tests {
         write_root(&dataset, path_str, &DatasetWriteOptions::default())
             .expect("writing root with mpi should succeed");
         world.barrier();
-
-        let reopened =
-            read_root(path_str, &DatasetReadOptions::new()).expect("root roundtrip should reopen");
-        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
-
         world.barrier();
-        if world.is_root() && path.exists() {
-            fs::remove_file(&path).expect("mpi root roundtrip cleanup should succeed");
-        }
         finalize_mpi();
+
+        if is_root {
+            let reopened = read_root(path_str, &DatasetReadOptions::new())
+                .expect("root roundtrip should reopen");
+            assert_datasets_close(&reference, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+            if path.exists() {
+                fs::remove_file(&path).expect("mpi root roundtrip cleanup should succeed");
+            }
+        }
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_root_output_is_deterministic_under_mpi() {
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
 
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let first_path = env::temp_dir().join("laddu_mpi_root_determinism_first.root");
@@ -3227,33 +3205,32 @@ mod tests {
     }
 
     #[cfg(feature = "mpi")]
-    #[test]
+    #[mpi_test(np = [2])]
     fn test_root_output_matches_between_mpi_and_non_mpi_writes() {
-        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
-        let cpu_path = env::temp_dir().join("laddu_root_cpu_reference.root");
+        let cpu_dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let mpi_path = env::temp_dir().join("laddu_root_mpi_reference.root");
-        let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
         let mpi_path_str = mpi_path.to_str().expect("path should be valid UTF-8");
 
-        for path in [&cpu_path, &mpi_path] {
-            if path.exists() {
-                fs::remove_file(path).expect("stale root file cleanup should succeed");
-            }
-        }
-
-        write_root(&dataset, cpu_path_str, &DatasetWriteOptions::default())
-            .expect("non-mpi root write should succeed");
-
         use_mpi(true);
-        let Some(world) = get_world() else {
-            finalize_mpi();
-            return;
-        };
+        let world = get_world().expect("MPI world should be initialized");
+        let is_root = world.is_root();
+        let mpi_dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
 
+        if is_root && mpi_path.exists() {
+            fs::remove_file(&mpi_path).expect("stale root file cleanup should succeed");
+        }
         world.barrier();
-        write_root(&dataset, mpi_path_str, &DatasetWriteOptions::default())
+        write_root(&mpi_dataset, mpi_path_str, &DatasetWriteOptions::default())
             .expect("mpi root write should succeed");
         world.barrier();
+        world.barrier();
+        finalize_mpi();
+
+        let cpu_dir = make_temp_dir();
+        let cpu_path = cpu_dir.join("laddu_root_cpu_reference.root");
+        let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
+        write_root(&cpu_dataset, cpu_path_str, &DatasetWriteOptions::default())
+            .expect("non-mpi root write should succeed");
 
         let cpu_output = read_root_storage(cpu_path_str, &DatasetReadOptions::new())
             .expect("non-mpi root output should reopen");
@@ -3261,15 +3238,10 @@ mod tests {
             .expect("mpi root output should reopen");
         assert_dataset_columnar_close(&cpu_output, &mpi_output);
 
-        world.barrier();
-        if world.is_root() {
-            for path in [&cpu_path, &mpi_path] {
-                if path.exists() {
-                    fs::remove_file(path).expect("root comparison cleanup should succeed");
-                }
-            }
+        fs::remove_dir_all(&cpu_dir).expect("root comparison temp dir cleanup should succeed");
+        if is_root && mpi_path.exists() {
+            fs::remove_file(&mpi_path).expect("root comparison cleanup should succeed");
         }
-        finalize_mpi();
     }
 
     #[test]

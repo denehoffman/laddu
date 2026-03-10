@@ -43,6 +43,7 @@ typetag = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+mpi_test = { workspace = true }
 sysinfo = { workspace = true }
 
 [[bench]]
