@@ -3178,6 +3178,100 @@ mod tests {
         finalize_mpi();
     }
 
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_root_output_is_deterministic_under_mpi() {
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let first_path = env::temp_dir().join("laddu_mpi_root_determinism_first.root");
+        let second_path = env::temp_dir().join("laddu_mpi_root_determinism_second.root");
+        let first_path_str = first_path.to_str().expect("path should be valid UTF-8");
+        let second_path_str = second_path.to_str().expect("path should be valid UTF-8");
+
+        if world.is_root() {
+            for path in [&first_path, &second_path] {
+                if path.exists() {
+                    fs::remove_file(path).expect("stale mpi root file cleanup should succeed");
+                }
+            }
+        }
+        world.barrier();
+
+        write_root(&dataset, first_path_str, &DatasetWriteOptions::default())
+            .expect("first mpi root write should succeed");
+        world.barrier();
+        write_root(&dataset, second_path_str, &DatasetWriteOptions::default())
+            .expect("second mpi root write should succeed");
+        world.barrier();
+
+        let first = read_root_storage(first_path_str, &DatasetReadOptions::new())
+            .expect("first mpi root output should reopen");
+        let second = read_root_storage(second_path_str, &DatasetReadOptions::new())
+            .expect("second mpi root output should reopen");
+        assert_dataset_columnar_close(&first, &second);
+
+        world.barrier();
+        if world.is_root() {
+            for path in [&first_path, &second_path] {
+                if path.exists() {
+                    fs::remove_file(path).expect("mpi root determinism cleanup should succeed");
+                }
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    fn test_root_output_matches_between_mpi_and_non_mpi_writes() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let cpu_path = env::temp_dir().join("laddu_root_cpu_reference.root");
+        let mpi_path = env::temp_dir().join("laddu_root_mpi_reference.root");
+        let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
+        let mpi_path_str = mpi_path.to_str().expect("path should be valid UTF-8");
+
+        for path in [&cpu_path, &mpi_path] {
+            if path.exists() {
+                fs::remove_file(path).expect("stale root file cleanup should succeed");
+            }
+        }
+
+        write_root(&dataset, cpu_path_str, &DatasetWriteOptions::default())
+            .expect("non-mpi root write should succeed");
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        world.barrier();
+        write_root(&dataset, mpi_path_str, &DatasetWriteOptions::default())
+            .expect("mpi root write should succeed");
+        world.barrier();
+
+        let cpu_output = read_root_storage(cpu_path_str, &DatasetReadOptions::new())
+            .expect("non-mpi root output should reopen");
+        let mpi_output = read_root_storage(mpi_path_str, &DatasetReadOptions::new())
+            .expect("mpi root output should reopen");
+        assert_dataset_columnar_close(&cpu_output, &mpi_output);
+
+        world.barrier();
+        if world.is_root() {
+            for path in [&cpu_path, &mpi_path] {
+                if path.exists() {
+                    fs::remove_file(path).expect("root comparison cleanup should succeed");
+                }
+            }
+        }
+        finalize_mpi();
+    }
+
     #[test]
     fn test_root_local_column_buffers_match_columnar_storage() {
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
