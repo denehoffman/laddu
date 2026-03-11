@@ -2824,6 +2824,32 @@ mod tests {
         assert!(dataset.get_event(99).is_none());
     }
 
+    #[cfg(feature = "mpi")]
+    fn event_iteration_signature<I>(iter: I) -> (usize, f64, f64, f64)
+    where
+        I: IntoIterator<Item = Event>,
+    {
+        let mut count = 0usize;
+        let mut weight_signature = 0.0;
+        let mut beam_signature = 0.0;
+        let mut aux_signature = 0.0;
+
+        for (index, event) in iter.into_iter().enumerate() {
+            let position = (index + 1) as f64;
+            count += 1;
+            weight_signature += position * event.weight();
+            beam_signature += position * event.p4("beam").expect("beam should exist").e();
+            aux_signature += position
+                * event
+                    .aux()
+                    .get("pol_angle")
+                    .copied()
+                    .expect("pol_angle should exist");
+        }
+
+        (count, weight_signature, beam_signature, aux_signature)
+    }
+
     #[test]
     fn test_dataset_event_stress_local_repeated_access() {
         let metadata = test_dataset().metadata_arc();
@@ -2954,6 +2980,27 @@ mod tests {
                 assert_relative_eq!(*current_weight, *expected_weight);
             }
         }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_iteration_long_running_mpi_repeated_passes() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let dataset = Arc::new(mpi_chunk_test_dataset(8_192));
+        let baseline_iter = event_iteration_signature(dataset.iter());
+        let baseline_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
+        assert_eq!(baseline_iter, baseline_shared);
+
+        for _ in 0..48 {
+            let current_iter = event_iteration_signature(dataset.iter());
+            let current_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
+            assert_eq!(current_iter, baseline_iter);
+            assert_eq!(current_shared, baseline_shared);
+        }
+
         finalize_mpi();
     }
 
