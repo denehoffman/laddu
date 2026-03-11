@@ -43,6 +43,11 @@ def check_manual_dataset() -> None:
     assert stored_local_weights == [float(rank + 1)]
     assert list(dataset.weights) == default_weights
     assert list(dataset.weights_local) == local_weights
+    assert isinstance(dataset.event_global(rank), Event)
+    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.weights_global, type(dataset.weights))
+    assert isinstance(dataset.n_events_global, int)
+    assert isinstance(dataset.n_events_weighted_global, float)
 
 
 def check_parquet_dataset() -> None:
@@ -67,6 +72,11 @@ def check_parquet_dataset() -> None:
     assert list(dataset.weights_local) == local_weights
     assert dataset.n_events_weighted == sum(default_weights)
     assert dataset.n_events_weighted_local == sum(local_weights)
+    assert isinstance(dataset.event_global(0), Event)
+    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.weights_global, type(dataset.weights))
+    assert isinstance(dataset.n_events_global, int)
+    assert isinstance(dataset.n_events_weighted_global, float)
 
 
 def main() -> None:

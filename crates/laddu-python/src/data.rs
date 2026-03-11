@@ -9,7 +9,7 @@ use laddu_core::{
         read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
         read_root as core_read_root, write_parquet as core_write_parquet,
         write_root as core_write_root, BinnedDataset, Dataset, DatasetArcIter, DatasetMetadata,
-        DatasetWriteOptions, Event, EventData, FloatPrecision,
+        DatasetWriteOptions, Event, EventData, FloatPrecision, SharedDatasetIterExt,
     },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
@@ -508,7 +508,7 @@ impl PyDataset {
     /// When MPI is enabled, this performs explicit cross-rank event fetches as needed.
     fn iter_global(&self) -> PyDatasetIter {
         PyDatasetIter {
-            kind: PyDatasetIterKind::Global(Dataset::shared_iter(self.0.clone())),
+            kind: PyDatasetIterKind::Global(self.0.shared_iter_global()),
         }
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
@@ -556,6 +556,11 @@ impl PyDataset {
     fn n_events(&self) -> usize {
         self.0.n_events()
     }
+    /// Alias for ``n_events``.
+    #[getter]
+    fn n_events_global(&self) -> usize {
+        self.0.n_events_global()
+    }
     /// Particle names used to construct four-momenta when loading from a Parquet file.
     #[getter]
     fn p4_names(&self) -> Vec<String> {
@@ -577,6 +582,11 @@ impl PyDataset {
     #[getter]
     fn n_events_weighted(&self) -> f64 {
         self.0.n_events_weighted()
+    }
+    /// Alias for ``n_events_weighted``.
+    #[getter]
+    fn n_events_weighted_global(&self) -> f64 {
+        self.0.n_events_weighted_global()
     }
     /// Get the weighted number of local Events in the Dataset
     ///
@@ -605,6 +615,11 @@ impl PyDataset {
     fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights())
     }
+    /// Alias for ``weights``.
+    #[getter]
+    fn weights_global<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.0.weights_global())
+    }
     /// The weights associated with the Dataset on the current rank.
     ///
     /// Returns
@@ -631,12 +646,18 @@ impl PyDataset {
     ///
     #[getter]
     fn events(&self) -> Vec<PyEvent> {
-        Dataset::shared_iter(self.0.clone())
+        self.0
+            .shared_iter()
             .map(|rust_event| PyEvent {
                 event: rust_event,
                 has_metadata: true,
             })
             .collect()
+    }
+    /// Alias for ``events``.
+    #[getter]
+    fn events_global(&self) -> Vec<PyEvent> {
+        self.events()
     }
     /// The list of Events stored on the current rank.
     ///
@@ -666,6 +687,17 @@ impl PyDataset {
         self.0
             .aux_by_name(index, name)
             .ok_or_else(|| PyKeyError::new_err(format!("Unknown auxiliary name '{name}'")))
+    }
+    /// Alias for ``dataset[index]``.
+    fn event_global(&self, index: usize) -> PyResult<PyEvent> {
+        let event = self
+            .0
+            .get_event_global(index)
+            .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
+        Ok(PyEvent {
+            event,
+            has_metadata: true,
+        })
     }
     fn __getitem__<'py>(
         &self,

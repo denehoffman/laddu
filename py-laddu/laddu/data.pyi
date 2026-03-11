@@ -39,12 +39,16 @@ class Event:
 
 class Dataset(Sequence[Event]):
     events: list[Event]
+    events_global: list[Event]
     events_local: list[Event]
     n_events: int
+    n_events_global: int
     n_events_local: int
     n_events_weighted: float
+    n_events_weighted_global: float
     n_events_weighted_local: float
     weights: NDArray[np.float64]
+    weights_global: NDArray[np.float64]
     weights_local: NDArray[np.float64]
     p4_names: list[str]
     aux_names: list[str]
@@ -83,6 +87,7 @@ class Dataset(Sequence[Event]):
     def bootstrap(self, seed: int) -> Dataset: ...
     def iter_local(self) -> Iterator[Event]: ...
     def iter_global(self) -> Iterator[Event]: ...
+    def event_global(self, index: int) -> Event: ...
     def p4_by_name(self, index: int, name: str) -> Vec4: ...
     def aux_by_name(self, index: int, name: str) -> float: ...
     def boost_to_rest_frame_of(self, names: list[str]) -> Dataset: ...

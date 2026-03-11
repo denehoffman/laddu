@@ -678,28 +678,51 @@ impl IntoIterator for Dataset {
     }
 }
 
-impl Dataset {
-    /// Build an iterator over a shared [`Arc<Dataset>`] without cloning the dataset contents.
-    pub fn shared_iter(dataset: Arc<Self>) -> DatasetArcIter {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                let total = dataset.n_events();
-                return DatasetArcIter::Mpi(DatasetArcMpiIter {
-                    dataset,
-                    world,
-                    index: 0,
-                    total,
-                    cursor: MpiEventChunkCursor::for_iteration(total),
-                });
-            }
+fn shared_dataset_iter(dataset: Arc<Dataset>) -> DatasetArcIter {
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            let total = dataset.n_events();
+            return DatasetArcIter::Mpi(DatasetArcMpiIter {
+                dataset,
+                world,
+                index: 0,
+                total,
+                cursor: MpiEventChunkCursor::for_iteration(total),
+            });
         }
-        DatasetArcIter::Local { dataset, index: 0 }
+    }
+    DatasetArcIter::Local { dataset, index: 0 }
+}
+
+/// Extension methods for shared [`Arc<Dataset>`] handles.
+pub trait SharedDatasetIterExt {
+    /// Build an iterator over a shared [`Arc<Dataset>`] without cloning the dataset contents.
+    fn shared_iter(&self) -> DatasetArcIter;
+
+    /// Alias for [`SharedDatasetIterExt::shared_iter`].
+    fn shared_iter_global(&self) -> DatasetArcIter;
+}
+
+impl SharedDatasetIterExt for Arc<Dataset> {
+    fn shared_iter(&self) -> DatasetArcIter {
+        shared_dataset_iter(self.clone())
     }
 
+    fn shared_iter_global(&self) -> DatasetArcIter {
+        self.shared_iter()
+    }
+}
+
+impl Dataset {
     /// Borrow locally stored events.
     pub fn events_local(&self) -> &[Event] {
         &self.events
+    }
+
+    /// Alias for [`Dataset::iter`] that collects all events into a [`Vec`].
+    pub fn events_global(&self) -> Vec<Event> {
+        self.iter_global().collect()
     }
 
     #[cfg(test)]
@@ -724,6 +747,11 @@ impl Dataset {
             }
         }
         DatasetIter::Local(self.events.iter())
+    }
+
+    /// Alias for [`Dataset::iter`].
+    pub fn iter_global(&self) -> DatasetIter<'_> {
+        self.iter()
     }
 
     /// Borrow the dataset metadata used for name lookups.
@@ -761,6 +789,11 @@ impl Dataset {
         self.event(index)
     }
 
+    /// Alias for [`Dataset::named_event`].
+    pub fn named_event_global(&self, index: usize) -> LadduResult<Event> {
+        self.named_event(index)
+    }
+
     /// Retrieve a single event by index, returning `None` when out of range.
     pub fn get_event(&self, index: usize) -> Option<Event> {
         #[cfg(feature = "mpi")]
@@ -777,6 +810,11 @@ impl Dataset {
         self.events.get(index).cloned()
     }
 
+    /// Alias for [`Dataset::get_event`].
+    pub fn get_event_global(&self, index: usize) -> Option<Event> {
+        self.get_event(index)
+    }
+
     /// Retrieve a single event by index.
     pub fn event(&self, index: usize) -> LadduResult<Event> {
         self.get_event(index).ok_or_else(|| {
@@ -785,6 +823,11 @@ impl Dataset {
                 self.n_events()
             ))
         })
+    }
+
+    /// Alias for [`Dataset::event`].
+    pub fn event_global(&self, index: usize) -> LadduResult<Event> {
+        self.event(index)
     }
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
@@ -1443,6 +1486,11 @@ impl Dataset {
         }
         self.n_events_local()
     }
+
+    /// Alias for [`Dataset::n_events`].
+    pub fn n_events_global(&self) -> usize {
+        self.n_events()
+    }
 }
 
 impl Dataset {
@@ -1488,6 +1536,11 @@ impl Dataset {
         self.weights_local()
     }
 
+    /// Alias for [`Dataset::weights`].
+    pub fn weights_global(&self) -> Vec<f64> {
+        self.weights()
+    }
+
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
@@ -1517,6 +1570,11 @@ impl Dataset {
             }
         }
         self.n_events_weighted_local()
+    }
+
+    /// Alias for [`Dataset::n_events_weighted`].
+    pub fn n_events_weighted_global(&self) -> f64 {
+        self.n_events_weighted()
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -2802,9 +2860,7 @@ mod tests {
     #[test]
     fn test_dataset_arc_into_iter_returns_events() {
         let dataset = Arc::new(test_dataset());
-        let weights: Vec<f64> = Dataset::shared_iter(dataset)
-            .map(|event| event.weight())
-            .collect();
+        let weights: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
         assert_eq!(weights.len(), 1);
         assert_relative_eq!(weights[0], test_event().weight);
     }
@@ -2986,14 +3042,10 @@ mod tests {
             }));
         }
         let dataset = Arc::new(Dataset::new_with_metadata(events, metadata));
-        let baseline: Vec<f64> = Dataset::shared_iter(dataset.clone())
-            .map(|event| event.weight())
-            .collect();
+        let baseline: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
 
         for _ in 0..80 {
-            let current: Vec<f64> = Dataset::shared_iter(dataset.clone())
-                .map(|event| event.weight())
-                .collect();
+            let current: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
             assert_eq!(current.len(), baseline.len());
             for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
                 assert_relative_eq!(*current_weight, *expected_weight);
@@ -3010,13 +3062,13 @@ mod tests {
 
         let dataset = Arc::new(mpi_chunk_test_dataset(8_192));
         let baseline_iter = event_iteration_signature(dataset.iter());
-        let baseline_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
+        let baseline_shared = event_iteration_signature(dataset.shared_iter());
         assert_eq!(baseline_iter, baseline_shared);
         let mut post_warmup_rss_kb = Vec::new();
 
         for pass_index in 0..48 {
             let current_iter = event_iteration_signature(dataset.iter());
-            let current_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
+            let current_shared = event_iteration_signature(dataset.shared_iter());
             assert_eq!(current_iter, baseline_iter);
             assert_eq!(current_shared, baseline_shared);
             if pass_index >= 7 {

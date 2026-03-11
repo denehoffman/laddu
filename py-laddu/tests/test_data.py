@@ -665,6 +665,13 @@ def test_dataset_iteration_modes() -> None:
     assert len(stored_local_events) == dataset.n_events_local
     assert np.allclose(dataset.weights_local, dataset.weights)
 
+    global_alias_event = dataset.event_global(0)
+    assert isinstance(global_alias_event, Event)
+    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.weights_global, np.ndarray)
+    assert isinstance(dataset.n_events_global, int)
+    assert isinstance(dataset.n_events_weighted_global, float)
+
     for actual in (
         local_events,
         global_events,
