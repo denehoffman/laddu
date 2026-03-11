@@ -4370,6 +4370,8 @@ mod tests {
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
+    #[cfg(feature = "mpi")]
+    use std::fs;
     use std::sync::Arc;
 
     const LENGTH_MISMATCH_MESSAGE_FRAGMENT: &str = "length mismatch";
@@ -4542,6 +4544,51 @@ mod tests {
             .map(|(&(e0, e1), &weight)| {
                 Arc::new(EventData {
                     p4s: vec![Vec4::new(0.0, 0.0, 0.0, e0), Vec4::new(0.0, 0.0, 0.0, e1)],
+                    aux: vec![],
+                    weight,
+                })
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    #[cfg(feature = "mpi")]
+    fn read_resident_rss_kb() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let status = fs::read_to_string("/proc/self/status").ok()?;
+            let vm_rss = status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))?
+                .split_whitespace()
+                .nth(1)?;
+            vm_rss.parse::<u64>().ok()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn generated_two_p4_dataset(
+        n_events: usize,
+        base_energy: f64,
+        weight_scale: f64,
+    ) -> Arc<Dataset> {
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = (0..n_events)
+            .map(|index| {
+                let idx = index as f64;
+                let beam_e0 = base_energy + (idx % 17.0) * 0.35 + idx * 0.0025;
+                let beam_e1 = 0.5 * base_energy + (idx % 11.0) * 0.2 + idx * 0.0015;
+                let weight = 0.75 + weight_scale * (1.0 + (index % 9) as f64);
+                Arc::new(EventData {
+                    p4s: vec![
+                        Vec4::new(0.0, 0.0, 0.0, beam_e0),
+                        Vec4::new(0.0, 0.0, 0.0, beam_e1),
+                    ],
                     aux: vec![],
                     weight,
                 })
@@ -4749,6 +4796,22 @@ mod tests {
                     parameters: vec![0.2, 0.15],
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn make_mixed_workload_nll_fixture(n_events: usize) -> DeterministicNllFixture {
+        let data = generated_two_p4_dataset(n_events, 1.4, 0.08);
+        let mc = generated_two_p4_dataset(n_events, 1.9, 0.11);
+        let p = ConstantAmplitude::new("p", parameter("p")).expect("mixed-workload p should build");
+        let c = CacheOnlyBeamAmplitude::new("c", 0)
+            .expect("mixed-workload cache amplitude should build");
+        let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+            .expect("mixed-workload beam amplitude should build");
+        let expression = (&p * &c) + &m;
+        DeterministicNllFixture {
+            nll: NLL::new(&expression, &data, &mc).expect("mixed-workload NLL should build"),
+            parameters: vec![0.35, 0.25],
         }
     }
 
@@ -5553,6 +5616,164 @@ mod tests {
                 assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
             }
         }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_mixed_workload_rss_stays_bounded() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let fixture = make_mixed_workload_nll_fixture(2_048);
+
+        let baseline_value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+        let baseline_gradient = fixture
+            .nll
+            .evaluate_gradient_mpi(&fixture.parameters, &world);
+        let baseline_weights = fixture
+            .nll
+            .project_weights_mpi(&fixture.parameters, None, &world)
+            .expect("baseline MPI projection should evaluate");
+        let (baseline_projection_weights, baseline_projection_gradients) = fixture
+            .nll
+            .project_weights_and_gradients_mpi(&fixture.parameters, None, &world)
+            .expect("baseline MPI projection gradient should evaluate");
+        let mut post_warmup_rss_kb = Vec::new();
+
+        assert_relative_eq!(
+            baseline_weights.as_slice(),
+            baseline_projection_weights.as_slice(),
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        for pass_index in 0..24 {
+            let value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+            assert_relative_eq!(
+                value,
+                baseline_value,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+
+            let gradient = fixture
+                .nll
+                .evaluate_gradient_mpi(&fixture.parameters, &world);
+            assert_eq!(
+                gradient.len(),
+                baseline_gradient.len(),
+                "mixed-workload MPI gradient length should remain stable"
+            );
+            for (actual_item, expected_item) in gradient.iter().zip(baseline_gradient.iter()) {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+
+            let weights = fixture
+                .nll
+                .project_weights_mpi(&fixture.parameters, None, &world)
+                .expect("MPI projection should remain evaluable");
+            assert_eq!(
+                weights.len(),
+                baseline_weights.len(),
+                "mixed-workload MPI projection length should remain stable"
+            );
+            for (actual_item, expected_item) in weights.iter().zip(baseline_weights.iter()) {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+
+            let (projection_weights, projection_gradients) = fixture
+                .nll
+                .project_weights_and_gradients_mpi(&fixture.parameters, None, &world)
+                .expect("MPI projection gradients should remain evaluable");
+            assert_eq!(
+                projection_weights.len(),
+                baseline_projection_weights.len(),
+                "mixed-workload MPI projection-gradient weight length should remain stable"
+            );
+            assert_eq!(
+                projection_gradients.len(),
+                baseline_projection_gradients.len(),
+                "mixed-workload MPI projection-gradient length should remain stable"
+            );
+            for (actual_item, expected_item) in projection_weights
+                .iter()
+                .zip(baseline_projection_weights.iter())
+            {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+            for (actual_gradient, expected_gradient) in projection_gradients
+                .iter()
+                .zip(baseline_projection_gradients.iter())
+            {
+                assert_eq!(
+                    actual_gradient.len(),
+                    expected_gradient.len(),
+                    "mixed-workload MPI projection-gradient vector length should remain stable"
+                );
+                for (actual_item, expected_item) in
+                    actual_gradient.iter().zip(expected_gradient.iter())
+                {
+                    assert_relative_eq!(
+                        *actual_item,
+                        *expected_item,
+                        epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                        max_relative = DETERMINISTIC_STRICT_REL_TOL
+                    );
+                }
+            }
+
+            if pass_index >= 3 {
+                if let Some(rss_kb) = read_resident_rss_kb() {
+                    post_warmup_rss_kb.push(rss_kb);
+                }
+            }
+        }
+
+        if let Some((&first_rss_kb, rest_rss_kb)) = post_warmup_rss_kb.split_first() {
+            let last_rss_kb = *rest_rss_kb.last().unwrap_or(&first_rss_kb);
+            let min_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .min()
+                .expect("post-warmup RSS sample should exist");
+            let max_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .max()
+                .expect("post-warmup RSS sample should exist");
+            const MAX_POST_WARMUP_RSS_GROWTH_KB: u64 = 64 * 1024;
+            const MAX_POST_WARMUP_RSS_SPREAD_KB: u64 = 64 * 1024;
+            assert!(
+                last_rss_kb.saturating_sub(first_rss_kb) <= MAX_POST_WARMUP_RSS_GROWTH_KB,
+                "mixed-workload post-warmup RSS grew by {} KiB (first={} KiB, last={} KiB)",
+                last_rss_kb.saturating_sub(first_rss_kb),
+                first_rss_kb,
+                last_rss_kb
+            );
+            assert!(
+                max_rss_kb.saturating_sub(min_rss_kb) <= MAX_POST_WARMUP_RSS_SPREAD_KB,
+                "mixed-workload post-warmup RSS spread was {} KiB (min={} KiB, max={} KiB)",
+                max_rss_kb.saturating_sub(min_rss_kb),
+                min_rss_kb,
+                max_rss_kb
+            );
+        }
+
         finalize_mpi();
     }
 }
