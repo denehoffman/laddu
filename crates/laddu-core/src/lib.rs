@@ -538,6 +538,8 @@ pub mod execution_context;
 pub mod parameter_manager;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
+/// Shared per-call thread-pool reuse utilities.
+pub mod thread_pool;
 /// Utility functions, enums, and traits
 pub mod utils;
 /// Useful traits for all crate structs
@@ -551,13 +553,12 @@ pub use crate::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
 };
 #[cfg(feature = "execution-context-prototype")]
-pub use crate::execution_context::{
-    ExecutionContext, ScratchAllocator, ThreadPolicy, ThreadPoolManager,
-};
+pub use crate::execution_context::{ExecutionContext, ScratchAllocator, ThreadPolicy};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,
 };
+pub use crate::thread_pool::ThreadPoolManager;
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,

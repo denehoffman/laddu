@@ -12,10 +12,8 @@ use ganesh::{
     core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status},
 };
-use laddu_core::{LadduError, LadduResult};
+use laddu_core::{LadduError, LadduResult, ThreadPoolManager};
 use nalgebra::DVector;
-#[cfg(feature = "rayon")]
-use rayon::{ThreadPool, ThreadPoolBuilder};
 
 /// A settings wrapper for minimization algorithms
 pub enum MinimizationSettings<P> {
@@ -25,7 +23,7 @@ pub enum MinimizationSettings<P> {
         config: LBFGSBConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<LBFGSB, P, GradientStatus, MaybeThreadPool, LadduError, LBFGSBConfig>,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
     /// Settings for the Adam algorithm
@@ -34,7 +32,7 @@ pub enum MinimizationSettings<P> {
         config: AdamConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<Adam, P, GradientStatus, MaybeThreadPool, LadduError, AdamConfig>,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
     /// Settings for the Nelder-Mead algorithm
@@ -50,7 +48,7 @@ pub enum MinimizationSettings<P> {
             LadduError,
             NelderMeadConfig,
         >,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
     /// Settings for the Particle Swarm Optimimization algorithm
@@ -59,7 +57,7 @@ pub enum MinimizationSettings<P> {
         config: PSOConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<PSO, P, SwarmStatus, MaybeThreadPool, LadduError, PSOConfig>,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
 }
@@ -72,7 +70,7 @@ pub enum MCMCSettings<P> {
         config: AIESConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<AIES, P, EnsembleStatus, MaybeThreadPool, LadduError, AIESConfig>,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
     /// Settings for the Ensemble Slice Sampler
@@ -81,17 +79,41 @@ pub enum MCMCSettings<P> {
         config: ESSConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<ESS, P, EnsembleStatus, MaybeThreadPool, LadduError, ESSConfig>,
-        /// The number of threads to use (0 will run in single-threaded mode)
+        /// The number of threads to use (`0` uses all available CPUs)
         num_threads: usize,
     },
 }
 
-/// A wrapper struct which conditionally contains a thread pool if the rayon feature is enabled.
-#[derive(Debug)]
+fn default_thread_count() -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+}
+
+fn resolve_requested_threads(num_threads: usize) -> Option<usize> {
+    Some(if num_threads == 0 {
+        default_thread_count()
+    } else {
+        num_threads
+    })
+}
+
+/// A wrapper for the requested thread-count policy used by optimization callbacks.
+#[derive(Clone, Copy, Debug)]
 pub struct MaybeThreadPool {
-    #[cfg(feature = "rayon")]
-    /// The underlying [`ThreadPool`]
-    pub thread_pool: ThreadPool,
+    requested_threads: Option<usize>,
+}
+
+impl MaybeThreadPool {
+    fn new(num_threads: usize) -> Self {
+        Self {
+            requested_threads: resolve_requested_threads(num_threads),
+        }
+    }
+
+    fn install<R: Send>(&self, op: impl FnOnce() -> LadduResult<R> + Send) -> LadduResult<R> {
+        ThreadPoolManager::shared().install(self.requested_threads, op)?
+    }
 }
 /// A trait for objects which can be used in multithreaded contexts
 pub trait Threadable {
@@ -99,74 +121,39 @@ pub trait Threadable {
     ///
     /// # Errors
     ///
-    /// This will return an error if there is any problem constructing the underlying thread pool.
+    /// This will return an error if there is any problem constructing the underlying thread pool
+    /// on first use.
     fn get_pool(&self) -> LadduResult<MaybeThreadPool>;
 }
+
+impl<P> MinimizationSettings<P> {
+    fn num_threads(&self) -> usize {
+        match self {
+            Self::LBFGSB { num_threads, .. }
+            | Self::Adam { num_threads, .. }
+            | Self::NelderMead { num_threads, .. }
+            | Self::PSO { num_threads, .. } => *num_threads,
+        }
+    }
+}
+
 impl<P> Threadable for MinimizationSettings<P> {
     fn get_pool(&self) -> LadduResult<MaybeThreadPool> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(MaybeThreadPool {
-                thread_pool: ThreadPoolBuilder::new()
-                    .num_threads(match self {
-                        Self::LBFGSB {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        }
-                        | Self::Adam {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        }
-                        | Self::NelderMead {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        }
-                        | Self::PSO {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        } => *num_threads,
-                    })
-                    .build()
-                    .map_err(LadduError::from)?,
-            })
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(MaybeThreadPool {})
+        Ok(MaybeThreadPool::new(self.num_threads()))
+    }
+}
+
+impl<P> MCMCSettings<P> {
+    fn num_threads(&self) -> usize {
+        match self {
+            Self::AIES { num_threads, .. } | Self::ESS { num_threads, .. } => *num_threads,
         }
     }
 }
 
 impl<P> Threadable for MCMCSettings<P> {
     fn get_pool(&self) -> LadduResult<MaybeThreadPool> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(MaybeThreadPool {
-                thread_pool: ThreadPoolBuilder::new()
-                    .num_threads(match self {
-                        Self::AIES {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        }
-                        | Self::ESS {
-                            config: _,
-                            callbacks: _,
-                            num_threads,
-                        } => *num_threads,
-                    })
-                    .build()
-                    .map_err(LadduError::from)?,
-            })
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(MaybeThreadPool {})
-        }
+        Ok(MaybeThreadPool::new(self.num_threads()))
     }
 }
 
@@ -192,50 +179,22 @@ where
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for NLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
     ) -> LadduResult<DVector<f64>> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate_gradient(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for NLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(-args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
-        }
+        Ok(-args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
     }
 }
 
@@ -331,50 +290,22 @@ impl NLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for StochasticNLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for StochasticNLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
     ) -> LadduResult<DVector<f64>> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate_gradient(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(-args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
-        }
+        Ok(-args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
     }
 }
 
@@ -470,50 +401,22 @@ impl StochasticNLL {
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))
     }
 }
 impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn gradient(
         &self,
         parameters: &DVector<f64>,
         args: &MaybeThreadPool,
     ) -> LadduResult<DVector<f64>> {
-        #[cfg(feature = "rayon")]
-        {
-            args.thread_pool
-                .install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate_gradient(self, parameters.into())
-        }
+        args.install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
     }
 }
 impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(-args
-                .thread_pool
-                .install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(-LikelihoodTerm::evaluate(self, parameters.into())?)
-        }
+        Ok(-args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
     }
 }
 

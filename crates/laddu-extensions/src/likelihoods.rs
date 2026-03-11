@@ -10,6 +10,8 @@ use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
+#[cfg(feature = "python")]
+use laddu_core::ThreadPoolManager;
 use laddu_core::{
     amplitudes::{Evaluator, Expression},
     data::Dataset,
@@ -49,8 +51,6 @@ use pyo3::{
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-#[cfg(all(feature = "python", feature = "rayon"))]
-use rayon::ThreadPoolBuilder;
 
 fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduResult<()> {
     if n_events == 0 {
@@ -74,6 +74,29 @@ fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> Lad
         validate_free_parameter_len(walker.len(), expected_len)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "python")]
+fn default_thread_count() -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+}
+
+#[cfg(feature = "python")]
+fn resolve_python_thread_request(threads: Option<usize>) -> Option<usize> {
+    Some(match threads {
+        Some(0) | None => default_thread_count(),
+        Some(n_threads) => n_threads,
+    })
+}
+
+#[cfg(feature = "python")]
+fn install_laddu_with_threads<R: Send>(
+    threads: Option<usize>,
+    op: impl FnOnce() -> LadduResult<R> + Send,
+) -> LadduResult<R> {
+    ThreadPoolManager::shared().install(resolve_python_thread_request(threads), op)?
 }
 
 #[cfg(feature = "mpi")]
@@ -2030,22 +2053,12 @@ impl PyNLL {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))
-                .map_err(PyErr::from)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters).map_err(PyErr::from)
-        }
+        install_laddu_with_threads(threads, || {
+            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)
+        })
+        .map_err(PyErr::from)
     }
     /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
     ///
@@ -2068,7 +2081,6 @@ impl PyNLL {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
@@ -2076,21 +2088,10 @@ impl PyNLL {
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            let gradient = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters))
-                .map_err(PyErr::from)?;
-            Ok(PyArray1::from_slice(py, gradient.as_slice()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let gradient = LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters)?;
-            Ok(PyArray1::from_slice(py, gradient.as_slice()))
-        }
+        let gradient = install_laddu_with_threads(threads, || {
+            LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters)
+        })?;
+        Ok(PyArray1::from_slice(py, gradient.as_slice()))
     }
     /// Project the model over the Monte Carlo dataset with the given parameter values
     ///
@@ -2119,7 +2120,6 @@ impl PyNLL {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project_weights<'py>(
         &self,
         py: Python<'py>,
@@ -2128,26 +2128,11 @@ impl PyNLL {
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            let projection = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| {
-                    self.0
-                        .project_weights(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                })
-                .map_err(PyErr::from)?;
-            Ok(PyArray1::from_slice(py, projection.as_slice()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let projection = self
-                .0
-                .project_weights(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))?;
-            Ok(PyArray1::from_slice(py, projection.as_slice()))
-        }
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        let projection = install_laddu_with_threads(threads, || {
+            self.0.project_weights(&parameters, mc_evaluator.clone())
+        })?;
+        Ok(PyArray1::from_slice(py, projection.as_slice()))
     }
 
     /// Project the model over the Monte Carlo dataset with the given parameter values, first
@@ -2188,7 +2173,6 @@ impl PyNLL {
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     ///
     #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project_weights_subset<'py>(
         &self,
         py: Python<'py>,
@@ -2208,31 +2192,12 @@ impl PyNLL {
                 "Argument must be either a string or a list of strings",
             ));
         };
-        #[cfg(feature = "rayon")]
-        {
-            let projection = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| {
-                    self.0.project_weights_subset(
-                        &parameters,
-                        &names,
-                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                    )
-                })
-                .map_err(PyErr::from)?;
-            Ok(PyArray1::from_slice(py, projection.as_slice()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let projection = self.0.project_weights_subset(
-                &parameters,
-                &names,
-                mc_evaluator.map(|pyeval| pyeval.0.clone()),
-            )?;
-            Ok(PyArray1::from_slice(py, projection.as_slice()))
-        }
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        let projection = install_laddu_with_threads(threads, || {
+            self.0
+                .project_weights_subset(&parameters, &names, mc_evaluator.clone())
+        })?;
+        Ok(PyArray1::from_slice(py, projection.as_slice()))
     }
 
     /// Project the model over the Monte Carlo dataset for multiple isolated amplitude subsets.
@@ -2253,7 +2218,6 @@ impl PyNLL {
     /// result : array_like
     ///     2D array of shape ``(len(subsets), n_events)``
     #[pyo3(signature = (parameters, subsets, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project_weights_subsets<'py>(
         &self,
         py: Python<'py>,
@@ -2263,31 +2227,12 @@ impl PyNLL {
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            let projection = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| {
-                    self.0.project_weights_subsets(
-                        &parameters,
-                        &subsets,
-                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                    )
-                })
-                .map_err(PyErr::from)?;
-            Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let projection = self.0.project_weights_subsets(
-                &parameters,
-                &subsets,
-                mc_evaluator.map(|pyeval| pyeval.0.clone()),
-            )?;
-            Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
-        }
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        let projection = install_laddu_with_threads(threads, || {
+            self.0
+                .project_weights_subsets(&parameters, &subsets, mc_evaluator.clone())
+        })?;
+        Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
     }
 
     /// Project the model and gradients over the Monte Carlo dataset while isolating selected terms.
@@ -2309,7 +2254,6 @@ impl PyNLL {
     ///     ``(weights, gradients)`` where ``weights`` has shape ``(n_events,)`` and
     ///     ``gradients`` has shape ``(n_events, n_parameters)``
     #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn project_weights_and_gradients_subset<'py>(
         &self,
         py: Python<'py>,
@@ -2329,45 +2273,19 @@ impl PyNLL {
                 "Argument must be either a string or a list of strings",
             ));
         };
-        #[cfg(feature = "rayon")]
-        {
-            let (weights, gradients) = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| {
-                    self.0.project_weights_and_gradients_subset(
-                        &parameters,
-                        &names,
-                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                    )
-                })
-                .map_err(PyErr::from)?;
-            let gradients = gradients
-                .iter()
-                .map(|gradient| gradient.as_slice().to_vec())
-                .collect::<Vec<_>>();
-            Ok((
-                PyArray1::from_slice(py, weights.as_slice()),
-                PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let (weights, gradients) = self.0.project_weights_and_gradients_subset(
-                &parameters,
-                &names,
-                mc_evaluator.map(|pyeval| pyeval.0.clone()),
-            )?;
-            let gradients = gradients
-                .iter()
-                .map(|gradient| gradient.as_slice().to_vec())
-                .collect::<Vec<_>>();
-            Ok((
-                PyArray1::from_slice(py, weights.as_slice()),
-                PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
-            ))
-        }
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        let (weights, gradients) = install_laddu_with_threads(threads, || {
+            self.0
+                .project_weights_and_gradients_subset(&parameters, &names, mc_evaluator.clone())
+        })?;
+        let gradients = gradients
+            .iter()
+            .map(|gradient| gradient.as_slice().to_vec())
+            .collect::<Vec<_>>();
+        Ok((
+            PyArray1::from_slice(py, weights.as_slice()),
+            PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+        ))
     }
 
     #[cfg_attr(doctest, doc = "```ignore")]
@@ -3941,22 +3859,9 @@ impl PyLikelihoodEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters))
-                .map_err(PyErr::from)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            self.0.evaluate(&parameters).map_err(PyErr::from)
-        }
+        install_laddu_with_threads(threads, || self.0.evaluate(&parameters)).map_err(PyErr::from)
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
     ///
@@ -3980,7 +3885,6 @@ impl PyLikelihoodEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
@@ -3988,21 +3892,9 @@ impl PyLikelihoodEvaluator {
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        #[cfg(feature = "rayon")]
-        {
-            let gradient = ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| self.0.evaluate_gradient(&parameters))
-                .map_err(PyErr::from)?;
-            Ok(PyArray1::from_slice(py, gradient.as_slice()))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            let gradient = self.0.evaluate_gradient(&parameters)?;
-            Ok(PyArray1::from_slice(py, gradient.as_slice()))
-        }
+        let gradient =
+            install_laddu_with_threads(threads, || self.0.evaluate_gradient(&parameters))?;
+        Ok(PyArray1::from_slice(py, gradient.as_slice()))
     }
     #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the LikelihoodTerm with respect to the free parameters in the model
