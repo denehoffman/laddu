@@ -478,6 +478,13 @@ impl PyDataset {
     fn __len__(&self) -> usize {
         self.0.n_events()
     }
+    /// Iterate over all events in dataset order.
+    ///
+    /// Notes
+    /// -----
+    /// This is the default iterator used by ``for event in dataset``.
+    /// When MPI is enabled, it preserves global indexing semantics and may fetch
+    /// remote events as needed.
     fn __iter__(&self) -> PyDatasetIter {
         self.iter_global()
     }
@@ -492,6 +499,7 @@ impl PyDataset {
     /// -----
     /// When MPI is disabled, this iterates over the full Dataset.
     /// When MPI is enabled, this iterates only over events stored on the current rank.
+    /// The yielded order matches the current rank's local storage order.
     fn iter_local(&self) -> PyDatasetIter {
         PyDatasetIter {
             kind: PyDatasetIterKind::Local {
@@ -505,7 +513,8 @@ impl PyDataset {
     /// Notes
     /// -----
     /// This is the default iterator used by ``for event in dataset``.
-    /// When MPI is enabled, this performs explicit cross-rank event fetches as needed.
+    /// When MPI is enabled, this preserves global dataset order and performs
+    /// explicit cross-rank event fetches as needed.
     fn iter_global(&self) -> PyDatasetIter {
         PyDatasetIter {
             kind: PyDatasetIterKind::Global(self.0.shared_iter_global()),
@@ -546,6 +555,7 @@ impl PyDataset {
     /// Notes
     /// -----
     /// When MPI is enabled, this returns the global event count.
+    /// It therefore matches ``len(dataset)`` and the valid range for ``dataset[i]``.
     ///
     /// Returns
     /// -------
@@ -573,6 +583,10 @@ impl PyDataset {
     }
 
     /// Get the weighted number of Events in the Dataset
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global weighted event count.
     ///
     /// Returns
     /// -------
@@ -606,6 +620,10 @@ impl PyDataset {
     }
     /// The weights associated with the Dataset
     ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global weight vector in dataset order.
+    ///
     /// Returns
     /// -------
     /// weights : array_like
@@ -621,6 +639,10 @@ impl PyDataset {
         PyArray1::from_slice(py, &self.0.weights_global())
     }
     /// The weights associated with the Dataset on the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// This is the explicit rank-local counterpart to ``weights``.
     ///
     /// Returns
     /// -------
@@ -638,6 +660,7 @@ impl PyDataset {
     /// When MPI is enabled, this returns the full global event list.
     /// Use ``events_local`` or ``iter_local()`` to access only the current rank's
     /// event ownership.
+    /// The returned list matches the order produced by ``for event in dataset``.
     ///
     /// Returns
     /// -------
@@ -664,6 +687,7 @@ impl PyDataset {
     /// Notes
     /// -----
     /// This is the explicit rank-local counterpart to ``events``.
+    /// The returned list matches the order produced by ``iter_local()``.
     #[getter]
     fn events_local(&self) -> Vec<PyEvent> {
         self.0
@@ -689,6 +713,10 @@ impl PyDataset {
             .ok_or_else(|| PyKeyError::new_err(format!("Unknown auxiliary name '{name}'")))
     }
     /// Alias for ``dataset[index]``.
+    ///
+    /// Notes
+    /// -----
+    /// This preserves the default global indexing semantics under MPI.
     fn event_global(&self, index: usize) -> PyResult<PyEvent> {
         let event = self
             .0

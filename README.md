@@ -374,6 +374,14 @@ To use MPI in Rust, one must simply surround their main analysis code with a cal
 
 In Python, the default `Dataset` interface keeps its usual global sequence semantics when MPI is enabled. That means `len(dataset)`, `dataset[i]`, `for event in dataset`, `list(dataset)`, `dataset.events`, `dataset.weights`, and `dataset.n_events_weighted` all behave as if the full dataset were present locally. Use `dataset.iter_local()`, `dataset.events_local`, `dataset.weights_local`, `dataset.n_events_local`, and `dataset.n_events_weighted_local` only when code explicitly wants rank-local ownership semantics. In non-MPI runs, local and global access behave the same way.
 
+The intended guarantees are:
+
+- Default/global access preserves the same dataset-wide ordering and indexing semantics in MPI and non-MPI runs.
+- `*_local` access is always limited to the current rank's ownership and should only be used for explicitly rank-local code paths.
+- `iter_global()` and the default iterator may fetch remote events under MPI; `iter_local()` never does.
+- Global counts and weighted sums (`n_events`, `n_events_weighted`, `weights`) remain valid for whole-dataset reporting under MPI.
+- Local/global results are identical in non-MPI runs because there is only one rank.
+
 # Future Plans
 
 - GPU integration (this is incredibly difficult to do right now, but it's something I'm looking into).

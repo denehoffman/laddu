@@ -43,8 +43,8 @@ def run_analysis() -> Summary:
     dataset = load_dataset()
 
     # The default Python Dataset interface remains global under MPI.
-    # Use `events_local`, `weights_local`, or `iter_local()` only for explicit
-    # rank-local work.
+    # Indexing, iteration, weights, and event counts keep their full-dataset
+    # semantics unless a `*_local` accessor is requested explicitly.
     mass_variable = ld.Mass(['kshort1', 'kshort2'])
     masses = mass_variable.value_on(dataset)
 
@@ -102,6 +102,7 @@ def report(summary: Summary) -> None:
             'per-rank event counts change while the global metrics stay stable.'
         )
         print(
+            'Default dataset indexing and iteration stay global under MPI. '
             'Use `dataset.iter_local()`, `dataset.events_local`, or '
             '`dataset.weights_local` only when a rank-local code path is '
             'actually desired.'

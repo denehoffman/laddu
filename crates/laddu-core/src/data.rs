@@ -716,11 +716,16 @@ impl SharedDatasetIterExt for Arc<Dataset> {
 
 impl Dataset {
     /// Borrow locally stored events.
+    ///
+    /// When MPI is enabled, this slice contains only the current rank's event ownership.
     pub fn events_local(&self) -> &[Event] {
         &self.events
     }
 
-    /// Alias for [`Dataset::iter`] that collects all events into a [`Vec`].
+    /// Collect all events into a [`Vec`] using the default global iteration semantics.
+    ///
+    /// When MPI is enabled, the returned vector is ordered like [`Dataset::iter`] and
+    /// may include remotely owned events fetched on demand.
     pub fn events_global(&self) -> Vec<Event> {
         self.iter_global().collect()
     }
@@ -750,6 +755,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::iter`].
+    ///
+    /// This preserves dataset-wide ordering under MPI.
     pub fn iter_global(&self) -> DatasetIter<'_> {
         self.iter()
     }
@@ -811,6 +818,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::get_event`].
+    ///
+    /// This preserves the default global indexing semantics under MPI.
     pub fn get_event_global(&self, index: usize) -> Option<Event> {
         self.get_event(index)
     }
@@ -826,6 +835,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::event`].
+    ///
+    /// This preserves the default global indexing semantics under MPI.
     pub fn event_global(&self, index: usize) -> LadduResult<Event> {
         self.event(index)
     }
@@ -1488,6 +1499,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::n_events`].
+    ///
+    /// This returns the global event count under MPI.
     pub fn n_events_global(&self) -> usize {
         self.n_events()
     }
@@ -1537,6 +1550,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::weights`].
+    ///
+    /// This returns the global weight vector in dataset order under MPI.
     pub fn weights_global(&self) -> Vec<f64> {
         self.weights()
     }
@@ -1573,6 +1588,8 @@ impl Dataset {
     }
 
     /// Alias for [`Dataset::n_events_weighted`].
+    ///
+    /// This returns the global weighted event count under MPI.
     pub fn n_events_weighted_global(&self) -> f64 {
         self.n_events_weighted()
     }
