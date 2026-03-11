@@ -2265,12 +2265,166 @@ mod tests {
         assert_datasets_close(&root_auto, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
 
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_from_root_metadata_matches_non_mpi_under_mpi() {
+        let reference_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
+        let explicit_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES);
+        let reference_explicit = open_test_dataset("data_f32.root", explicit_options.clone());
+
+        use_mpi(true);
+        let local_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
+        let local_explicit = open_test_dataset("data_f32.root", explicit_options);
+
+        assert_eq!(local_auto.p4_names(), reference_auto.p4_names());
+        assert_eq!(local_auto.aux_names(), reference_auto.aux_names());
+        assert_eq!(local_explicit.p4_names(), reference_explicit.p4_names());
+        assert_eq!(local_explicit.aux_names(), reference_explicit.aux_names());
+        assert_eq!(local_auto.p4_names(), local_explicit.p4_names());
+        assert_eq!(local_auto.aux_names(), local_explicit.aux_names());
+
+        for name in local_auto.p4_names() {
+            let local_auto_selection = local_auto
+                .metadata()
+                .p4_selection(name)
+                .expect("local auto canonical p4 selection should exist");
+            let reference_auto_selection = reference_auto
+                .metadata()
+                .p4_selection(name)
+                .expect("reference auto canonical p4 selection should exist");
+            let local_explicit_selection = local_explicit
+                .metadata()
+                .p4_selection(name)
+                .expect("local explicit canonical p4 selection should exist");
+            assert_eq!(
+                local_auto_selection.names(),
+                reference_auto_selection.names()
+            );
+            assert_eq!(
+                local_auto_selection.indices(),
+                reference_auto_selection.indices()
+            );
+            assert_eq!(
+                local_explicit_selection.names(),
+                reference_auto_selection.names()
+            );
+            assert_eq!(
+                local_explicit_selection.indices(),
+                reference_auto_selection.indices()
+            );
+        }
+
+        finalize_mpi();
+    }
+
     #[test]
     fn test_from_root_f64_matches_parquet() {
         let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let root_f64 = open_test_dataset("data_f64.root", DatasetReadOptions::new());
         assert_datasets_close(&root_f64, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_from_root_alias_resolution_matches_non_mpi_under_mpi() {
+        let alias_options = DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]);
+        let explicit_alias_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES)
+            .alias("resonance", ["kshort1", "kshort2"]);
+        let reference_auto = open_test_dataset("data_f32.root", alias_options.clone());
+        let reference_explicit = open_test_dataset("data_f32.root", explicit_alias_options.clone());
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let local_auto = open_test_dataset("data_f32.root", alias_options);
+        let local_explicit = open_test_dataset("data_f32.root", explicit_alias_options);
+
+        let local_auto_alias = local_auto
+            .metadata()
+            .p4_selection("resonance")
+            .expect("local auto alias should exist");
+        let local_explicit_alias = local_explicit
+            .metadata()
+            .p4_selection("resonance")
+            .expect("local explicit alias should exist");
+        let reference_alias = reference_auto
+            .metadata()
+            .p4_selection("resonance")
+            .expect("reference alias should exist");
+        let reference_explicit_alias = reference_explicit
+            .metadata()
+            .p4_selection("resonance")
+            .expect("reference explicit alias should exist");
+        assert_eq!(local_auto_alias.names(), reference_alias.names());
+        assert_eq!(local_auto_alias.indices(), reference_alias.indices());
+        assert_eq!(
+            local_explicit_alias.names(),
+            reference_explicit_alias.names()
+        );
+        assert_eq!(
+            local_explicit_alias.indices(),
+            reference_explicit_alias.indices()
+        );
+        assert_eq!(local_auto_alias.names(), local_explicit_alias.names());
+        assert_eq!(local_auto_alias.indices(), local_explicit_alias.indices());
+
+        let partition = world.partition(reference_auto.n_events());
+        let local_range = partition.range_for_rank(world.rank() as usize);
+        assert_eq!(local_auto.n_events_local(), local_range.len());
+        assert_eq!(local_explicit.n_events_local(), local_range.len());
+
+        for (local_index, global_index) in local_range.enumerate() {
+            let local_auto_event = local_auto.event_view(local_index);
+            let local_explicit_event = local_explicit.event_view(local_index);
+            let reference_event = reference_auto.event_view(global_index);
+            let reference_explicit_event = reference_explicit.event_view(global_index);
+
+            let local_auto_value = local_auto_event
+                .p4("resonance")
+                .expect("local auto alias should resolve");
+            let local_explicit_value = local_explicit_event
+                .p4("resonance")
+                .expect("local explicit alias should resolve");
+            let reference_value = reference_event
+                .p4("resonance")
+                .expect("reference alias should resolve");
+            let reference_explicit_value = reference_explicit_event
+                .p4("resonance")
+                .expect("reference explicit alias should resolve");
+
+            assert_relative_eq!(local_auto_value.px(), reference_value.px(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.py(), reference_value.py(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.pz(), reference_value.pz(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.e(), reference_value.e(), epsilon = 1e-9);
+
+            assert_relative_eq!(
+                local_explicit_value.px(),
+                reference_explicit_value.px(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.py(),
+                reference_explicit_value.py(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.pz(),
+                reference_explicit_value.pz(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.e(),
+                reference_explicit_value.e(),
+                epsilon = 1e-9
+            );
+        }
+
+        finalize_mpi();
+    }
+
     #[test]
     fn test_event_creation() {
         let event = test_event();
