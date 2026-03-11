@@ -2850,6 +2850,25 @@ mod tests {
         (count, weight_signature, beam_signature, aux_signature)
     }
 
+    #[cfg(feature = "mpi")]
+    fn read_resident_rss_kb() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let status = fs::read_to_string("/proc/self/status").ok()?;
+            let vm_rss = status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))?
+                .split_whitespace()
+                .nth(1)?;
+            vm_rss.parse::<u64>().ok()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
     #[test]
     fn test_dataset_event_stress_local_repeated_access() {
         let metadata = test_dataset().metadata_arc();
@@ -2993,12 +3012,48 @@ mod tests {
         let baseline_iter = event_iteration_signature(dataset.iter());
         let baseline_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
         assert_eq!(baseline_iter, baseline_shared);
+        let mut post_warmup_rss_kb = Vec::new();
 
-        for _ in 0..48 {
+        for pass_index in 0..48 {
             let current_iter = event_iteration_signature(dataset.iter());
             let current_shared = event_iteration_signature(Dataset::shared_iter(dataset.clone()));
             assert_eq!(current_iter, baseline_iter);
             assert_eq!(current_shared, baseline_shared);
+            if pass_index >= 7 {
+                if let Some(rss_kb) = read_resident_rss_kb() {
+                    post_warmup_rss_kb.push(rss_kb);
+                }
+            }
+        }
+
+        if let Some((&first_rss_kb, rest_rss_kb)) = post_warmup_rss_kb.split_first() {
+            let last_rss_kb = *rest_rss_kb.last().unwrap_or(&first_rss_kb);
+            let min_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .min()
+                .expect("post-warmup RSS sample should exist");
+            let max_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .max()
+                .expect("post-warmup RSS sample should exist");
+            const MAX_POST_WARMUP_RSS_GROWTH_KB: u64 = 32 * 1024;
+            const MAX_POST_WARMUP_RSS_SPREAD_KB: u64 = 32 * 1024;
+            assert!(
+                last_rss_kb.saturating_sub(first_rss_kb) <= MAX_POST_WARMUP_RSS_GROWTH_KB,
+                "post-warmup RSS grew by {} KiB (first={} KiB, last={} KiB)",
+                last_rss_kb.saturating_sub(first_rss_kb),
+                first_rss_kb,
+                last_rss_kb
+            );
+            assert!(
+                max_rss_kb.saturating_sub(min_rss_kb) <= MAX_POST_WARMUP_RSS_SPREAD_KB,
+                "post-warmup RSS spread was {} KiB (min={} KiB, max={} KiB)",
+                max_rss_kb.saturating_sub(min_rss_kb),
+                min_rss_kb,
+                max_rss_kb
+            );
         }
 
         finalize_mpi();
