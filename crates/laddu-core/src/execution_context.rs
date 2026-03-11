@@ -18,9 +18,15 @@
 //! - [`ThreadPolicy::Dedicated`]: creates a private Rayon pool; setup is higher-cost, so it
 //!   should be reused across many calls.
 
+#[cfg(feature = "rayon")]
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use nalgebra::DVector;
 use num::complex::Complex64;
 use parking_lot::Mutex;
+#[cfg(feature = "rayon")]
+use parking_lot::RwLock;
 
 use crate::{LadduError, LadduResult};
 
@@ -35,6 +41,78 @@ pub enum ThreadPolicy {
     GlobalPool,
     /// Use a dedicated Rayon pool with `n_threads`.
     Dedicated(usize),
+}
+
+/// Shared manager for per-call Rayon thread-pool reuse.
+///
+/// This manager is intended for APIs that accept an optional thread count on each call.
+/// Requests with `None` or `Some(0)` use the ambient/global Rayon behavior. Positive thread
+/// counts reuse one cached dedicated pool for the most recently requested size.
+#[derive(Debug, Default)]
+pub struct ThreadPoolManager {
+    #[cfg(feature = "rayon")]
+    dedicated_pool: RwLock<Option<(usize, Arc<rayon::ThreadPool>)>>,
+}
+
+impl ThreadPoolManager {
+    /// Return the process-wide shared pool manager.
+    pub fn shared() -> &'static Self {
+        static THREAD_POOL_MANAGER: OnceLock<ThreadPoolManager> = OnceLock::new();
+        THREAD_POOL_MANAGER.get_or_init(Self::default)
+    }
+
+    /// Execute work using the requested thread-count policy.
+    ///
+    /// `None` or `Some(0)` uses the ambient/global Rayon behavior. Positive thread counts reuse
+    /// a cached dedicated pool of that size.
+    #[cfg(feature = "rayon")]
+    pub fn install<R: Send>(
+        &self,
+        requested_threads: Option<usize>,
+        op: impl FnOnce() -> R + Send,
+    ) -> LadduResult<R> {
+        match Self::normalize_thread_request(requested_threads) {
+            Some(n_threads) => Ok(self.pool_for_threads(n_threads)?.install(op)),
+            None => Ok(op()),
+        }
+    }
+
+    /// Execute work using the requested thread-count policy.
+    ///
+    /// Without Rayon, all work runs on the caller thread and the requested thread count is
+    /// ignored.
+    #[cfg(not(feature = "rayon"))]
+    pub fn install<R>(
+        &self,
+        _requested_threads: Option<usize>,
+        op: impl FnOnce() -> R,
+    ) -> LadduResult<R> {
+        Ok(op())
+    }
+
+    #[cfg(feature = "rayon")]
+    fn normalize_thread_request(requested_threads: Option<usize>) -> Option<usize> {
+        requested_threads.filter(|&n_threads| n_threads > 0)
+    }
+
+    #[cfg(feature = "rayon")]
+    fn pool_for_threads(&self, n_threads: usize) -> LadduResult<Arc<rayon::ThreadPool>> {
+        if let Some((cached_threads, pool)) = &*self.dedicated_pool.read() {
+            if *cached_threads == n_threads {
+                return Ok(pool.clone());
+            }
+        }
+
+        let pool = Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n_threads)
+                .build()?,
+        );
+
+        let mut dedicated_pool = self.dedicated_pool.write();
+        *dedicated_pool = Some((n_threads, pool.clone()));
+        Ok(pool)
+    }
 }
 
 /// Reusable scratch buffers owned by an [`ExecutionContext`].
@@ -218,5 +296,69 @@ impl ExecutionContext {
     pub fn with_scratch<R>(&self, op: impl FnOnce(&mut ScratchAllocator) -> R) -> R {
         let mut scratch = self.scratch.lock();
         op(&mut scratch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ThreadPoolManager;
+
+    #[cfg(feature = "rayon")]
+    use std::sync::Arc;
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn thread_pool_manager_reuses_cached_pool_for_same_thread_count() {
+        let manager = ThreadPoolManager::default();
+        let first_pool = manager
+            .pool_for_threads(2)
+            .expect("pool for two threads should build");
+        let second_pool = manager
+            .pool_for_threads(2)
+            .expect("pool for two threads should be cached");
+        assert!(Arc::ptr_eq(&first_pool, &second_pool));
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn thread_pool_manager_separates_distinct_thread_counts() {
+        let manager = ThreadPoolManager::default();
+        let two_thread_pool = manager
+            .pool_for_threads(2)
+            .expect("pool for two threads should build");
+        let three_thread_pool = manager
+            .pool_for_threads(3)
+            .expect("pool for three threads should build");
+        assert!(!Arc::ptr_eq(&two_thread_pool, &three_thread_pool));
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn thread_pool_manager_replaces_cached_pool_when_thread_count_changes() {
+        let manager = ThreadPoolManager::default();
+        let first_two_thread_pool = manager
+            .pool_for_threads(2)
+            .expect("pool for two threads should build");
+        manager
+            .pool_for_threads(3)
+            .expect("pool for three threads should replace the cache");
+        let second_two_thread_pool = manager
+            .pool_for_threads(2)
+            .expect("pool for two threads should rebuild after cache replacement");
+        assert!(!Arc::ptr_eq(
+            &first_two_thread_pool,
+            &second_two_thread_pool
+        ));
+    }
+
+    #[test]
+    fn thread_pool_manager_treats_zero_threads_as_global_fallback() {
+        let manager = ThreadPoolManager::default();
+        let value = manager
+            .install(Some(0), || 17usize)
+            .expect("global fallback install should succeed");
+        assert_eq!(value, 17);
+        #[cfg(feature = "rayon")]
+        assert!(manager.dedicated_pool.read().is_none());
     }
 }

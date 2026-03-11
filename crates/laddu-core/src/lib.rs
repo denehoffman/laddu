@@ -551,7 +551,9 @@ pub use crate::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
 };
 #[cfg(feature = "execution-context-prototype")]
-pub use crate::execution_context::{ExecutionContext, ScratchAllocator, ThreadPolicy};
+pub use crate::execution_context::{
+    ExecutionContext, ScratchAllocator, ThreadPolicy, ThreadPoolManager,
+};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,
