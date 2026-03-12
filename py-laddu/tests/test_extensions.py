@@ -89,6 +89,78 @@ def test_python_regression_table_driven_error_paths() -> None:
             fn()
 
 
+def test_minimize_unknown_algorithm_setting_suggests_close_match() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown key 'alpah' in adam settings.*Did you mean 'alpha'\?",
+    ):
+        nll.minimize(
+            [2.0],
+            method='adam',
+            settings={
+                'alpah': 0.1,
+            },
+        )
+
+
+def test_minimize_unknown_line_search_key_suggests_close_match() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Unknown key 'max_iteratons' in morethuente line_search settings"
+            r".*Did you mean 'max_iterations'\?"
+        ),
+    ):
+        nll.minimize(
+            [2.0],
+            method='lbfgsb',
+            settings={
+                'line_search': {
+                    'method': 'morethuente',
+                    'max_iteratons': 10,
+                },
+            },
+        )
+
+
+def test_mcmc_unknown_move_setting_suggests_close_match() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown key 'aa' in stretch AIES move settings.*Did you mean 'a'\?",
+    ):
+        nll.mcmc(
+            [[2.0], [2.1]],
+            method='aies',
+            settings={
+                'moves': [('stretch', {'aa': 3.0}, 1.0)],
+            },
+        )
+
+
+def test_unknown_algorithm_setting_without_close_match_lists_allowed_keys() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unknown key 'potato' in adam settings\..*Allowed keys: .*'alpha'",
+    ) as error:
+        nll.minimize(
+            [2.0],
+            method='adam',
+            settings={
+                'potato': 0.1,
+            },
+        )
+
+    assert 'Did you mean' not in str(error.value)
+
+
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     evaluator = likelihood_sum([expr]).load()

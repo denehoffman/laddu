@@ -742,6 +742,10 @@ pub mod py_ganesh {
     use std::{ops::ControlFlow, sync::Arc};
 
     use super::*;
+    use allowed_keys::{
+        aies_move_settings, ess_move_settings, line_search_settings, mcmc_settings,
+        minimization_settings, MCMC_TOP_LEVEL, MINIMIZATION_TOP_LEVEL,
+    };
 
     use ganesh::{
         algorithms::{
@@ -779,6 +783,104 @@ pub mod py_ganesh {
         Borrowed,
     };
 
+    fn normalize_method_name(method: &str) -> String {
+        method
+            .to_lowercase()
+            .trim()
+            .replace("-", "")
+            .replace(" ", "")
+    }
+
+    fn normalize_key_for_match(key: &str) -> String {
+        key.to_ascii_lowercase()
+    }
+
+    fn levenshtein_distance(left: &str, right: &str) -> usize {
+        let right_len = right.chars().count();
+        let mut previous: Vec<usize> = (0..=right_len).collect();
+        let mut current = vec![0; right_len + 1];
+
+        for (left_index, left_char) in left.chars().enumerate() {
+            current[0] = left_index + 1;
+            for (right_index, right_char) in right.chars().enumerate() {
+                let substitution_cost = usize::from(left_char != right_char);
+                current[right_index + 1] = (current[right_index] + 1)
+                    .min(previous[right_index + 1] + 1)
+                    .min(previous[right_index] + substitution_cost);
+            }
+            std::mem::swap(&mut previous, &mut current);
+        }
+
+        previous[right_len]
+    }
+
+    fn max_suggestion_distance(key_len: usize) -> usize {
+        match key_len {
+            0..=4 => 1,
+            5..=10 => 2,
+            _ => 3,
+        }
+    }
+
+    fn best_allowed_key_match<'a>(key: &str, allowed: &'a [&str]) -> Option<&'a str> {
+        let normalized_key = normalize_key_for_match(key);
+        let mut best_match = None;
+        let mut best_distance = usize::MAX;
+        let mut is_tied = false;
+
+        for candidate in allowed {
+            let distance =
+                levenshtein_distance(&normalized_key, &normalize_key_for_match(candidate));
+            if distance < best_distance {
+                best_distance = distance;
+                best_match = Some(*candidate);
+                is_tied = false;
+            } else if distance == best_distance {
+                is_tied = true;
+            }
+        }
+
+        if is_tied || best_distance > max_suggestion_distance(normalized_key.chars().count()) {
+            None
+        } else {
+            best_match
+        }
+    }
+
+    fn allowed_keys_message(allowed: &[&str]) -> String {
+        allowed
+            .iter()
+            .map(|key| format!("'{key}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn unknown_key_error(context: &str, key: &str, allowed: &[&str]) -> PyErr {
+        let suggestion = best_allowed_key_match(key, allowed)
+            .map(|candidate| format!(" Did you mean '{candidate}'?"))
+            .unwrap_or_default();
+        PyValueError::new_err(format!(
+            "Unknown key '{key}' in {context}.{suggestion} Allowed keys: {}",
+            allowed_keys_message(allowed)
+        ))
+    }
+
+    fn validate_allowed_dict_keys(
+        dict: &Bound<PyDict>,
+        context: &str,
+        allowed: &[&str],
+    ) -> PyResult<()> {
+        for (key, _) in dict.iter() {
+            let key: String = key.extract().map_err(|_| {
+                PyTypeError::new_err(format!("All keys in {context} must be strings."))
+            })?;
+            if !allowed.contains(&key.as_str()) {
+                return Err(unknown_key_error(context, &key, allowed));
+            }
+        }
+        Ok(())
+    }
+
     /// A helper trait for parsing Python arguments.
     pub trait FromPyArgs<A = ()>: Sized {
         /// Convert the given Python arguments into a [`Self`].
@@ -808,14 +910,12 @@ pub mod py_ganesh {
     impl FromPyArgs for StrongWolfeLineSearch {
         fn from_pyargs(_args: &(), d: &Bound<PyDict>) -> PyResult<Self> {
             if let Some(method) = d.get_item("method")? {
-                match method
-                    .extract::<String>()?
-                    .to_lowercase()
-                    .trim()
-                    .replace("-", "")
-                    .replace(" ", "")
-                    .as_str()
-                {
+                let method = normalize_method_name(&method.extract::<String>()?);
+                let allowed = line_search_settings(&method).ok_or_else(|| {
+                    PyTypeError::new_err(format!("Invalid line search method: {}", method))
+                })?;
+                validate_allowed_dict_keys(d, &format!("{method} line_search settings"), allowed)?;
+                match method.as_str() {
                     "morethuente" => {
                         let mut line_search = MoreThuenteLineSearch::default();
                         if let Some(max_iterations) = d.get_item("max_iterations")? {
@@ -1329,6 +1429,7 @@ pub mod py_ganesh {
         P: Gradient<MaybeThreadPool, LadduError>,
     {
         fn from_pyargs(args: &Vec<f64>, d: &Bound<PyDict>) -> PyResult<Self> {
+            validate_allowed_dict_keys(d, "minimization arguments", MINIMIZATION_TOP_LEVEL)?;
             let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
                 .get_item("bounds")?
                 .map(|bounds| bounds.extract::<Vec<(Option<f64>, Option<f64>)>>())
@@ -1393,14 +1494,12 @@ pub mod py_ganesh {
                 PyDict::new(d.py())
             };
             if let Some(method) = d.get_item("method")? {
-                match method
-                    .extract::<String>()?
-                    .to_lowercase()
-                    .trim()
-                    .replace("-", "")
-                    .replace(" ", "")
-                    .as_str()
-                {
+                let method = normalize_method_name(&method.extract::<String>()?);
+                let allowed = minimization_settings(&method).ok_or_else(|| {
+                    PyValueError::new_err(format!("Invalid minimizer: {}", method))
+                })?;
+                validate_allowed_dict_keys(&settings, &format!("{method} settings"), allowed)?;
+                match method.as_str() {
                     "lbfgsb" => {
                         let mut config = LBFGSBConfig::from_pyargs(args, &settings)?;
                         if let Some(bounds) = bounds {
@@ -1552,14 +1651,16 @@ pub mod py_ganesh {
                     } else if let Ok(custom_move) =
                         mcmc_move.extract::<(String, Bound<PyDict>, f64)>()
                     {
-                        match custom_move
-                            .0
-                            .to_lowercase()
-                            .trim()
-                            .replace("-", "")
-                            .replace(" ", "")
-                            .as_str()
-                        {
+                        let method = normalize_method_name(&custom_move.0);
+                        let allowed = aies_move_settings(&method).ok_or_else(|| {
+                            PyValueError::new_err(format!("Invalid AIES move: {}", custom_move.0))
+                        })?;
+                        validate_allowed_dict_keys(
+                            &custom_move.1,
+                            &format!("{method} AIES move settings"),
+                            allowed,
+                        )?;
+                        match method.as_str() {
                             "stretch" => aies_moves.push((
                                 AIESMove::Stretch {
                                     a: custom_move
@@ -1620,14 +1721,16 @@ pub mod py_ganesh {
                     } else if let Ok(custom_move) =
                         mcmc_move.extract::<(String, Bound<PyDict>, f64)>()
                     {
-                        match custom_move
-                            .0
-                            .to_lowercase()
-                            .trim()
-                            .replace("-", "")
-                            .replace(" ", "")
-                            .as_str()
-                        {
+                        let method = normalize_method_name(&custom_move.0);
+                        let allowed = ess_move_settings(&method).ok_or_else(|| {
+                            PyValueError::new_err(format!("Invalid ESS move: {}", custom_move.0))
+                        })?;
+                        validate_allowed_dict_keys(
+                            &custom_move.1,
+                            &format!("{method} ESS move settings"),
+                            allowed,
+                        )?;
+                        match method.as_str() {
                             "differential" => ess_moves.push(ESSMove::differential(custom_move.2)),
                             "gaussian" => ess_moves.push(ESSMove::gaussian(custom_move.2)),
                             "global" => ess_moves.push(ESSMove::global(
@@ -1679,6 +1782,7 @@ pub mod py_ganesh {
         P: LogDensity<MaybeThreadPool, LadduError>,
     {
         fn from_pyargs(args: &Vec<DVector<f64>>, d: &Bound<PyDict>) -> PyResult<Self> {
+            validate_allowed_dict_keys(d, "MCMC arguments", MCMC_TOP_LEVEL)?;
             let bounds: Option<Vec<ganesh::traits::boundlike::Bound>> = d
                 .get_item("bounds")?
                 .map(|bounds| bounds.extract::<Vec<(Option<f64>, Option<f64>)>>())
@@ -1754,14 +1858,12 @@ pub mod py_ganesh {
                 PyDict::new(d.py())
             };
             if let Some(method) = d.get_item("method")? {
-                match method
-                    .extract::<String>()?
-                    .to_lowercase()
-                    .trim()
-                    .replace("-", "")
-                    .replace(" ", "")
-                    .as_str()
-                {
+                let method = normalize_method_name(&method.extract::<String>()?);
+                let allowed = mcmc_settings(&method).ok_or_else(|| {
+                    PyValueError::new_err(format!("Invalid MCMC algorithm: {}", method))
+                })?;
+                validate_allowed_dict_keys(&settings, &format!("{method} settings"), allowed)?;
+                match method.as_str() {
                     "aies" => {
                         let mut config = AIESConfig::from_pyargs(args, &settings)?;
                         if let Some(bounds) = bounds {
