@@ -15,6 +15,7 @@ from laddu import (
     constant,
     likelihood_sum,
     parameter,
+    set_threads,
 )
 from laddu.experimental import Regularizer
 
@@ -243,6 +244,49 @@ def test_repeated_short_calls_with_threads_remain_stable() -> None:
         )
         assert subset_weights.tolist() == pytest.approx(expected_subset_weights.tolist())
         np.testing.assert_allclose(subset_gradients, expected_subset_gradients)
+
+
+def test_set_threads_aligns_omitted_and_zero_thread_requests() -> None:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
+    evaluator = expr.load(dataset)
+    nll = NLL(expr, dataset, _dataset_from_weights([0.5, 1.5, 2.5, 0.5]))
+    params = [1.25]
+
+    try:
+        set_threads(2)
+
+        assert evaluator.evaluate(params) == pytest.approx(
+            evaluator.evaluate(params, threads=0)
+        )
+        assert evaluator.evaluate(params, threads=None) == pytest.approx(
+            evaluator.evaluate(params, threads=0)
+        )
+        np.testing.assert_allclose(
+            evaluator.evaluate_gradient(params, threads=None),
+            evaluator.evaluate_gradient(params, threads=0),
+        )
+        assert nll.evaluate(params, threads=None) == pytest.approx(
+            nll.evaluate(params, threads=0)
+        )
+        assert nll.project_weights(params).tolist() == pytest.approx(
+            nll.project_weights(params, threads=0).tolist()
+        )
+        assert nll.project_weights(params, threads=None).tolist() == pytest.approx(
+            nll.project_weights(params, threads=0).tolist()
+        )
+
+        set_threads(1)
+        assert evaluator.evaluate(params) == pytest.approx(
+            evaluator.evaluate(params, threads=0)
+        )
+        assert nll.evaluate(params) == pytest.approx(nll.evaluate(params, threads=0))
+        assert evaluator.evaluate(params, threads=2) == pytest.approx(
+            evaluator.evaluate(params, threads=0)
+        )
+    finally:
+        set_threads(0)
 
 
 def test_nll_parameter_fix_free_and_rename() -> None:

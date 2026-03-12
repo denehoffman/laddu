@@ -146,6 +146,7 @@ __all__ = [
     'read_parquet',
     'read_parquet_chunked',
     'read_root',
+    'set_threads',
     'use_mpi',
     'using_mpi',
     'version',
@@ -162,6 +163,9 @@ def version() -> str:
 
 def available_parallelism() -> int:
     """Return the number of logical CPU cores available to laddu."""
+
+def set_threads(n_threads: int) -> None:
+    """Set the global default thread count for omitted or zero-valued thread arguments."""
 
 def use_mpi(*, trigger: bool = True) -> None:
     """Enable the MPI backend if the extension was compiled with MPI support."""

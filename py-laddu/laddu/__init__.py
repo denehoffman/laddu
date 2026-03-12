@@ -58,12 +58,15 @@ class _BackendProtocol(Protocol):
 
     def available_parallelism(self) -> int: ...
 
+    def set_threads(self, n_threads: int) -> None: ...
+
 
 _laddu = cast('_BackendProtocol', _backend_module)
 
 __doc__: str | None = _laddu.__doc__
 __version__: str = _laddu.version()
 available_parallelism = _laddu.available_parallelism
+set_threads = _laddu.set_threads
 
 
 __all__ = [
@@ -128,5 +131,6 @@ __all__ = [
     'likelihood_sum',
     'mpi',
     'parameter',
+    'set_threads',
     'utils',
 ]

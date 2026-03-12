@@ -18,6 +18,7 @@ mod laddu {
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
+        set_threads,
         utils::{
             variables::{
                 PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,

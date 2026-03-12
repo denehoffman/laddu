@@ -23,7 +23,7 @@ pub enum MinimizationSettings<P> {
         config: LBFGSBConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<LBFGSB, P, GradientStatus, MaybeThreadPool, LadduError, LBFGSBConfig>,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
     /// Settings for the Adam algorithm
@@ -32,7 +32,7 @@ pub enum MinimizationSettings<P> {
         config: AdamConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<Adam, P, GradientStatus, MaybeThreadPool, LadduError, AdamConfig>,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
     /// Settings for the Nelder-Mead algorithm
@@ -48,7 +48,7 @@ pub enum MinimizationSettings<P> {
             LadduError,
             NelderMeadConfig,
         >,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
     /// Settings for the Particle Swarm Optimimization algorithm
@@ -57,7 +57,7 @@ pub enum MinimizationSettings<P> {
         config: PSOConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<PSO, P, SwarmStatus, MaybeThreadPool, LadduError, PSOConfig>,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
 }
@@ -70,7 +70,7 @@ pub enum MCMCSettings<P> {
         config: AIESConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<AIES, P, EnsembleStatus, MaybeThreadPool, LadduError, AIESConfig>,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
     /// Settings for the Ensemble Slice Sampler
@@ -79,23 +79,9 @@ pub enum MCMCSettings<P> {
         config: ESSConfig,
         /// Callbacks to apply to the algorithm
         callbacks: Callbacks<ESS, P, EnsembleStatus, MaybeThreadPool, LadduError, ESSConfig>,
-        /// The number of threads to use (`0` uses all available CPUs)
+        /// The number of threads to use (`0` uses the global default thread count)
         num_threads: usize,
     },
-}
-
-fn default_thread_count() -> usize {
-    std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
-}
-
-fn resolve_requested_threads(num_threads: usize) -> Option<usize> {
-    Some(if num_threads == 0 {
-        default_thread_count()
-    } else {
-        num_threads
-    })
 }
 
 /// A wrapper for the requested thread-count policy used by optimization callbacks.
@@ -107,7 +93,7 @@ pub struct MaybeThreadPool {
 impl MaybeThreadPool {
     fn new(num_threads: usize) -> Self {
         Self {
-            requested_threads: resolve_requested_threads(num_threads),
+            requested_threads: Some(num_threads),
         }
     }
 

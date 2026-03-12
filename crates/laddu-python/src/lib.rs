@@ -1,5 +1,6 @@
 #![warn(clippy::perf, clippy::style)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+use laddu_core::ThreadPoolManager;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -8,6 +9,23 @@ use pyo3::types::PyDict;
 #[pyfunction]
 pub fn available_parallelism() -> usize {
     num_cpus::get()
+}
+
+/// Set the process-global default thread count for Python APIs that accept ``threads=``.
+///
+/// Parameters
+/// ----------
+/// n_threads : int
+///     The default number of threads to use for omitted thread arguments and for ``threads=0``.
+///     Setting this to ``0`` resets the default to "all available CPUs".
+///
+/// Notes
+/// -----
+/// Explicit positive ``threads=`` arguments on individual calls override this default.
+///
+#[pyfunction]
+pub fn set_threads(n_threads: usize) {
+    ThreadPoolManager::set_global_thread_count(n_threads);
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]

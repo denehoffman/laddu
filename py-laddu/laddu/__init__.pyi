@@ -56,6 +56,7 @@ from .utils.vectors import Vec3, Vec4
 __version__: str
 
 def available_parallelism() -> int: ...
+def set_threads(n_threads: int) -> None: ...
 
 __all__ = [
     'NLL',
@@ -118,5 +119,6 @@ __all__ = [
     'likelihood_sum',
     'mpi',
     'parameter',
+    'set_threads',
     'utils',
 ]

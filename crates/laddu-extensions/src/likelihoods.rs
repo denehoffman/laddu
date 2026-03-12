@@ -77,26 +77,11 @@ fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> Lad
 }
 
 #[cfg(feature = "python")]
-fn default_thread_count() -> usize {
-    std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
-}
-
-#[cfg(feature = "python")]
-fn resolve_python_thread_request(threads: Option<usize>) -> Option<usize> {
-    Some(match threads {
-        Some(0) | None => default_thread_count(),
-        Some(n_threads) => n_threads,
-    })
-}
-
-#[cfg(feature = "python")]
 fn install_laddu_with_threads<R: Send>(
     threads: Option<usize>,
     op: impl FnOnce() -> LadduResult<R> + Send,
 ) -> LadduResult<R> {
-    ThreadPoolManager::shared().install(resolve_python_thread_request(threads), op)?
+    ThreadPoolManager::shared().install(threads, op)?
 }
 
 #[cfg(feature = "mpi")]
@@ -2040,7 +2025,8 @@ impl PyNLL {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2067,7 +2053,8 @@ impl PyNLL {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2106,7 +2093,8 @@ impl PyNLL {
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2152,7 +2140,8 @@ impl PyNLL {
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2211,7 +2200,8 @@ impl PyNLL {
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2246,7 +2236,8 @@ impl PyNLL {
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2314,7 +2305,8 @@ impl PyNLL {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2524,7 +2516,8 @@ impl PyNLL {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2681,7 +2674,8 @@ impl PyStochasticNLL {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -2890,7 +2884,8 @@ impl PyStochasticNLL {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -3846,7 +3841,8 @@ impl PyLikelihoodEvaluator {
     /// parameters : list of float
     ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -3870,7 +3866,8 @@ impl PyLikelihoodEvaluator {
     /// parameters : list of float
     ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -3922,7 +3919,8 @@ impl PyLikelihoodEvaluator {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -4064,7 +4062,8 @@ impl PyLikelihoodEvaluator {
     /// debug : bool, default=False
     ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the global default, which
+    ///     uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------

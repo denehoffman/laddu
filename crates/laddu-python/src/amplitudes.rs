@@ -12,18 +12,11 @@ use pyo3::{
 };
 use std::collections::HashMap;
 
-fn resolve_python_thread_request(threads: Option<usize>) -> Option<usize> {
-    Some(match threads {
-        Some(0) | None => num_cpus::get(),
-        Some(n_threads) => n_threads,
-    })
-}
-
 fn install_with_threads<R: Send>(
     threads: Option<usize>,
     op: impl FnOnce() -> R + Send,
 ) -> LadduResult<R> {
-    ThreadPoolManager::shared().install(resolve_python_thread_request(threads), op)
+    ThreadPoolManager::shared().install(threads, op)
 }
 
 /// A mathematical expression formed from amplitudes.
@@ -506,7 +499,8 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -537,7 +531,8 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -568,7 +563,8 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
@@ -606,7 +602,8 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
+    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
     ///
     /// Returns
     /// -------
