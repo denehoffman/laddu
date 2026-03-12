@@ -28,6 +28,14 @@ pub fn set_threads(n_threads: usize) {
     ThreadPoolManager::set_global_thread_count(n_threads);
 }
 
+/// Return the process-global default thread count used by omitted or zero-valued thread requests.
+///
+/// Returns ``0`` when the default is "all available CPUs".
+#[pyfunction]
+pub fn get_threads() -> usize {
+    ThreadPoolManager::global_thread_count().unwrap_or(0)
+}
+
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod amplitudes;
 #[cfg_attr(coverage_nightly, coverage(off))]

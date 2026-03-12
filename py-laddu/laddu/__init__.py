@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Protocol, cast
 
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
@@ -58,6 +60,8 @@ class _BackendProtocol(Protocol):
 
     def available_parallelism(self) -> int: ...
 
+    def get_threads(self) -> int: ...
+
     def set_threads(self, n_threads: int) -> None: ...
 
 
@@ -66,7 +70,18 @@ _laddu = cast('_BackendProtocol', _backend_module)
 __doc__: str | None = _laddu.__doc__
 __version__: str = _laddu.version()
 available_parallelism = _laddu.available_parallelism
+get_threads = _laddu.get_threads
 set_threads = _laddu.set_threads
+
+
+@contextmanager
+def threads(n_threads: int) -> Iterator[None]:
+    previous = get_threads()
+    set_threads(n_threads)
+    try:
+        yield
+    finally:
+        set_threads(previous)
 
 
 __all__ = [
@@ -125,6 +140,7 @@ __all__ = [
     'expr_product',
     'expr_sum',
     'extensions',
+    'get_threads',
     'integrated_autocorrelation_times',
     'io',
     'likelihood_product',
@@ -132,5 +148,6 @@ __all__ = [
     'mpi',
     'parameter',
     'set_threads',
+    'threads',
     'utils',
 ]

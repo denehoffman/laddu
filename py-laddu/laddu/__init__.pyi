@@ -1,3 +1,5 @@
+from contextlib import AbstractContextManager
+
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from .amplitudes import (
     Evaluator,
@@ -56,7 +58,9 @@ from .utils.vectors import Vec3, Vec4
 __version__: str
 
 def available_parallelism() -> int: ...
+def get_threads() -> int: ...
 def set_threads(n_threads: int) -> None: ...
+def threads(n_threads: int) -> AbstractContextManager[None, None]: ...
 
 __all__ = [
     'NLL',
@@ -113,6 +117,7 @@ __all__ = [
     'expr_product',
     'expr_sum',
     'extensions',
+    'get_threads',
     'integrated_autocorrelation_times',
     'io',
     'likelihood_product',
@@ -120,5 +125,6 @@ __all__ = [
     'mpi',
     'parameter',
     'set_threads',
+    'threads',
     'utils',
 ]

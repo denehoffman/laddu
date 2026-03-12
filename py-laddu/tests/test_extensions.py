@@ -13,9 +13,11 @@ from laddu import (
     Scalar,
     Vec3,
     constant,
+    get_threads,
     likelihood_sum,
     parameter,
     set_threads,
+    threads,
 )
 from laddu.experimental import Regularizer
 
@@ -285,6 +287,66 @@ def test_set_threads_aligns_omitted_and_zero_thread_requests() -> None:
         assert evaluator.evaluate(params, threads=2) == pytest.approx(
             evaluator.evaluate(params, threads=0)
         )
+    finally:
+        set_threads(0)
+
+
+def test_threads_context_manager_restores_previous_default() -> None:
+    try:
+        set_threads(0)
+        assert get_threads() == 0
+
+        with threads(2):
+            assert get_threads() == 2
+        assert get_threads() == 0
+    finally:
+        set_threads(0)
+
+
+def test_threads_context_manager_nests() -> None:
+    try:
+        set_threads(1)
+        with threads(2):
+            assert get_threads() == 2
+            with threads(3):
+                assert get_threads() == 3
+            assert get_threads() == 2
+        assert get_threads() == 1
+    finally:
+        set_threads(0)
+
+
+def test_threads_context_manager_restores_after_exception() -> None:
+    try:
+        set_threads(1)
+        with threads(2):
+            message = 'boom'
+            with pytest.raises(RuntimeError, match=message):
+                raise RuntimeError(message)
+        assert get_threads() == 1
+    finally:
+        set_threads(0)
+
+
+def test_threads_context_aligns_none_and_zero_requests() -> None:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
+    evaluator = expr.load(dataset)
+    params = [1.25]
+
+    try:
+        set_threads(0)
+        with threads(2):
+            assert get_threads() == 2
+            assert evaluator.evaluate(params, threads=None) == pytest.approx(
+                evaluator.evaluate(params, threads=0)
+            )
+            np.testing.assert_allclose(
+                evaluator.evaluate_gradient(params, threads=None),
+                evaluator.evaluate_gradient(params, threads=0),
+            )
+        assert get_threads() == 0
     finally:
         set_threads(0)
 

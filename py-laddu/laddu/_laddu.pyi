@@ -137,6 +137,7 @@ __all__ = [
     'from_columns',
     'get_rank',
     'get_size',
+    'get_threads',
     'integrated_autocorrelation_times',
     'is_mpi_available',
     'is_root',
@@ -163,6 +164,9 @@ def version() -> str:
 
 def available_parallelism() -> int:
     """Return the number of logical CPU cores available to laddu."""
+
+def get_threads() -> int:
+    """Return the global default thread count, or ``0`` for the ambient default."""
 
 def set_threads(n_threads: int) -> None:
     """Set the global default thread count for omitted or zero-valued thread arguments."""
