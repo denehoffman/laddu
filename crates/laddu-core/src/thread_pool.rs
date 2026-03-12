@@ -207,4 +207,36 @@ mod tests {
         #[cfg(feature = "rayon")]
         assert!(manager.dedicated_pool.read().is_none());
     }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn thread_pool_manager_reuses_cached_pool_across_many_short_installs() {
+        let manager = ThreadPoolManager::default();
+        let first_pool = match manager
+            .executor_for_threads(2)
+            .expect("pool for two threads should build")
+        {
+            ThreadExecutor::Dedicated(pool) => pool,
+            ThreadExecutor::Ambient => panic!("executor should be dedicated"),
+        };
+
+        let total = (0usize..128)
+            .map(|index| {
+                let value = manager
+                    .install(Some(2), || index + 1)
+                    .expect("repeated short install should succeed");
+                let cached_pool = match manager
+                    .executor_for_threads(2)
+                    .expect("pool for two threads should remain cached")
+                {
+                    ThreadExecutor::Dedicated(pool) => pool,
+                    ThreadExecutor::Ambient => panic!("executor should be dedicated"),
+                };
+                assert!(Arc::ptr_eq(&first_pool, &cached_pool));
+                value
+            })
+            .sum::<usize>();
+
+        assert_eq!(total, (1usize..=128).sum::<usize>());
+    }
 }

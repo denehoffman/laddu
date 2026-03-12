@@ -4244,6 +4244,8 @@ pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "python")]
+    use super::install_laddu_with_threads;
     use super::{LikelihoodScalar, LikelihoodTerm, NLL};
     use approx::assert_relative_eq;
     #[cfg(feature = "mpi")]
@@ -4506,6 +4508,42 @@ mod tests {
         let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
         let nll = NLL::new(&expr, &data, &mc).unwrap();
         (nll, vec![0.75, -1.25])
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn install_laddu_with_threads_handles_repeated_short_calls() {
+        let (nll, params) = make_two_parameter_nll();
+
+        let expected_value = nll
+            .evaluate(&params)
+            .expect("reference evaluation should succeed");
+        let expected_gradient = nll
+            .evaluate_gradient(&params)
+            .expect("reference gradient should succeed");
+        let expected_projection = nll
+            .project_weights(&params, None)
+            .expect("reference projection should succeed");
+
+        for _ in 0..64 {
+            let value = install_laddu_with_threads(Some(2), || nll.evaluate(&params))
+                .expect("threaded evaluation should succeed");
+            let gradient = install_laddu_with_threads(Some(2), || nll.evaluate_gradient(&params))
+                .expect("threaded gradient should succeed");
+            let projection =
+                install_laddu_with_threads(Some(2), || nll.project_weights(&params, None))
+                    .expect("threaded projection should succeed");
+
+            assert_relative_eq!(value, expected_value, epsilon = 1e-12);
+            assert_eq!(gradient.len(), expected_gradient.len());
+            for (lhs, rhs) in gradient.iter().zip(expected_gradient.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            assert_eq!(projection.len(), expected_projection.len());
+            for (lhs, rhs) in projection.iter().zip(expected_projection.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+        }
     }
 
     #[derive(Clone, Copy)]

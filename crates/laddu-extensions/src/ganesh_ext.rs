@@ -2803,3 +2803,20 @@ pub mod py_ganesh {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MaybeThreadPool;
+
+    #[test]
+    fn maybe_thread_pool_handles_repeated_short_installs() {
+        let pool = MaybeThreadPool::new(2);
+        let total = (0usize..64)
+            .map(|index| {
+                pool.install(|| Ok(index + 1))
+                    .expect("repeated install should succeed")
+            })
+            .sum::<usize>();
+        assert_eq!(total, (1usize..=64).sum::<usize>());
+    }
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any, cast
 
+import numpy as np
 import pytest
 from laddu import (
     NLL,
@@ -196,6 +197,52 @@ def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> 
         assert weights.tolist() == pytest.approx(expected_weights.tolist())
         assert gradients.shape[0] == weights.shape[0]
         assert gradients.shape[1] == len(params)
+
+
+def test_repeated_short_calls_with_threads_remain_stable() -> None:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
+    evaluator = expr.load(dataset)
+    nll = NLL(expr, dataset, _dataset_from_weights([0.5, 1.5, 2.5, 0.5]))
+    params = [1.25]
+
+    expected_eval = evaluator.evaluate(params, threads=2)
+    expected_batch = evaluator.evaluate_batch(params, [0, 2], threads=2)
+    expected_gradient = evaluator.evaluate_gradient(params, threads=2)
+    expected_gradient_batch = evaluator.evaluate_gradient_batch(params, [0, 2], threads=2)
+    expected_nll_value = nll.evaluate(params, threads=2)
+    expected_nll_gradient = nll.evaluate_gradient(params, threads=2)
+    expected_projection = nll.project_weights(params, threads=2)
+    expected_subset_weights, expected_subset_gradients = (
+        nll.project_weights_and_gradients_subset(params, ['scale'], threads=2)
+    )
+
+    for _ in range(32):
+        assert evaluator.evaluate(params, threads=2) == pytest.approx(expected_eval)
+        assert evaluator.evaluate_batch(
+            params, [0, 2], threads=2
+        ).tolist() == pytest.approx(expected_batch.tolist())
+        np.testing.assert_allclose(
+            evaluator.evaluate_gradient(params, threads=2), expected_gradient
+        )
+        np.testing.assert_allclose(
+            evaluator.evaluate_gradient_batch(params, [0, 2], threads=2),
+            expected_gradient_batch,
+        )
+
+        assert nll.evaluate(params, threads=2) == pytest.approx(expected_nll_value)
+        assert nll.evaluate_gradient(params, threads=2).tolist() == pytest.approx(
+            expected_nll_gradient.tolist()
+        )
+        assert nll.project_weights(params, threads=2).tolist() == pytest.approx(
+            expected_projection.tolist()
+        )
+        subset_weights, subset_gradients = nll.project_weights_and_gradients_subset(
+            params, ['scale'], threads=2
+        )
+        assert subset_weights.tolist() == pytest.approx(expected_subset_weights.tolist())
+        np.testing.assert_allclose(subset_gradients, expected_subset_gradients)
 
 
 def test_nll_parameter_fix_free_and_rename() -> None:
