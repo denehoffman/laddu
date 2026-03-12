@@ -378,6 +378,15 @@ mod tests {
     }
 
     #[test]
+    fn resolve_thread_request_prioritizes_explicit_positive_values() {
+        let _reset = GlobalThreadCountReset::new(2);
+
+        assert_eq!(ThreadPoolManager::resolve_thread_request(None), Some(2));
+        assert_eq!(ThreadPoolManager::resolve_thread_request(Some(0)), Some(2));
+        assert_eq!(ThreadPoolManager::resolve_thread_request(Some(3)), Some(3));
+    }
+
+    #[test]
     fn set_global_thread_count_zero_resets_to_ambient_behavior() {
         let _reset = GlobalThreadCountReset::new(3);
         assert_eq!(ThreadPoolManager::global_thread_count(), Some(3));

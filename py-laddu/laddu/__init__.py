@@ -76,6 +76,7 @@ set_threads = _laddu.set_threads
 
 @contextmanager
 def threads(n_threads: int) -> Iterator[None]:
+    """Temporarily override the global default thread count within a ``with`` block."""
     previous = get_threads()
     set_threads(n_threads)
     try:

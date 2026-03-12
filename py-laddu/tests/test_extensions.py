@@ -351,6 +351,30 @@ def test_threads_context_aligns_none_and_zero_requests() -> None:
         set_threads(0)
 
 
+def test_explicit_thread_argument_overrides_context_default_for_a_single_call() -> None:
+    amp = Scalar('scale', parameter('scale'))
+    expr = amp.norm_sqr()
+    dataset = _dataset_from_weights([1.0, 2.0, 3.0, 4.0])
+    evaluator = expr.load(dataset)
+    nll = NLL(expr, dataset, _dataset_from_weights([0.5, 1.5, 2.5, 0.5]))
+    params = [1.25]
+
+    try:
+        set_threads(1)
+        with threads(2):
+            assert get_threads() == 2
+            assert evaluator.evaluate(params, threads=3) == pytest.approx(
+                evaluator.evaluate(params, threads=0)
+            )
+            assert nll.evaluate(params, threads=3) == pytest.approx(
+                nll.evaluate(params, threads=None)
+            )
+            assert get_threads() == 2
+        assert get_threads() == 1
+    finally:
+        set_threads(0)
+
+
 def test_nll_parameter_fix_free_and_rename() -> None:
     amp = Scalar('scale', parameter('scale'))
     expr = amp.norm_sqr()

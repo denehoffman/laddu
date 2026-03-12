@@ -499,8 +499,9 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
-    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -531,8 +532,9 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
-    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -563,8 +565,9 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
-    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -602,8 +605,9 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the global
-    ///     default, which uses all available CPUs unless changed with ``laddu.set_threads()``)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
