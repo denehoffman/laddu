@@ -84,6 +84,245 @@ pub enum MCMCSettings<P> {
     },
 }
 
+#[allow(dead_code)]
+mod allowed_keys {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) struct AllowedKeysByMethod {
+        pub(crate) method: &'static str,
+        pub(crate) keys: &'static [&'static str],
+    }
+
+    pub(crate) const MINIMIZATION_TOP_LEVEL: &[&str] = &[
+        "bounds",
+        "method",
+        "observers",
+        "terminators",
+        "max_steps",
+        "debug",
+        "threads",
+        "settings",
+    ];
+
+    pub(crate) const MCMC_TOP_LEVEL: &[&str] = &[
+        "bounds",
+        "method",
+        "observers",
+        "terminators",
+        "max_steps",
+        "debug",
+        "threads",
+        "settings",
+    ];
+
+    pub(crate) const LBFGSB_SETTINGS: &[&str] = &[
+        "m",
+        "skip_hessian",
+        "line_search",
+        "eps_f",
+        "eps_g",
+        "eps_norm_g",
+    ];
+
+    pub(crate) const ADAM_SETTINGS: &[&str] = &[
+        "alpha", "beta_1", "beta_2", "epsilon", "beta_c", "eps_loss", "patience",
+    ];
+
+    pub(crate) const NELDER_MEAD_SETTINGS: &[&str] = &[
+        "simplex_construction_method",
+        "orthogonal_multiplier",
+        "orthogonal_zero_step",
+        "simplex_size",
+        "simplex",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "adaptive",
+        "expansion_method",
+        "eps_f",
+        "f_terminator",
+        "eps_x",
+        "x_terminator",
+    ];
+
+    pub(crate) const PSO_SETTINGS: &[&str] = &[
+        "swarm_position_initializer",
+        "swarm_position_bounds",
+        "swarm_size",
+        "swarm",
+        "swarm_topology",
+        "swarm_update_method",
+        "swarm_boundary_method",
+        "swarm_velocity_bounds",
+        "omega",
+        "c1",
+        "c2",
+        "use_transform",
+    ];
+
+    pub(crate) const AIES_SETTINGS: &[&str] = &["moves"];
+
+    pub(crate) const ESS_SETTINGS: &[&str] = &["moves", "n_adaptive", "mu", "max_steps"];
+
+    pub(crate) const MINIMIZATION_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "lbfgsb",
+            keys: LBFGSB_SETTINGS,
+        },
+        AllowedKeysByMethod {
+            method: "adam",
+            keys: ADAM_SETTINGS,
+        },
+        AllowedKeysByMethod {
+            method: "neldermead",
+            keys: NELDER_MEAD_SETTINGS,
+        },
+        AllowedKeysByMethod {
+            method: "pso",
+            keys: PSO_SETTINGS,
+        },
+    ];
+
+    pub(crate) const MCMC_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "aies",
+            keys: AIES_SETTINGS,
+        },
+        AllowedKeysByMethod {
+            method: "ess",
+            keys: ESS_SETTINGS,
+        },
+    ];
+
+    pub(crate) const LINE_SEARCH_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "morethuente",
+            keys: &["method", "max_iterations", "max_zoom", "c1", "c2"],
+        },
+        AllowedKeysByMethod {
+            method: "hagerzhang",
+            keys: &[
+                "method",
+                "max_iterations",
+                "max_bisects",
+                "delta",
+                "sigma",
+                "epsilon",
+                "theta",
+                "gamma",
+            ],
+        },
+    ];
+
+    pub(crate) const SIMPLEX_CONSTRUCTION_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "scaledorthogonal",
+            keys: &[
+                "simplex_construction_method",
+                "orthogonal_multiplier",
+                "orthogonal_zero_step",
+            ],
+        },
+        AllowedKeysByMethod {
+            method: "orthogonal",
+            keys: &["simplex_construction_method", "simplex_size"],
+        },
+        AllowedKeysByMethod {
+            method: "custom",
+            keys: &["simplex_construction_method", "simplex"],
+        },
+    ];
+
+    pub(crate) const SWARM_POSITION_INITIALIZER_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "randominlimits",
+            keys: &[
+                "swarm_position_initializer",
+                "swarm_position_bounds",
+                "swarm_size",
+            ],
+        },
+        AllowedKeysByMethod {
+            method: "latinhypercube",
+            keys: &[
+                "swarm_position_initializer",
+                "swarm_position_bounds",
+                "swarm_size",
+            ],
+        },
+        AllowedKeysByMethod {
+            method: "custom",
+            keys: &["swarm_position_initializer", "swarm"],
+        },
+    ];
+
+    pub(crate) const AIES_MOVE_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "stretch",
+            keys: &["a"],
+        },
+        AllowedKeysByMethod {
+            method: "walk",
+            keys: &[],
+        },
+    ];
+
+    pub(crate) const ESS_MOVE_SETTINGS: &[AllowedKeysByMethod] = &[
+        AllowedKeysByMethod {
+            method: "differential",
+            keys: &[],
+        },
+        AllowedKeysByMethod {
+            method: "gaussian",
+            keys: &[],
+        },
+        AllowedKeysByMethod {
+            method: "global",
+            keys: &["scale", "rescale_cov", "n_components"],
+        },
+    ];
+
+    fn keys_for_method(
+        allowed_keys_by_method: &'static [AllowedKeysByMethod],
+        method: &str,
+    ) -> Option<&'static [&'static str]> {
+        allowed_keys_by_method
+            .iter()
+            .find(|allowed| allowed.method == method)
+            .map(|allowed| allowed.keys)
+    }
+
+    pub(crate) fn minimization_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(MINIMIZATION_SETTINGS, method)
+    }
+
+    pub(crate) fn mcmc_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(MCMC_SETTINGS, method)
+    }
+
+    pub(crate) fn line_search_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(LINE_SEARCH_SETTINGS, method)
+    }
+
+    pub(crate) fn simplex_construction_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(SIMPLEX_CONSTRUCTION_SETTINGS, method)
+    }
+
+    pub(crate) fn swarm_position_initializer_settings(
+        method: &str,
+    ) -> Option<&'static [&'static str]> {
+        keys_for_method(SWARM_POSITION_INITIALIZER_SETTINGS, method)
+    }
+
+    pub(crate) fn aies_move_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(AIES_MOVE_SETTINGS, method)
+    }
+
+    pub(crate) fn ess_move_settings(method: &str) -> Option<&'static [&'static str]> {
+        keys_for_method(ESS_MOVE_SETTINGS, method)
+    }
+}
+
 /// A wrapper for the requested thread-count policy used by optimization callbacks.
 #[derive(Clone, Copy, Debug)]
 pub struct MaybeThreadPool {
@@ -2792,7 +3031,14 @@ pub mod py_ganesh {
 
 #[cfg(test)]
 mod tests {
-    use super::MaybeThreadPool;
+    use super::{
+        allowed_keys::{
+            aies_move_settings, ess_move_settings, line_search_settings, mcmc_settings,
+            minimization_settings, simplex_construction_settings,
+            swarm_position_initializer_settings, MCMC_TOP_LEVEL, MINIMIZATION_TOP_LEVEL,
+        },
+        MaybeThreadPool,
+    };
 
     #[test]
     fn maybe_thread_pool_handles_repeated_short_installs() {
@@ -2804,5 +3050,167 @@ mod tests {
             })
             .sum::<usize>();
         assert_eq!(total, (1usize..=64).sum::<usize>());
+    }
+
+    #[test]
+    fn top_level_allowed_key_sets_match_public_entry_points() {
+        assert_eq!(
+            MINIMIZATION_TOP_LEVEL,
+            &[
+                "bounds",
+                "method",
+                "observers",
+                "terminators",
+                "max_steps",
+                "debug",
+                "threads",
+                "settings",
+            ]
+        );
+        assert_eq!(MCMC_TOP_LEVEL, MINIMIZATION_TOP_LEVEL);
+    }
+
+    #[test]
+    fn algorithm_setting_key_sets_match_parser_usage() {
+        assert_eq!(
+            minimization_settings("lbfgsb"),
+            Some(
+                &[
+                    "m",
+                    "skip_hessian",
+                    "line_search",
+                    "eps_f",
+                    "eps_g",
+                    "eps_norm_g",
+                ][..]
+            )
+        );
+        assert_eq!(
+            minimization_settings("adam"),
+            Some(&["alpha", "beta_1", "beta_2", "epsilon", "beta_c", "eps_loss", "patience",][..])
+        );
+        assert_eq!(
+            minimization_settings("neldermead"),
+            Some(
+                &[
+                    "simplex_construction_method",
+                    "orthogonal_multiplier",
+                    "orthogonal_zero_step",
+                    "simplex_size",
+                    "simplex",
+                    "alpha",
+                    "beta",
+                    "gamma",
+                    "delta",
+                    "adaptive",
+                    "expansion_method",
+                    "eps_f",
+                    "f_terminator",
+                    "eps_x",
+                    "x_terminator",
+                ][..]
+            )
+        );
+        assert_eq!(
+            minimization_settings("pso"),
+            Some(
+                &[
+                    "swarm_position_initializer",
+                    "swarm_position_bounds",
+                    "swarm_size",
+                    "swarm",
+                    "swarm_topology",
+                    "swarm_update_method",
+                    "swarm_boundary_method",
+                    "swarm_velocity_bounds",
+                    "omega",
+                    "c1",
+                    "c2",
+                    "use_transform",
+                ][..]
+            )
+        );
+        assert_eq!(mcmc_settings("aies"), Some(&["moves"][..]));
+        assert_eq!(
+            mcmc_settings("ess"),
+            Some(&["moves", "n_adaptive", "mu", "max_steps"][..])
+        );
+    }
+
+    #[test]
+    fn nested_setting_key_sets_match_parser_usage() {
+        assert_eq!(
+            line_search_settings("morethuente"),
+            Some(&["method", "max_iterations", "max_zoom", "c1", "c2"][..])
+        );
+        assert_eq!(
+            line_search_settings("hagerzhang"),
+            Some(
+                &[
+                    "method",
+                    "max_iterations",
+                    "max_bisects",
+                    "delta",
+                    "sigma",
+                    "epsilon",
+                    "theta",
+                    "gamma",
+                ][..]
+            )
+        );
+
+        assert_eq!(
+            simplex_construction_settings("scaledorthogonal"),
+            Some(
+                &[
+                    "simplex_construction_method",
+                    "orthogonal_multiplier",
+                    "orthogonal_zero_step",
+                ][..]
+            )
+        );
+        assert_eq!(
+            simplex_construction_settings("orthogonal"),
+            Some(&["simplex_construction_method", "simplex_size"][..])
+        );
+        assert_eq!(
+            simplex_construction_settings("custom"),
+            Some(&["simplex_construction_method", "simplex"][..])
+        );
+
+        assert_eq!(
+            swarm_position_initializer_settings("randominlimits"),
+            Some(
+                &[
+                    "swarm_position_initializer",
+                    "swarm_position_bounds",
+                    "swarm_size",
+                ][..]
+            )
+        );
+        assert_eq!(
+            swarm_position_initializer_settings("latinhypercube"),
+            Some(
+                &[
+                    "swarm_position_initializer",
+                    "swarm_position_bounds",
+                    "swarm_size",
+                ][..]
+            )
+        );
+        assert_eq!(
+            swarm_position_initializer_settings("custom"),
+            Some(&["swarm_position_initializer", "swarm"][..])
+        );
+
+        assert_eq!(aies_move_settings("stretch"), Some(&["a"][..]));
+        assert_eq!(aies_move_settings("walk"), Some(&[][..]));
+
+        assert_eq!(ess_move_settings("differential"), Some(&[][..]));
+        assert_eq!(ess_move_settings("gaussian"), Some(&[][..]));
+        assert_eq!(
+            ess_move_settings("global"),
+            Some(&["scale", "rescale_cov", "n_components"][..])
+        );
     }
 }
