@@ -161,6 +161,65 @@ def test_unknown_algorithm_setting_without_close_match_lists_allowed_keys() -> N
     assert 'Did you mean' not in str(error.value)
 
 
+def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
+    nll = _simple_scalar_nll()
+
+    canonical = nll.minimize(
+        [2.0],
+        method='lbfgsb',
+        max_steps=4,
+        settings={'line_search': {'method': 'morethuente'}},
+    )
+    alias = nll.minimize(
+        [2.0],
+        method=cast(Any, 'L-BFGS-B'),
+        max_steps=4,
+        settings={'line_search': {'method': 'More Thuente'}},
+    )
+
+    np.testing.assert_allclose([alias.fx], [canonical.fx], equal_nan=True)
+    np.testing.assert_allclose(alias.x, canonical.x, equal_nan=True)
+    assert alias.parameter_names == canonical.parameter_names
+
+
+def test_mcmc_method_alias_matches_canonical_shape() -> None:
+    nll = _simple_scalar_nll()
+
+    canonical = nll.mcmc(
+        [[2.0], [2.1]],
+        method='aies',
+        max_steps=2,
+        settings={'moves': [('stretch', 1.0)]},
+    )
+    alias = nll.mcmc(
+        [[2.0], [2.1]],
+        method=cast(Any, 'A I E S'),
+        max_steps=2,
+        settings={'moves': [('stretch', 1.0)]},
+    )
+
+    assert alias.dimension == canonical.dimension
+    assert alias.parameter_names == canonical.parameter_names
+
+
+def test_minimize_method_typo_still_raises_value_error() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(ValueError, match=r'Invalid minimizer: lbgfsb'):
+        nll.minimize([2.0], method=cast(Any, 'lbgfsb'))
+
+
+def test_mcmc_move_typo_still_raises_value_error() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(ValueError, match=r'Invalid AIES move: strech'):
+        nll.mcmc(
+            [[2.0], [2.1]],
+            method='aies',
+            settings={'moves': [('strech', 1.0)]},
+        )
+
+
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     evaluator = likelihood_sum([expr]).load()
