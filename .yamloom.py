@@ -197,7 +197,7 @@ def create_build_job(
     needs: list[str] | None = None,
     upload: bool = True,
 ) -> Job:
-    def platform_entry(target: Target) -> dict[str, object]:
+    def platform_entry(target: Target) -> dict[str, str | list[str]]:
         entry = {
             'runner': target.runner,
             'target': target.target,
