@@ -288,7 +288,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let expr = pos_re + pos_im + neg_re + neg_im;
-    let nll = laddu::extensions::NLL::new(&expr, &ds_data, &ds_mc).expect("nll should build");
+    let nll = laddu::extensions::NLL::new(&expr, &ds_data, &ds_mc, None).expect("nll should build");
     let params = deterministic_parameter_vector(nll.n_free(), -100.0);
     (nll, params)
 }

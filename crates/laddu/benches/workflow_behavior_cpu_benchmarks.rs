@@ -162,7 +162,7 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
         PARTIAL_WAVE_GENMC_SAMPLE_EVENTS,
     );
     let model = build_breit_wigner_partial_wave_model();
-    let nll = NLL::new(&model, &ds_data, &ds_accmc).expect("unbinned NLL should build");
+    let nll = NLL::new(&model, &ds_data, &ds_accmc, None).expect("unbinned NLL should build");
     let gen_evaluator = model
         .load(&ds_genmc)
         .expect("generated-mc evaluator should build");
@@ -307,6 +307,7 @@ fn breit_wigner_partial_wave_benchmarks(c: &mut Criterion) {
         &model,
         data_binned.get(target_bin).expect("bin should exist"),
         accmc_binned.get(target_bin).expect("bin should exist"),
+        None,
     )
     .expect("single-bin NLL should build");
 
@@ -612,7 +613,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let expr = pos_re + pos_im + neg_re + neg_im;
-    NLL::new(&expr, &ds_data, &ds_mc).expect("k-matrix NLL should build")
+    NLL::new(&expr, &ds_data, &ds_mc, None).expect("k-matrix NLL should build")
 }
 
 fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {

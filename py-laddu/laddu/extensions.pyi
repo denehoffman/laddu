@@ -230,6 +230,8 @@ class NLL:
         expression: Expression,
         ds_data: Dataset,
         ds_accmc: Dataset,
+        *,
+        n_mc: float | None = None,
     ) -> None: ...
     def to_expression(self) -> LikelihoodExpression: ...
     def to_stochastic(

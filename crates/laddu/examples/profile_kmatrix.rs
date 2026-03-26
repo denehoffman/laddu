@@ -264,7 +264,7 @@ fn build_kmatrix_nll(dataset_path: &str) -> Box<NLL> {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let expr = pos_re + pos_im + neg_re + neg_im;
-    NLL::new(&expr, &ds_data, &ds_mc).unwrap()
+    NLL::new(&expr, &ds_data, &ds_mc, None).unwrap()
 }
 
 fn run_iteration(nll: &NLL, iteration: usize, mode: Mode) {

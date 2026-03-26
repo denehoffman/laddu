@@ -223,7 +223,7 @@
 //! let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
 //! let expr = (mag * bw).norm_sqr();
 //!
-//! let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
+//! let nll = NLL::new(&expr, &ds_data, &ds_mc, None).unwrap();
 //! println!("Parameters names and order: {:?}", nll.parameters());
 //! let result = nll.evaluate(&[1.27, 0.120, 100.0]).unwrap();
 //! println!("The extended negative log-likelihood is {}", result);

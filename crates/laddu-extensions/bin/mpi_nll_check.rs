@@ -77,7 +77,7 @@ fn make_test_nll(
     let data = dataset_with_weights(data_weights);
     let mc = dataset_with_weights(mc_weights);
 
-    NLL::new(&case.expression, &data, &mc).expect("NLL should construct")
+    NLL::new(&case.expression, &data, &mc, None).expect("NLL should construct")
 }
 
 fn dataset_with_weights(weights: &[f64]) -> Arc<Dataset> {

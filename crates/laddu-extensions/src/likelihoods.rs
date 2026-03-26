@@ -297,23 +297,28 @@ pub struct NLL {
     pub data_evaluator: Evaluator,
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
+    n_mc: f64,
     parameter_manager: ParameterManager,
     projection_active_mask_cache: Arc<Mutex<HashMap<Vec<String>, Vec<bool>>>>,
 }
 
 impl NLL {
     /// Construct an [`NLL`] from an [`Expression`] and two [`Dataset`]s (data and Monte Carlo). This mirrors loading a model but starts from
-    /// the expression directly.
+    /// the expression directly. The number of Monte Carlo events used in the denominator of the
+    /// normalization integral may also be specified (uses the weighted number of accepted Monte
+    /// Carlo events if None is given).
     pub fn new(
         expression: &Expression,
         ds_data: &Arc<Dataset>,
         ds_accmc: &Arc<Dataset>,
+        n_mc: Option<f64>,
     ) -> LadduResult<Box<Self>> {
         let data_evaluator = expression.load(ds_data)?;
         let accmc_evaluator = expression.load(ds_accmc)?;
         Ok(Self {
             parameter_manager: data_evaluator.parameter_manager().clone(),
             data_evaluator,
+            n_mc: n_mc.unwrap_or(accmc_evaluator.dataset.n_events_weighted()),
             accmc_evaluator,
             projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -370,7 +375,6 @@ impl NLL {
         }
         let resources = evaluator.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let amplitude_len = evaluator.amplitudes.len();
         let slot_count = evaluator.expression_slot_count();
         let subset_active_indices = resolved_masks
@@ -421,7 +425,7 @@ impl NLL {
                     amplitude_values,
                     &mut subset_expr_slots[subset_index],
                 );
-                output[subset_index].push(event.weight * value.re / n_mc);
+                output[subset_index].push(event.weight * value.re / self.n_mc);
             }
         }
         output
@@ -465,6 +469,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.fix(name, value)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
             projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
@@ -478,6 +483,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.free(name)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
             projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
@@ -491,6 +497,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename(old, new)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
             projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
@@ -504,6 +511,7 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename_parameters(mapping)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
             projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
@@ -632,19 +640,18 @@ impl NLL {
                 self.accmc_evaluator.evaluate_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         let output: Vec<f64> = result
             .par_iter()
             .zip(mc_dataset.events_local().par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
+            .map(|(l, e)| e.weight * l.re / self.n_mc)
             .collect();
 
         #[cfg(not(feature = "rayon"))]
         let output: Vec<f64> = result
             .iter()
             .zip(mc_dataset.events_local().iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
+            .map(|(l, e)| e.weight * l.re / self.n_mc)
             .collect();
         Ok(output)
     }
@@ -734,19 +741,18 @@ impl NLL {
                     .evaluate_with_gradient_local(parameters),
             )
         };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         {
             Ok((
                 result
                     .par_iter()
                     .zip(mc_dataset.events_local().par_iter())
-                    .map(|((l, _), e)| e.weight * l.re / n_mc)
+                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                     .collect(),
                 result
                     .par_iter()
                     .zip(mc_dataset.events_local().par_iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                     .collect(),
             ))
         }
@@ -756,12 +762,12 @@ impl NLL {
                 result
                     .iter()
                     .zip(mc_dataset.events_local().iter())
-                    .map(|((l, _), e)| e.weight * l.re / n_mc)
+                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                     .collect(),
                 result
                     .iter()
                     .zip(mc_dataset.events_local().iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                     .collect(),
             ))
         }
@@ -868,18 +874,17 @@ impl NLL {
             }
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
                 .zip(mc_dataset.events_local().par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .map(|(l, e)| e.weight * l.re / self.n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
                 .zip(mc_dataset.events_local().iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .map(|(l, e)| e.weight * l.re / self.n_mc)
                 .collect();
             mc_evaluator.set_active_mask(&current_active_mc)?;
             Ok(output)
@@ -889,18 +894,17 @@ impl NLL {
             let result = self
                 .accmc_evaluator
                 .evaluate_local_with_active_mask(parameters, &resolved_mask)?;
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let output: Vec<f64> = result
                 .par_iter()
                 .zip(mc_dataset.events_local().par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .map(|(l, e)| e.weight * l.re / self.n_mc)
                 .collect();
             #[cfg(not(feature = "rayon"))]
             let output: Vec<f64> = result
                 .iter()
                 .zip(mc_dataset.events_local().iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
+                .map(|(l, e)| e.weight * l.re / self.n_mc)
                 .collect();
             Ok(output)
         }
@@ -1084,19 +1088,18 @@ impl NLL {
             }
             let mc_dataset = mc_evaluator.dataset.clone();
             let result = mc_evaluator.evaluate_with_gradient_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|((l, _), e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                         .collect(),
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                         .collect(),
                 )
             };
@@ -1106,12 +1109,12 @@ impl NLL {
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|((l, _), e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                         .collect(),
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                         .collect(),
                 )
             };
@@ -1123,19 +1126,18 @@ impl NLL {
             let result = self
                 .accmc_evaluator
                 .evaluate_with_gradient_local_with_active_mask(parameters, &resolved_mask)?;
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
             #[cfg(feature = "rayon")]
             let (res, res_gradient) = {
                 (
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|((l, _), e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                         .collect(),
                     result
                         .par_iter()
                         .zip(mc_dataset.events_local().par_iter())
-                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                         .collect(),
                 )
             };
@@ -1145,12 +1147,12 @@ impl NLL {
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|((l, _), e)| e.weight * l.re / n_mc)
+                        .map(|((l, _), e)| e.weight * l.re / self.n_mc)
                         .collect(),
                     result
                         .iter()
                         .zip(mc_dataset.events_local().iter())
-                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
+                        .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
                         .collect(),
                 )
             };
@@ -1249,7 +1251,6 @@ impl NLL {
     }
 
     fn evaluate_local(&self, parameters: &[f64]) -> f64 {
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let data_term =
             evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
                 f64::ln(l.re)
@@ -1257,7 +1258,7 @@ impl NLL {
         let mc_term = self
             .accmc_evaluator
             .evaluate_weighted_value_sum_local(parameters);
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1266,12 +1267,11 @@ impl NLL {
             evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
                 f64::ln(l.re)
             });
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = self
             .accmc_evaluator
             .evaluate_weighted_value_sum_mpi(parameters, world);
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1369,12 +1369,11 @@ impl NLL {
     }
 
     fn evaluate_gradient_local(&self, parameters: &[f64]) -> DVector<f64> {
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let data_term = self.evaluate_data_gradient_term_local(parameters);
         let mc_term = self
             .accmc_evaluator
             .evaluate_weighted_gradient_sum_local(parameters);
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1383,13 +1382,12 @@ impl NLL {
         parameters: &[f64],
         world: &SimpleCommunicator,
     ) -> DVector<f64> {
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
         let data_term_local = self.evaluate_data_gradient_term_local(parameters);
         let data_term = reduce_gradient(world, &data_term_local);
         let mc_term = self
             .accmc_evaluator
             .evaluate_weighted_gradient_sum_mpi(parameters, world);
-        -2.0 * (data_term - mc_term / n_mc)
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1601,14 +1599,13 @@ impl StochasticNLL {
     }
 
     fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         let data_term = self.evaluate_data_term_local(parameters, indices);
         let mc_term = self
             .nll
             .accmc_evaluator
             .evaluate_weighted_value_sum_local(parameters);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1622,7 +1619,6 @@ impl StochasticNLL {
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let data_term_local = self.evaluate_data_term_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
         let data_term = reduce_scalar(world, data_term_local);
@@ -1630,7 +1626,7 @@ impl StochasticNLL {
             .nll
             .accmc_evaluator
             .evaluate_weighted_value_sum_mpi(parameters, world);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 
     fn evaluate_data_gradient_term_local(
@@ -1739,13 +1735,12 @@ impl StochasticNLL {
         n_data_batch: f64,
     ) -> DVector<f64> {
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let data_term = self.evaluate_data_gradient_term_local(parameters, indices);
         let mc_term = self
             .nll
             .accmc_evaluator
             .evaluate_weighted_gradient_sum_local(parameters);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1759,7 +1754,6 @@ impl StochasticNLL {
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
         let data_term_local = self.evaluate_data_gradient_term_local(parameters, &locals);
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
         let data_term = reduce_gradient(world, &data_term_local);
@@ -1767,7 +1761,7 @@ impl StochasticNLL {
             .nll
             .accmc_evaluator
             .evaluate_weighted_gradient_sum_mpi(parameters, world);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 }
 
@@ -1781,6 +1775,9 @@ impl StochasticNLL {
 ///     A Dataset representing true signal data
 /// ds_accmc : Dataset
 ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
+/// n_mc : float, optional
+///     The number of Monte Carlo events used in the denominator of the normalization integral
+///     (uses the weighted number of accepted Monte Carlo events if None is given)
 ///
 #[cfg(feature = "python")]
 #[pyclass(name = "NLL", module = "laddu")]
@@ -1791,9 +1788,19 @@ pub struct PyNLL(pub Box<NLL>);
 #[pymethods]
 impl PyNLL {
     #[new]
-    #[pyo3(signature = (expression, ds_data, ds_accmc))]
-    fn new(expression: &PyExpression, ds_data: &PyDataset, ds_accmc: &PyDataset) -> PyResult<Self> {
-        Ok(Self(NLL::new(&expression.0, &ds_data.0, &ds_accmc.0)?))
+    #[pyo3(signature = (expression, ds_data, ds_accmc, *, n_mc=None))]
+    fn new(
+        expression: &PyExpression,
+        ds_data: &PyDataset,
+        ds_accmc: &PyDataset,
+        n_mc: Option<f64>,
+    ) -> PyResult<Self> {
+        Ok(Self(NLL::new(
+            &expression.0,
+            &ds_data.0,
+            &ds_accmc.0,
+            n_mc,
+        )?))
     }
     /// The underlying signal dataset used in calculating the NLL
     ///
@@ -4509,7 +4516,7 @@ mod tests {
         let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0]);
         let mc = dataset_with_weights(&[0.5, 1.5]);
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         (nll, vec![2.0])
     }
 
@@ -4519,7 +4526,7 @@ mod tests {
         let expr = (amp_a + amp_b).norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0, 3.0, 1.0]);
         let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         (nll, vec![0.75, -1.25])
     }
 
@@ -4584,8 +4591,7 @@ mod tests {
             .nll
             .accmc_evaluator
             .evaluate_weighted_value_sum_local(&fixture.parameters);
-        let n_mc = fixture.nll.accmc_evaluator.dataset.n_events_weighted();
-        let expected_value = -2.0 * (expected_value - expected_mc_term / n_mc);
+        let expected_value = -2.0 * (expected_value - expected_mc_term / fixture.nll.n_mc);
 
         let expected_data_gradient = fixture
             .nll
@@ -4594,7 +4600,8 @@ mod tests {
             .nll
             .accmc_evaluator
             .evaluate_weighted_gradient_sum_local(&fixture.parameters);
-        let expected_gradient = -2.0 * (expected_data_gradient - expected_mc_gradient / n_mc);
+        let expected_gradient =
+            -2.0 * (expected_data_gradient - expected_mc_gradient / fixture.nll.n_mc);
 
         let actual_value = fixture.nll.evaluate_local(&fixture.parameters);
         assert_relative_eq!(
@@ -4636,10 +4643,9 @@ mod tests {
             .nll
             .accmc_evaluator
             .evaluate_weighted_value_sum_local(&fixture.parameters);
-        let n_mc = fixture.nll.accmc_evaluator.dataset.n_events_weighted();
         let data_term = super::reduce_scalar(world, data_term_local);
         let mc_term = super::reduce_scalar(world, mc_term_local);
-        let expected_value = -2.0 * (data_term - mc_term / n_mc);
+        let expected_value = -2.0 * (data_term - mc_term / fixture.nll.n_mc);
         let mpi_value = fixture.nll.evaluate_mpi_value(&fixture.parameters, world);
         assert_relative_eq!(
             mpi_value,
@@ -4657,7 +4663,7 @@ mod tests {
             .evaluate_weighted_gradient_sum_local(&fixture.parameters);
         let data_gradient = super::reduce_gradient(world, &data_gradient_local);
         let mc_gradient = super::reduce_gradient(world, &mc_gradient_local);
-        let expected_gradient = -2.0 * (data_gradient - mc_gradient / n_mc);
+        let expected_gradient = -2.0 * (data_gradient - mc_gradient / fixture.nll.n_mc);
         let mpi_gradient = fixture
             .nll
             .evaluate_mpi_gradient(&fixture.parameters, world);
@@ -4712,7 +4718,8 @@ mod tests {
                 let c2 = CacheOnlyBeamAmplitude::new("c2", 1).expect("separable c2 should build");
                 let expression = (&p1 * &c1) + &(&p2 * &c2);
                 DeterministicNllFixture {
-                    nll: NLL::new(&expression, &data, &mc).expect("separable NLL should build"),
+                    nll: NLL::new(&expression, &data, &mc, None)
+                        .expect("separable NLL should build"),
                     parameters: vec![0.4, 0.2],
                 }
             }
@@ -4724,7 +4731,7 @@ mod tests {
                     .expect("partial m should build");
                 let expression = (&p * &c) + &m;
                 DeterministicNllFixture {
-                    nll: NLL::new(&expression, &data, &mc).expect("partial NLL should build"),
+                    nll: NLL::new(&expression, &data, &mc, None).expect("partial NLL should build"),
                     parameters: vec![0.35, 0.25],
                 }
             }
@@ -4735,7 +4742,8 @@ mod tests {
                     .expect("non-separable m2 should build");
                 let expression = &m1 * &m2;
                 DeterministicNllFixture {
-                    nll: NLL::new(&expression, &data, &mc).expect("non-separable NLL should build"),
+                    nll: NLL::new(&expression, &data, &mc, None)
+                        .expect("non-separable NLL should build"),
                     parameters: vec![0.2, 0.15],
                 }
             }
@@ -4753,7 +4761,7 @@ mod tests {
             .expect("mixed-workload beam amplitude should build");
         let expression = (&p * &c) + &m;
         DeterministicNllFixture {
-            nll: NLL::new(&expression, &data, &mc).expect("mixed-workload NLL should build"),
+            nll: NLL::new(&expression, &data, &mc, None).expect("mixed-workload NLL should build"),
             parameters: vec![0.35, 0.25],
         }
     }
@@ -5003,7 +5011,7 @@ mod tests {
         let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0e12, 1.0e-12, 3.5, 7.25e4, 2.0e-3]);
         let mc = dataset_with_weights(&[4.0e9, 9.0e-6, 1.25, 2.5e2, 8.0e-4]);
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         let params = vec![1.125];
 
         let intensity: f64 = params[0] * params[0];
@@ -5037,7 +5045,7 @@ mod tests {
             &[(1.5, 1.0), (3.0, 2.1), (5.5, 2.9), (2.0, 1.2), (4.2, 1.8)],
             &[0.8, 1.4, 0.6, 1.1, 0.75],
         );
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         let params = vec![0.6, 1.1];
         assert_eq!(nll.free_parameters(), vec!["alpha", "beta"]);
 
@@ -5371,10 +5379,9 @@ mod tests {
         let mc_term_local = nll
             .accmc_evaluator
             .evaluate_weighted_value_sum_local(&params);
-        let n_mc = nll.accmc_evaluator.dataset.n_events_weighted();
         let data_term = super::reduce_scalar(&world, data_term_local);
         let mc_term = super::reduce_scalar(&world, mc_term_local);
-        let expected_value = -2.0 * (data_term - mc_term / n_mc);
+        let expected_value = -2.0 * (data_term - mc_term / nll.n_mc);
 
         let mpi_value = nll.evaluate_mpi(&params, &world);
         assert_relative_eq!(mpi_value, expected_value);
@@ -5385,7 +5392,7 @@ mod tests {
             .evaluate_weighted_gradient_sum_local(&params);
         let data_gradient = super::reduce_gradient(&world, &data_gradient_local);
         let mc_gradient = super::reduce_gradient(&world, &mc_gradient_local);
-        let expected_gradient = -2.0 * (data_gradient - mc_gradient / n_mc);
+        let expected_gradient = -2.0 * (data_gradient - mc_gradient / nll.n_mc);
         let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
         assert_relative_eq!(mpi_gradient, expected_gradient);
 
@@ -5429,7 +5436,7 @@ mod tests {
             &[(4.0, 0.1), (6.0, 2.0), (8.0, 1.5), (1.0e1, 3.0)],
             &[4.0e9, 9.0e-6, 1.25, 2.5e2],
         );
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         let params = vec![1.125, -0.375];
 
         let data_local = nll.data_evaluator.evaluate_local(&params);
@@ -5446,8 +5453,7 @@ mod tests {
             .sum();
         let data_term = super::reduce_scalar(&world, data_term_local);
         let mc_term = super::reduce_scalar(&world, mc_term_local);
-        let n_mc = nll.accmc_evaluator.dataset.n_events_weighted();
-        let expected = -2.0 * (data_term - mc_term / n_mc);
+        let expected = -2.0 * (data_term - mc_term / nll.n_mc);
         let mpi_value = nll.evaluate_mpi_value(&params, &world);
         assert_relative_eq!(mpi_value, expected, epsilon = 1e-9, max_relative = 1e-12);
         finalize_mpi();
