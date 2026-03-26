@@ -200,6 +200,16 @@ def from_pandas(
         return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
+def from_arrow(
+    data: pa.Table,
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset:
+    return _dataset_from_arrow_table(data, p4s=p4s, aux=aux, aliases=aliases)
+
+
 def from_polars(
     data: PolarsDataFrame,
     *,
@@ -409,6 +419,23 @@ def to_numpy(
     return _coalesce_numpy_batches(
         _iter_numpy_batches(dataset, chunk_size=len(dataset), precision=precision)
     )
+
+
+def to_arrow(
+    dataset: Dataset,
+    *,
+    precision: Literal['f64', 'f32'] = 'f64',
+) -> pa.Table:
+    try:
+        import pyarrow as pa
+    except ModuleNotFoundError as exc:
+        msg = (
+            "laddu.io.to_arrow requires the optional dependency 'pyarrow'. "
+            f'{_OPTIONAL_DEPENDENCY_HINTS["pyarrow"]}'
+        )
+        raise ModuleNotFoundError(msg) from exc
+
+    return pa.table(to_numpy(dataset, precision=precision))
 
 
 def write_parquet(
@@ -1050,6 +1077,7 @@ def _amptools_columns(
 
 
 __all__ = [
+    'from_arrow',
     'from_dict',
     'from_numpy',
     'from_pandas',
@@ -1060,6 +1088,7 @@ __all__ = [
     'read_parquet_chunked',
     'read_root',
     'read_root_chunked',
+    'to_arrow',
     'to_numpy',
     'write_parquet',
     'write_root',

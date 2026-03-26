@@ -296,6 +296,45 @@ def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
         _assert_datasets_close(reopened_root, baseline)
 
 
+def test_arrow_entrypoints_io_compatibility() -> None:
+    pa = pytest.importorskip('pyarrow')
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+
+    baseline = ldio.from_dict(data)
+    table = pa.table(data)
+    dataset = ldio.from_arrow(table)
+    _assert_datasets_close(dataset, baseline)
+
+    roundtrip = ldio.from_arrow(ldio.to_arrow(dataset))
+    _assert_datasets_close(roundtrip, baseline)
+
+
+def test_dataset_to_arrow_roundtrip_method_matches_io_helper() -> None:
+    pa = pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table_from_method = dataset.to_arrow()
+    table_from_helper = ldio.to_arrow(dataset)
+
+    assert isinstance(table_from_method, pa.Table)
+    assert table_from_method.schema == table_from_helper.schema
+
+    roundtrip = ldio.from_arrow(table_from_method, p4s=P4_NAMES, aux=AUX_NAMES)
+    _assert_datasets_close(roundtrip, dataset)
+
+
 def test_table_entrypoints_dtype_and_null_handling() -> None:
     data = {
         'beam_px': [1, 2, 3],

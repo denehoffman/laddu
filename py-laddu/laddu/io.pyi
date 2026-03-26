@@ -38,6 +38,13 @@ def from_polars(
     aux: list[str] | None = None,
     aliases: dict[str, str | list[str]] | None = None,
 ) -> Dataset: ...
+def from_arrow(
+    data: Any,
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: dict[str, str | list[str]] | None = None,
+) -> Dataset: ...
 def read_parquet(
     path: str | Path,
     *,
@@ -100,6 +107,7 @@ def read_amptools_chunked(
 def to_numpy(
     dataset: Dataset, *, precision: Literal['f64', 'f32'] = 'f64'
 ) -> dict[str, NDArray[np.floating]]: ...
+def to_arrow(dataset: Dataset, *, precision: Literal['f64', 'f32'] = 'f64') -> Any: ...
 def write_parquet(
     dataset: Dataset,
     path: str | Path,
@@ -119,6 +127,7 @@ def write_root(
 ) -> None: ...
 
 __all__ = [
+    'from_arrow',
     'from_dict',
     'from_numpy',
     'from_pandas',
@@ -129,6 +138,7 @@ __all__ = [
     'read_parquet_chunked',
     'read_root',
     'read_root_chunked',
+    'to_arrow',
     'to_numpy',
     'write_parquet',
     'write_root',

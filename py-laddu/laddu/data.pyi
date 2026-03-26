@@ -1,5 +1,5 @@
 from collections.abc import Iterator, Mapping, Sequence
-from typing import overload
+from typing import Any, Literal, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -94,6 +94,7 @@ class Dataset(Sequence[Event]):
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
+    def to_arrow(self, *, precision: Literal['f64', 'f32'] = 'f64') -> Any: ...
 
 class BinnedDataset:
     n_bins: int
