@@ -170,6 +170,14 @@ def _arrow_array_to_numpy(array: pa.Array) -> np.ndarray:
         return np.asarray(array.to_numpy(zero_copy_only=False))
 
 
+def _numpy_columns_to_arrow_table(columns: NumpyColumns) -> pa.Table:
+    import pyarrow as pa
+
+    names = list(columns)
+    arrays = [pa.array(columns[name], from_pandas=False) for name in names]
+    return pa.Table.from_arrays(arrays, names=names)
+
+
 def from_numpy(
     data: Mapping[str, FloatArray],
     *,
@@ -427,15 +435,14 @@ def to_arrow(
     precision: Literal['f64', 'f32'] = 'f64',
 ) -> pa.Table:
     try:
-        import pyarrow as pa
+        columns = to_numpy(dataset, precision=precision)
+        return _numpy_columns_to_arrow_table(columns)
     except ModuleNotFoundError as exc:
         msg = (
             "laddu.io.to_arrow requires the optional dependency 'pyarrow'. "
             f'{_OPTIONAL_DEPENDENCY_HINTS["pyarrow"]}'
         )
         raise ModuleNotFoundError(msg) from exc
-
-    return pa.table(to_numpy(dataset, precision=precision))
 
 
 def write_parquet(

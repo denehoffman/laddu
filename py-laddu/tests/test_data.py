@@ -335,6 +335,15 @@ def test_dataset_to_arrow_roundtrip_method_matches_io_helper() -> None:
     _assert_datasets_close(roundtrip, dataset)
 
 
+def test_to_arrow_exports_single_chunk_columns() -> None:
+    pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table = ldio.to_arrow(dataset)
+
+    assert all(table[name].num_chunks == 1 for name in table.column_names)
+
+
 def test_table_entrypoints_dtype_and_null_handling() -> None:
     data = {
         'beam_px': [1, 2, 3],
