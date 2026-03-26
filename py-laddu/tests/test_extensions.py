@@ -7,10 +7,21 @@ import numpy as np
 import pytest
 from laddu import (
     NLL,
+    AdamSettings,
+    AIESMoveConfig,
+    AIESSettings,
     Dataset,
+    ESSMoveConfig,
+    ESSSettings,
     Event,
+    LBFGSBSettings,
     LikelihoodScalar,
+    LineSearchConfig,
+    NelderMeadSettings,
+    PSOSettings,
     Scalar,
+    SimplexConfig,
+    SwarmInitializerConfig,
     Vec3,
     constant,
     get_threads,
@@ -25,12 +36,8 @@ _ERROR_EXPECTATIONS: dict[str, tuple[type[Exception], str]] = {
     'evaluate short': (ValueError, 'length mismatch'),
     'evaluate_gradient long': (ValueError, 'length mismatch'),
     'project_weights_subset unknown amplitude': (ValueError, 'No registered amplitude'),
-    'minimize settings wrong type': (TypeError, 'dict'),
-    'mcmc settings wrong type': (TypeError, 'dict'),
-    'minimize malformed line search method': (
-        TypeError,
-        r'Invalid line search method|not-a-valid-method',
-    ),
+    'minimize settings wrong type': (TypeError, 'LBFGSBSettings'),
+    'mcmc settings wrong type': (TypeError, 'AIESSettings'),
 }
 
 
@@ -56,6 +63,15 @@ def _simple_scalar_nll() -> NLL:
     return NLL(expr, data, mc)
 
 
+def _two_parameter_nll() -> NLL:
+    amp_a = Scalar('alpha_amp', parameter('alpha'))
+    amp_b = Scalar('beta_amp', parameter('beta'))
+    expr = (amp_a + amp_b).norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    return NLL(expr, data, mc)
+
+
 def test_python_regression_table_driven_error_paths() -> None:
     nll = _simple_scalar_nll()
     cases = [
@@ -70,17 +86,6 @@ def test_python_regression_table_driven_error_paths() -> None:
             lambda: nll.minimize([2.0], settings=cast(Any, [])),
         ),
         ('mcmc settings wrong type', lambda: nll.mcmc([[2.0]], settings=cast(Any, []))),
-        (
-            'minimize malformed line search method',
-            lambda: nll.minimize(
-                [2.0],
-                settings={
-                    'line_search': {
-                        'method': 'not-a-valid-method',
-                    },
-                },
-            ),
-        ),
     ]
 
     for label, fn in cases:
@@ -89,76 +94,78 @@ def test_python_regression_table_driven_error_paths() -> None:
             fn()
 
 
-def test_minimize_unknown_algorithm_setting_suggests_close_match() -> None:
+def test_minimize_typed_settings_require_matching_method() -> None:
     nll = _simple_scalar_nll()
 
     with pytest.raises(
-        ValueError,
-        match=r"Unknown key 'alpah' in adam settings.*Did you mean 'alpha'\?",
-    ):
-        nll.minimize(
-            [2.0],
-            method='adam',
-            settings={
-                'alpah': 0.1,
-            },
-        )
-
-
-def test_minimize_unknown_line_search_key_suggests_close_match() -> None:
-    nll = _simple_scalar_nll()
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"Unknown key 'max_iteratons' in morethuente line_search settings"
-            r".*Did you mean 'max_iterations'\?"
-        ),
+        TypeError,
+        match=r"settings for method 'lbfgsb' must be LBFGSBSettings or None",
     ):
         nll.minimize(
             [2.0],
             method='lbfgsb',
-            settings={
-                'line_search': {
-                    'method': 'morethuente',
-                    'max_iteratons': 10,
-                },
-            },
+            settings=AdamSettings(alpha=0.1),
         )
 
 
-def test_mcmc_unknown_move_setting_suggests_close_match() -> None:
+def test_mcmc_typed_settings_require_matching_method() -> None:
     nll = _simple_scalar_nll()
 
     with pytest.raises(
-        ValueError,
-        match=r"Unknown key 'aa' in stretch AIES move settings.*Did you mean 'a'\?",
+        TypeError,
+        match=r"settings for method 'ess' must be ESSSettings or None",
     ):
         nll.mcmc(
             [[2.0], [2.1]],
-            method='aies',
-            settings={
-                'moves': [('stretch', {'aa': 3.0}, 1.0)],
-            },
+            method='ess',
+            settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
         )
 
 
-def test_unknown_algorithm_setting_without_close_match_lists_allowed_keys() -> None:
-    nll = _simple_scalar_nll()
+def test_typed_minimize_settings_smoke() -> None:
+    nll = _two_parameter_nll()
 
-    with pytest.raises(
-        ValueError,
-        match=r"Unknown key 'potato' in adam settings\..*Allowed keys: .*'alpha'",
-    ) as error:
-        nll.minimize(
-            [2.0],
-            method='adam',
-            settings={
-                'potato': 0.1,
-            },
-        )
+    lbfgsb = nll.minimize(
+        [2.0, -0.5],
+        method='lbfgsb',
+        max_steps=4,
+        settings=LBFGSBSettings(
+            m=4,
+            line_search=LineSearchConfig.morethuente(max_iterations=8),
+        ),
+    )
+    adam = nll.minimize(
+        [2.0, -0.5],
+        method='adam',
+        max_steps=4,
+        settings=AdamSettings(alpha=0.05, patience=2),
+    )
+    nelder_mead = nll.minimize(
+        [2.0, -0.5],
+        method='nelder-mead',
+        max_steps=4,
+        settings=NelderMeadSettings(
+            simplex=SimplexConfig.orthogonal(simplex_size=0.25),
+            expansion_method='greedyexpansion',
+            f_terminator='absolute',
+            x_terminator='diameter',
+        ),
+    )
+    pso = nll.minimize(
+        [2.0, -0.5],
+        method='pso',
+        max_steps=2,
+        settings=PSOSettings(
+            SwarmInitializerConfig.random_in_limits([(0.0, 3.0), (-2.0, 2.0)], 4),
+            omega=0.7,
+            c1=0.2,
+            c2=0.2,
+        ),
+    )
 
-    assert 'Did you mean' not in str(error.value)
+    for summary in (lbfgsb, adam, nelder_mead, pso):
+        assert summary.parameter_names == ['alpha', 'beta']
+        assert summary.x.shape == (2,)
 
 
 def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
@@ -168,13 +175,13 @@ def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
         [2.0],
         method='lbfgsb',
         max_steps=4,
-        settings={'line_search': {'method': 'morethuente'}},
+        settings=LBFGSBSettings(line_search=LineSearchConfig.morethuente()),
     )
     alias = nll.minimize(
         [2.0],
         method=cast(Any, 'L-BFGS-B'),
         max_steps=4,
-        settings={'line_search': {'method': 'More Thuente'}},
+        settings=LBFGSBSettings(line_search=LineSearchConfig.morethuente()),
     )
 
     np.testing.assert_allclose([alias.fx], [canonical.fx], equal_nan=True)
@@ -189,13 +196,13 @@ def test_mcmc_method_alias_matches_canonical_shape() -> None:
         [[2.0], [2.1]],
         method='aies',
         max_steps=2,
-        settings={'moves': [('stretch', 1.0)]},
+        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
     )
     alias = nll.mcmc(
         [[2.0], [2.1]],
         method=cast(Any, 'A I E S'),
         max_steps=2,
-        settings={'moves': [('stretch', 1.0)]},
+        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
     )
 
     assert alias.dimension == canonical.dimension
@@ -209,15 +216,28 @@ def test_minimize_method_typo_still_raises_value_error() -> None:
         nll.minimize([2.0], method=cast(Any, 'lbgfsb'))
 
 
-def test_mcmc_move_typo_still_raises_value_error() -> None:
+def test_typed_mcmc_settings_smoke() -> None:
     nll = _simple_scalar_nll()
 
-    with pytest.raises(ValueError, match=r'Invalid AIES move: strech'):
-        nll.mcmc(
-            [[2.0], [2.1]],
-            method='aies',
-            settings={'moves': [('strech', 1.0)]},
-        )
+    aies = nll.mcmc(
+        [[2.0], [2.1]],
+        method='aies',
+        max_steps=2,
+        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0, a=3.0)]),
+    )
+    ess = nll.mcmc(
+        [[2.0], [2.1]],
+        method='ess',
+        max_steps=2,
+        settings=ESSSettings(
+            moves=[ESSMoveConfig.global_(1.0, scale=1.5, n_components=2)],
+            n_adaptive=1,
+            mu=1.1,
+        ),
+    )
+
+    assert aies.parameter_names == ['scale']
+    assert ess.parameter_names == ['scale']
 
 
 def test_regularizer_l1_matches_rust_implementation() -> None:

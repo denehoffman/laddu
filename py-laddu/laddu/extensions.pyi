@@ -5,6 +5,7 @@ from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
+from typing_extensions import TypeAlias
 
 from laddu.amplitudes import Evaluator, Expression
 from laddu.data import Dataset
@@ -130,6 +131,146 @@ class MCMCTerminator(metaclass=ABCMeta):
     @abstractmethod
     def check_for_termination(self, step: int, status: EnsembleStatus) -> ControlFlow: ...
 
+class LineSearchConfig:
+    @staticmethod
+    def morethuente(
+        *,
+        max_iterations: int | None = None,
+        max_zoom: int | None = None,
+        c1: float | None = None,
+        c2: float | None = None,
+    ) -> LineSearchConfig: ...
+    @staticmethod
+    def hagerzhang(
+        *,
+        max_iterations: int | None = None,
+        max_bisects: int | None = None,
+        delta: float | None = None,
+        sigma: float | None = None,
+        epsilon: float | None = None,
+        theta: float | None = None,
+        gamma: float | None = None,
+    ) -> LineSearchConfig: ...
+
+class SimplexConfig:
+    @staticmethod
+    def scaled_orthogonal(
+        *, orthogonal_multiplier: float = 1.05, orthogonal_zero_step: float = 0.00025
+    ) -> SimplexConfig: ...
+    @staticmethod
+    def orthogonal(*, simplex_size: float = 1.0) -> SimplexConfig: ...
+    @staticmethod
+    def custom(simplex: list[list[float]] | npt.ArrayLike) -> SimplexConfig: ...
+
+class SwarmInitializerConfig:
+    @staticmethod
+    def random_in_limits(
+        bounds: Sequence[tuple[float, float]], n_particles: int
+    ) -> SwarmInitializerConfig: ...
+    @staticmethod
+    def latin_hypercube(
+        bounds: Sequence[tuple[float, float]], n_particles: int
+    ) -> SwarmInitializerConfig: ...
+    @staticmethod
+    def custom(swarm: list[list[float]] | npt.ArrayLike) -> SwarmInitializerConfig: ...
+
+class AIESMoveConfig:
+    @staticmethod
+    def stretch(weight: float, *, a: float = 2.0) -> AIESMoveConfig: ...
+    @staticmethod
+    def walk(weight: float) -> AIESMoveConfig: ...
+
+class ESSMoveConfig:
+    @staticmethod
+    def differential(weight: float) -> ESSMoveConfig: ...
+    @staticmethod
+    def gaussian(weight: float) -> ESSMoveConfig: ...
+    @staticmethod
+    def global_(
+        weight: float,
+        *,
+        scale: float | None = None,
+        rescale_cov: float | None = None,
+        n_components: int | None = None,
+    ) -> ESSMoveConfig: ...
+
+class LBFGSBSettings:
+    def __init__(
+        self,
+        *,
+        m: int | None = None,
+        skip_hessian: bool = False,
+        line_search: LineSearchConfig | None = None,
+        eps_f: float | None = None,
+        eps_g: float | None = None,
+        eps_norm_g: float | None = None,
+    ) -> None: ...
+
+class AdamSettings:
+    def __init__(
+        self,
+        *,
+        alpha: float | None = None,
+        beta_1: float | None = None,
+        beta_2: float | None = None,
+        epsilon: float | None = None,
+        beta_c: float | None = None,
+        eps_loss: float | None = None,
+        patience: int | None = None,
+    ) -> None: ...
+
+class NelderMeadSettings:
+    def __init__(
+        self,
+        *,
+        simplex: SimplexConfig | None = None,
+        alpha: float | None = None,
+        beta: float | None = None,
+        gamma: float | None = None,
+        delta: float | None = None,
+        adaptive: bool = False,
+        expansion_method: Literal['greedyminimization', 'greedyexpansion'] | None = None,
+        eps_f: float | None = None,
+        f_terminator: Literal['amoeba', 'absolute', 'stddev'] | None = None,
+        eps_x: float | None = None,
+        x_terminator: Literal['diameter', 'higham', 'rowan', 'singer'] | None = None,
+    ) -> None: ...
+
+class PSOSettings:
+    def __init__(
+        self,
+        initializer: SwarmInitializerConfig,
+        *,
+        swarm_topology: Literal['global', 'ring'] = 'global',
+        swarm_update_method: Literal[
+            'sync', 'synchronous', 'async', 'asynchronous'
+        ] = 'sync',
+        swarm_boundary_method: Literal['inf', 'shr'] = 'inf',
+        use_transform: bool = False,
+        swarm_velocity_bounds: Sequence[tuple[float, float]] | None = None,
+        omega: float | None = None,
+        c1: float | None = None,
+        c2: float | None = None,
+    ) -> None: ...
+
+class AIESSettings:
+    def __init__(self, *, moves: Sequence[AIESMoveConfig] | None = None) -> None: ...
+
+class ESSSettings:
+    def __init__(
+        self,
+        *,
+        moves: Sequence[ESSMoveConfig] | None = None,
+        n_adaptive: int | None = None,
+        mu: float | None = None,
+        max_steps: int | None = None,
+    ) -> None: ...
+
+MinimizerSettings: TypeAlias = (
+    LBFGSBSettings | AdamSettings | NelderMeadSettings | PSOSettings
+)
+SamplerSettings: TypeAlias = AIESSettings | ESSSettings
+
 class LikelihoodEvaluator:
     parameters: list[str]
     free_parameters: list[str]
@@ -154,7 +295,7 @@ class LikelihoodEvaluator:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: dict | None = None,
+        settings: MinimizerSettings | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
@@ -169,7 +310,7 @@ class LikelihoodEvaluator:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: dict | None = None,
+        settings: SamplerSettings | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
         terminators: MCMCTerminator
         | AutocorrelationTerminator
@@ -189,7 +330,7 @@ class StochasticNLL:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: dict | None = None,
+        settings: MinimizerSettings | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
@@ -204,7 +345,7 @@ class StochasticNLL:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: dict | None = None,
+        settings: SamplerSettings | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
         terminators: MCMCTerminator
         | AutocorrelationTerminator
@@ -293,7 +434,7 @@ class NLL:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: dict | None = None,
+        settings: MinimizerSettings | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
@@ -308,7 +449,7 @@ class NLL:
         *,
         bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: dict | None = None,
+        settings: SamplerSettings | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
         terminators: MCMCTerminator
         | AutocorrelationTerminator
@@ -342,14 +483,21 @@ def integrated_autocorrelation_times(
 
 __all__ = [
     'NLL',
+    'AIESMoveConfig',
+    'AIESSettings',
+    'AdamSettings',
     'AutocorrelationTerminator',
     'ControlFlow',
+    'ESSMoveConfig',
+    'ESSSettings',
     'EnsembleStatus',
+    'LBFGSBSettings',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodZero',
+    'LineSearchConfig',
     'MCMCObserver',
     'MCMCSummary',
     'MCMCTerminator',
@@ -357,8 +505,12 @@ __all__ = [
     'MinimizationStatus',
     'MinimizationSummary',
     'MinimizationTerminator',
+    'NelderMeadSettings',
+    'PSOSettings',
+    'SimplexConfig',
     'StochasticNLL',
     'Swarm',
+    'SwarmInitializerConfig',
     'SwarmParticle',
     'Walker',
     'integrated_autocorrelation_times',

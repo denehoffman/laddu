@@ -48,9 +48,11 @@ mod laddu {
     #[pymodule_export]
     use laddu_extensions::{
         ganesh_ext::py_ganesh::{
-            py_integrated_autocorrelation_times, PyAutocorrelationTerminator, PyControlFlow,
-            PyEnsembleStatus, PyMCMCSummary, PyMinimizationStatus, PyMinimizationSummary, PySwarm,
-            PySwarmParticle, PyWalker,
+            py_integrated_autocorrelation_times, PyAIESMoveConfig, PyAIESSettings, PyAdamSettings,
+            PyAutocorrelationTerminator, PyControlFlow, PyESSMoveConfig, PyESSSettings,
+            PyEnsembleStatus, PyLBFGSBSettings, PyLineSearchConfig, PyMCMCSummary,
+            PyMinimizationStatus, PyMinimizationSummary, PyNelderMeadSettings, PyPSOSettings,
+            PySimplexConfig, PySwarm, PySwarmInitializerConfig, PySwarmParticle, PyWalker,
         },
         likelihoods::{
             py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,

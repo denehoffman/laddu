@@ -780,8 +780,473 @@ pub mod py_ganesh {
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
         types::{PyBytes, PyDict, PyList},
-        Borrowed,
+        Borrowed, PyClass,
     };
+
+    #[derive(Clone)]
+    enum LineSearchSpec {
+        MoreThuente {
+            max_iterations: Option<usize>,
+            max_zoom: Option<usize>,
+            c1: Option<f64>,
+            c2: Option<f64>,
+        },
+        HagerZhang {
+            max_iterations: Option<usize>,
+            max_bisects: Option<usize>,
+            delta: Option<f64>,
+            sigma: Option<f64>,
+            epsilon: Option<f64>,
+            theta: Option<f64>,
+            gamma: Option<f64>,
+        },
+    }
+
+    #[derive(Clone)]
+    enum SimplexSpec {
+        ScaledOrthogonal {
+            orthogonal_multiplier: f64,
+            orthogonal_zero_step: f64,
+        },
+        Orthogonal {
+            simplex_size: f64,
+        },
+        Custom {
+            simplex: Vec<Vec<f64>>,
+        },
+    }
+
+    #[derive(Clone)]
+    enum ExpansionMethodSpec {
+        GreedyMinimization,
+        GreedyExpansion,
+    }
+
+    #[derive(Clone)]
+    enum FTerminatorSpec {
+        Amoeba,
+        Absolute,
+        StdDev,
+    }
+
+    #[derive(Clone)]
+    enum XTerminatorSpec {
+        Diameter,
+        Higham,
+        Rowan,
+        Singer,
+    }
+
+    #[derive(Clone)]
+    enum SwarmInitializerSpec {
+        RandomInLimits {
+            bounds: Vec<(f64, f64)>,
+            n_particles: usize,
+        },
+        LatinHypercube {
+            bounds: Vec<(f64, f64)>,
+            n_particles: usize,
+        },
+        Custom {
+            swarm: Vec<Vec<f64>>,
+        },
+    }
+
+    #[derive(Clone)]
+    enum AIESMoveSpec {
+        Stretch { a: f64, weight: f64 },
+        Walk { weight: f64 },
+    }
+
+    #[derive(Clone)]
+    enum ESSMoveSpec {
+        Differential {
+            weight: f64,
+        },
+        Gaussian {
+            weight: f64,
+        },
+        Global {
+            weight: f64,
+            scale: Option<f64>,
+            rescale_cov: Option<f64>,
+            n_components: Option<usize>,
+        },
+    }
+
+    #[pyclass(name = "LineSearchConfig", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyLineSearchConfig(LineSearchSpec);
+
+    #[pymethods]
+    impl PyLineSearchConfig {
+        #[staticmethod]
+        #[pyo3(signature = (*, max_iterations=None, max_zoom=None, c1=None, c2=None))]
+        fn morethuente(
+            max_iterations: Option<usize>,
+            max_zoom: Option<usize>,
+            c1: Option<f64>,
+            c2: Option<f64>,
+        ) -> Self {
+            Self(LineSearchSpec::MoreThuente {
+                max_iterations,
+                max_zoom,
+                c1,
+                c2,
+            })
+        }
+
+        #[staticmethod]
+        #[pyo3(signature = (*, max_iterations=None, max_bisects=None, delta=None, sigma=None, epsilon=None, theta=None, gamma=None))]
+        fn hagerzhang(
+            max_iterations: Option<usize>,
+            max_bisects: Option<usize>,
+            delta: Option<f64>,
+            sigma: Option<f64>,
+            epsilon: Option<f64>,
+            theta: Option<f64>,
+            gamma: Option<f64>,
+        ) -> Self {
+            Self(LineSearchSpec::HagerZhang {
+                max_iterations,
+                max_bisects,
+                delta,
+                sigma,
+                epsilon,
+                theta,
+                gamma,
+            })
+        }
+    }
+
+    #[pyclass(name = "SimplexConfig", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySimplexConfig(SimplexSpec);
+
+    #[pymethods]
+    impl PySimplexConfig {
+        #[staticmethod]
+        #[pyo3(signature = (*, orthogonal_multiplier=1.05, orthogonal_zero_step=0.00025))]
+        fn scaled_orthogonal(orthogonal_multiplier: f64, orthogonal_zero_step: f64) -> Self {
+            Self(SimplexSpec::ScaledOrthogonal {
+                orthogonal_multiplier,
+                orthogonal_zero_step,
+            })
+        }
+
+        #[staticmethod]
+        #[pyo3(signature = (*, simplex_size=1.0))]
+        fn orthogonal(simplex_size: f64) -> Self {
+            Self(SimplexSpec::Orthogonal { simplex_size })
+        }
+
+        #[staticmethod]
+        fn custom(simplex: Vec<Vec<f64>>) -> Self {
+            Self(SimplexSpec::Custom { simplex })
+        }
+    }
+
+    #[pyclass(name = "SwarmInitializerConfig", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PySwarmInitializerConfig(SwarmInitializerSpec);
+
+    #[pymethods]
+    impl PySwarmInitializerConfig {
+        #[staticmethod]
+        fn random_in_limits(bounds: Vec<(f64, f64)>, n_particles: usize) -> Self {
+            Self(SwarmInitializerSpec::RandomInLimits {
+                bounds,
+                n_particles,
+            })
+        }
+
+        #[staticmethod]
+        fn latin_hypercube(bounds: Vec<(f64, f64)>, n_particles: usize) -> Self {
+            Self(SwarmInitializerSpec::LatinHypercube {
+                bounds,
+                n_particles,
+            })
+        }
+
+        #[staticmethod]
+        fn custom(swarm: Vec<Vec<f64>>) -> Self {
+            Self(SwarmInitializerSpec::Custom { swarm })
+        }
+    }
+
+    #[pyclass(name = "AIESMoveConfig", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyAIESMoveConfig(AIESMoveSpec);
+
+    #[pymethods]
+    impl PyAIESMoveConfig {
+        #[staticmethod]
+        #[pyo3(signature = (weight, *, a=2.0))]
+        fn stretch(weight: f64, a: f64) -> Self {
+            Self(AIESMoveSpec::Stretch { a, weight })
+        }
+
+        #[staticmethod]
+        fn walk(weight: f64) -> Self {
+            Self(AIESMoveSpec::Walk { weight })
+        }
+    }
+
+    #[pyclass(name = "ESSMoveConfig", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyESSMoveConfig(ESSMoveSpec);
+
+    #[pymethods]
+    impl PyESSMoveConfig {
+        #[staticmethod]
+        fn differential(weight: f64) -> Self {
+            Self(ESSMoveSpec::Differential { weight })
+        }
+
+        #[staticmethod]
+        fn gaussian(weight: f64) -> Self {
+            Self(ESSMoveSpec::Gaussian { weight })
+        }
+
+        #[staticmethod]
+        #[pyo3(signature = (weight, *, scale=None, rescale_cov=None, n_components=None))]
+        fn global_(
+            weight: f64,
+            scale: Option<f64>,
+            rescale_cov: Option<f64>,
+            n_components: Option<usize>,
+        ) -> Self {
+            Self(ESSMoveSpec::Global {
+                weight,
+                scale,
+                rescale_cov,
+                n_components,
+            })
+        }
+    }
+
+    #[pyclass(name = "LBFGSBSettings", module = "laddu")]
+    #[derive(Clone, Default)]
+    pub struct PyLBFGSBSettings {
+        m: Option<usize>,
+        skip_hessian: bool,
+        line_search: Option<LineSearchSpec>,
+        eps_f: Option<f64>,
+        eps_g: Option<f64>,
+        eps_norm_g: Option<f64>,
+    }
+
+    #[pymethods]
+    impl PyLBFGSBSettings {
+        #[new]
+        #[pyo3(signature = (*, m=None, skip_hessian=false, line_search=None, eps_f=None, eps_g=None, eps_norm_g=None))]
+        fn new(
+            m: Option<usize>,
+            skip_hessian: bool,
+            line_search: Option<PyRef<'_, PyLineSearchConfig>>,
+            eps_f: Option<f64>,
+            eps_g: Option<f64>,
+            eps_norm_g: Option<f64>,
+        ) -> Self {
+            Self {
+                m,
+                skip_hessian,
+                line_search: line_search.map(|line_search| line_search.0.clone()),
+                eps_f,
+                eps_g,
+                eps_norm_g,
+            }
+        }
+    }
+
+    #[pyclass(name = "AdamSettings", module = "laddu")]
+    #[derive(Clone, Default)]
+    pub struct PyAdamSettings {
+        alpha: Option<f64>,
+        beta_1: Option<f64>,
+        beta_2: Option<f64>,
+        epsilon: Option<f64>,
+        beta_c: Option<f64>,
+        eps_loss: Option<f64>,
+        patience: Option<usize>,
+    }
+
+    #[pymethods]
+    impl PyAdamSettings {
+        #[new]
+        #[pyo3(signature = (*, alpha=None, beta_1=None, beta_2=None, epsilon=None, beta_c=None, eps_loss=None, patience=None))]
+        fn new(
+            alpha: Option<f64>,
+            beta_1: Option<f64>,
+            beta_2: Option<f64>,
+            epsilon: Option<f64>,
+            beta_c: Option<f64>,
+            eps_loss: Option<f64>,
+            patience: Option<usize>,
+        ) -> Self {
+            Self {
+                alpha,
+                beta_1,
+                beta_2,
+                epsilon,
+                beta_c,
+                eps_loss,
+                patience,
+            }
+        }
+    }
+
+    #[pyclass(name = "NelderMeadSettings", module = "laddu")]
+    #[derive(Clone, Default)]
+    pub struct PyNelderMeadSettings {
+        simplex: Option<SimplexSpec>,
+        alpha: Option<f64>,
+        beta: Option<f64>,
+        gamma: Option<f64>,
+        delta: Option<f64>,
+        adaptive: bool,
+        expansion_method: Option<ExpansionMethodSpec>,
+        eps_f: Option<f64>,
+        f_terminator: Option<FTerminatorSpec>,
+        eps_x: Option<f64>,
+        x_terminator: Option<XTerminatorSpec>,
+    }
+
+    #[pymethods]
+    impl PyNelderMeadSettings {
+        #[new]
+        #[pyo3(signature = (*, simplex=None, alpha=None, beta=None, gamma=None, delta=None, adaptive=false, expansion_method=None, eps_f=None, f_terminator=None, eps_x=None, x_terminator=None))]
+        fn new(
+            simplex: Option<PyRef<'_, PySimplexConfig>>,
+            alpha: Option<f64>,
+            beta: Option<f64>,
+            gamma: Option<f64>,
+            delta: Option<f64>,
+            adaptive: bool,
+            expansion_method: Option<String>,
+            eps_f: Option<f64>,
+            f_terminator: Option<String>,
+            eps_x: Option<f64>,
+            x_terminator: Option<String>,
+        ) -> PyResult<Self> {
+            Ok(Self {
+                simplex: simplex.map(|simplex| simplex.0.clone()),
+                alpha,
+                beta,
+                gamma,
+                delta,
+                adaptive,
+                expansion_method: expansion_method
+                    .map(|expansion_method| parse_expansion_method(&expansion_method))
+                    .transpose()?,
+                eps_f,
+                f_terminator: f_terminator
+                    .map(|f_terminator| parse_f_terminator(&f_terminator))
+                    .transpose()?,
+                eps_x,
+                x_terminator: x_terminator
+                    .map(|x_terminator| parse_x_terminator(&x_terminator))
+                    .transpose()?,
+            })
+        }
+    }
+
+    #[pyclass(name = "PSOSettings", module = "laddu")]
+    #[derive(Clone)]
+    pub struct PyPSOSettings {
+        initializer: SwarmInitializerSpec,
+        topology: SwarmTopology,
+        update_method: SwarmUpdateMethod,
+        boundary_method: SwarmBoundaryMethod,
+        use_transform: bool,
+        swarm_velocity_bounds: Option<Vec<(f64, f64)>>,
+        omega: Option<f64>,
+        c1: Option<f64>,
+        c2: Option<f64>,
+    }
+
+    #[pymethods]
+    impl PyPSOSettings {
+        #[new]
+        #[pyo3(signature = (initializer, *, swarm_topology="global".to_string(), swarm_update_method="sync".to_string(), swarm_boundary_method="inf".to_string(), use_transform=false, swarm_velocity_bounds=None, omega=None, c1=None, c2=None))]
+        fn new(
+            initializer: PyRef<'_, PySwarmInitializerConfig>,
+            swarm_topology: String,
+            swarm_update_method: String,
+            swarm_boundary_method: String,
+            use_transform: bool,
+            swarm_velocity_bounds: Option<Vec<(f64, f64)>>,
+            omega: Option<f64>,
+            c1: Option<f64>,
+            c2: Option<f64>,
+        ) -> PyResult<Self> {
+            Ok(Self {
+                initializer: initializer.0.clone(),
+                topology: parse_swarm_topology(&swarm_topology)?,
+                update_method: parse_swarm_update_method(&swarm_update_method)?,
+                boundary_method: parse_swarm_boundary_method(&swarm_boundary_method)?,
+                use_transform,
+                swarm_velocity_bounds,
+                omega,
+                c1,
+                c2,
+            })
+        }
+    }
+
+    #[pyclass(name = "AIESSettings", module = "laddu")]
+    #[derive(Clone, Default)]
+    pub struct PyAIESSettings {
+        moves: Vec<AIESMoveSpec>,
+    }
+
+    #[pymethods]
+    impl PyAIESSettings {
+        #[new]
+        #[pyo3(signature = (*, moves=None))]
+        fn new(moves: Option<Vec<Py<PyAIESMoveConfig>>>, py: Python<'_>) -> PyResult<Self> {
+            let moves = moves
+                .unwrap_or_default()
+                .into_iter()
+                .map(|move_config| Ok(move_config.bind(py).borrow().0.clone()))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(Self { moves })
+        }
+    }
+
+    #[pyclass(name = "ESSSettings", module = "laddu")]
+    #[derive(Clone, Default)]
+    pub struct PyESSSettings {
+        moves: Vec<ESSMoveSpec>,
+        n_adaptive: Option<usize>,
+        mu: Option<f64>,
+        max_steps: Option<usize>,
+    }
+
+    #[pymethods]
+    impl PyESSSettings {
+        #[new]
+        #[pyo3(signature = (*, moves=None, n_adaptive=None, mu=None, max_steps=None))]
+        fn new(
+            moves: Option<Vec<Py<PyESSMoveConfig>>>,
+            n_adaptive: Option<usize>,
+            mu: Option<f64>,
+            max_steps: Option<usize>,
+            py: Python<'_>,
+        ) -> PyResult<Self> {
+            let moves = moves
+                .unwrap_or_default()
+                .into_iter()
+                .map(|move_config| Ok(move_config.bind(py).borrow().0.clone()))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(Self {
+                moves,
+                n_adaptive,
+                mu,
+                max_steps,
+            })
+        }
+    }
 
     fn normalize_method_name(method: &str) -> String {
         method
@@ -879,6 +1344,740 @@ pub mod py_ganesh {
             }
         }
         Ok(())
+    }
+
+    fn parse_expansion_method(method: &str) -> PyResult<ExpansionMethodSpec> {
+        match normalize_method_name(method).as_str() {
+            "greedyminimization" => Ok(ExpansionMethodSpec::GreedyMinimization),
+            "greedyexpansion" => Ok(ExpansionMethodSpec::GreedyExpansion),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid expansion method: {method}"
+            ))),
+        }
+    }
+
+    fn parse_f_terminator(method: &str) -> PyResult<FTerminatorSpec> {
+        match normalize_method_name(method).as_str() {
+            "amoeba" => Ok(FTerminatorSpec::Amoeba),
+            "absolute" => Ok(FTerminatorSpec::Absolute),
+            "stddev" => Ok(FTerminatorSpec::StdDev),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid f_terminator: {method}"
+            ))),
+        }
+    }
+
+    fn parse_x_terminator(method: &str) -> PyResult<XTerminatorSpec> {
+        match normalize_method_name(method).as_str() {
+            "diameter" => Ok(XTerminatorSpec::Diameter),
+            "higham" => Ok(XTerminatorSpec::Higham),
+            "rowan" => Ok(XTerminatorSpec::Rowan),
+            "singer" => Ok(XTerminatorSpec::Singer),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid x_terminator: {method}"
+            ))),
+        }
+    }
+
+    fn parse_swarm_topology(topology: &str) -> PyResult<SwarmTopology> {
+        match normalize_method_name(topology).as_str() {
+            "global" => Ok(SwarmTopology::Global),
+            "ring" => Ok(SwarmTopology::Ring),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid swarm_topology: {topology}"
+            ))),
+        }
+    }
+
+    fn parse_swarm_update_method(method: &str) -> PyResult<SwarmUpdateMethod> {
+        match normalize_method_name(method).as_str() {
+            "sync" | "synchronous" => Ok(SwarmUpdateMethod::Synchronous),
+            "async" | "asynchronous" => Ok(SwarmUpdateMethod::Asynchronous),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid swarm_update_method: {method}"
+            ))),
+        }
+    }
+
+    fn parse_swarm_boundary_method(method: &str) -> PyResult<SwarmBoundaryMethod> {
+        match normalize_method_name(method).as_str() {
+            "inf" => Ok(SwarmBoundaryMethod::Inf),
+            "shr" => Ok(SwarmBoundaryMethod::Shr),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid swarm_boundary_method: {method}"
+            ))),
+        }
+    }
+
+    fn build_line_search(spec: &LineSearchSpec) -> StrongWolfeLineSearch {
+        match spec {
+            LineSearchSpec::MoreThuente {
+                max_iterations,
+                max_zoom,
+                c1,
+                c2,
+            } => {
+                let mut line_search = MoreThuenteLineSearch::default();
+                if let Some(max_iterations) = max_iterations {
+                    line_search = line_search.with_max_iterations(*max_iterations);
+                }
+                if let Some(max_zoom) = max_zoom {
+                    line_search = line_search.with_max_zoom(*max_zoom);
+                }
+                match (c1, c2) {
+                    (Some(c1), Some(c2)) => {
+                        line_search = line_search.with_c1_c2(*c1, *c2);
+                    }
+                    (Some(c1), None) => {
+                        line_search = line_search.with_c1(*c1);
+                    }
+                    (None, Some(c2)) => {
+                        line_search = line_search.with_c2(*c2);
+                    }
+                    (None, None) => {}
+                }
+                StrongWolfeLineSearch::MoreThuente(line_search)
+            }
+            LineSearchSpec::HagerZhang {
+                max_iterations,
+                max_bisects,
+                delta,
+                sigma,
+                epsilon,
+                theta,
+                gamma,
+            } => {
+                let mut line_search = HagerZhangLineSearch::default();
+                if let Some(max_iterations) = max_iterations {
+                    line_search = line_search.with_max_iterations(*max_iterations);
+                }
+                if let Some(max_bisects) = max_bisects {
+                    line_search = line_search.with_max_bisects(*max_bisects);
+                }
+                match (delta, sigma) {
+                    (Some(delta), Some(sigma)) => {
+                        line_search = line_search.with_delta_sigma(*delta, *sigma);
+                    }
+                    (Some(delta), None) => {
+                        line_search = line_search.with_delta(*delta);
+                    }
+                    (None, Some(sigma)) => {
+                        line_search = line_search.with_sigma(*sigma);
+                    }
+                    (None, None) => {}
+                }
+                if let Some(epsilon) = epsilon {
+                    line_search = line_search.with_epsilon(*epsilon);
+                }
+                if let Some(theta) = theta {
+                    line_search = line_search.with_theta(*theta);
+                }
+                if let Some(gamma) = gamma {
+                    line_search = line_search.with_gamma(*gamma);
+                }
+                StrongWolfeLineSearch::HagerZhang(line_search)
+            }
+        }
+    }
+
+    fn build_simplex(args: &[f64], spec: &SimplexSpec) -> PyResult<SimplexConstructionMethod> {
+        match spec {
+            SimplexSpec::ScaledOrthogonal {
+                orthogonal_multiplier,
+                orthogonal_zero_step,
+            } => Ok(SimplexConstructionMethod::custom_scaled_orthogonal(
+                &args.to_vec(),
+                *orthogonal_multiplier,
+                *orthogonal_zero_step,
+            )),
+            SimplexSpec::Orthogonal { simplex_size } => Ok(
+                SimplexConstructionMethod::custom_orthogonal(&args.to_vec(), *simplex_size),
+            ),
+            SimplexSpec::Custom { simplex } => {
+                if simplex.len() != args.len() {
+                    return Err(PyValueError::new_err(format!(
+                        "Expected {} additional simplex points, got {}.",
+                        args.len(),
+                        simplex.len()
+                    )));
+                }
+                let simplex: Vec<DVector<f64>> = std::iter::once(DVector::from_vec(args.to_vec()))
+                    .chain(simplex.iter().cloned().map(DVector::from_vec))
+                    .collect();
+                Ok(SimplexConstructionMethod::custom(simplex))
+            }
+        }
+    }
+
+    fn build_swarm_initializer(
+        args: &[f64],
+        spec: &SwarmInitializerSpec,
+    ) -> SwarmPositionInitializer {
+        match spec {
+            SwarmInitializerSpec::RandomInLimits {
+                bounds,
+                n_particles,
+            } => SwarmPositionInitializer::RandomInLimits {
+                bounds: bounds.clone(),
+                n_particles: *n_particles,
+            },
+            SwarmInitializerSpec::LatinHypercube {
+                bounds,
+                n_particles,
+            } => SwarmPositionInitializer::LatinHypercube {
+                bounds: bounds.clone(),
+                n_particles: *n_particles,
+            },
+            SwarmInitializerSpec::Custom { swarm } => SwarmPositionInitializer::Custom(
+                swarm
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(args.to_vec()))
+                    .map(DVector::from_vec)
+                    .collect(),
+            ),
+        }
+    }
+
+    fn build_aies_moves(moves: &[AIESMoveSpec]) -> Vec<(AIESMove, f64)> {
+        moves
+            .iter()
+            .map(|move_spec| match move_spec {
+                AIESMoveSpec::Stretch { a, weight } => (AIESMove::Stretch { a: *a }, *weight),
+                AIESMoveSpec::Walk { weight } => AIESMove::walk(*weight),
+            })
+            .collect()
+    }
+
+    fn build_ess_moves(moves: &[ESSMoveSpec]) -> Vec<(ESSMove, f64)> {
+        moves
+            .iter()
+            .map(|move_spec| match move_spec {
+                ESSMoveSpec::Differential { weight } => ESSMove::differential(*weight),
+                ESSMoveSpec::Gaussian { weight } => ESSMove::gaussian(*weight),
+                ESSMoveSpec::Global {
+                    weight,
+                    scale,
+                    rescale_cov,
+                    n_components,
+                } => ESSMove::global(*weight, *scale, *rescale_cov, *n_components),
+            })
+            .collect()
+    }
+
+    fn extract_optional_typed_settings<T>(
+        settings: Option<&Bound<'_, PyAny>>,
+        method: &str,
+        expected_type: &str,
+    ) -> PyResult<Option<T>>
+    where
+        T: PyClass + Clone,
+    {
+        let Some(settings) = settings else {
+            return Ok(None);
+        };
+        let settings_ref: PyRef<'_, T> = settings.extract().map_err(|_| {
+            PyTypeError::new_err(format!(
+                "settings for method '{method}' must be {expected_type} or None"
+            ))
+        })?;
+        Ok(Some((*settings_ref).clone()))
+    }
+
+    fn extract_minimization_observers(
+        observers: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<MinimizationObserver>> {
+        if let Some(observers) = observers {
+            if let Ok(observers) = observers.cast::<PyList>() {
+                observers
+                    .into_iter()
+                    .map(|observer| {
+                        observer.extract::<MinimizationObserver>().map_err(|_| {
+                            PyValueError::new_err(
+                                "The observers must be either a single MinimizationObserver or a list of MinimizationObservers.",
+                            )
+                        })
+                    })
+                    .collect()
+            } else if let Ok(observer) = observers.extract::<MinimizationObserver>() {
+                Ok(vec![observer])
+            } else {
+                Err(PyValueError::new_err(
+                    "The observers must be either a single MinimizationObserver or a list of MinimizationObservers.",
+                ))
+            }
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn extract_minimization_terminators(
+        terminators: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<MinimizationTerminator>> {
+        if let Some(terminators) = terminators {
+            if let Ok(terminators) = terminators.cast::<PyList>() {
+                terminators
+                    .into_iter()
+                    .map(|terminator| {
+                        terminator.extract::<MinimizationTerminator>().map_err(|_| {
+                            PyValueError::new_err(
+                                "The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators.",
+                            )
+                        })
+                    })
+                    .collect()
+            } else if let Ok(terminator) = terminators.extract::<MinimizationTerminator>() {
+                Ok(vec![terminator])
+            } else {
+                Err(PyValueError::new_err(
+                    "The terminators must be either a single MinimizationTerminator or a list of MinimizationTerminators.",
+                ))
+            }
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn extract_mcmc_observers(observers: Option<Bound<'_, PyAny>>) -> PyResult<Vec<MCMCObserver>> {
+        if let Some(observers) = observers {
+            if let Ok(observers) = observers.cast::<PyList>() {
+                observers
+                    .into_iter()
+                    .map(|observer| {
+                        observer.extract::<MCMCObserver>().map_err(|_| {
+                            PyValueError::new_err(
+                                "The observers must be either a single MCMCObserver or a list of MCMCObservers.",
+                            )
+                        })
+                    })
+                    .collect()
+            } else if let Ok(observer) = observers.extract::<MCMCObserver>() {
+                Ok(vec![observer])
+            } else {
+                Err(PyValueError::new_err(
+                    "The observers must be either a single MCMCObserver or a list of MCMCObservers.",
+                ))
+            }
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    fn extract_mcmc_terminators(
+        terminators: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<PythonMCMCTerminator>> {
+        if let Some(terminators) = terminators {
+            if let Ok(terminators) = terminators.cast::<PyList>() {
+                terminators
+                    .into_iter()
+                    .map(|terminator| {
+                        if let Ok(terminator) = terminator.extract::<PyAutocorrelationTerminator>()
+                        {
+                            Ok(PythonMCMCTerminator::Autocorrelation(terminator))
+                        } else if let Ok(terminator) = terminator.extract::<MCMCTerminator>() {
+                            Ok(PythonMCMCTerminator::UserDefined(terminator))
+                        } else {
+                            Err(PyValueError::new_err(
+                                "The terminators must be either a single MCMCTerminator or a list of MCMCTerminators.",
+                            ))
+                        }
+                    })
+                    .collect()
+            } else if let Ok(terminator) = terminators.extract::<PyAutocorrelationTerminator>() {
+                Ok(vec![PythonMCMCTerminator::Autocorrelation(terminator)])
+            } else if let Ok(terminator) = terminators.extract::<MCMCTerminator>() {
+                Ok(vec![PythonMCMCTerminator::UserDefined(terminator)])
+            } else {
+                Err(PyValueError::new_err(
+                    "The terminators must be either a single MCMCTerminator or a list of MCMCTerminators.",
+                ))
+            }
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    pub fn minimization_settings_from_python<P>(
+        args: &Vec<f64>,
+        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        method: String,
+        settings: Option<&Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
+        debug: bool,
+        threads: usize,
+    ) -> PyResult<MinimizationSettings<P>>
+    where
+        P: Gradient<MaybeThreadPool, LadduError> + CostFunction<MaybeThreadPool, LadduError>,
+    {
+        let bounds = bounds.map(|bounds| {
+            bounds
+                .into_iter()
+                .map(ganesh::traits::boundlike::Bound::from)
+                .collect::<Vec<_>>()
+        });
+        let observers = extract_minimization_observers(observers)?;
+        let terminators = extract_minimization_terminators(terminators)?;
+        let method = normalize_method_name(&method);
+
+        match method.as_str() {
+            "lbfgsb" => {
+                let settings = extract_optional_typed_settings::<PyLBFGSBSettings>(
+                    settings,
+                    &method,
+                    "LBFGSBSettings",
+                )?
+                .unwrap_or_default();
+                let mut config = LBFGSBConfig::new(args);
+                if let Some(m) = settings.m {
+                    config = config.with_memory_limit(m);
+                }
+                if settings.skip_hessian {
+                    config = config.with_error_mode(LBFGSBErrorMode::Skip);
+                }
+                if let Some(line_search) = settings.line_search.as_ref() {
+                    config = config.with_line_search(build_line_search(line_search));
+                }
+                if let Some(bounds) = bounds {
+                    config = config.with_bounds(bounds);
+                }
+                let mut callbacks = Callbacks::empty()
+                    .with_terminator(LBFGSBFTerminator {
+                        eps_abs: settings.eps_f.unwrap_or(f64::EPSILON.powf(0.5)),
+                    })
+                    .with_terminator(LBFGSBGTerminator {
+                        eps_abs: settings.eps_g.unwrap_or(f64::EPSILON.powf(1.0 / 3.0)),
+                    })
+                    .with_terminator(LBFGSBInfNormGTerminator {
+                        eps_abs: settings.eps_norm_g.unwrap_or(1e-5),
+                    });
+                if debug {
+                    callbacks = callbacks.with_observer(DebugObserver);
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MinimizationSettings::LBFGSB {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            "adam" => {
+                let settings = extract_optional_typed_settings::<PyAdamSettings>(
+                    settings,
+                    &method,
+                    "AdamSettings",
+                )?
+                .unwrap_or_default();
+                let mut config = AdamConfig::new(args);
+                if let Some(alpha) = settings.alpha {
+                    config = config.with_alpha(alpha);
+                }
+                if let Some(beta_1) = settings.beta_1 {
+                    config = config.with_beta_1(beta_1);
+                }
+                if let Some(beta_2) = settings.beta_2 {
+                    config = config.with_beta_2(beta_2);
+                }
+                if let Some(epsilon) = settings.epsilon {
+                    config = config.with_epsilon(epsilon);
+                }
+                if let Some(bounds) = bounds {
+                    config = config.with_transform(&Bounds::from(bounds))
+                }
+                let mut term = AdamEMATerminator::default();
+                if let Some(beta_c) = settings.beta_c {
+                    term.beta_c = beta_c;
+                }
+                if let Some(eps_loss) = settings.eps_loss {
+                    term.eps_loss = eps_loss;
+                }
+                if let Some(patience) = settings.patience {
+                    term.patience = patience;
+                }
+                let mut callbacks = Callbacks::empty().with_terminator(term);
+                if debug {
+                    callbacks = callbacks.with_observer(DebugObserver);
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MinimizationSettings::Adam {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            "neldermead" => {
+                let settings = extract_optional_typed_settings::<PyNelderMeadSettings>(
+                    settings,
+                    &method,
+                    "NelderMeadSettings",
+                )?
+                .unwrap_or_default();
+                let construction_method = if let Some(simplex) = settings.simplex.as_ref() {
+                    build_simplex(args, simplex)?
+                } else {
+                    SimplexConstructionMethod::scaled_orthogonal(args)
+                };
+                let mut config = NelderMeadConfig::new_with_method(construction_method);
+                if let Some(alpha) = settings.alpha {
+                    config = config.with_alpha(alpha);
+                }
+                if let Some(beta) = settings.beta {
+                    config = config.with_beta(beta);
+                }
+                if let Some(gamma) = settings.gamma {
+                    config = config.with_gamma(gamma);
+                }
+                if let Some(delta) = settings.delta {
+                    config = config.with_delta(delta);
+                }
+                if settings.adaptive {
+                    config = config.with_adaptive(args.len());
+                }
+                if let Some(expansion_method) = settings.expansion_method.as_ref() {
+                    let expansion_method = match expansion_method {
+                        ExpansionMethodSpec::GreedyMinimization => {
+                            SimplexExpansionMethod::GreedyMinimization
+                        }
+                        ExpansionMethodSpec::GreedyExpansion => {
+                            SimplexExpansionMethod::GreedyMinimization
+                        }
+                    };
+                    config = config.with_expansion_method(expansion_method);
+                }
+                if let Some(bounds) = bounds {
+                    config = config.with_bounds(bounds);
+                }
+                let eps_f = settings.eps_f.unwrap_or(f64::EPSILON.powf(0.25));
+                let f_terminator = match settings
+                    .f_terminator
+                    .as_ref()
+                    .unwrap_or(&FTerminatorSpec::StdDev)
+                {
+                    FTerminatorSpec::Amoeba => NelderMeadFTerminator::Amoeba { eps_rel: eps_f },
+                    FTerminatorSpec::Absolute => NelderMeadFTerminator::Absolute { eps_abs: eps_f },
+                    FTerminatorSpec::StdDev => NelderMeadFTerminator::StdDev { eps_abs: eps_f },
+                };
+                let eps_x = settings.eps_x.unwrap_or(f64::EPSILON.powf(0.25));
+                let x_terminator = match settings
+                    .x_terminator
+                    .as_ref()
+                    .unwrap_or(&XTerminatorSpec::Singer)
+                {
+                    XTerminatorSpec::Diameter => NelderMeadXTerminator::Diameter { eps_abs: eps_x },
+                    XTerminatorSpec::Higham => NelderMeadXTerminator::Higham { eps_rel: eps_x },
+                    XTerminatorSpec::Rowan => NelderMeadXTerminator::Rowan { eps_rel: eps_x },
+                    XTerminatorSpec::Singer => NelderMeadXTerminator::Singer { eps_rel: eps_x },
+                };
+                let mut callbacks = Callbacks::empty()
+                    .with_terminator(f_terminator)
+                    .with_terminator(x_terminator);
+                if debug {
+                    callbacks = callbacks.with_observer(DebugObserver);
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MinimizationSettings::NelderMead {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            "pso" => {
+                let settings = extract_optional_typed_settings::<PyPSOSettings>(
+                    settings,
+                    &method,
+                    "PSOSettings",
+                )?
+                .ok_or_else(|| {
+                    PyTypeError::new_err("settings for method 'pso' must be PSOSettings or None")
+                })?;
+                let mut swarm = Swarm::new(build_swarm_initializer(args, &settings.initializer))
+                    .with_topology(settings.topology)
+                    .with_update_method(settings.update_method)
+                    .with_boundary_method(settings.boundary_method);
+                if let Some(swarm_velocity_bounds) = settings.swarm_velocity_bounds.clone() {
+                    swarm = swarm.with_velocity_initializer(
+                        SwarmVelocityInitializer::RandomInLimits(swarm_velocity_bounds),
+                    );
+                }
+                let mut config = PSOConfig::new(swarm);
+                if let Some(omega) = settings.omega {
+                    config = config.with_omega(omega);
+                }
+                if let Some(c1) = settings.c1 {
+                    config = config.with_c1(c1);
+                }
+                if let Some(c2) = settings.c2 {
+                    config = config.with_c2(c2);
+                }
+                if let Some(bounds) = bounds {
+                    if settings.use_transform {
+                        config = config.with_transform(&Bounds::from(bounds));
+                    } else {
+                        config = config.with_bounds(bounds);
+                    }
+                }
+                let mut callbacks = Callbacks::empty();
+                if debug {
+                    return Err(PyValueError::new_err(
+                        "The debug setting is not yet supported for PSO",
+                    ));
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MinimizationSettings::PSO {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid minimizer: {method}"
+            ))),
+        }
+    }
+
+    pub fn mcmc_settings_from_python<P>(
+        args: &Vec<DVector<f64>>,
+        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        method: String,
+        settings: Option<&Bound<'_, PyAny>>,
+        observers: Option<Bound<'_, PyAny>>,
+        terminators: Option<Bound<'_, PyAny>>,
+        max_steps: Option<usize>,
+        debug: bool,
+        threads: usize,
+    ) -> PyResult<MCMCSettings<P>>
+    where
+        P: LogDensity<MaybeThreadPool, LadduError>,
+    {
+        let bounds = bounds.map(|bounds| {
+            bounds
+                .into_iter()
+                .map(ganesh::traits::boundlike::Bound::from)
+                .collect::<Vec<_>>()
+        });
+        let observers = extract_mcmc_observers(observers)?;
+        let terminators = extract_mcmc_terminators(terminators)?;
+        let method = normalize_method_name(&method);
+
+        match method.as_str() {
+            "aies" => {
+                let settings = extract_optional_typed_settings::<PyAIESSettings>(
+                    settings,
+                    &method,
+                    "AIESSettings",
+                )?
+                .unwrap_or_default();
+                let mut config = AIESConfig::new(args.to_vec());
+                if !settings.moves.is_empty() {
+                    config = config.with_moves(build_aies_moves(&settings.moves));
+                }
+                if let Some(bounds) = bounds {
+                    config = config.with_transform(&Bounds::from(bounds))
+                }
+                let mut callbacks = Callbacks::empty();
+                if debug {
+                    callbacks = callbacks.with_observer(DebugObserver);
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MCMCSettings::AIES {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            "ess" => {
+                let settings = extract_optional_typed_settings::<PyESSSettings>(
+                    settings,
+                    &method,
+                    "ESSSettings",
+                )?
+                .unwrap_or_default();
+                let mut config = ESSConfig::new(args.to_vec());
+                if !settings.moves.is_empty() {
+                    config = config.with_moves(build_ess_moves(&settings.moves));
+                }
+                if let Some(n_adaptive) = settings.n_adaptive {
+                    config = config.with_n_adaptive(n_adaptive);
+                }
+                if let Some(mu) = settings.mu {
+                    config = config.with_mu(mu);
+                }
+                if let Some(max_steps) = settings.max_steps {
+                    config = config.with_max_steps(max_steps);
+                }
+                if let Some(bounds) = bounds {
+                    config = config.with_transform(&Bounds::from(bounds))
+                }
+                let mut callbacks = Callbacks::empty();
+                if debug {
+                    callbacks = callbacks.with_observer(DebugObserver);
+                }
+                if let Some(max_steps) = max_steps {
+                    callbacks = callbacks.with_terminator(MaxSteps(max_steps));
+                }
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                Ok(MCMCSettings::ESS {
+                    config,
+                    callbacks,
+                    num_threads: threads,
+                })
+            }
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid MCMC algorithm: {method}"
+            ))),
+        }
     }
 
     /// A helper trait for parsing Python arguments.

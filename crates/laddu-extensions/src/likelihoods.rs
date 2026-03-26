@@ -32,9 +32,9 @@ use mpi::{
 use parking_lot::Mutex;
 
 #[cfg(feature = "python")]
-use crate::ganesh_ext::{
-    py_ganesh::{FromPyArgs, PyMCMCSummary, PyMinimizationSummary},
-    MCMCSettings, MinimizationSettings,
+use crate::ganesh_ext::py_ganesh::{
+    mcmc_settings_from_python, minimization_settings_from_python, PyMCMCSummary,
+    PyMinimizationSummary,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
@@ -47,7 +47,7 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyAny, PyList},
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -2467,13 +2467,12 @@ impl PyNLL {
     #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize<'py>(
+    fn minimize(
         &self,
-        py: Python<'py>,
         p0: Vec<f64>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -2481,28 +2480,17 @@ impl PyNLL {
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
         validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        let result = self.0.minimize(minimization_settings_from_python(
+            &p0,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
+        )?)?;
         Ok(PyMinimizationSummary(result))
     }
 
@@ -2596,13 +2584,12 @@ impl PyNLL {
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc<'py>(
+    fn mcmc(
         &self,
-        py: Python<'py>,
         p0: Vec<Vec<f64>>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -2610,28 +2597,16 @@ impl PyNLL {
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
         validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+        let result = self.0.mcmc(mcmc_settings_from_python(
             &p0.into_iter().map(DVector::from_vec).collect(),
-            &full_settings,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
         )?)?;
         Ok(PyMCMCSummary(result))
     }
@@ -2838,13 +2813,12 @@ impl PyStochasticNLL {
     #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize<'py>(
+    fn minimize(
         &self,
-        py: Python<'py>,
         p0: Vec<f64>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -2852,28 +2826,17 @@ impl PyStochasticNLL {
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
         validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        let result = self.0.minimize(minimization_settings_from_python(
+            &p0,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
+        )?)?;
         Ok(PyMinimizationSummary(result))
     }
     /// Run an MCMC algorithm on the free parameters of the StochasticNLL's model
@@ -2967,13 +2930,12 @@ impl PyStochasticNLL {
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc<'py>(
+    fn mcmc(
         &self,
-        py: Python<'py>,
         p0: Vec<Vec<f64>>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -2981,28 +2943,16 @@ impl PyStochasticNLL {
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
         validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+        let result = self.0.mcmc(mcmc_settings_from_python(
             &p0.into_iter().map(DVector::from_vec).collect(),
-            &full_settings,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
         )?)?;
         Ok(PyMCMCSummary(result))
     }
@@ -4020,13 +3970,12 @@ impl PyLikelihoodEvaluator {
     #[cfg_attr(doctest, doc = "```")]
     #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize<'py>(
+    fn minimize(
         &self,
-        py: Python<'py>,
         p0: Vec<f64>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -4034,28 +3983,17 @@ impl PyLikelihoodEvaluator {
         threads: usize,
     ) -> PyResult<PyMinimizationSummary> {
         validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
+        let result = self.0.minimize(minimization_settings_from_python(
+            &p0,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
+        )?)?;
         Ok(PyMinimizationSummary(result))
     }
     /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
@@ -4145,13 +4083,12 @@ impl PyLikelihoodEvaluator {
     ///
     #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc<'py>(
+    fn mcmc(
         &self,
-        py: Python<'py>,
         p0: Vec<Vec<f64>>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        settings: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
         max_steps: Option<usize>,
@@ -4159,28 +4096,16 @@ impl PyLikelihoodEvaluator {
         threads: usize,
     ) -> PyResult<PyMCMCSummary> {
         validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
+        let result = self.0.mcmc(mcmc_settings_from_python(
             &p0.into_iter().map(DVector::from_vec).collect(),
-            &full_settings,
+            bounds,
+            method,
+            settings.as_ref(),
+            observers,
+            terminators,
+            max_steps,
+            debug,
+            threads,
         )?)?;
         Ok(PyMCMCSummary(result))
     }
