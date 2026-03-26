@@ -875,12 +875,32 @@ pub mod py_ganesh {
     }
 
     /// Typed line-search configuration used by `LBFGSBSettings`.
+    ///
+    /// Construct instances with one of the static factory methods on this class.
+    ///
+    /// `LineSearchConfig.morethuente(...)` parameters:
+    /// - `max_iterations`: optional cap on outer line-search iterations.
+    /// - `max_zoom`: optional cap on zoom iterations.
+    /// - `c1`: optional first Wolfe-condition constant.
+    /// - `c2`: optional second Wolfe-condition constant.
+    ///
+    /// `LineSearchConfig.hagerzhang(...)` parameters:
+    /// - `max_iterations`: optional cap on outer line-search iterations.
+    /// - `max_bisects`: optional cap on bisection steps.
+    /// - `delta`: optional first Wolfe-style constant.
+    /// - `sigma`: optional second Wolfe-style constant.
+    /// - `epsilon`: optional approximate-Wolfe tolerance.
+    /// - `theta`: optional interval-splitting ratio.
+    /// - `gamma`: optional safeguard controlling when bisection is forced.
     #[pyclass(name = "LineSearchConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyLineSearchConfig(LineSearchSpec);
 
     #[pymethods]
     impl PyLineSearchConfig {
+        /// Create a More-Thuente line-search configuration.
+        ///
+        /// Parameters mirror the optional More-Thuente tuning constants.
         #[staticmethod]
         #[pyo3(signature = (*, max_iterations=None, max_zoom=None, c1=None, c2=None))]
         fn morethuente(
@@ -897,6 +917,9 @@ pub mod py_ganesh {
             })
         }
 
+        /// Create a Hager-Zhang line-search configuration.
+        ///
+        /// Parameters mirror the optional Hager-Zhang tuning constants.
         #[staticmethod]
         #[pyo3(signature = (*, max_iterations=None, max_bisects=None, delta=None, sigma=None, epsilon=None, theta=None, gamma=None))]
         fn hagerzhang(
@@ -921,12 +944,25 @@ pub mod py_ganesh {
     }
 
     /// Typed simplex-construction configuration used by `NelderMeadSettings`.
+    ///
+    /// Use this class to choose how the initial simplex is constructed.
+    ///
+    /// `SimplexConfig.scaled_orthogonal(...)` parameters:
+    /// - `orthogonal_multiplier`: multiplier applied to nonzero coordinates of the starting point.
+    /// - `orthogonal_zero_step`: step used when a starting coordinate is zero.
+    ///
+    /// `SimplexConfig.orthogonal(...)` parameters:
+    /// - `simplex_size`: fixed orthogonal step size.
+    ///
+    /// `SimplexConfig.custom(...)` parameters:
+    /// - `simplex`: explicit simplex vertices, excluding the starting point itself.
     #[pyclass(name = "SimplexConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PySimplexConfig(SimplexSpec);
 
     #[pymethods]
     impl PySimplexConfig {
+        /// Construct a scaled orthogonal simplex around the starting point.
         #[staticmethod]
         #[pyo3(signature = (*, orthogonal_multiplier=1.05, orthogonal_zero_step=0.00025))]
         fn scaled_orthogonal(orthogonal_multiplier: f64, orthogonal_zero_step: f64) -> Self {
@@ -936,12 +972,14 @@ pub mod py_ganesh {
             })
         }
 
+        /// Construct an orthogonal simplex with a fixed step size.
         #[staticmethod]
         #[pyo3(signature = (*, simplex_size=1.0))]
         fn orthogonal(simplex_size: f64) -> Self {
             Self(SimplexSpec::Orthogonal { simplex_size })
         }
 
+        /// Provide the full simplex explicitly as a list of vertices.
         #[staticmethod]
         fn custom(simplex: Vec<Vec<f64>>) -> Self {
             Self(SimplexSpec::Custom { simplex })
@@ -949,12 +987,26 @@ pub mod py_ganesh {
     }
 
     /// Typed swarm-initializer configuration used by `PSOSettings`.
+    ///
+    /// A `PSOSettings` instance requires one initializer.
+    ///
+    /// `SwarmInitializerConfig.random_in_limits(...)` parameters:
+    /// - `bounds`: per-parameter bounds used to sample initial positions.
+    /// - `n_particles`: number of particles to generate.
+    ///
+    /// `SwarmInitializerConfig.latin_hypercube(...)` parameters:
+    /// - `bounds`: per-parameter bounds used for the Latin hypercube design.
+    /// - `n_particles`: number of particles to generate.
+    ///
+    /// `SwarmInitializerConfig.custom(...)` parameters:
+    /// - `swarm`: explicit particle positions.
     #[pyclass(name = "SwarmInitializerConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PySwarmInitializerConfig(SwarmInitializerSpec);
 
     #[pymethods]
     impl PySwarmInitializerConfig {
+        /// Randomly initialize swarm positions inside the given bounds.
         #[staticmethod]
         fn random_in_limits(bounds: Vec<(f64, f64)>, n_particles: usize) -> Self {
             Self(SwarmInitializerSpec::RandomInLimits {
@@ -963,6 +1015,7 @@ pub mod py_ganesh {
             })
         }
 
+        /// Initialize swarm positions with Latin hypercube sampling inside the given bounds.
         #[staticmethod]
         fn latin_hypercube(bounds: Vec<(f64, f64)>, n_particles: usize) -> Self {
             Self(SwarmInitializerSpec::LatinHypercube {
@@ -971,6 +1024,7 @@ pub mod py_ganesh {
             })
         }
 
+        /// Provide the full swarm explicitly as a list of particle positions.
         #[staticmethod]
         fn custom(swarm: Vec<Vec<f64>>) -> Self {
             Self(SwarmInitializerSpec::Custom { swarm })
@@ -978,18 +1032,27 @@ pub mod py_ganesh {
     }
 
     /// Typed AIES move configuration used by `AIESSettings`.
+    ///
+    /// `AIESMoveConfig.stretch(...)` parameters:
+    /// - `weight`: relative move frequency.
+    /// - `a`: optional stretch scaling parameter.
+    ///
+    /// `AIESMoveConfig.walk(...)` parameters:
+    /// - `weight`: relative move frequency.
     #[pyclass(name = "AIESMoveConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyAIESMoveConfig(AIESMoveSpec);
 
     #[pymethods]
     impl PyAIESMoveConfig {
+        /// Add a stretch move with the given relative weight.
         #[staticmethod]
         #[pyo3(signature = (weight, *, a=2.0))]
         fn stretch(weight: f64, a: f64) -> Self {
             Self(AIESMoveSpec::Stretch { a, weight })
         }
 
+        /// Add a walk move with the given relative weight.
         #[staticmethod]
         fn walk(weight: f64) -> Self {
             Self(AIESMoveSpec::Walk { weight })
@@ -997,22 +1060,37 @@ pub mod py_ganesh {
     }
 
     /// Typed ESS move configuration used by `ESSSettings`.
+    ///
+    /// `ESSMoveConfig.differential(...)` parameters:
+    /// - `weight`: relative move frequency.
+    ///
+    /// `ESSMoveConfig.gaussian(...)` parameters:
+    /// - `weight`: relative move frequency.
+    ///
+    /// `ESSMoveConfig.global_(...)` parameters:
+    /// - `weight`: relative move frequency.
+    /// - `scale`: optional local-cluster rescaling factor.
+    /// - `rescale_cov`: optional covariance-rescaling factor.
+    /// - `n_components`: optional mixture-component count for clustering.
     #[pyclass(name = "ESSMoveConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyESSMoveConfig(ESSMoveSpec);
 
     #[pymethods]
     impl PyESSMoveConfig {
+        /// Add a differential move with the given relative weight.
         #[staticmethod]
         fn differential(weight: f64) -> Self {
             Self(ESSMoveSpec::Differential { weight })
         }
 
+        /// Add a gaussian move with the given relative weight.
         #[staticmethod]
         fn gaussian(weight: f64) -> Self {
             Self(ESSMoveSpec::Gaussian { weight })
         }
 
+        /// Add a global move with the given relative weight and optional clustering controls.
         #[staticmethod]
         #[pyo3(signature = (weight, *, scale=None, rescale_cov=None, n_components=None))]
         fn global_(
@@ -1031,6 +1109,21 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `lbfgsb` minimizer.
+    ///
+    /// Parameters
+    /// ----------
+    /// m
+    ///     Number of correction vectors retained for the approximate Hessian.
+    /// skip_hessian
+    ///     Skip the exact Hessian recomputation during convergence checks.
+    /// line_search
+    ///     Optional `LineSearchConfig`.
+    /// eps_f
+    ///     Optional function-value stopping tolerance.
+    /// eps_g
+    ///     Optional gradient-value stopping tolerance.
+    /// eps_norm_g
+    ///     Optional gradient-norm stopping tolerance.
     #[pyclass(name = "LBFGSBSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyLBFGSBSettings {
@@ -1066,6 +1159,23 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `adam` minimizer.
+    ///
+    /// Parameters
+    /// ----------
+    /// alpha
+    ///     Optional learning-rate parameter.
+    /// beta_1
+    ///     Optional first-moment decay parameter.
+    /// beta_2
+    ///     Optional second-moment decay parameter.
+    /// epsilon
+    ///     Optional numerical-stability term.
+    /// beta_c
+    ///     Optional EMA slope used by the Adam convergence terminator.
+    /// eps_loss
+    ///     Optional minimum EMA loss improvement.
+    /// patience
+    ///     Optional number of tolerated non-improving steps.
     #[pyclass(name = "AdamSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyAdamSettings {
@@ -1104,6 +1214,31 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `nelder-mead` minimizer.
+    ///
+    /// Parameters
+    /// ----------
+    /// simplex
+    ///     Optional `SimplexConfig` controlling simplex construction.
+    /// alpha
+    ///     Optional reflection coefficient.
+    /// beta
+    ///     Optional expansion coefficient.
+    /// gamma
+    ///     Optional contraction coefficient.
+    /// delta
+    ///     Optional shrink coefficient.
+    /// adaptive
+    ///     Enable adaptive coefficients.
+    /// expansion_method
+    ///     Either `"greedyminimization"` or `"greedyexpansion"`.
+    /// f_terminator
+    ///     Optional function-value termination mode.
+    /// eps_f
+    ///     Optional function-value termination tolerance.
+    /// x_terminator
+    ///     Optional position-based termination mode.
+    /// eps_x
+    ///     Optional position-based termination tolerance.
     #[pyclass(name = "NelderMeadSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyNelderMeadSettings {
@@ -1160,6 +1295,27 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `pso` minimizer.
+    ///
+    /// Parameters
+    /// ----------
+    /// initializer
+    ///     Required `SwarmInitializerConfig`.
+    /// swarm_topology
+    ///     Optional swarm-topology choice (`"global"` or `"ring"`).
+    /// swarm_update_method
+    ///     Optional update policy (`"sync"`/`"synchronous"` or `"async"`/`"asynchronous"`).
+    /// swarm_boundary_method
+    ///     Optional boundary policy (`"inf"` or `"shr"`).
+    /// use_transform
+    ///     Apply a bounded-space transform instead of boundary clipping rules.
+    /// swarm_velocity_bounds
+    ///     Optional initial velocity bounds.
+    /// omega
+    ///     Optional inertia coefficient.
+    /// c1
+    ///     Optional cognitive coefficient.
+    /// c2
+    ///     Optional social coefficient.
     #[pyclass(name = "PSOSettings", module = "laddu")]
     #[derive(Clone)]
     pub struct PyPSOSettings {
@@ -1204,6 +1360,12 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `aies` sampler.
+    ///
+    /// Parameters
+    /// ----------
+    /// moves
+    ///     Optional sequence of `AIESMoveConfig`. The sampler uses its default move set when
+    ///     omitted.
     #[pyclass(name = "AIESSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyAIESSettings {
@@ -1225,6 +1387,18 @@ pub mod py_ganesh {
     }
 
     /// Typed settings for the `ess` sampler.
+    ///
+    /// Parameters
+    /// ----------
+    /// moves
+    ///     Optional sequence of `ESSMoveConfig`. The sampler uses its default move set when
+    ///     omitted.
+    /// n_adaptive
+    ///     Optional number of adaptive warm-up moves.
+    /// mu
+    ///     Optional adaptive scaling parameter.
+    /// max_steps
+    ///     Optional cap on slice expansion/contraction steps per move.
     #[pyclass(name = "ESSSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyESSSettings {
