@@ -36,7 +36,6 @@ uproot = ["uproot"]
 
 [tool.maturin]
 bindings = "pyo3"
-strip = true
 profile = "release"
 sdist-include = ['../Cargo.lock']
 
