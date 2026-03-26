@@ -130,15 +130,16 @@ def test_event_name_lookup() -> None:
     proton_vec = event.p4s['proton']
     assert isinstance(proton_vec, Vec4)
     assert pytest.approx(proton_vec.e) == event.p4s['proton'].e
-    proton_optional = event.p4('proton')
-    assert proton_optional is not None
-    assert pytest.approx(proton_optional.e) == event.p4s['proton'].e
+    proton = event.p4('proton')
+    assert pytest.approx(proton.e) == event.p4s['proton'].e
     aux_value = event.aux['pol_angle']
     assert pytest.approx(aux_value) == event.aux['pol_angle']
     assert isinstance(event.aux.get('pol_magnitude'), float)
     assert event.aux.get('unknown') is None
     with pytest.raises(KeyError):
         _ = event.p4s['unknown']
+    with pytest.raises(KeyError, match="Unknown particle name 'unknown'"):
+        event.p4('unknown')
 
 
 def test_event_alias_lookup() -> None:
@@ -231,8 +232,36 @@ def test_event_evaluate_without_metadata() -> None:
         1.0,
     )
     mass = Mass(['particle'])
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
         event.evaluate(mass)
+
+
+def test_event_name_based_operations_require_metadata() -> None:
+    event = Event([Vec3(0, 0, 1).with_mass(1.0)], [], 1.0)
+
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.p4('beam')
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.get_p4_sum(['beam'])
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.boost_to_rest_frame_of(['beam'])
+
+
+def test_dataset_name_lookup_errors_are_specific() -> None:
+    dataset = make_test_dataset()
+
+    with pytest.raises(KeyError, match="Unknown particle name 'missing'"):
+        dataset.p4_by_name(0, 'missing')
+    with pytest.raises(KeyError, match="Unknown auxiliary name 'missing'"):
+        dataset.aux_by_name(0, 'missing')
 
 
 def test_dataset_conversion() -> None:

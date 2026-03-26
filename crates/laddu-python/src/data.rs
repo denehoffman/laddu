@@ -289,19 +289,18 @@ impl PyEvent {
     ///
     fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<f64> {
         let mut variable = variable.extract::<PyVariable>()?;
-        if !self.has_metadata {
-            return Err(PyValueError::new_err(
-                "Cannot evaluate variable on an Event without associated metadata. Construct the Event with `p4_names`/`aux_names` or evaluate through a Dataset.",
-            ));
-        }
-        variable.bind_in_place(self.event.metadata())?;
+        let metadata = self.ensure_metadata()?;
+        variable.bind_in_place(metadata)?;
         variable.evaluate_event(&self.event)
     }
 
-    /// Retrieve a four-momentum by name (if present).
-    fn p4(&self, name: &str) -> PyResult<Option<PyVec4>> {
+    /// Retrieve a four-momentum by name.
+    fn p4(&self, name: &str) -> PyResult<PyVec4> {
         self.ensure_metadata()?;
-        Ok(self.event.p4(name).map(PyVec4))
+        self.event
+            .p4(name)
+            .map(PyVec4)
+            .ok_or_else(|| PyKeyError::new_err(format!("Unknown particle name '{name}'")))
     }
 }
 
