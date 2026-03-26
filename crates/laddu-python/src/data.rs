@@ -140,6 +140,8 @@ fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f
 /// ... )
 /// >>> event.p4('pair')  # doctest: +SKIP
 /// Vec4(px=0.0, py=0.0, pz=2.0, e=2.0)
+/// >>> event.aux['pol_angle']  # doctest: +SKIP
+/// 0.3
 ///
 #[pyclass(name = "Event", module = "laddu")]
 #[derive(Clone)]
@@ -287,6 +289,19 @@ impl PyEvent {
     /// ``p4_names``/``aux_names`` when constructing the event or evaluate variables through a
     /// ``laddu.Dataset`` to ensure the metadata is available.
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu import Event, Vec3  # doctest: +SKIP
+    /// >>> from laddu.utils.variables import Mass  # doctest: +SKIP
+    /// >>> event = Event(  # doctest: +SKIP
+    /// ...     [Vec3(0.0, 0.0, 1.0).with_mass(0.938)],
+    /// ...     [],
+    /// ...     1.0,
+    /// ...     p4_names=['proton'],
+    /// ... )
+    /// >>> event.evaluate(Mass(['proton']))  # doctest: +SKIP
+    /// 0.938
+    ///
     fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<f64> {
         let mut variable = variable.extract::<PyVariable>()?;
         let metadata = self.ensure_metadata()?;
@@ -354,6 +369,23 @@ impl PyEvent {
 /// -----
 /// Explicit metadata provided here takes precedence over metadata embedded in the
 /// input Events.
+///
+/// Examples
+/// --------
+/// >>> from laddu import Dataset, Event, Vec3  # doctest: +SKIP
+/// >>> event = Event(  # doctest: +SKIP
+/// ...     [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.0, 0.0, -1.0).with_mass(0.938)],
+/// ...     [0.4, 0.3],
+/// ...     1.0,
+/// ... )
+/// >>> dataset = Dataset(  # doctest: +SKIP
+/// ...     [event],
+/// ...     p4_names=['beam', 'proton'],
+/// ...     aux_names=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset[0].p4('target')  # doctest: +SKIP
+/// Vec4(px=0.0, py=0.0, pz=-1.0, e=1.371073...)
 ///
 #[pyclass(name = "Dataset", module = "laddu", subclass)]
 #[derive(Clone)]
@@ -896,6 +928,18 @@ impl PyDataset {
 }
 
 /// Read a Dataset from a Parquet file.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.read_parquet(  # doctest: +SKIP
+/// ...     'events.parquet',
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset.p4_names  # doctest: +SKIP
+/// ['beam', 'proton']
 #[pyfunction]
 #[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None))]
 pub fn read_parquet(
@@ -951,6 +995,18 @@ pub fn read_parquet_chunked(
 }
 
 /// Read a Dataset from a ROOT file using the oxyroot backend.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.read_root(  # doctest: +SKIP
+/// ...     'events.root',
+/// ...     tree='kin',
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ... )
+/// >>> dataset.aux_names  # doctest: +SKIP
+/// ['pol_magnitude', 'pol_angle']
 #[pyfunction]
 #[pyo3(signature = (path, *, tree=None, p4s=None, aux=None, aliases=None))]
 pub fn read_root(
@@ -1021,6 +1077,30 @@ pub fn write_root(
 /// Build a Dataset from columnar arrays.
 ///
 /// This is the canonical high-throughput ingestion path used by Python reader helpers.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.from_columns(  # doctest: +SKIP
+/// ...     {
+/// ...         'beam_px': [0.0],
+/// ...         'beam_py': [0.0],
+/// ...         'beam_pz': [8.5],
+/// ...         'beam_e': [8.5],
+/// ...         'proton_px': [0.0],
+/// ...         'proton_py': [0.0],
+/// ...         'proton_pz': [-0.2],
+/// ...         'proton_e': [0.959],
+/// ...         'pol_magnitude': [0.4],
+/// ...         'pol_angle': [0.3],
+/// ...         'weight': [1.0],
+/// ...     },
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset[0].p4('target')  # doctest: +SKIP
+/// Vec4(px=0.0, py=0.0, pz=-0.2, e=0.959)
 #[pyfunction]
 #[pyo3(signature = (columns, *, p4s=None, aux=None, aliases=None))]
 pub fn from_columns(
