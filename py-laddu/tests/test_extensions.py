@@ -224,24 +224,56 @@ def test_swarm_initializer_custom_accepts_numpy_array() -> None:
 
 
 @pytest.mark.parametrize(
-    ('factory', 'argument_name', 'payload'),
+    ('factory', 'argument_name', 'payload', 'message'),
     [
-        (SimplexConfig.custom, 'simplex', np.array([1.0, 2.0], dtype=np.float64)),
+        (
+            SimplexConfig.custom,
+            'simplex',
+            np.array([1.0, 2.0], dtype=np.float64),
+            'simplex must be a 2D numpy.ndarray, got 1D',
+        ),
         (
             SwarmInitializerConfig.custom,
             'swarm',
             np.array([1.0, 2.0], dtype=np.float64),
+            'swarm must be a 2D numpy.ndarray, got 1D',
+        ),
+        (
+            SimplexConfig.custom,
+            'simplex',
+            np.array([[1, 2], [3, 4]], dtype=np.int64),
+            'simplex numpy.ndarray must have dtype float64, got int64',
+        ),
+        (
+            SwarmInitializerConfig.custom,
+            'swarm',
+            np.array([[1, 2], [3, 4]], dtype=np.int64),
+            'swarm numpy.ndarray must have dtype float64, got int64',
         ),
     ],
 )
 def test_custom_payload_rejects_non_matrix_numpy_arrays(
-    factory: Any, argument_name: str, payload: np.ndarray[Any, Any]
+    factory: Any, argument_name: str, payload: np.ndarray[Any, Any], message: str
+) -> None:
+    with pytest.raises(TypeError, match=message):
+        factory(payload)
+
+
+@pytest.mark.parametrize(
+    ('factory', 'argument_name'),
+    [
+        (SimplexConfig.custom, 'simplex'),
+        (SwarmInitializerConfig.custom, 'swarm'),
+    ],
+)
+def test_custom_payload_rejects_ragged_nested_sequences(
+    factory: Any, argument_name: str
 ) -> None:
     with pytest.raises(
         TypeError,
-        match=rf'{argument_name} must be a nested sequence of floats or a 2D numpy.ndarray',
+        match=rf'{argument_name} nested sequences must form a rectangular 2D matrix',
     ):
-        factory(payload)
+        factory([[1.0, 2.0], [3.0]])
 
 
 def test_minimize_method_and_line_search_aliases_match_canonical() -> None:

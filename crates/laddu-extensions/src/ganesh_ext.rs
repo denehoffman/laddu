@@ -878,8 +878,23 @@ pub mod py_ganesh {
         values: &Bound<'_, PyAny>,
         argument_name: &str,
     ) -> PyResult<Vec<Vec<f64>>> {
-        if let Ok(rows) = values.extract::<Vec<Vec<f64>>>() {
-            return Ok(rows);
+        if let (Ok(ndim), Ok(dtype)) = (
+            values.getattr("ndim").and_then(|v| v.extract::<usize>()),
+            values
+                .getattr("dtype")
+                .and_then(|v| v.str())
+                .and_then(|v| v.extract::<String>()),
+        ) {
+            if ndim != 2 {
+                return Err(PyTypeError::new_err(format!(
+                    "{argument_name} must be a 2D numpy.ndarray, got {ndim}D"
+                )));
+            }
+            if dtype != "float64" {
+                return Err(PyTypeError::new_err(format!(
+                    "{argument_name} numpy.ndarray must have dtype float64, got {dtype}"
+                )));
+            }
         }
         if let Ok(array) = values.extract::<PyReadonlyArray2<'_, f64>>() {
             return Ok(array
@@ -888,9 +903,24 @@ pub mod py_ganesh {
                 .map(|row| row.iter().copied().collect())
                 .collect());
         }
+        if let Ok(rows) = values.extract::<Vec<Vec<f64>>>() {
+            validate_rectangular_rows(&rows, argument_name)?;
+            return Ok(rows);
+        }
         Err(PyTypeError::new_err(format!(
             "{argument_name} must be a nested sequence of floats or a 2D numpy.ndarray"
         )))
+    }
+
+    fn validate_rectangular_rows(rows: &[Vec<f64>], argument_name: &str) -> PyResult<()> {
+        if let Some(expected_len) = rows.first().map(Vec::len) {
+            if rows.iter().any(|row| row.len() != expected_len) {
+                return Err(PyTypeError::new_err(format!(
+                    "{argument_name} nested sequences must form a rectangular 2D matrix"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Typed line-search configuration used by `LBFGSBSettings`.
