@@ -874,6 +874,7 @@ pub mod py_ganesh {
         },
     }
 
+    /// Typed line-search configuration used by `LBFGSBSettings`.
     #[pyclass(name = "LineSearchConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyLineSearchConfig(LineSearchSpec);
@@ -919,6 +920,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed simplex-construction configuration used by `NelderMeadSettings`.
     #[pyclass(name = "SimplexConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PySimplexConfig(SimplexSpec);
@@ -946,6 +948,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed swarm-initializer configuration used by `PSOSettings`.
     #[pyclass(name = "SwarmInitializerConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PySwarmInitializerConfig(SwarmInitializerSpec);
@@ -974,6 +977,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed AIES move configuration used by `AIESSettings`.
     #[pyclass(name = "AIESMoveConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyAIESMoveConfig(AIESMoveSpec);
@@ -992,6 +996,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed ESS move configuration used by `ESSSettings`.
     #[pyclass(name = "ESSMoveConfig", module = "laddu")]
     #[derive(Clone)]
     pub struct PyESSMoveConfig(ESSMoveSpec);
@@ -1025,6 +1030,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `lbfgsb` minimizer.
     #[pyclass(name = "LBFGSBSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyLBFGSBSettings {
@@ -1059,6 +1065,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `adam` minimizer.
     #[pyclass(name = "AdamSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyAdamSettings {
@@ -1096,6 +1103,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `nelder-mead` minimizer.
     #[pyclass(name = "NelderMeadSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyNelderMeadSettings {
@@ -1151,6 +1159,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `pso` minimizer.
     #[pyclass(name = "PSOSettings", module = "laddu")]
     #[derive(Clone)]
     pub struct PyPSOSettings {
@@ -1194,6 +1203,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `aies` sampler.
     #[pyclass(name = "AIESSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyAIESSettings {
@@ -1214,6 +1224,7 @@ pub mod py_ganesh {
         }
     }
 
+    /// Typed settings for the `ess` sampler.
     #[pyclass(name = "ESSSettings", module = "laddu")]
     #[derive(Clone, Default)]
     pub struct PyESSSettings {
@@ -1697,7 +1708,7 @@ pub mod py_ganesh {
         }
     }
 
-    pub fn minimization_settings_from_python<P>(
+    pub(crate) fn minimization_settings_from_python<P>(
         args: &Vec<f64>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,
@@ -1972,7 +1983,7 @@ pub mod py_ganesh {
         }
     }
 
-    pub fn mcmc_settings_from_python<P>(
+    pub(crate) fn mcmc_settings_from_python<P>(
         args: &Vec<DVector<f64>>,
         bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
         method: String,

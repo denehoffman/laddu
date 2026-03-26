@@ -240,6 +240,31 @@ def test_typed_mcmc_settings_smoke() -> None:
     assert ess.parameter_names == ['scale']
 
 
+def test_pso_requires_explicit_typed_settings() -> None:
+    nll = _two_parameter_nll()
+
+    with pytest.raises(
+        TypeError,
+        match=r"settings for method 'pso' must be PSOSettings or None",
+    ):
+        nll.minimize([2.0, -0.5], method='pso', settings=None)
+
+
+def test_typed_sampler_defaults_construct_and_run() -> None:
+    nll = _simple_scalar_nll()
+
+    aies = nll.mcmc([[2.0], [2.1]], method='aies', max_steps=2, settings=AIESSettings())
+    ess = nll.mcmc(
+        [[2.0], [2.1], [1.9], [2.2]],
+        method='ess',
+        max_steps=2,
+        settings=ESSSettings(),
+    )
+
+    assert aies.dimension[2] == 1
+    assert ess.dimension[2] == 1
+
+
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     evaluator = likelihood_sum([expr]).load()
