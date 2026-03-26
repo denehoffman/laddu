@@ -201,7 +201,7 @@ def from_pandas(
         import pyarrow as pa
 
         table = pa.Table.from_pandas(data, preserve_index=False)
-        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
+        return from_arrow(table, p4s=p4s, aux=aux, aliases=aliases)
     except ModuleNotFoundError:
         converted = {col: data[col].to_numpy() for col in data.columns}
         normalized = _normalize_ingestion_columns(converted)
@@ -227,7 +227,7 @@ def from_polars(
 ) -> Dataset:
     try:
         table = data.to_arrow()
-        return _dataset_from_arrow_table(table, p4s=p4s, aux=aux, aliases=aliases)
+        return from_arrow(table, p4s=p4s, aux=aux, aliases=aliases)
     except ModuleNotFoundError:
         converted = {name: data.get_column(name).to_numpy() for name in data.columns}
         normalized = _normalize_ingestion_columns(converted)

@@ -321,6 +321,30 @@ def test_arrow_entrypoints_io_compatibility() -> None:
     _assert_datasets_close(roundtrip, baseline)
 
 
+def test_pandas_and_polars_arrow_interop_matches_direct_arrow_ingestion() -> None:
+    pa = pytest.importorskip('pyarrow')
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+
+    baseline = ldio.from_arrow(pa.table(data))
+    from_pandas = ldio.from_pandas(pd.DataFrame(data))
+    from_polars = ldio.from_polars(pl.DataFrame(data))
+
+    _assert_datasets_close(from_pandas, baseline)
+    _assert_datasets_close(from_polars, baseline)
+
+
 def test_dataset_to_arrow_roundtrip_method_matches_io_helper() -> None:
     pa = pytest.importorskip('pyarrow')
     dataset = make_test_dataset()
@@ -333,6 +357,24 @@ def test_dataset_to_arrow_roundtrip_method_matches_io_helper() -> None:
 
     roundtrip = ldio.from_arrow(table_from_method, p4s=P4_NAMES, aux=AUX_NAMES)
     _assert_datasets_close(roundtrip, dataset)
+
+
+def test_dataset_arrow_table_converts_to_pandas_and_polars() -> None:
+    pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table = dataset.to_arrow()
+    pandas_frame = table.to_pandas()
+    polars_frame = pl.from_arrow(table)
+
+    _assert_datasets_close(
+        ldio.from_pandas(pandas_frame, p4s=P4_NAMES, aux=AUX_NAMES),
+        dataset,
+    )
+    _assert_datasets_close(
+        ldio.from_polars(polars_frame, p4s=P4_NAMES, aux=AUX_NAMES),
+        dataset,
+    )
 
 
 def test_to_arrow_exports_single_chunk_columns() -> None:
