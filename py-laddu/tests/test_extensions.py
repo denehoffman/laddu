@@ -168,6 +168,82 @@ def test_typed_minimize_settings_smoke() -> None:
         assert summary.x.shape == (2,)
 
 
+def test_simplex_custom_accepts_numpy_array() -> None:
+    nll = _two_parameter_nll()
+
+    summary = nll.minimize(
+        [2.0, -0.5],
+        method='nelder-mead',
+        max_steps=4,
+        settings=NelderMeadSettings(
+            simplex=SimplexConfig.custom(
+                np.array(
+                    [
+                        [2.25, -0.5],
+                        [2.0, -0.25],
+                    ],
+                    dtype=np.float64,
+                )
+            ),
+            expansion_method='greedyexpansion',
+            f_terminator='absolute',
+            x_terminator='diameter',
+        ),
+    )
+
+    assert summary.parameter_names == ['alpha', 'beta']
+    assert summary.x.shape == (2,)
+
+
+def test_swarm_initializer_custom_accepts_numpy_array() -> None:
+    nll = _two_parameter_nll()
+
+    summary = nll.minimize(
+        [2.0, -0.5],
+        method='pso',
+        max_steps=2,
+        settings=PSOSettings(
+            SwarmInitializerConfig.custom(
+                np.array(
+                    [
+                        [2.25, -0.5],
+                        [1.75, -0.75],
+                        [2.5, 0.0],
+                    ],
+                    dtype=np.float64,
+                )
+            ),
+            omega=0.7,
+            c1=0.2,
+            c2=0.2,
+        ),
+    )
+
+    assert summary.parameter_names == ['alpha', 'beta']
+    assert summary.x.shape == (2,)
+
+
+@pytest.mark.parametrize(
+    ('factory', 'argument_name', 'payload'),
+    [
+        (SimplexConfig.custom, 'simplex', np.array([1.0, 2.0], dtype=np.float64)),
+        (
+            SwarmInitializerConfig.custom,
+            'swarm',
+            np.array([1.0, 2.0], dtype=np.float64),
+        ),
+    ],
+)
+def test_custom_payload_rejects_non_matrix_numpy_arrays(
+    factory: Any, argument_name: str, payload: np.ndarray[Any, Any]
+) -> None:
+    with pytest.raises(
+        TypeError,
+        match=rf'{argument_name} must be a nested sequence of floats or a 2D numpy.ndarray',
+    ):
+        factory(payload)
+
+
 def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
     nll = _simple_scalar_nll()
 

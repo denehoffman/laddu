@@ -774,7 +774,7 @@ pub mod py_ganesh {
     };
     use laddu_core::{f64, LadduError, ReadWrite};
     use nalgebra::DMatrix;
-    use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
+    use numpy::{PyArray1, PyArray2, PyArray3, PyReadonlyArray2, ToPyArray};
     use parking_lot::Mutex;
     use pyo3::{
         exceptions::{PyTypeError, PyValueError},
@@ -872,6 +872,25 @@ pub mod py_ganesh {
             rescale_cov: Option<f64>,
             n_components: Option<usize>,
         },
+    }
+
+    fn extract_matrix_like_f64(
+        values: &Bound<'_, PyAny>,
+        argument_name: &str,
+    ) -> PyResult<Vec<Vec<f64>>> {
+        if let Ok(rows) = values.extract::<Vec<Vec<f64>>>() {
+            return Ok(rows);
+        }
+        if let Ok(array) = values.extract::<PyReadonlyArray2<'_, f64>>() {
+            return Ok(array
+                .as_array()
+                .outer_iter()
+                .map(|row| row.iter().copied().collect())
+                .collect());
+        }
+        Err(PyTypeError::new_err(format!(
+            "{argument_name} must be a nested sequence of floats or a 2D numpy.ndarray"
+        )))
     }
 
     /// Typed line-search configuration used by `LBFGSBSettings`.
@@ -979,10 +998,12 @@ pub mod py_ganesh {
             Self(SimplexSpec::Orthogonal { simplex_size })
         }
 
-        /// Provide the full simplex explicitly as a list of vertices.
+        /// Provide the full simplex explicitly as a list of vertices or a 2D `numpy.ndarray`.
         #[staticmethod]
-        fn custom(simplex: Vec<Vec<f64>>) -> Self {
-            Self(SimplexSpec::Custom { simplex })
+        fn custom(simplex: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(Self(SimplexSpec::Custom {
+                simplex: extract_matrix_like_f64(simplex, "simplex")?,
+            }))
         }
     }
 
@@ -1024,10 +1045,12 @@ pub mod py_ganesh {
             })
         }
 
-        /// Provide the full swarm explicitly as a list of particle positions.
+        /// Provide the full swarm explicitly as a list of particle positions or a 2D `numpy.ndarray`.
         #[staticmethod]
-        fn custom(swarm: Vec<Vec<f64>>) -> Self {
-            Self(SwarmInitializerSpec::Custom { swarm })
+        fn custom(swarm: &Bound<'_, PyAny>) -> PyResult<Self> {
+            Ok(Self(SwarmInitializerSpec::Custom {
+                swarm: extract_matrix_like_f64(swarm, "swarm")?,
+            }))
         }
     }
 
