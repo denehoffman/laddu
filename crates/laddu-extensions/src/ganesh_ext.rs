@@ -812,7 +812,7 @@ pub mod py_ganesh {
             simplex_size: f64,
         },
         Custom {
-            simplex: Vec<Vec<f64>>,
+            simplex: Vec<DVector<f64>>,
         },
     }
 
@@ -848,7 +848,7 @@ pub mod py_ganesh {
             n_particles: usize,
         },
         Custom {
-            swarm: Vec<Vec<f64>>,
+            swarm: Vec<DVector<f64>>,
         },
     }
 
@@ -910,6 +910,14 @@ pub mod py_ganesh {
         Err(PyTypeError::new_err(format!(
             "{argument_name} must be a nested sequence of floats or a 2D numpy.ndarray"
         )))
+    }
+
+    fn extract_matrix_like_dvectors(
+        values: &Bound<'_, PyAny>,
+        argument_name: &str,
+    ) -> PyResult<Vec<DVector<f64>>> {
+        extract_matrix_like_f64(values, argument_name)
+            .map(|rows| rows.into_iter().map(DVector::from_vec).collect())
     }
 
     fn validate_rectangular_rows(rows: &[Vec<f64>], argument_name: &str) -> PyResult<()> {
@@ -1032,7 +1040,7 @@ pub mod py_ganesh {
         #[staticmethod]
         fn custom(simplex: &Bound<'_, PyAny>) -> PyResult<Self> {
             Ok(Self(SimplexSpec::Custom {
-                simplex: extract_matrix_like_f64(simplex, "simplex")?,
+                simplex: extract_matrix_like_dvectors(simplex, "simplex")?,
             }))
         }
     }
@@ -1079,7 +1087,7 @@ pub mod py_ganesh {
         #[staticmethod]
         fn custom(swarm: &Bound<'_, PyAny>) -> PyResult<Self> {
             Ok(Self(SwarmInitializerSpec::Custom {
-                swarm: extract_matrix_like_f64(swarm, "swarm")?,
+                swarm: extract_matrix_like_dvectors(swarm, "swarm")?,
             }))
         }
     }
@@ -1740,7 +1748,7 @@ pub mod py_ganesh {
                     )));
                 }
                 let simplex: Vec<DVector<f64>> = std::iter::once(DVector::from_vec(args.to_vec()))
-                    .chain(simplex.iter().cloned().map(DVector::from_vec))
+                    .chain(simplex.iter().cloned())
                     .collect();
                 Ok(SimplexConstructionMethod::custom(simplex))
             }
@@ -1770,8 +1778,7 @@ pub mod py_ganesh {
                 swarm
                     .iter()
                     .cloned()
-                    .chain(std::iter::once(args.to_vec()))
-                    .map(DVector::from_vec)
+                    .chain(std::iter::once(DVector::from_vec(args.to_vec())))
                     .collect(),
             ),
         }
