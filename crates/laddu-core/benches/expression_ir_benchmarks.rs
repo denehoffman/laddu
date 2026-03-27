@@ -312,10 +312,11 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
         ),
     ];
 
-    let mut value_group = c.benchmark_group("expression_ir_factorization_weighted_value_sum");
-    value_group.sample_size(50);
-    value_group.warm_up_time(Duration::from_secs(2));
-    value_group.measurement_time(Duration::from_secs(8));
+    let mut overall_value_group =
+        c.benchmark_group("expression_ir_factorization_weighted_value_sum");
+    overall_value_group.sample_size(50);
+    overall_value_group.warm_up_time(Duration::from_secs(2));
+    overall_value_group.measurement_time(Duration::from_secs(8));
     for (tier_label, dataset) in &datasets {
         let cases = [
             build_scenario(dataset, ScenarioKind::Separable),
@@ -323,8 +324,8 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
             build_scenario(dataset, ScenarioKind::NonSeparable),
         ];
         for case in &cases {
-            value_group.throughput(Throughput::Elements(case.n_events as u64));
-            value_group.bench_with_input(
+            overall_value_group.throughput(Throughput::Elements(case.n_events as u64));
+            overall_value_group.bench_with_input(
                 BenchmarkId::new(
                     format!("optimized/{}", tier_label),
                     format!("{}@{}", case.label, case.n_events),
@@ -339,7 +340,7 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
                     })
                 },
             );
-            value_group.bench_with_input(
+            overall_value_group.bench_with_input(
                 BenchmarkId::new(
                     format!("eventwise_baseline/{}", tier_label),
                     format!("{}@{}", case.label, case.n_events),
@@ -356,12 +357,93 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
             );
         }
     }
-    value_group.finish();
+    overall_value_group.finish();
+    let mut separable_value_group =
+        c.benchmark_group("expression_ir_factorization_separable_weighted_value_sum");
+    separable_value_group.sample_size(50);
+    separable_value_group.warm_up_time(Duration::from_secs(2));
+    separable_value_group.measurement_time(Duration::from_secs(8));
+    for (tier_label, dataset) in &datasets {
+        let case = build_scenario(dataset, ScenarioKind::Separable);
+        separable_value_group.throughput(Throughput::Elements(case.n_events as u64));
+        separable_value_group.bench_with_input(
+            BenchmarkId::new(
+                format!("optimized/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        separable_value_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_baseline/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(eventwise_weighted_value_sum(
+                        &case.evaluator,
+                        black_box(&case.parameters),
+                    ))
+                })
+            },
+        );
+    }
+    separable_value_group.finish();
+    let mut partial_value_group =
+        c.benchmark_group("expression_ir_factorization_partial_weighted_value_sum");
+    partial_value_group.sample_size(50);
+    partial_value_group.warm_up_time(Duration::from_secs(2));
+    partial_value_group.measurement_time(Duration::from_secs(8));
+    for (tier_label, dataset) in &datasets {
+        let case = build_scenario(dataset, ScenarioKind::Partial);
+        partial_value_group.throughput(Throughput::Elements(case.n_events as u64));
+        partial_value_group.bench_with_input(
+            BenchmarkId::new(
+                format!("optimized/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        partial_value_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_baseline/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(eventwise_weighted_value_sum(
+                        &case.evaluator,
+                        black_box(&case.parameters),
+                    ))
+                })
+            },
+        );
+    }
+    partial_value_group.finish();
 
-    let mut gradient_group = c.benchmark_group("expression_ir_factorization_weighted_gradient_sum");
-    gradient_group.sample_size(50);
-    gradient_group.warm_up_time(Duration::from_secs(2));
-    gradient_group.measurement_time(Duration::from_secs(8));
+    let mut overall_gradient_group =
+        c.benchmark_group("expression_ir_factorization_weighted_gradient_sum");
+    overall_gradient_group.sample_size(50);
+    overall_gradient_group.warm_up_time(Duration::from_secs(2));
+    overall_gradient_group.measurement_time(Duration::from_secs(8));
     for (tier_label, dataset) in &datasets {
         let cases = [
             build_scenario(dataset, ScenarioKind::Separable),
@@ -369,8 +451,8 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
             build_scenario(dataset, ScenarioKind::NonSeparable),
         ];
         for case in &cases {
-            gradient_group.throughput(Throughput::Elements(case.n_events as u64));
-            gradient_group.bench_with_input(
+            overall_gradient_group.throughput(Throughput::Elements(case.n_events as u64));
+            overall_gradient_group.bench_with_input(
                 BenchmarkId::new(
                     format!("optimized/{}", tier_label),
                     format!("{}@{}", case.label, case.n_events),
@@ -385,7 +467,7 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
                     })
                 },
             );
-            gradient_group.bench_with_input(
+            overall_gradient_group.bench_with_input(
                 BenchmarkId::new(
                     format!("eventwise_baseline/{}", tier_label),
                     format!("{}@{}", case.label, case.n_events),
@@ -402,7 +484,87 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
             );
         }
     }
-    gradient_group.finish();
+    overall_gradient_group.finish();
+    let mut separable_gradient_group =
+        c.benchmark_group("expression_ir_factorization_separable_weighted_gradient_sum");
+    separable_gradient_group.sample_size(50);
+    separable_gradient_group.warm_up_time(Duration::from_secs(2));
+    separable_gradient_group.measurement_time(Duration::from_secs(8));
+    for (tier_label, dataset) in &datasets {
+        let case = build_scenario(dataset, ScenarioKind::Separable);
+        separable_gradient_group.throughput(Throughput::Elements(case.n_events as u64));
+        separable_gradient_group.bench_with_input(
+            BenchmarkId::new(
+                format!("optimized/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        separable_gradient_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_baseline/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(eventwise_weighted_gradient_sum(
+                        &case.evaluator,
+                        black_box(&case.parameters),
+                    ))
+                })
+            },
+        );
+    }
+    separable_gradient_group.finish();
+    let mut partial_gradient_group =
+        c.benchmark_group("expression_ir_factorization_partial_weighted_gradient_sum");
+    partial_gradient_group.sample_size(50);
+    partial_gradient_group.warm_up_time(Duration::from_secs(2));
+    partial_gradient_group.measurement_time(Duration::from_secs(8));
+    for (tier_label, dataset) in &datasets {
+        let case = build_scenario(dataset, ScenarioKind::Partial);
+        partial_gradient_group.throughput(Throughput::Elements(case.n_events as u64));
+        partial_gradient_group.bench_with_input(
+            BenchmarkId::new(
+                format!("optimized/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        partial_gradient_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_baseline/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(eventwise_weighted_gradient_sum(
+                        &case.evaluator,
+                        black_box(&case.parameters),
+                    ))
+                })
+            },
+        );
+    }
+    partial_gradient_group.finish();
 
     let mut control_group = c.benchmark_group("expression_ir_factorization_controls");
     control_group.sample_size(40);
