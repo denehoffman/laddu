@@ -1511,9 +1511,34 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
-    fn invalidate_runtime_specializations(&self) {
-        *self.ir_planning.cached_integrals.write() = None;
-        *self.runtime_state.lowered_runtime.write() = None;
+    fn rebuild_runtime_specializations(&self, resources: &Resources) {
+        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
+        let cached_integrals = Self::precompute_cached_integrals_at_load(
+            &expression_ir,
+            &self.amplitudes,
+            resources,
+            &self.dataset,
+            self.parameter_manager.n_free_parameters(),
+        );
+        let execution_sets = expression_ir.normalization_execution_sets().clone();
+        let cached_integral_key =
+            Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
+        let lowered_runtime =
+            lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
+
+        *self.ir_planning.cached_integrals.write() = Some(CachedIntegralCacheState {
+            key: cached_integral_key,
+            expression_ir: expression_ir.clone(),
+            values: cached_integrals,
+            execution_sets,
+        });
+        *self.runtime_state.lowered_runtime.write() = lowered_runtime;
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn refresh_runtime_specializations(&self) {
+        let resources = self.resources.read();
+        self.rebuild_runtime_specializations(&resources);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -2639,68 +2664,102 @@ impl Evaluator {
     /// Activate an [`Amplitude`] by name, skipping missing entries.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().activate(name);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
     /// Activate an [`Amplitude`] by name and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().activate_strict(name)
+        self.resources.write().activate_strict(name)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Activate several [`Amplitude`]s by name, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().activate_many(names);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
     /// Activate several [`Amplitude`]s by name and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().activate_many_strict(names)
+        self.resources.write().activate_many_strict(names)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Activate all registered [`Amplitude`]s.
     pub fn activate_all(&self) {
         self.resources.write().activate_all();
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
 
     /// Dectivate an [`Amplitude`] by name, skipping missing entries.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().deactivate(name);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
 
     /// Dectivate an [`Amplitude`] by name and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().deactivate_strict(name)
+        self.resources.write().deactivate_strict(name)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Deactivate several [`Amplitude`]s by name, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().deactivate_many(names);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
     /// Dectivate several [`Amplitude`]s by name and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().deactivate_many_strict(names)
+        self.resources.write().deactivate_many_strict(names)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Deactivate all registered [`Amplitude`]s.
     pub fn deactivate_all(&self) {
         self.resources.write().deactivate_all();
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate an [`Amplitude`] by name (deactivate the rest), skipping missing entries.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().isolate(name);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate an [`Amplitude`] by name (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().isolate_strict(name)
+        self.resources.write().isolate_strict(name)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Isolate several [`Amplitude`]s by name (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().isolate_many(names);
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate several [`Amplitude`]s by name (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().isolate_many_strict(names)
+        self.resources.write().isolate_many_strict(names)?;
+        #[cfg(feature = "expression-ir")]
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Return a copy of the current active-amplitude mask.
@@ -2710,6 +2769,21 @@ impl Evaluator {
 
     /// Apply a precomputed active-amplitude mask.
     pub fn set_active_mask(&self, mask: &[bool]) -> LadduResult<()> {
+        #[cfg(feature = "expression-ir")]
+        let resources = {
+            let mut resources = self.resources.write();
+            if mask.len() != resources.active.len() {
+                return Err(LadduError::LengthMismatch {
+                    context: "active amplitude mask".to_string(),
+                    expected: resources.active.len(),
+                    actual: mask.len(),
+                });
+            }
+            resources.active.clone_from_slice(mask);
+            resources.refresh_active_indices();
+            resources.clone()
+        };
+        #[cfg(not(feature = "expression-ir"))]
         {
             let mut resources = self.resources.write();
             if mask.len() != resources.active.len() {
@@ -2723,7 +2797,7 @@ impl Evaluator {
             resources.refresh_active_indices();
         }
         #[cfg(feature = "expression-ir")]
-        self.invalidate_runtime_specializations();
+        self.rebuild_runtime_specializations(&resources);
         Ok(())
     }
 
