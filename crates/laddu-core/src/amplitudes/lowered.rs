@@ -63,6 +63,114 @@ pub(crate) enum LoweredInstruction {
     },
 }
 
+fn apply_unary_op(op: LoweredUnaryOp, value: Complex64) -> Complex64 {
+    match op {
+        LoweredUnaryOp::Neg => -value,
+        LoweredUnaryOp::Real => Complex64::new(value.re, 0.0),
+        LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
+        LoweredUnaryOp::Conj => value.conj(),
+        LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+    }
+}
+
+fn apply_binary_op(
+    op: LoweredBinaryOp,
+    left_value: Complex64,
+    right_value: Complex64,
+) -> Complex64 {
+    match op {
+        LoweredBinaryOp::Add => left_value + right_value,
+        LoweredBinaryOp::Sub => left_value - right_value,
+        LoweredBinaryOp::Mul => left_value * right_value,
+        LoweredBinaryOp::Div => left_value / right_value,
+    }
+}
+
+fn apply_unary_gradient_op(
+    op: LoweredUnaryOp,
+    value: Complex64,
+    input_grad: &DVector<Complex64>,
+    dst_grad: &mut DVector<Complex64>,
+) {
+    match op {
+        LoweredUnaryOp::Neg => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = -*input_item;
+            }
+        }
+        LoweredUnaryOp::Real => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(input_item.re, 0.0);
+            }
+        }
+        LoweredUnaryOp::Imag => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(input_item.im, 0.0);
+            }
+        }
+        LoweredUnaryOp::Conj => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = input_item.conj();
+            }
+        }
+        LoweredUnaryOp::NormSqr => {
+            let conj_input = value.conj();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
+            }
+        }
+    }
+}
+
+fn apply_binary_gradient_op(
+    op: LoweredBinaryOp,
+    left_value: Complex64,
+    right_value: Complex64,
+    left_grad: &DVector<Complex64>,
+    right_grad: &DVector<Complex64>,
+    dst_grad: &mut DVector<Complex64>,
+) {
+    match op {
+        LoweredBinaryOp::Add => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item + *right_item;
+            }
+        }
+        LoweredBinaryOp::Sub => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item - *right_item;
+            }
+        }
+        LoweredBinaryOp::Mul => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item * right_value + *right_item * left_value;
+            }
+        }
+        LoweredBinaryOp::Div => {
+            let denom = right_value * right_value;
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = (*left_item * right_value - *right_item * left_value) / denom;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoweredRuntimeLayout {
     scratch_slots: usize,
@@ -154,14 +262,7 @@ impl LoweredProgram {
                         .unwrap_or_default();
                 }
                 LoweredInstruction::Unary { dst, input, op } => {
-                    let value = scratch[input];
-                    scratch[dst] = match op {
-                        LoweredUnaryOp::Neg => -value,
-                        LoweredUnaryOp::Real => Complex64::new(value.re, 0.0),
-                        LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
-                        LoweredUnaryOp::Conj => value.conj(),
-                        LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
-                    };
+                    scratch[dst] = apply_unary_op(op, scratch[input]);
                 }
                 LoweredInstruction::Binary {
                     dst,
@@ -169,14 +270,7 @@ impl LoweredProgram {
                     right,
                     op,
                 } => {
-                    let left_value = scratch[left];
-                    let right_value = scratch[right];
-                    scratch[dst] = match op {
-                        LoweredBinaryOp::Add => left_value + right_value,
-                        LoweredBinaryOp::Sub => left_value - right_value,
-                        LoweredBinaryOp::Mul => left_value * right_value,
-                        LoweredBinaryOp::Div => left_value / right_value,
-                    };
+                    scratch[dst] = apply_binary_op(op, scratch[left], scratch[right]);
                 }
             }
         }
@@ -252,49 +346,10 @@ impl LoweredProgram {
                 }
                 LoweredInstruction::Unary { dst, input, op } => {
                     let value = value_scratch[input];
-                    value_scratch[dst] = match op {
-                        LoweredUnaryOp::Neg => -value,
-                        LoweredUnaryOp::Real => Complex64::new(value.re, 0.0),
-                        LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
-                        LoweredUnaryOp::Conj => value.conj(),
-                        LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
-                    };
+                    value_scratch[dst] = apply_unary_op(op, value);
                     let input_grad = gradient_scratch[input].clone();
                     let dst_grad = &mut gradient_scratch[dst];
-                    match op {
-                        LoweredUnaryOp::Neg => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = -*input_item;
-                            }
-                        }
-                        LoweredUnaryOp::Real => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.re, 0.0);
-                            }
-                        }
-                        LoweredUnaryOp::Imag => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.im, 0.0);
-                            }
-                        }
-                        LoweredUnaryOp::Conj => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = input_item.conj();
-                            }
-                        }
-                        LoweredUnaryOp::NormSqr => {
-                            let conj_input = value.conj();
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item =
-                                    Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
-                            }
-                        }
-                    }
+                    apply_unary_gradient_op(op, value, &input_grad, dst_grad);
                 }
                 LoweredInstruction::Binary {
                     dst,
@@ -304,55 +359,18 @@ impl LoweredProgram {
                 } => {
                     let left_value = value_scratch[left];
                     let right_value = value_scratch[right];
-                    value_scratch[dst] = match op {
-                        LoweredBinaryOp::Add => left_value + right_value,
-                        LoweredBinaryOp::Sub => left_value - right_value,
-                        LoweredBinaryOp::Mul => left_value * right_value,
-                        LoweredBinaryOp::Div => left_value / right_value,
-                    };
+                    value_scratch[dst] = apply_binary_op(op, left_value, right_value);
                     let left_grad = gradient_scratch[left].clone();
                     let right_grad = gradient_scratch[right].clone();
                     let dst_grad = &mut gradient_scratch[dst];
-                    match op {
-                        LoweredBinaryOp::Add => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item + *right_item;
-                            }
-                        }
-                        LoweredBinaryOp::Sub => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item - *right_item;
-                            }
-                        }
-                        LoweredBinaryOp::Mul => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item * right_value + *right_item * left_value;
-                            }
-                        }
-                        LoweredBinaryOp::Div => {
-                            let denom = right_value * right_value;
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item =
-                                    (*left_item * right_value - *right_item * left_value) / denom;
-                            }
-                        }
-                    }
+                    apply_binary_gradient_op(
+                        op,
+                        left_value,
+                        right_value,
+                        &left_grad,
+                        &right_grad,
+                        dst_grad,
+                    );
                 }
             }
         }
@@ -487,8 +505,9 @@ impl LoweredProgram {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoweredBinaryOp, LoweredExpressionRuntime, LoweredInstruction, LoweredProgram,
-        LoweredProgramKind, LoweredRuntimeLayout,
+        apply_binary_op, apply_unary_op, LoweredBinaryOp, LoweredExpressionRuntime,
+        LoweredInstruction, LoweredProgram, LoweredProgramKind, LoweredRuntimeLayout,
+        LoweredUnaryOp,
     };
     use crate::amplitudes::ir::{compile_expression_ir, DependenceClass};
     use crate::amplitudes::ExpressionNode;
@@ -522,6 +541,44 @@ mod tests {
         assert_eq!(program.scratch_slots(), 3);
         assert_eq!(program.root_slot(), 2);
         assert_eq!(program.instructions().len(), 3);
+    }
+
+    #[test]
+    fn lowered_op_helpers_match_expected_complex_semantics() {
+        let value = Complex64::new(2.0, -3.0);
+        let other = Complex64::new(-1.0, 0.5);
+
+        assert_eq!(apply_unary_op(LoweredUnaryOp::Neg, value), -value);
+        assert_eq!(
+            apply_unary_op(LoweredUnaryOp::Real, value),
+            Complex64::new(value.re, 0.0)
+        );
+        assert_eq!(
+            apply_unary_op(LoweredUnaryOp::Imag, value),
+            Complex64::new(value.im, 0.0)
+        );
+        assert_eq!(apply_unary_op(LoweredUnaryOp::Conj, value), value.conj());
+        assert_eq!(
+            apply_unary_op(LoweredUnaryOp::NormSqr, value),
+            Complex64::new(value.norm_sqr(), 0.0)
+        );
+
+        assert_eq!(
+            apply_binary_op(LoweredBinaryOp::Add, value, other),
+            value + other
+        );
+        assert_eq!(
+            apply_binary_op(LoweredBinaryOp::Sub, value, other),
+            value - other
+        );
+        assert_eq!(
+            apply_binary_op(LoweredBinaryOp::Mul, value, other),
+            value * other
+        );
+        assert_eq!(
+            apply_binary_op(LoweredBinaryOp::Div, value, other),
+            value / other
+        );
     }
 
     #[test]
