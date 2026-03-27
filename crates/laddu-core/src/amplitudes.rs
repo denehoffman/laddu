@@ -4125,7 +4125,7 @@ mod tests {
         let lowered_runtime = evaluator.lowered_runtime().unwrap();
         assert!(lowered_runtime.value_program().is_some());
         assert!(lowered_runtime.gradient_program().is_some());
-        assert!(lowered_runtime.value_gradient_program().is_none());
+        assert!(lowered_runtime.value_gradient_program().is_some());
     }
 
     #[cfg(feature = "expression-ir")]
@@ -4209,6 +4209,109 @@ mod tests {
             assert_relative_eq!(lowered.im, ir.im);
         }
         for (ir, program) in ir_gradient.iter().zip(program_gradient.iter()) {
+            assert_relative_eq!(ir.re, program.re);
+            assert_relative_eq!(ir.im, program.im);
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_value_gradient_matches_program() {
+        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_value_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
+        let mut ir_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_ir().node_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let mut program_value_slots =
+            vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
+        let mut program_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_program.slot_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let lowered_runtime = evaluator.lowered_runtime().unwrap();
+        let lowered_program = lowered_runtime.value_gradient_program().unwrap();
+        let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let mut lowered_gradient_slots: Vec<DVector<Complex64>> = (0..lowered_program
+            .scratch_slots())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect();
+
+        let lowered_active = evaluator.evaluate_expression_value_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let ir_value_gradient = evaluator.expression_ir().evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let program_value_gradient = evaluator.expression_program.evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut program_value_slots,
+            &mut program_gradient_slots,
+        );
+        let lowered_value_gradient = lowered_program.evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut lowered_value_slots,
+            &mut lowered_gradient_slots,
+        );
+
+        assert_relative_eq!(lowered_active.0.re, lowered_value_gradient.0.re);
+        assert_relative_eq!(lowered_active.0.im, lowered_value_gradient.0.im);
+        for (active, lowered) in lowered_active.1.iter().zip(lowered_value_gradient.1.iter()) {
+            assert_relative_eq!(active.re, lowered.re);
+            assert_relative_eq!(active.im, lowered.im);
+        }
+        assert_relative_eq!(lowered_value_gradient.0.re, ir_value_gradient.0.re);
+        assert_relative_eq!(lowered_value_gradient.0.im, ir_value_gradient.0.im);
+        for (lowered, ir) in lowered_value_gradient
+            .1
+            .iter()
+            .zip(ir_value_gradient.1.iter())
+        {
+            assert_relative_eq!(lowered.re, ir.re);
+            assert_relative_eq!(lowered.im, ir.im);
+        }
+        assert_relative_eq!(ir_value_gradient.0.re, program_value_gradient.0.re);
+        assert_relative_eq!(ir_value_gradient.0.im, program_value_gradient.0.im);
+        for (ir, program) in ir_value_gradient
+            .1
+            .iter()
+            .zip(program_value_gradient.1.iter())
+        {
             assert_relative_eq!(ir.re, program.re);
             assert_relative_eq!(ir.im, program.im);
         }
