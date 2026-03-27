@@ -13,6 +13,92 @@ struct LoweredProgramTemplate {
     layout: LoweredRuntimeLayout,
 }
 
+fn instruction_inputs(instruction: &LoweredInstruction) -> [Option<usize>; 2] {
+    match *instruction {
+        LoweredInstruction::Constant { .. } | LoweredInstruction::LoadAmplitude { .. } => {
+            [None, None]
+        }
+        LoweredInstruction::Unary { input, .. } => [Some(input), None],
+        LoweredInstruction::Binary { left, right, .. } => [Some(left), Some(right)],
+    }
+}
+
+fn instruction_destination(instruction: &LoweredInstruction) -> usize {
+    match *instruction {
+        LoweredInstruction::Constant { dst, .. }
+        | LoweredInstruction::LoadAmplitude { dst, .. }
+        | LoweredInstruction::Unary { dst, .. }
+        | LoweredInstruction::Binary { dst, .. } => dst,
+    }
+}
+
+fn remap_instruction_slots(
+    instruction: &LoweredInstruction,
+    dst: usize,
+    inputs: [Option<usize>; 2],
+) -> LoweredInstruction {
+    match *instruction {
+        LoweredInstruction::Constant { value, .. } => LoweredInstruction::Constant { dst, value },
+        LoweredInstruction::LoadAmplitude {
+            amplitude_index, ..
+        } => LoweredInstruction::LoadAmplitude {
+            dst,
+            amplitude_index,
+        },
+        LoweredInstruction::Unary { op, .. } => LoweredInstruction::Unary {
+            dst,
+            input: inputs[0].expect("unary instruction should have one input"),
+            op,
+        },
+        LoweredInstruction::Binary { op, .. } => LoweredInstruction::Binary {
+            dst,
+            left: inputs[0].expect("binary instruction should have left input"),
+            right: inputs[1].expect("binary instruction should have right input"),
+            op,
+        },
+    }
+}
+
+fn allocate_reused_slots(
+    instructions: &[LoweredInstruction],
+    root_dst: usize,
+) -> (Vec<LoweredInstruction>, LoweredRuntimeLayout) {
+    let mut last_use = vec![0usize; instructions.len()];
+    for (index, instruction) in instructions.iter().enumerate() {
+        for input in instruction_inputs(instruction).into_iter().flatten() {
+            last_use[input] = index;
+        }
+    }
+
+    let mut value_slots = vec![usize::MAX; instructions.len()];
+    let mut free_slots = Vec::new();
+    let mut next_slot = 0usize;
+    let mut remapped = Vec::with_capacity(instructions.len());
+
+    for (index, instruction) in instructions.iter().enumerate() {
+        let inputs = instruction_inputs(instruction).map(|slot| slot.map(|src| value_slots[src]));
+        let dst_slot = free_slots.pop().unwrap_or_else(|| {
+            let slot = next_slot;
+            next_slot += 1;
+            slot
+        });
+        let original_dst = instruction_destination(instruction);
+        value_slots[original_dst] = dst_slot;
+        remapped.push(remap_instruction_slots(instruction, dst_slot, inputs));
+
+        for input in instruction_inputs(instruction).into_iter().flatten() {
+            if last_use[input] == index {
+                free_slots.push(value_slots[input]);
+            }
+        }
+    }
+
+    (
+        remapped,
+        LoweredRuntimeLayout::new(next_slot, value_slots[root_dst]),
+    )
+}
+
 fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
     fn visit(node_index: usize, nodes: &[IrNode], live: &mut [bool]) {
         if live[node_index] {
@@ -501,14 +587,14 @@ impl LoweredProgram {
                     },
                 },
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let root_slot = remap[ir.root()];
+        let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
 
         Ok(LoweredProgramTemplate {
             instructions,
-            layout: LoweredRuntimeLayout::new(
-                remap.iter().filter(|slot| **slot != usize::MAX).count(),
-                remap[ir.root()],
-            ),
+            layout,
         })
     }
 
@@ -660,9 +746,9 @@ mod tests {
         let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
 
         assert_eq!(program.kind(), LoweredProgramKind::Value);
-        assert_eq!(program.scratch_slots(), ir.node_count());
-        assert_eq!(program.root_slot(), ir.root());
         assert_eq!(program.instructions().len(), ir.node_count());
+        assert!(program.scratch_slots() <= ir.node_count());
+        assert!(program.root_slot() < program.scratch_slots());
     }
 
     #[test]
@@ -795,8 +881,33 @@ mod tests {
         let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
 
         assert!(program.scratch_slots() < ir.node_count());
-        assert_eq!(program.instructions().len(), program.scratch_slots());
-        assert_eq!(program.root_slot(), program.scratch_slots() - 1);
+        assert!(program.root_slot() < program.scratch_slots());
+    }
+
+    #[test]
+    fn lowering_reuses_slots_when_values_die_early() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Mul(
+                Box::new(ExpressionNode::Add(
+                    Box::new(ExpressionNode::Amp(0)),
+                    Box::new(ExpressionNode::Amp(1)),
+                )),
+                Box::new(ExpressionNode::Add(
+                    Box::new(ExpressionNode::Amp(2)),
+                    Box::new(ExpressionNode::Amp(3)),
+                )),
+            ),
+            &[true, true, true, true],
+            &[
+                DependenceClass::Mixed,
+                DependenceClass::Mixed,
+                DependenceClass::Mixed,
+                DependenceClass::Mixed,
+            ],
+        );
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert!(program.instructions().len() > program.scratch_slots());
     }
 
     #[test]

@@ -4505,7 +4505,7 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         let annotations = evaluator.expression_node_dependence_annotations();
-        assert_eq!(annotations.len(), evaluator.expression_slot_count());
+        assert_eq!(annotations.len(), evaluator.expression_ir().node_count());
         assert!(annotations
             .iter()
             .all(|dependence| *dependence == ExpressionDependence::Mixed));
