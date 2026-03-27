@@ -4390,6 +4390,60 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "expression-ir")]
+    fn assert_mixed_normalization_components_match_combined_path(fixture: &DeterministicFixture) {
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let state = {
+            let resources = evaluator.resources.read();
+            evaluator.ensure_cached_integral_cache_state(&resources)
+        };
+        assert!(
+            !state.values.is_empty(),
+            "fixture should exercise cached normalization terms"
+        );
+        assert!(
+            !state.execution_sets.residual_amplitudes.is_empty(),
+            "fixture should exercise residual normalization amplitudes"
+        );
+
+        let (residual_value_sum, cached_value_sum) =
+            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        assert!(residual_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
+        assert!(cached_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
+        let combined_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            residual_value_sum + cached_value_sum,
+            combined_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let (residual_gradient_sum, cached_gradient_sum) =
+            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
+        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        assert!(residual_gradient_sum
+            .iter()
+            .any(|value| value.abs() > DETERMINISTIC_STRICT_ABS_TOL));
+        assert!(cached_gradient_sum
+            .iter()
+            .any(|value| value.abs() > DETERMINISTIC_STRICT_ABS_TOL));
+        for ((residual_item, cached_item), combined_item) in residual_gradient_sum
+            .iter()
+            .zip(cached_gradient_sum.iter())
+            .zip(combined_gradient.iter())
+        {
+            assert_relative_eq!(
+                residual_item + cached_item,
+                *combined_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
     #[test]
     fn test_deterministic_fixture_weighted_sums_stable_across_activation_mask_toggle() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
@@ -4555,6 +4609,13 @@ mod tests {
         assert!(non_separable_evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_partial_fixture_combined_normalization_components_match_total() {
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        assert_mixed_normalization_components_match_combined_path(&partial);
     }
 
     #[test]

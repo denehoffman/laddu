@@ -444,6 +444,64 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
         }
     }
     control_group.finish();
+
+    let mut mixed_group = c.benchmark_group("expression_ir_factorization_mixed_components");
+    mixed_group.sample_size(40);
+    mixed_group.warm_up_time(Duration::from_secs(2));
+    mixed_group.measurement_time(Duration::from_secs(6));
+    for (tier_label, dataset) in &datasets {
+        let case = build_scenario(dataset, ScenarioKind::Partial);
+        mixed_group.throughput(Throughput::Elements(case.n_events as u64));
+        mixed_group.bench_with_input(
+            BenchmarkId::new(
+                format!("weighted_value_sum_partial/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        mixed_group.bench_with_input(
+            BenchmarkId::new(
+                format!("weighted_gradient_sum_partial/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        mixed_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_partial/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box((
+                        eventwise_weighted_value_sum(&case.evaluator, black_box(&case.parameters)),
+                        eventwise_weighted_gradient_sum(
+                            &case.evaluator,
+                            black_box(&case.parameters),
+                        ),
+                    ))
+                })
+            },
+        );
+    }
+    mixed_group.finish();
 }
 
 #[cfg(feature = "expression-ir")]
