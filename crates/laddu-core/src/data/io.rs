@@ -759,6 +759,7 @@ pub fn write_root(
     dataset.write_root_impl(path, options)
 }
 
+#[cfg(feature = "mpi")]
 #[cfg(test)]
 pub(crate) fn write_root_with_chunk_size_for_test(
     dataset: &Dataset,

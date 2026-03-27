@@ -192,6 +192,9 @@ impl DatasetStorage {
         let events = (0..self.n_events())
             .map(|event_index| Arc::new(self.event_data(event_index)))
             .collect::<Vec<_>>();
+        #[cfg(not(feature = "mpi"))]
+        let dataset = Dataset::new_local(events, self.metadata.clone());
+        #[cfg(feature = "mpi")]
         let mut dataset = Dataset::new_local(events, self.metadata.clone());
         #[cfg(feature = "mpi")]
         {
@@ -1369,6 +1372,7 @@ impl Dataset {
             .into_iter()
             .map(|event| Event::new(event, metadata.clone()))
             .collect::<Vec<_>>();
+        #[cfg(feature = "mpi")]
         let local_count = wrapped_events.len();
         let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
             .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
