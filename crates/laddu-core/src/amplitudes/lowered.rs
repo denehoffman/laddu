@@ -127,6 +127,63 @@ fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
     collect_live_ir_nodes_from_root(ir, ir.root())
 }
 
+fn collect_live_ir_nodes_from_roots(ir: &ExpressionIR, roots: &[usize]) -> Vec<usize> {
+    fn visit(node_index: usize, nodes: &[IrNode], live: &mut [bool]) {
+        if live[node_index] {
+            return;
+        }
+        live[node_index] = true;
+        match nodes[node_index] {
+            IrNode::Constant(_) | IrNode::Amp(_) => {}
+            IrNode::Unary { input, .. } => visit(input, nodes, live),
+            IrNode::Binary { left, right, .. } => {
+                visit(left, nodes, live);
+                visit(right, nodes, live);
+            }
+        }
+    }
+
+    let mut live = vec![false; ir.node_count()];
+    for &root in roots {
+        visit(root, ir.nodes(), &mut live);
+    }
+    live.into_iter()
+        .enumerate()
+        .filter_map(|(index, is_live)| is_live.then_some(index))
+        .collect()
+}
+
+fn collect_live_ir_nodes_from_root_with_zeroed(
+    ir: &ExpressionIR,
+    root: usize,
+    zeroed_nodes: &[bool],
+) -> Vec<usize> {
+    fn visit(node_index: usize, nodes: &[IrNode], live: &mut [bool], zeroed_nodes: &[bool]) {
+        if live[node_index] {
+            return;
+        }
+        live[node_index] = true;
+        if zeroed_nodes.get(node_index).copied().unwrap_or(false) {
+            return;
+        }
+        match nodes[node_index] {
+            IrNode::Constant(_) | IrNode::Amp(_) => {}
+            IrNode::Unary { input, .. } => visit(input, nodes, live, zeroed_nodes),
+            IrNode::Binary { left, right, .. } => {
+                visit(left, nodes, live, zeroed_nodes);
+                visit(right, nodes, live, zeroed_nodes);
+            }
+        }
+    }
+
+    let mut live = vec![false; ir.node_count()];
+    visit(root, ir.nodes(), &mut live, zeroed_nodes);
+    live.into_iter()
+        .enumerate()
+        .filter_map(|(index, is_live)| is_live.then_some(index))
+        .collect()
+}
+
 /// Execution-only program kinds derived from optimized IR.
 ///
 /// These variants classify lowered runtimes by output contract rather than by planning logic.
@@ -558,6 +615,49 @@ impl LoweredExpressionRuntime {
             value_gradient_program,
         ))
     }
+
+    pub(crate) fn from_ir_residual_terms(
+        ir: &ExpressionIR,
+        residual_terms: &[usize],
+    ) -> Result<Self, LoweringError> {
+        let value_program = Some(LoweredProgram::from_ir_residual_terms_value_only(
+            ir,
+            residual_terms,
+        )?);
+        let gradient_program = Some(LoweredProgram::from_ir_residual_terms_gradient_only(
+            ir,
+            residual_terms,
+        )?);
+        let value_gradient_program = Some(LoweredProgram::from_ir_residual_terms_value_gradient(
+            ir,
+            residual_terms,
+        )?);
+        Ok(Self::new(
+            value_program,
+            gradient_program,
+            value_gradient_program,
+        ))
+    }
+
+    pub(crate) fn from_ir_zeroed_value_gradient(
+        ir: &ExpressionIR,
+        zeroed_nodes: &[bool],
+    ) -> Result<Self, LoweringError> {
+        let value_program = Some(LoweredProgram::from_ir_zeroed_value_only(ir, zeroed_nodes)?);
+        let gradient_program = Some(LoweredProgram::from_ir_zeroed_gradient_only(
+            ir,
+            zeroed_nodes,
+        )?);
+        let value_gradient_program = Some(LoweredProgram::from_ir_zeroed_value_gradient(
+            ir,
+            zeroed_nodes,
+        )?);
+        Ok(Self::new(
+            value_program,
+            gradient_program,
+            value_gradient_program,
+        ))
+    }
 }
 
 impl LoweredProgram {
@@ -623,6 +723,148 @@ impl LoweredProgram {
         Self::lower_ir_template_from_root(ir, ir.root())
     }
 
+    fn lower_ir_template_from_root_with_zeroed(
+        ir: &ExpressionIR,
+        root: usize,
+        zeroed_nodes: &[bool],
+    ) -> Result<LoweredProgramTemplate, LoweringError> {
+        if ir.node_count() == 0 {
+            return Err(LoweringError::EmptyIr);
+        }
+
+        let live_nodes = collect_live_ir_nodes_from_root_with_zeroed(ir, root, zeroed_nodes);
+        let mut remap = vec![usize::MAX; ir.node_count()];
+        for (new_index, old_index) in live_nodes.iter().copied().enumerate() {
+            remap[old_index] = new_index;
+        }
+        let instructions = live_nodes
+            .into_iter()
+            .map(|old_index| {
+                if zeroed_nodes.get(old_index).copied().unwrap_or(false) {
+                    LoweredInstruction::Constant {
+                        dst: remap[old_index],
+                        value: Complex64::ZERO,
+                    }
+                } else {
+                    match ir.nodes()[old_index] {
+                        IrNode::Constant(value) => LoweredInstruction::Constant {
+                            dst: remap[old_index],
+                            value,
+                        },
+                        IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
+                            dst: remap[old_index],
+                            amplitude_index,
+                        },
+                        IrNode::Unary { op, input } => LoweredInstruction::Unary {
+                            dst: remap[old_index],
+                            input: remap[input],
+                            op: match op {
+                                IrUnaryOp::Neg => LoweredUnaryOp::Neg,
+                                IrUnaryOp::Real => LoweredUnaryOp::Real,
+                                IrUnaryOp::Imag => LoweredUnaryOp::Imag,
+                                IrUnaryOp::Conj => LoweredUnaryOp::Conj,
+                                IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
+                            },
+                        },
+                        IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
+                            dst: remap[old_index],
+                            left: remap[left],
+                            right: remap[right],
+                            op: match op {
+                                IrBinaryOp::Add => LoweredBinaryOp::Add,
+                                IrBinaryOp::Sub => LoweredBinaryOp::Sub,
+                                IrBinaryOp::Mul => LoweredBinaryOp::Mul,
+                                IrBinaryOp::Div => LoweredBinaryOp::Div,
+                            },
+                        },
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let root_slot = remap[root];
+        let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
+        Ok(LoweredProgramTemplate {
+            instructions,
+            layout,
+        })
+    }
+
+    fn lower_ir_template_from_roots(
+        ir: &ExpressionIR,
+        roots: &[usize],
+    ) -> Result<LoweredProgramTemplate, LoweringError> {
+        if ir.node_count() == 0 || roots.is_empty() {
+            return Err(LoweringError::EmptyIr);
+        }
+
+        let live_nodes = collect_live_ir_nodes_from_roots(ir, roots);
+        let mut remap = vec![usize::MAX; ir.node_count()];
+        for (new_index, old_index) in live_nodes.iter().copied().enumerate() {
+            remap[old_index] = new_index;
+        }
+        let mut instructions = live_nodes
+            .into_iter()
+            .map(|old_index| match ir.nodes()[old_index] {
+                IrNode::Constant(value) => LoweredInstruction::Constant {
+                    dst: remap[old_index],
+                    value,
+                },
+                IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
+                    dst: remap[old_index],
+                    amplitude_index,
+                },
+                IrNode::Unary { op, input } => LoweredInstruction::Unary {
+                    dst: remap[old_index],
+                    input: remap[input],
+                    op: match op {
+                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
+                        IrUnaryOp::Real => LoweredUnaryOp::Real,
+                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
+                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
+                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
+                    },
+                },
+                IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
+                    dst: remap[old_index],
+                    left: remap[left],
+                    right: remap[right],
+                    op: match op {
+                        IrBinaryOp::Add => LoweredBinaryOp::Add,
+                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
+                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
+                        IrBinaryOp::Div => LoweredBinaryOp::Div,
+                    },
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let mut remapped_roots = roots.iter().map(|&root| remap[root]).collect::<Vec<_>>();
+        let combined_root = if remapped_roots.len() == 1 {
+            remapped_roots[0]
+        } else {
+            let mut accumulator = remapped_roots.remove(0);
+            let mut next_dst = instructions.len();
+            for root in remapped_roots {
+                instructions.push(LoweredInstruction::Binary {
+                    dst: next_dst,
+                    left: accumulator,
+                    right: root,
+                    op: LoweredBinaryOp::Add,
+                });
+                accumulator = next_dst;
+                next_dst += 1;
+            }
+            accumulator
+        };
+
+        let (instructions, layout) = allocate_reused_slots(&instructions, combined_root);
+        Ok(LoweredProgramTemplate {
+            instructions,
+            layout,
+        })
+    }
+
     fn from_template(kind: LoweredProgramKind, template: &LoweredProgramTemplate) -> Self {
         Self::new(kind, template.instructions.clone(), template.layout.clone())
     }
@@ -666,6 +908,60 @@ impl LoweredProgram {
         root: usize,
     ) -> Result<Self, LoweringError> {
         let template = Self::lower_ir_template_from_root(ir, root)?;
+        Ok(Self::from_template(
+            LoweredProgramKind::ValueGradient,
+            &template,
+        ))
+    }
+
+    pub(crate) fn from_ir_residual_terms_value_only(
+        ir: &ExpressionIR,
+        residual_terms: &[usize],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_roots(ir, residual_terms)?;
+        Ok(Self::from_template(LoweredProgramKind::Value, &template))
+    }
+
+    pub(crate) fn from_ir_residual_terms_gradient_only(
+        ir: &ExpressionIR,
+        residual_terms: &[usize],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_roots(ir, residual_terms)?;
+        Ok(Self::from_template(LoweredProgramKind::Gradient, &template))
+    }
+
+    pub(crate) fn from_ir_residual_terms_value_gradient(
+        ir: &ExpressionIR,
+        residual_terms: &[usize],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_roots(ir, residual_terms)?;
+        Ok(Self::from_template(
+            LoweredProgramKind::ValueGradient,
+            &template,
+        ))
+    }
+
+    pub(crate) fn from_ir_zeroed_value_only(
+        ir: &ExpressionIR,
+        zeroed_nodes: &[bool],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root_with_zeroed(ir, ir.root(), zeroed_nodes)?;
+        Ok(Self::from_template(LoweredProgramKind::Value, &template))
+    }
+
+    pub(crate) fn from_ir_zeroed_gradient_only(
+        ir: &ExpressionIR,
+        zeroed_nodes: &[bool],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root_with_zeroed(ir, ir.root(), zeroed_nodes)?;
+        Ok(Self::from_template(LoweredProgramKind::Gradient, &template))
+    }
+
+    pub(crate) fn from_ir_zeroed_value_gradient(
+        ir: &ExpressionIR,
+        zeroed_nodes: &[bool],
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root_with_zeroed(ir, ir.root(), zeroed_nodes)?;
         Ok(Self::from_template(
             LoweredProgramKind::ValueGradient,
             &template,
