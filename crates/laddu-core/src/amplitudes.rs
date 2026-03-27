@@ -4661,36 +4661,32 @@ mod tests {
     }
 
     #[cfg(feature = "expression-ir")]
-    fn assert_runtime_backends_match_fixture(kind: DeterministicFixtureKind) {
-        let fixture = make_deterministic_fixture(kind);
-        let evaluator = fixture
-            .expression
-            .load(&fixture.dataset)
-            .expect("fixture evaluator should load");
-        let resources = evaluator.resources.read();
-        let parameters = Parameters::new(&fixture.parameters, &resources.constants);
-        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
-        evaluator.fill_amplitude_values(
-            &mut amplitude_values,
-            resources.active_indices(),
-            &parameters,
-            &resources.caches[0],
-        );
-        let mut active_mask = vec![false; evaluator.amplitudes.len()];
-        for &index in resources.active_indices() {
-            active_mask[index] = true;
-        }
-        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
-            .map(|_| DVector::zeros(parameters.len()))
-            .collect::<Vec<_>>();
-        evaluator.fill_amplitude_gradients(
-            &mut amplitude_gradients,
-            &active_mask,
-            &parameters,
-            &resources.caches[0],
-        );
-        let grad_dim = parameters.len();
-        drop(resources);
+    fn assert_runtime_backends_match_evaluator(evaluator: &Evaluator, parameters: &[f64]) {
+        let (amplitude_values, amplitude_gradients, grad_dim) = {
+            let resources = evaluator.resources.read();
+            let parameters = Parameters::new(parameters, &resources.constants);
+            let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+            evaluator.fill_amplitude_values(
+                &mut amplitude_values,
+                resources.active_indices(),
+                &parameters,
+                &resources.caches[0],
+            );
+            let mut active_mask = vec![false; evaluator.amplitudes.len()];
+            for &index in resources.active_indices() {
+                active_mask[index] = true;
+            }
+            let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect::<Vec<_>>();
+            evaluator.fill_amplitude_gradients(
+                &mut amplitude_gradients,
+                &active_mask,
+                &parameters,
+                &resources.caches[0],
+            );
+            (amplitude_values, amplitude_gradients, parameters.len())
+        };
 
         let backends = [
             ExpressionRuntimeBackend::LegacyProgram,
@@ -4705,8 +4701,8 @@ mod tests {
         for backend in backends {
             let mut backend_evaluator = evaluator.clone();
             backend_evaluator.set_expression_runtime_backend(backend);
-            local_values.push(backend_evaluator.evaluate_local(&fixture.parameters));
-            local_gradients.push(backend_evaluator.evaluate_gradient_local(&fixture.parameters));
+            local_values.push(backend_evaluator.evaluate_local(parameters));
+            local_gradients.push(backend_evaluator.evaluate_gradient_local(parameters));
 
             let slot_count = backend_evaluator.expression_slot_count();
             let mut value_scratch = vec![Complex64::ZERO; slot_count];
@@ -4751,11 +4747,55 @@ mod tests {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn assert_runtime_backends_match_fixture(kind: DeterministicFixtureKind) {
+        let fixture = make_deterministic_fixture(kind);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+    }
+
+    #[cfg(feature = "expression-ir")]
     #[test]
     fn test_expression_runtime_backends_match_representative_fixture_models() {
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::Separable);
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::Partial);
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::NonSeparable);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_runtime_backends_match_activation_heavy_workflow() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.isolate_many(&["p"]);
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.activate_many(&["c", "m"]);
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.deactivate_many(&["c"]);
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.activate_many(&["c"]);
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.isolate_many(&["m"]);
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        evaluator.activate_all();
+        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+
+        let metrics = evaluator.expression_specialization_metrics();
+        assert!(metrics.cache_hits >= 2);
+        assert!(metrics.cache_misses >= 3);
     }
 
     #[cfg(feature = "expression-ir")]

@@ -209,6 +209,15 @@ fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str]
     }
 }
 
+#[cfg(feature = "expression-ir")]
+fn activation_churn_deactivate_names(kind: ScenarioKind) -> &'static [&'static str] {
+    match kind {
+        ScenarioKind::Separable => &["sep_c2"],
+        ScenarioKind::Partial => &["partial_c"],
+        ScenarioKind::NonSeparable => &["nonsep_m2"],
+    }
+}
+
 fn eventwise_weighted_value_sum(evaluator: &Evaluator, parameters: &[f64]) -> f64 {
     evaluator
         .evaluate_local(parameters)
@@ -453,6 +462,7 @@ fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
 
     for case in &cases {
         let isolate_names = activation_churn_isolate_names(case.kind);
+        let deactivate_names = activation_churn_deactivate_names(case.kind);
         group.throughput(Throughput::Elements(case.n_events as u64));
         group.bench_with_input(
             BenchmarkId::new(
@@ -493,6 +503,32 @@ fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
                         evaluator
                     },
                     |evaluator| {
+                        evaluator.activate_all();
+                        black_box(evaluator.expression_specialization_metrics())
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "workflow/repeated_activation_cycle",
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            case,
+            |b, case| {
+                b.iter_batched(
+                    || {
+                        let evaluator = build_scenario(&dataset, case.kind).evaluator;
+                        evaluator.reset_expression_specialization_metrics();
+                        evaluator
+                    },
+                    |evaluator| {
+                        evaluator.isolate_many(isolate_names);
+                        evaluator.activate_all();
+                        evaluator.deactivate_many(deactivate_names);
+                        evaluator.activate_many(deactivate_names);
+                        evaluator.isolate_many(isolate_names);
                         evaluator.activate_all();
                         black_box(evaluator.expression_specialization_metrics())
                     },
