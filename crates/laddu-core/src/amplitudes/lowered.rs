@@ -59,6 +59,180 @@ fn remap_instruction_slots(
     }
 }
 
+fn detect_norm_sqr_operand(
+    instructions: &[Option<LoweredInstruction>],
+    left: usize,
+    right: usize,
+) -> Option<usize> {
+    match (&instructions[left], &instructions[right]) {
+        (
+            Some(LoweredInstruction::Unary {
+                op: LoweredUnaryOp::Conj,
+                input,
+                ..
+            }),
+            _,
+        ) if *input == right => Some(right),
+        (
+            _,
+            Some(LoweredInstruction::Unary {
+                op: LoweredUnaryOp::Conj,
+                input,
+                ..
+            }),
+        ) if *input == left => Some(left),
+        _ => None,
+    }
+}
+
+fn optimize_instruction_sequence(
+    instructions: &[LoweredInstruction],
+    root_dst: usize,
+) -> (Vec<LoweredInstruction>, usize) {
+    let mut kept = vec![None; instructions.len()];
+    let mut constants = vec![None; instructions.len()];
+
+    for instruction in instructions {
+        match *instruction {
+            LoweredInstruction::Constant { dst, value } => {
+                kept[dst] = Some(LoweredInstruction::Constant { dst, value });
+                constants[dst] = Some(value);
+            }
+            LoweredInstruction::LoadAmplitude {
+                dst,
+                amplitude_index,
+            } => {
+                kept[dst] = Some(LoweredInstruction::LoadAmplitude {
+                    dst,
+                    amplitude_index,
+                });
+                constants[dst] = None;
+            }
+            LoweredInstruction::Unary { dst, input, op } => {
+                if let Some(value) = constants[input] {
+                    let folded = apply_unary_op(op, value);
+                    kept[dst] = Some(LoweredInstruction::Constant { dst, value: folded });
+                    constants[dst] = Some(folded);
+                    continue;
+                }
+
+                let rewritten = match (op, kept[input]) {
+                    (
+                        LoweredUnaryOp::Imag,
+                        Some(LoweredInstruction::Unary {
+                            op: LoweredUnaryOp::Real | LoweredUnaryOp::NormSqr,
+                            ..
+                        }),
+                    ) => {
+                        kept[dst] = Some(LoweredInstruction::Constant {
+                            dst,
+                            value: Complex64::ZERO,
+                        });
+                        constants[dst] = Some(Complex64::ZERO);
+                        continue;
+                    }
+                    (
+                        LoweredUnaryOp::Real,
+                        Some(LoweredInstruction::Binary {
+                            op: LoweredBinaryOp::Mul,
+                            left,
+                            right,
+                            ..
+                        }),
+                    ) => detect_norm_sqr_operand(&kept, left, right)
+                        .map(|input| LoweredInstruction::Unary {
+                            dst,
+                            input,
+                            op: LoweredUnaryOp::NormSqr,
+                        })
+                        .or(Some(LoweredInstruction::Unary { dst, input, op })),
+                    _ => Some(LoweredInstruction::Unary { dst, input, op }),
+                };
+
+                if let Some(instruction) = rewritten {
+                    kept[dst] = Some(instruction);
+                    constants[dst] = None;
+                }
+            }
+            LoweredInstruction::Binary {
+                dst,
+                left,
+                right,
+                op,
+            } => {
+                if let (Some(left_value), Some(right_value)) = (constants[left], constants[right]) {
+                    let folded = apply_binary_op(op, left_value, right_value);
+                    kept[dst] = Some(LoweredInstruction::Constant { dst, value: folded });
+                    constants[dst] = Some(folded);
+                    continue;
+                }
+
+                let rewritten = match op {
+                    LoweredBinaryOp::Sub if left == right => {
+                        kept[dst] = Some(LoweredInstruction::Constant {
+                            dst,
+                            value: Complex64::ZERO,
+                        });
+                        constants[dst] = Some(Complex64::ZERO);
+                        continue;
+                    }
+                    LoweredBinaryOp::Mul
+                        if constants[left] == Some(Complex64::ZERO)
+                            || constants[right] == Some(Complex64::ZERO) =>
+                    {
+                        kept[dst] = Some(LoweredInstruction::Constant {
+                            dst,
+                            value: Complex64::ZERO,
+                        });
+                        constants[dst] = Some(Complex64::ZERO);
+                        None
+                    }
+                    LoweredBinaryOp::Div if constants[left] == Some(Complex64::ZERO) => {
+                        kept[dst] = Some(LoweredInstruction::Constant {
+                            dst,
+                            value: Complex64::ZERO,
+                        });
+                        constants[dst] = Some(Complex64::ZERO);
+                        None
+                    }
+                    _ => Some(LoweredInstruction::Binary {
+                        dst,
+                        left,
+                        right,
+                        op,
+                    }),
+                };
+
+                if let Some(instruction) = rewritten {
+                    kept[dst] = Some(instruction);
+                    constants[dst] = None;
+                }
+            }
+        }
+    }
+
+    let mut remap = vec![usize::MAX; kept.len()];
+    let mut compact_instructions = Vec::new();
+    for (old_dst, instruction) in kept.into_iter().enumerate() {
+        if instruction.is_some() {
+            remap[old_dst] = compact_instructions.len();
+            compact_instructions.push(instruction.expect("checked is_some above"));
+        }
+    }
+    let compact_root = remap[root_dst];
+    let compact_instructions = compact_instructions
+        .into_iter()
+        .map(|instruction| {
+            let dst = remap[instruction_destination(&instruction)];
+            let inputs =
+                instruction_inputs(&instruction).map(|slot| slot.map(|index| remap[index]));
+            remap_instruction_slots(&instruction, dst, inputs)
+        })
+        .collect::<Vec<_>>();
+
+    (compact_instructions, compact_root)
+}
+
 fn allocate_reused_slots(
     instructions: &[LoweredInstruction],
     root_dst: usize,
@@ -947,6 +1121,7 @@ impl LoweredProgram {
             .collect::<Vec<_>>();
 
         let root_slot = remap[root];
+        let (instructions, root_slot) = optimize_instruction_sequence(&instructions, root_slot);
         let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
 
         Ok(LoweredProgramTemplate {
@@ -1019,6 +1194,7 @@ impl LoweredProgram {
             .collect::<Vec<_>>();
 
         let root_slot = remap[root];
+        let (instructions, root_slot) = optimize_instruction_sequence(&instructions, root_slot);
         let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
         Ok(LoweredProgramTemplate {
             instructions,
@@ -1094,7 +1270,8 @@ impl LoweredProgram {
             accumulator
         };
 
-        let (instructions, layout) = allocate_reused_slots(&instructions, combined_root);
+        let (instructions, root_slot) = optimize_instruction_sequence(&instructions, combined_root);
+        let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
         Ok(LoweredProgramTemplate {
             instructions,
             layout,
@@ -1597,6 +1774,69 @@ mod tests {
         let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
 
         assert!(program.instructions().len() > program.scratch_slots());
+    }
+
+    #[test]
+    fn peephole_folds_constant_only_subgraphs() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Add(
+                Box::new(ExpressionNode::Neg(Box::new(ExpressionNode::One))),
+                Box::new(ExpressionNode::One),
+            ),
+            &[],
+            &[],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert_eq!(
+            *program.instructions().last().unwrap(),
+            LoweredInstruction::Constant {
+                dst: program.root_slot(),
+                value: Complex64::ZERO,
+            }
+        );
+    }
+
+    #[test]
+    fn peephole_folds_zero_imaginary_projection() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Imag(Box::new(ExpressionNode::Real(Box::new(
+                ExpressionNode::Amp(0),
+            )))),
+            &[true],
+            &[DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+        let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
+
+        assert_eq!(
+            program.evaluate_into(&[Complex64::new(2.0, -3.0)], &mut scratch),
+            Complex64::ZERO
+        );
+    }
+
+    #[test]
+    fn peephole_rewrites_real_conj_mul_to_norm_sqr() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Real(Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(0)))),
+                Box::new(ExpressionNode::Amp(0)),
+            ))),
+            &[true],
+            &[DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert!(matches!(
+            program.instructions().last(),
+            Some(LoweredInstruction::Unary {
+                op: LoweredUnaryOp::NormSqr,
+                ..
+            })
+        ));
     }
 
     #[test]
