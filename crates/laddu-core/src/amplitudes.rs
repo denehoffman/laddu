@@ -4618,6 +4618,50 @@ mod tests {
         assert_mixed_normalization_components_match_combined_path(&partial);
     }
 
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_non_separable_fixture_normalization_components_stay_residual_only() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let resources = evaluator.resources.read();
+        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        assert!(state.values.is_empty());
+
+        let (residual_value_sum, cached_value_sum) =
+            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        assert_relative_eq!(
+            cached_value_sum,
+            0.0,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL
+        );
+        assert_relative_eq!(
+            residual_value_sum,
+            evaluator.evaluate_weighted_value_sum_local(&fixture.parameters),
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let (residual_gradient_sum, cached_gradient_sum) =
+            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
+        assert!(cached_gradient_sum
+            .iter()
+            .all(|value| value.abs() <= DETERMINISTIC_STRICT_ABS_TOL));
+        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        for (residual_item, combined_item) in
+            residual_gradient_sum.iter().zip(combined_gradient.iter())
+        {
+            assert_relative_eq!(
+                *residual_item,
+                *combined_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
     #[test]
     fn test_batch_evaluation() {
         let expr = TestAmplitude::new("test", parameter("real"), parameter("imag")).unwrap();
