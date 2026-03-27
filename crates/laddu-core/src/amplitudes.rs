@@ -1258,6 +1258,9 @@ impl Expression {
             parameter_manager.n_free_parameters(),
         );
         #[cfg(feature = "expression-ir")]
+        let lowered_runtime =
+            lowered::LoweredExpressionRuntime::from_ir_value_only(&expression_ir).ok();
+        #[cfg(feature = "expression-ir")]
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         #[cfg(feature = "expression-ir")]
         let cached_integral_key =
@@ -1290,7 +1293,7 @@ impl Expression {
             },
             #[cfg(feature = "expression-ir")]
             runtime_state: ExpressionRuntimeState {
-                lowered_runtime: Arc::new(RwLock::new(None)),
+                lowered_runtime: Arc::new(RwLock::new(lowered_runtime)),
             },
             registry: self.registry.clone(),
             parameter_manager,
@@ -4049,13 +4052,16 @@ mod tests {
 
     #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_expression_ir_load_initializes_without_lowered_runtime() {
+    fn test_expression_ir_load_initializes_with_lowered_value_runtime() {
         let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai"))
             .unwrap()
             .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        assert!(evaluator.lowered_runtime().is_none());
+        let lowered_runtime = evaluator.lowered_runtime().unwrap();
+        assert!(lowered_runtime.value_program().is_some());
+        assert!(lowered_runtime.gradient_program().is_none());
+        assert!(lowered_runtime.value_gradient_program().is_none());
     }
 
     #[cfg(feature = "expression-ir")]

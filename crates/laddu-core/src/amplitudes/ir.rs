@@ -34,7 +34,7 @@ impl DependenceClass {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum IrUnaryOp {
+pub(super) enum IrUnaryOp {
     Neg,
     Real,
     Imag,
@@ -43,7 +43,7 @@ enum IrUnaryOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum IrBinaryOp {
+pub(super) enum IrBinaryOp {
     Add,
     Sub,
     Mul,
@@ -51,7 +51,7 @@ enum IrBinaryOp {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum IrNode {
+pub(super) enum IrNode {
     Constant(Complex64),
     Amp(usize),
     Unary {
@@ -335,6 +335,14 @@ impl ExpressionIR {
 
     pub(super) fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub(super) fn nodes(&self) -> &[IrNode] {
+        &self.nodes
+    }
+
+    pub(super) fn root(&self) -> IrValueId {
+        self.root
     }
 
     pub(super) fn root_dependence(&self) -> DependenceClass {

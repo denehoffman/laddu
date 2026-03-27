@@ -1,4 +1,10 @@
+use super::ir::{ExpressionIR, IrBinaryOp, IrNode, IrUnaryOp};
 use num::complex::Complex64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LoweringError {
+    EmptyIr,
+}
 
 /// Execution-only program kinds derived from optimized IR.
 ///
@@ -119,6 +125,56 @@ impl LoweredProgram {
     pub(crate) fn root_slot(&self) -> usize {
         self.layout.root_slot()
     }
+
+    pub(crate) fn evaluate_into(
+        &self,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        debug_assert!(scratch.len() >= self.scratch_slots());
+        for instruction in &self.instructions {
+            match *instruction {
+                LoweredInstruction::Constant { dst, value } => {
+                    scratch[dst] = value;
+                }
+                LoweredInstruction::LoadAmplitude {
+                    dst,
+                    amplitude_index,
+                } => {
+                    scratch[dst] = amplitude_values
+                        .get(amplitude_index)
+                        .copied()
+                        .unwrap_or_default();
+                }
+                LoweredInstruction::Unary { dst, input, op } => {
+                    let value = scratch[input];
+                    scratch[dst] = match op {
+                        LoweredUnaryOp::Neg => -value,
+                        LoweredUnaryOp::Real => Complex64::new(value.re, 0.0),
+                        LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
+                        LoweredUnaryOp::Conj => value.conj(),
+                        LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+                    };
+                }
+                LoweredInstruction::Binary {
+                    dst,
+                    left,
+                    right,
+                    op,
+                } => {
+                    let left_value = scratch[left];
+                    let right_value = scratch[right];
+                    scratch[dst] = match op {
+                        LoweredBinaryOp::Add => left_value + right_value,
+                        LoweredBinaryOp::Sub => left_value - right_value,
+                        LoweredBinaryOp::Mul => left_value * right_value,
+                        LoweredBinaryOp::Div => left_value / right_value,
+                    };
+                }
+            }
+        }
+        scratch[self.root_slot()]
+    }
 }
 
 /// Collection of lowered execution programs derived from the same specialized IR instance.
@@ -156,6 +212,60 @@ impl LoweredExpressionRuntime {
     pub(crate) fn value_gradient_program(&self) -> Option<&LoweredProgram> {
         self.value_gradient_program.as_ref()
     }
+
+    pub(crate) fn from_ir_value_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
+        let value_program = Some(LoweredProgram::from_ir_value_only(ir)?);
+        Ok(Self::new(value_program, None, None))
+    }
+}
+
+impl LoweredProgram {
+    pub(crate) fn from_ir_value_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
+        if ir.node_count() == 0 {
+            return Err(LoweringError::EmptyIr);
+        }
+
+        let instructions = ir
+            .nodes()
+            .iter()
+            .enumerate()
+            .map(|(dst, node)| match *node {
+                IrNode::Constant(value) => LoweredInstruction::Constant { dst, value },
+                IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
+                    dst,
+                    amplitude_index,
+                },
+                IrNode::Unary { op, input } => LoweredInstruction::Unary {
+                    dst,
+                    input,
+                    op: match op {
+                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
+                        IrUnaryOp::Real => LoweredUnaryOp::Real,
+                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
+                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
+                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
+                    },
+                },
+                IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
+                    dst,
+                    left,
+                    right,
+                    op: match op {
+                        IrBinaryOp::Add => LoweredBinaryOp::Add,
+                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
+                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
+                        IrBinaryOp::Div => LoweredBinaryOp::Div,
+                    },
+                },
+            })
+            .collect();
+
+        Ok(Self::new(
+            LoweredProgramKind::Value,
+            instructions,
+            LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +274,8 @@ mod tests {
         LoweredBinaryOp, LoweredExpressionRuntime, LoweredInstruction, LoweredProgram,
         LoweredProgramKind, LoweredRuntimeLayout,
     };
+    use crate::amplitudes::ir::{compile_expression_ir, DependenceClass};
+    use crate::amplitudes::ExpressionNode;
     use num::complex::Complex64;
 
     #[test]
@@ -222,6 +334,60 @@ mod tests {
 
         assert_eq!(runtime.value_program(), Some(&value_program));
         assert_eq!(runtime.gradient_program(), Some(&gradient_program));
+        assert!(runtime.value_gradient_program().is_none());
+    }
+
+    #[test]
+    fn lowering_from_ir_value_only_preserves_program_shape() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::NormSqr(Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ))),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert_eq!(program.kind(), LoweredProgramKind::Value);
+        assert_eq!(program.scratch_slots(), ir.node_count());
+        assert_eq!(program.root_slot(), ir.root());
+        assert_eq!(program.instructions().len(), ir.node_count());
+    }
+
+    #[test]
+    fn lowered_value_program_matches_ir_evaluation() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Add(
+                Box::new(ExpressionNode::NormSqr(Box::new(ExpressionNode::Amp(0)))),
+                Box::new(ExpressionNode::Div(
+                    Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+                    Box::new(ExpressionNode::One),
+                )),
+            ),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+        let amplitude_values = [Complex64::new(1.5, -0.25), Complex64::new(-2.0, 0.5)];
+        let mut ir_scratch = vec![Complex64::ZERO; ir.node_count()];
+        let mut lowered_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+
+        let ir_value = ir.evaluate_into(&amplitude_values, &mut ir_scratch);
+        let lowered_value = program.evaluate_into(&amplitude_values, &mut lowered_scratch);
+
+        assert_eq!(lowered_value, ir_value);
+    }
+
+    #[test]
+    fn lowered_runtime_from_ir_populates_value_program_only() {
+        let ir = compile_expression_ir(&ExpressionNode::Amp(0), &[true], &[DependenceClass::Mixed]);
+
+        let runtime = LoweredExpressionRuntime::from_ir_value_only(&ir).unwrap();
+
+        assert!(runtime.value_program().is_some());
+        assert!(runtime.gradient_program().is_none());
         assert!(runtime.value_gradient_program().is_none());
     }
 }
