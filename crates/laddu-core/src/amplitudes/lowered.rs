@@ -465,6 +465,18 @@ pub(crate) enum LoweredUnaryOp {
     NormSqr,
 }
 
+impl LoweredUnaryOp {
+    fn is_real_output(self) -> bool {
+        matches!(
+            self,
+            LoweredUnaryOp::Real
+                | LoweredUnaryOp::Imag
+                | LoweredUnaryOp::NormSqr
+                | LoweredUnaryOp::Identity
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoweredBinaryOp {
     Add,
@@ -504,6 +516,23 @@ fn apply_unary_op(op: LoweredUnaryOp, value: Complex64) -> Complex64 {
         LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
         LoweredUnaryOp::Conj => value.conj(),
         LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+    }
+}
+
+fn apply_unary_op_real(op: LoweredUnaryOp, value: Complex64) -> Option<f64> {
+    match op {
+        LoweredUnaryOp::Identity => {
+            if value.im == 0.0 {
+                Some(value.re)
+            } else {
+                None
+            }
+        }
+        LoweredUnaryOp::Real => Some(value.re),
+        LoweredUnaryOp::Imag => Some(value.im),
+        LoweredUnaryOp::NormSqr => Some(value.norm_sqr()),
+        LoweredUnaryOp::Neg => None,
+        LoweredUnaryOp::Conj => None,
     }
 }
 
@@ -786,7 +815,12 @@ impl LoweredProgram {
                         .unwrap_or_default();
                 }
                 LoweredInstruction::Unary { dst, input, op } => {
-                    scratch[dst] = apply_unary_op(op, scratch[input]);
+                    scratch[dst] = if let Some(real_value) = apply_unary_op_real(op, scratch[input])
+                    {
+                        Complex64::new(real_value, 0.0)
+                    } else {
+                        apply_unary_op(op, scratch[input])
+                    };
                 }
                 LoweredInstruction::Binary {
                     dst,
@@ -870,7 +904,11 @@ impl LoweredProgram {
                 }
                 LoweredInstruction::Unary { dst, input, op } => {
                     let value = value_scratch[input];
-                    value_scratch[dst] = apply_unary_op(op, value);
+                    value_scratch[dst] = if let Some(real_value) = apply_unary_op_real(op, value) {
+                        Complex64::new(real_value, 0.0)
+                    } else {
+                        apply_unary_op(op, value)
+                    };
                     let (input_grad, dst_grad) =
                         gradient_slot_pair_mut(gradient_scratch, input, dst);
                     apply_unary_gradient_op(
@@ -981,7 +1019,11 @@ impl LoweredProgram {
                 }
                 LoweredInstruction::Unary { dst, input, op } => {
                     let value = value_scratch[input];
-                    value_scratch[dst] = apply_unary_op(op, value);
+                    value_scratch[dst] = if let Some(real_value) = apply_unary_op_real(op, value) {
+                        Complex64::new(real_value, 0.0)
+                    } else {
+                        apply_unary_op(op, value)
+                    };
                     let (input_grad, dst_grad) =
                         flat_gradient_slot_pair_mut(gradient_scratch, grad_dim, input, dst);
                     apply_unary_gradient_op(op, value, input_grad, dst_grad);
@@ -1482,9 +1524,9 @@ impl LoweredProgram {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_binary_op, apply_unary_op, LoweredBinaryOp, LoweredExpressionRuntime,
-        LoweredFactorRuntime, LoweredInstruction, LoweredProgram, LoweredProgramKind,
-        LoweredRuntimeLayout, LoweredUnaryOp,
+        apply_binary_op, apply_unary_op, apply_unary_op_real, LoweredBinaryOp,
+        LoweredExpressionRuntime, LoweredFactorRuntime, LoweredInstruction, LoweredProgram,
+        LoweredProgramKind, LoweredRuntimeLayout, LoweredUnaryOp,
     };
     use crate::amplitudes::ir::{
         compile_expression_ir, DependenceClass, ExpressionIR, IrBinaryOp, IrNode, IrUnaryOp,
@@ -1541,6 +1583,22 @@ mod tests {
             apply_unary_op(LoweredUnaryOp::NormSqr, value),
             Complex64::new(value.norm_sqr(), 0.0)
         );
+        assert_eq!(
+            apply_unary_op_real(LoweredUnaryOp::Real, value),
+            Some(value.re)
+        );
+        assert_eq!(
+            apply_unary_op_real(LoweredUnaryOp::Imag, value),
+            Some(value.im)
+        );
+        assert_eq!(
+            apply_unary_op_real(LoweredUnaryOp::NormSqr, value),
+            Some(value.norm_sqr())
+        );
+        assert_eq!(apply_unary_op_real(LoweredUnaryOp::Conj, value), None);
+        assert!(LoweredUnaryOp::Identity.is_real_output());
+        assert!(LoweredUnaryOp::NormSqr.is_real_output());
+        assert!(!LoweredUnaryOp::Conj.is_real_output());
 
         assert_eq!(
             apply_binary_op(LoweredBinaryOp::Add, value, other),
@@ -1558,6 +1616,31 @@ mod tests {
             apply_binary_op(LoweredBinaryOp::Div, value, other),
             value / other
         );
+    }
+
+    #[test]
+    fn lowered_value_execution_keeps_real_unary_outputs_real() {
+        let program = LoweredProgram::new(
+            LoweredProgramKind::Value,
+            vec![
+                LoweredInstruction::LoadAmplitude {
+                    dst: 0,
+                    amplitude_index: 0,
+                },
+                LoweredInstruction::Unary {
+                    dst: 1,
+                    input: 0,
+                    op: LoweredUnaryOp::Real,
+                },
+            ],
+            LoweredRuntimeLayout::new(2, 1),
+        );
+        let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
+
+        let result = program.evaluate_into(&[Complex64::new(2.0, -3.0)], &mut scratch);
+
+        assert_eq!(result, Complex64::new(2.0, 0.0));
+        assert_eq!(scratch[program.root_slot()].im, 0.0);
     }
 
     #[test]
