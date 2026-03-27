@@ -130,16 +130,24 @@ struct CachedIntegralCacheState {
     key: CachedIntegralCacheKey,
     expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
+    execution_sets: ir::NormalizationExecutionSets,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug)]
+struct LoweredArtifactCacheState {
+    parameter_node_indices: Vec<usize>,
+    mul_node_indices: Vec<usize>,
     lowered_parameter_factors: Vec<Option<lowered::LoweredFactorRuntime>>,
     residual_runtime: Option<lowered::LoweredExpressionRuntime>,
-    execution_sets: ir::NormalizationExecutionSets,
+    lowered_runtime: Option<lowered::LoweredExpressionRuntime>,
 }
 
 #[cfg(feature = "expression-ir")]
 #[derive(Clone)]
 struct ExpressionSpecializationState {
     cached_integrals: CachedIntegralCacheState,
-    lowered_runtime: Option<lowered::LoweredExpressionRuntime>,
+    lowered_artifacts: Arc<LoweredArtifactCacheState>,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -172,6 +180,10 @@ pub struct ExpressionCompileMetrics {
     pub specialization_cached_integrals_nanos: u64,
     /// Accumulated nanoseconds spent lowering specialized runtimes after load.
     pub specialization_lowering_nanos: u64,
+    /// Number of specialization rebuilds that reused cached lowered artifacts.
+    pub specialization_lowering_cache_hits: usize,
+    /// Number of specialization rebuilds that had to lower fresh artifacts.
+    pub specialization_lowering_cache_misses: usize,
     /// Accumulated nanoseconds spent restoring specializations from cache.
     pub specialization_cache_restore_nanos: u64,
 }
@@ -1313,8 +1325,10 @@ impl Expression {
         #[cfg(feature = "expression-ir")]
         let lowering_start = Instant::now();
         #[cfg(feature = "expression-ir")]
-        let (lowered_parameter_factors, residual_runtime, lowered_runtime) =
-            Evaluator::lower_expression_runtime_artifacts(&expression_ir, &cached_integrals);
+        let lowered_artifacts = Arc::new(Evaluator::lower_expression_runtime_artifacts(
+            &expression_ir,
+            &cached_integrals,
+        ));
         #[cfg(feature = "expression-ir")]
         let initial_lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
         #[cfg(feature = "expression-ir")]
@@ -1327,17 +1341,18 @@ impl Expression {
             key: cached_integral_key.clone(),
             expression_ir,
             values: cached_integrals,
-            lowered_parameter_factors,
-            residual_runtime,
             execution_sets,
         };
         #[cfg(feature = "expression-ir")]
         let specialization_state = ExpressionSpecializationState {
             cached_integrals: cached_integral_state.clone(),
-            lowered_runtime: lowered_runtime.clone(),
+            lowered_artifacts: lowered_artifacts.clone(),
         };
         #[cfg(feature = "expression-ir")]
         let specialization_cache = HashMap::from([(cached_integral_key, specialization_state)]);
+        #[cfg(feature = "expression-ir")]
+        let lowered_artifact_cache =
+            HashMap::from([(resources.active.clone(), lowered_artifacts.clone())]);
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
@@ -1363,16 +1378,19 @@ impl Expression {
                     cache_hits: 0,
                     cache_misses: 1,
                 })),
+                lowered_artifact_cache: Arc::new(RwLock::new(lowered_artifact_cache)),
+                active_lowered_artifacts: Arc::new(RwLock::new(Some(lowered_artifacts.clone()))),
                 compile_metrics: Arc::new(RwLock::new(ExpressionCompileMetrics {
                     initial_ir_compile_nanos,
                     initial_cached_integrals_nanos,
                     initial_lowering_nanos,
+                    specialization_lowering_cache_misses: 1,
                     ..Default::default()
                 })),
             },
             #[cfg(feature = "expression-ir")]
             runtime_state: ExpressionRuntimeState {
-                lowered_runtime: Arc::new(RwLock::new(lowered_runtime)),
+                lowered_runtime: Arc::new(RwLock::new(lowered_artifacts.lowered_runtime.clone())),
             },
             registry: self.registry.clone(),
             parameter_manager,
@@ -1515,6 +1533,8 @@ struct ExpressionIrPlanningState {
     specialization_cache:
         Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
     specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
+    lowered_artifact_cache: Arc<RwLock<HashMap<Vec<bool>, Arc<LoweredArtifactCacheState>>>>,
+    active_lowered_artifacts: Arc<RwLock<Option<Arc<LoweredArtifactCacheState>>>>,
     compile_metrics: Arc<RwLock<ExpressionCompileMetrics>>,
 }
 
@@ -1585,6 +1605,8 @@ impl Evaluator {
         metrics.specialization_ir_compile_nanos = 0;
         metrics.specialization_cached_integrals_nanos = 0;
         metrics.specialization_lowering_nanos = 0;
+        metrics.specialization_lowering_cache_hits = 0;
+        metrics.specialization_lowering_cache_misses = 0;
         metrics.specialization_cache_restore_nanos = 0;
     }
 
@@ -1602,6 +1624,11 @@ impl Evaluator {
     #[allow(dead_code)]
     fn lowered_runtime(&self) -> Option<lowered::LoweredExpressionRuntime> {
         self.runtime_state.lowered_runtime.read().clone()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn active_lowered_artifacts(&self) -> Option<Arc<LoweredArtifactCacheState>> {
+        self.ir_planning.active_lowered_artifacts.read().clone()
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1701,25 +1728,60 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
+    #[cfg(test)]
+    fn lowered_artifact_cache_len(&self) -> usize {
+        self.ir_planning.lowered_artifact_cache.read().len()
+    }
+
+    #[cfg(feature = "expression-ir")]
     fn install_expression_specialization(&self, specialization: &ExpressionSpecializationState) {
         *self.ir_planning.cached_integrals.write() = Some(specialization.cached_integrals.clone());
-        *self.runtime_state.lowered_runtime.write() = specialization.lowered_runtime.clone();
+        *self.ir_planning.active_lowered_artifacts.write() =
+            Some(specialization.lowered_artifacts.clone());
+        *self.runtime_state.lowered_runtime.write() =
+            specialization.lowered_artifacts.lowered_runtime.clone();
     }
 
     #[cfg(feature = "expression-ir")]
     fn lower_expression_runtime_artifacts(
         expression_ir: &ir::ExpressionIR,
         values: &[PrecomputedCachedIntegral],
-    ) -> (
-        Vec<Option<lowered::LoweredFactorRuntime>>,
-        Option<lowered::LoweredExpressionRuntime>,
-        Option<lowered::LoweredExpressionRuntime>,
-    ) {
+    ) -> LoweredArtifactCacheState {
+        let parameter_node_indices = values
+            .iter()
+            .map(|value| value.parameter_node_index)
+            .collect();
+        let mul_node_indices = values.iter().map(|value| value.mul_node_index).collect();
         let lowered_parameter_factors = Self::lower_cached_parameter_factors(expression_ir);
         let residual_runtime = Self::lower_residual_runtime(expression_ir, values);
         let lowered_runtime =
             lowered::LoweredExpressionRuntime::from_ir_value_gradient(expression_ir).ok();
-        (lowered_parameter_factors, residual_runtime, lowered_runtime)
+        LoweredArtifactCacheState {
+            parameter_node_indices,
+            mul_node_indices,
+            lowered_parameter_factors,
+            residual_runtime,
+            lowered_runtime,
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn lowered_artifact_signature_matches(
+        artifacts: &LoweredArtifactCacheState,
+        values: &[PrecomputedCachedIntegral],
+    ) -> bool {
+        artifacts.parameter_node_indices.len() == values.len()
+            && artifacts.mul_node_indices.len() == values.len()
+            && artifacts
+                .parameter_node_indices
+                .iter()
+                .copied()
+                .eq(values.iter().map(|value| value.parameter_node_index))
+            && artifacts
+                .mul_node_indices
+                .iter()
+                .copied()
+                .eq(values.iter().map(|value| value.mul_node_index))
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1740,26 +1802,49 @@ impl Evaluator {
             self.parameter_manager.n_free_parameters(),
         );
         let cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
-        let lowering_start = Instant::now();
-        let (lowered_parameter_factors, residual_runtime, lowered_runtime) =
-            Self::lower_expression_runtime_artifacts(&expression_ir, &values);
-        let lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
         let execution_sets = expression_ir.normalization_execution_sets().clone();
+        let active_mask_key = resources.active.clone();
+        let lowered_artifacts = if let Some(artifacts) = self
+            .ir_planning
+            .lowered_artifact_cache
+            .read()
+            .get(&active_mask_key)
+            .cloned()
+            .filter(|artifacts| Self::lowered_artifact_signature_matches(artifacts, &values))
+        {
+            self.ir_planning
+                .compile_metrics
+                .write()
+                .specialization_lowering_cache_hits += 1;
+            artifacts
+        } else {
+            let lowering_start = Instant::now();
+            let artifacts = Arc::new(Self::lower_expression_runtime_artifacts(
+                &expression_ir,
+                &values,
+            ));
+            let lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
+            self.ir_planning
+                .lowered_artifact_cache
+                .write()
+                .insert(active_mask_key, artifacts.clone());
+            let mut compile_metrics = self.ir_planning.compile_metrics.write();
+            compile_metrics.specialization_lowering_cache_misses += 1;
+            compile_metrics.specialization_lowering_nanos += lowering_nanos;
+            artifacts
+        };
         let mut compile_metrics = self.ir_planning.compile_metrics.write();
         compile_metrics.specialization_cache_misses += 1;
         compile_metrics.specialization_ir_compile_nanos += ir_compile_nanos;
         compile_metrics.specialization_cached_integrals_nanos += cached_integrals_nanos;
-        compile_metrics.specialization_lowering_nanos += lowering_nanos;
         ExpressionSpecializationState {
             cached_integrals: CachedIntegralCacheState {
                 key,
                 expression_ir,
                 values,
-                lowered_parameter_factors,
-                residual_runtime,
                 execution_sets,
             },
-            lowered_runtime,
+            lowered_artifacts,
         }
     }
 
@@ -1773,7 +1858,9 @@ impl Evaluator {
             if state.key == key {
                 return ExpressionSpecializationState {
                     cached_integrals: state.clone(),
-                    lowered_runtime: self.runtime_state.lowered_runtime.read().clone(),
+                    lowered_artifacts: self
+                        .active_lowered_artifacts()
+                        .expect("active lowered artifacts should exist for cached specialization"),
                 };
             }
         }
@@ -2478,30 +2565,38 @@ impl Evaluator {
             &parameter_values,
             cache,
         );
+        let lowered_artifacts = self.active_lowered_artifacts();
         let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
         let mut gradient_slots = (0..state.expression_ir.node_count())
             .map(|_| DVector::zeros(parameters.len()))
             .collect::<Vec<_>>();
-        let max_lowered_slots = state
-            .lowered_parameter_factors
-            .iter()
-            .filter_map(|runtime| {
-                runtime
-                    .as_ref()
-                    .and_then(|runtime| runtime.gradient_program())
-                    .map(|program| program.scratch_slots())
+        let max_lowered_slots = lowered_artifacts
+            .as_ref()
+            .map(|artifacts| {
+                artifacts
+                    .lowered_parameter_factors
+                    .iter()
+                    .filter_map(|runtime| {
+                        runtime
+                            .as_ref()
+                            .and_then(|runtime| runtime.gradient_program())
+                            .map(|program| program.scratch_slots())
+                    })
+                    .max()
+                    .unwrap_or(0)
             })
-            .max()
             .unwrap_or(0);
         let mut lowered_value_slots = vec![Complex64::ZERO; max_lowered_slots];
         let mut lowered_gradient_slots = vec![DVector::zeros(parameters.len()); max_lowered_slots];
-        let use_lowered = state.lowered_parameter_factors.len() == state.values.len()
-            && state.lowered_parameter_factors.iter().all(|runtime| {
-                runtime
-                    .as_ref()
-                    .and_then(|runtime| runtime.gradient_program())
-                    .is_some()
-            });
+        let use_lowered = lowered_artifacts.as_ref().is_some_and(|artifacts| {
+            artifacts.lowered_parameter_factors.len() == state.values.len()
+                && artifacts.lowered_parameter_factors.iter().all(|runtime| {
+                    runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.gradient_program())
+                        .is_some()
+                })
+        });
 
         if !use_lowered {
             let _ = state.expression_ir.evaluate_gradient_into(
@@ -2512,13 +2607,14 @@ impl Evaluator {
             );
         }
 
-        state
-            .values
-            .into_iter()
-            .zip(state.lowered_parameter_factors)
-            .map(|(descriptor, runtime)| {
-                let parameter_gradient = if use_lowered {
-                    runtime
+        if use_lowered {
+            let lowered_artifacts = lowered_artifacts.expect("lowered artifacts should exist");
+            state
+                .values
+                .into_iter()
+                .zip(lowered_artifacts.lowered_parameter_factors.iter())
+                .map(|(descriptor, runtime)| {
+                    let parameter_gradient = runtime
                         .as_ref()
                         .and_then(|runtime| runtime.gradient_program())
                         .map(|program| {
@@ -2529,25 +2625,41 @@ impl Evaluator {
                                 &mut lowered_gradient_slots[..program.scratch_slots()],
                             )
                         })
-                        .unwrap_or_else(|| DVector::zeros(parameters.len()))
-                } else {
-                    gradient_slots
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()));
+                    let weighted_gradient = parameter_gradient.map(|value| {
+                        value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
+                    });
+                    PrecomputedCachedIntegralGradientTerm {
+                        mul_node_index: descriptor.mul_node_index,
+                        parameter_node_index: descriptor.parameter_node_index,
+                        cache_node_index: descriptor.cache_node_index,
+                        coefficient: descriptor.coefficient,
+                        weighted_gradient,
+                    }
+                })
+                .collect()
+        } else {
+            state
+                .values
+                .into_iter()
+                .map(|descriptor| {
+                    let parameter_gradient = gradient_slots
                         .get(descriptor.parameter_node_index)
                         .cloned()
-                        .unwrap_or_else(|| DVector::zeros(parameters.len()))
-                };
-                let weighted_gradient = parameter_gradient.map(|value| {
-                    value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
-                });
-                PrecomputedCachedIntegralGradientTerm {
-                    mul_node_index: descriptor.mul_node_index,
-                    parameter_node_index: descriptor.parameter_node_index,
-                    cache_node_index: descriptor.cache_node_index,
-                    coefficient: descriptor.coefficient,
-                    weighted_gradient,
-                }
-            })
-            .collect()
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()));
+                    let weighted_gradient = parameter_gradient.map(|value| {
+                        value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
+                    });
+                    PrecomputedCachedIntegralGradientTerm {
+                        mul_node_index: descriptor.mul_node_index,
+                        parameter_node_index: descriptor.parameter_node_index,
+                        cache_node_index: descriptor.cache_node_index,
+                        coefficient: descriptor.coefficient,
+                        weighted_gradient,
+                    }
+                })
+                .collect()
+        }
     }
 
     #[cfg(feature = "expression-ir")]
@@ -2575,9 +2687,10 @@ impl Evaluator {
     fn evaluate_cached_weighted_value_sum_lowered(
         &self,
         state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
         amplitude_values: &[Complex64],
     ) -> Option<f64> {
-        let max_slots = state
+        let max_slots = lowered_artifacts
             .lowered_parameter_factors
             .iter()
             .filter_map(|runtime| {
@@ -2593,7 +2706,7 @@ impl Evaluator {
         for (descriptor, runtime) in state
             .values
             .iter()
-            .zip(state.lowered_parameter_factors.iter())
+            .zip(lowered_artifacts.lowered_parameter_factors.iter())
         {
             let parameter_factor = runtime
                 .as_ref()
@@ -2645,11 +2758,12 @@ impl Evaluator {
     fn evaluate_cached_weighted_gradient_sum_lowered(
         &self,
         state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
         amplitude_values: &[Complex64],
         amplitude_gradients: &[DVector<Complex64>],
         grad_dim: usize,
     ) -> Option<DVector<f64>> {
-        let max_value_slots = state
+        let max_value_slots = lowered_artifacts
             .lowered_parameter_factors
             .iter()
             .filter_map(|runtime| {
@@ -2666,7 +2780,7 @@ impl Evaluator {
         for (descriptor, runtime) in state
             .values
             .iter()
-            .zip(state.lowered_parameter_factors.iter())
+            .zip(lowered_artifacts.lowered_parameter_factors.iter())
         {
             let parameter_gradient = runtime
                 .as_ref()
@@ -2711,10 +2825,11 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     fn evaluate_residual_value_lowered(
         &self,
-        state: &CachedIntegralCacheState,
+        _state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
         amplitude_values: &[Complex64],
     ) -> Option<Complex64> {
-        let program = state
+        let program = lowered_artifacts
             .residual_runtime
             .as_ref()
             .and_then(|runtime| runtime.value_program())?;
@@ -2752,12 +2867,13 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     fn evaluate_residual_gradient_lowered(
         &self,
-        state: &CachedIntegralCacheState,
+        _state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
         amplitude_values: &[Complex64],
         amplitude_gradients: &[DVector<Complex64>],
         grad_dim: usize,
     ) -> Option<DVector<Complex64>> {
-        let program = state
+        let program = lowered_artifacts
             .residual_runtime
             .as_ref()
             .and_then(|runtime| runtime.gradient_program())?;
@@ -2780,6 +2896,8 @@ impl Evaluator {
         let active_indices = resources.active_indices().to_vec();
         #[cfg(feature = "expression-ir")]
         let state = self.ensure_cached_integral_cache_state(&resources);
+        #[cfg(feature = "expression-ir")]
+        let lowered_artifacts = self.active_lowered_artifacts();
         #[cfg(feature = "expression-ir")]
         let active_index_set = resources.active_indices();
         #[cfg(feature = "expression-ir")]
@@ -2810,7 +2928,15 @@ impl Evaluator {
                     &parameters,
                     cache,
                 );
-                self.evaluate_cached_weighted_value_sum_lowered(&state, &amplitude_values)
+                lowered_artifacts
+                    .as_ref()
+                    .and_then(|artifacts| {
+                        self.evaluate_cached_weighted_value_sum_lowered(
+                            &state,
+                            artifacts,
+                            &amplitude_values,
+                        )
+                    })
                     .unwrap_or_else(|| {
                         self.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values)
                     })
@@ -2844,7 +2970,15 @@ impl Evaluator {
                         #[cfg(feature = "expression-ir")]
                         {
                             let value = self
-                                .evaluate_residual_value_lowered(&state, amplitude_values)
+                                .active_lowered_artifacts()
+                                .as_ref()
+                                .and_then(|artifacts| {
+                                    self.evaluate_residual_value_lowered(
+                                        &state,
+                                        artifacts,
+                                        amplitude_values,
+                                    )
+                                })
                                 .unwrap_or_else(|| {
                                     self.evaluate_residual_value_ir(&state, amplitude_values)
                                 });
@@ -2882,7 +3016,15 @@ impl Evaluator {
                     #[cfg(feature = "expression-ir")]
                     {
                         let value = self
-                            .evaluate_residual_value_lowered(&state, &amplitude_values)
+                            .active_lowered_artifacts()
+                            .as_ref()
+                            .and_then(|artifacts| {
+                                self.evaluate_residual_value_lowered(
+                                    &state,
+                                    artifacts,
+                                    &amplitude_values,
+                                )
+                            })
                             .unwrap_or_else(|| {
                                 self.evaluate_residual_value_ir(&state, &amplitude_values)
                             });
@@ -2961,6 +3103,8 @@ impl Evaluator {
         #[cfg(feature = "expression-ir")]
         let state = self.ensure_cached_integral_cache_state(&resources);
         #[cfg(feature = "expression-ir")]
+        let lowered_artifacts = self.active_lowered_artifacts();
+        #[cfg(feature = "expression-ir")]
         let active_index_set = resources.active_indices();
         #[cfg(feature = "expression-ir")]
         let cached_parameter_indices = state
@@ -3013,20 +3157,25 @@ impl Evaluator {
                     &parameters,
                     cache,
                 );
-                self.evaluate_cached_weighted_gradient_sum_lowered(
-                    &state,
-                    &amplitude_values,
-                    &amplitude_gradients,
-                    grad_dim,
-                )
-                .unwrap_or_else(|| {
-                    self.evaluate_cached_weighted_gradient_sum_ir(
-                        &state,
-                        &amplitude_values,
-                        &amplitude_gradients,
-                        grad_dim,
-                    )
-                })
+                lowered_artifacts
+                    .as_ref()
+                    .and_then(|artifacts| {
+                        self.evaluate_cached_weighted_gradient_sum_lowered(
+                            &state,
+                            artifacts,
+                            &amplitude_values,
+                            &amplitude_gradients,
+                            grad_dim,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        self.evaluate_cached_weighted_gradient_sum_ir(
+                            &state,
+                            &amplitude_values,
+                            &amplitude_gradients,
+                            grad_dim,
+                        )
+                    })
             } else {
                 DVector::zeros(grad_dim)
             }
@@ -3067,12 +3216,17 @@ impl Evaluator {
                         );
                         #[cfg(feature = "expression-ir")]
                         let gradient = self
-                            .evaluate_residual_gradient_lowered(
-                                &state,
-                                amplitude_values,
-                                gradient_values,
-                                grad_dim,
-                            )
+                            .active_lowered_artifacts()
+                            .as_ref()
+                            .and_then(|artifacts| {
+                                self.evaluate_residual_gradient_lowered(
+                                    &state,
+                                    artifacts,
+                                    amplitude_values,
+                                    gradient_values,
+                                    grad_dim,
+                                )
+                            })
                             .unwrap_or_else(|| {
                                 self.evaluate_residual_gradient_ir(
                                     &state,
@@ -3123,12 +3277,17 @@ impl Evaluator {
                     );
                     #[cfg(feature = "expression-ir")]
                     let gradient = self
-                        .evaluate_residual_gradient_lowered(
-                            &state,
-                            &amplitude_values,
-                            &gradient_values,
-                            grad_dim,
-                        )
+                        .active_lowered_artifacts()
+                        .as_ref()
+                        .and_then(|artifacts| {
+                            self.evaluate_residual_gradient_lowered(
+                                &state,
+                                artifacts,
+                                &amplitude_values,
+                                &gradient_values,
+                                grad_dim,
+                            )
+                        })
                         .unwrap_or_else(|| {
                             self.evaluate_residual_gradient_ir(
                                 &state,
@@ -6013,6 +6172,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
         let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
         let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
 
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
@@ -6025,7 +6185,11 @@ mod tests {
         let cached_value_ir =
             evaluator.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values);
         let cached_value_lowered = evaluator
-            .evaluate_cached_weighted_value_sum_lowered(&state, &amplitude_values)
+            .evaluate_cached_weighted_value_sum_lowered(
+                &state,
+                lowered_artifacts.as_ref(),
+                &amplitude_values,
+            )
             .expect("cached value lowering should succeed");
         assert_relative_eq!(cached_value_lowered, cached_value_ir, epsilon = 1e-12);
 
@@ -6051,6 +6215,7 @@ mod tests {
         let cached_gradient_lowered = evaluator
             .evaluate_cached_weighted_gradient_sum_lowered(
                 &state,
+                lowered_artifacts.as_ref(),
                 &amplitude_values,
                 &amplitude_gradients,
                 parameters.len(),
@@ -6074,6 +6239,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
         let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
         let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
 
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
@@ -6085,7 +6251,7 @@ mod tests {
         );
         let residual_value_ir = evaluator.evaluate_residual_value_ir(&state, &amplitude_values);
         let residual_value_lowered = evaluator
-            .evaluate_residual_value_lowered(&state, &amplitude_values)
+            .evaluate_residual_value_lowered(&state, lowered_artifacts.as_ref(), &amplitude_values)
             .expect("residual value lowering should succeed");
         assert_relative_eq!(
             residual_value_lowered.re,
@@ -6120,6 +6286,7 @@ mod tests {
         let residual_gradient_lowered = evaluator
             .evaluate_residual_gradient_lowered(
                 &state,
+                lowered_artifacts.as_ref(),
                 &amplitude_values,
                 &amplitude_gradients,
                 parameters.len(),
@@ -6132,6 +6299,50 @@ mod tests {
             assert_relative_eq!(lowered.re, ir.re, epsilon = 1e-12);
             assert_relative_eq!(lowered.im, ir.im, epsilon = 1e-12);
         }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_reuses_lowered_artifacts_when_dataset_key_changes() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+
+        assert_eq!(evaluator.specialization_cache_len(), 1);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
+
+        evaluator.reset_expression_compile_metrics();
+        evaluator.reset_expression_specialization_metrics();
+
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+        assert_eq!(cached_integrals[0].weighted_cache_sum, Complex64::ZERO);
+
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 1,
+            }
+        );
+
+        let compile_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(compile_metrics.specialization_cache_hits, 0);
+        assert_eq!(compile_metrics.specialization_cache_misses, 1);
+        assert_eq!(compile_metrics.specialization_lowering_cache_hits, 1);
+        assert_eq!(compile_metrics.specialization_lowering_cache_misses, 0);
+        assert!(compile_metrics.specialization_ir_compile_nanos > 0);
+        assert!(compile_metrics.specialization_cached_integrals_nanos > 0);
+        assert_eq!(compile_metrics.specialization_lowering_nanos, 0);
     }
 
     #[test]
@@ -6345,8 +6556,17 @@ mod tests {
         assert!(initial_compile_metrics.initial_lowering_nanos > 0);
         assert_eq!(initial_compile_metrics.specialization_cache_hits, 0);
         assert_eq!(initial_compile_metrics.specialization_cache_misses, 0);
+        assert_eq!(
+            initial_compile_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            initial_compile_metrics.specialization_lowering_cache_misses,
+            1
+        );
 
         assert_eq!(evaluator.specialization_cache_len(), 1);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
         assert_eq!(
             evaluator.expression_specialization_metrics(),
             ExpressionSpecializationMetrics {
@@ -6369,6 +6589,14 @@ mod tests {
         let after_cache_miss_metrics = evaluator.expression_compile_metrics();
         assert_eq!(after_cache_miss_metrics.specialization_cache_hits, 0);
         assert_eq!(after_cache_miss_metrics.specialization_cache_misses, 1);
+        assert_eq!(
+            after_cache_miss_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            after_cache_miss_metrics.specialization_lowering_cache_misses,
+            2
+        );
         assert!(after_cache_miss_metrics.specialization_ir_compile_nanos > 0);
         assert!(after_cache_miss_metrics.specialization_cached_integrals_nanos > 0);
         assert!(after_cache_miss_metrics.specialization_lowering_nanos > 0);
@@ -6398,10 +6626,19 @@ mod tests {
         let after_cache_hit_metrics = evaluator.expression_compile_metrics();
         assert_eq!(after_cache_hit_metrics.specialization_cache_hits, 1);
         assert_eq!(after_cache_hit_metrics.specialization_cache_misses, 1);
+        assert_eq!(
+            after_cache_hit_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            after_cache_hit_metrics.specialization_lowering_cache_misses,
+            2
+        );
         assert!(after_cache_hit_metrics.specialization_cache_restore_nanos > 0);
 
         evaluator.deactivate_many(&["k"]);
         assert_eq!(evaluator.specialization_cache_len(), 3);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 3);
         assert_eq!(
             evaluator.expression_specialization_metrics(),
             ExpressionSpecializationMetrics {
