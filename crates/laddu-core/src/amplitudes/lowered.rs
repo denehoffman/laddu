@@ -7,6 +7,12 @@ pub(crate) enum LoweringError {
     EmptyIr,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LoweredProgramTemplate {
+    instructions: Vec<LoweredInstruction>,
+    layout: LoweredRuntimeLayout,
+}
+
 /// Execution-only program kinds derived from optimized IR.
 ///
 /// These variants classify lowered runtimes by output contract rather than by planning logic.
@@ -409,7 +415,7 @@ impl LoweredExpressionRuntime {
 }
 
 impl LoweredProgram {
-    pub(crate) fn from_ir_value_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
+    fn lower_ir_template(ir: &ExpressionIR) -> Result<LoweredProgramTemplate, LoweringError> {
         if ir.node_count() == 0 {
             return Err(LoweringError::EmptyIr);
         }
@@ -449,104 +455,31 @@ impl LoweredProgram {
             })
             .collect();
 
-        Ok(Self::new(
-            LoweredProgramKind::Value,
+        Ok(LoweredProgramTemplate {
             instructions,
-            LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
-        ))
+            layout: LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
+        })
+    }
+
+    fn from_template(kind: LoweredProgramKind, template: &LoweredProgramTemplate) -> Self {
+        Self::new(kind, template.instructions.clone(), template.layout.clone())
+    }
+
+    pub(crate) fn from_ir_value_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template(ir)?;
+        Ok(Self::from_template(LoweredProgramKind::Value, &template))
     }
 
     pub(crate) fn from_ir_gradient_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
-        if ir.node_count() == 0 {
-            return Err(LoweringError::EmptyIr);
-        }
-
-        let instructions = ir
-            .nodes()
-            .iter()
-            .enumerate()
-            .map(|(dst, node)| match *node {
-                IrNode::Constant(value) => LoweredInstruction::Constant { dst, value },
-                IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
-                    dst,
-                    amplitude_index,
-                },
-                IrNode::Unary { op, input } => LoweredInstruction::Unary {
-                    dst,
-                    input,
-                    op: match op {
-                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
-                        IrUnaryOp::Real => LoweredUnaryOp::Real,
-                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
-                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
-                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
-                    },
-                },
-                IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
-                    dst,
-                    left,
-                    right,
-                    op: match op {
-                        IrBinaryOp::Add => LoweredBinaryOp::Add,
-                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
-                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
-                        IrBinaryOp::Div => LoweredBinaryOp::Div,
-                    },
-                },
-            })
-            .collect();
-
-        Ok(Self::new(
-            LoweredProgramKind::Gradient,
-            instructions,
-            LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
-        ))
+        let template = Self::lower_ir_template(ir)?;
+        Ok(Self::from_template(LoweredProgramKind::Gradient, &template))
     }
 
     pub(crate) fn from_ir_value_gradient(ir: &ExpressionIR) -> Result<Self, LoweringError> {
-        if ir.node_count() == 0 {
-            return Err(LoweringError::EmptyIr);
-        }
-
-        let instructions = ir
-            .nodes()
-            .iter()
-            .enumerate()
-            .map(|(dst, node)| match *node {
-                IrNode::Constant(value) => LoweredInstruction::Constant { dst, value },
-                IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
-                    dst,
-                    amplitude_index,
-                },
-                IrNode::Unary { op, input } => LoweredInstruction::Unary {
-                    dst,
-                    input,
-                    op: match op {
-                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
-                        IrUnaryOp::Real => LoweredUnaryOp::Real,
-                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
-                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
-                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
-                    },
-                },
-                IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
-                    dst,
-                    left,
-                    right,
-                    op: match op {
-                        IrBinaryOp::Add => LoweredBinaryOp::Add,
-                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
-                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
-                        IrBinaryOp::Div => LoweredBinaryOp::Div,
-                    },
-                },
-            })
-            .collect();
-
-        Ok(Self::new(
+        let template = Self::lower_ir_template(ir)?;
+        Ok(Self::from_template(
             LoweredProgramKind::ValueGradient,
-            instructions,
-            LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
+            &template,
         ))
     }
 }
@@ -725,6 +658,28 @@ mod tests {
         assert!(runtime.value_program().is_some());
         assert!(runtime.gradient_program().is_some());
         assert!(runtime.value_gradient_program().is_some());
+    }
+
+    #[test]
+    fn shared_lowering_template_drives_all_program_kinds() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+
+        let template = LoweredProgram::lower_ir_template(&ir).unwrap();
+        let value = LoweredProgram::from_template(LoweredProgramKind::Value, &template);
+        let gradient = LoweredProgram::from_template(LoweredProgramKind::Gradient, &template);
+        let fused = LoweredProgram::from_template(LoweredProgramKind::ValueGradient, &template);
+
+        assert_eq!(value.instructions(), gradient.instructions());
+        assert_eq!(value.instructions(), fused.instructions());
+        assert_eq!(value.layout(), gradient.layout());
+        assert_eq!(value.layout(), fused.layout());
     }
 
     #[test]
