@@ -1713,9 +1713,18 @@ impl Evaluator {
                 .expression_program
                 .evaluate_into(amplitude_values, scratch),
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => self
-                .expression_ir()
-                .evaluate_into(amplitude_values, scratch),
+            ExpressionRuntimeBackend::IrInterpreter => {
+                let lowered_runtime = self.runtime_state.lowered_runtime.read();
+                if let Some(program) = lowered_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_program())
+                {
+                    program.evaluate_into(amplitude_values, scratch)
+                } else {
+                    self.expression_ir()
+                        .evaluate_into(amplitude_values, scratch)
+                }
+            }
         }
     }
 
@@ -1780,7 +1789,16 @@ impl Evaluator {
             }
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => {
-                self.expression_ir().evaluate(amplitude_values)
+                let lowered_runtime = self.runtime_state.lowered_runtime.read();
+                if let Some(program) = lowered_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_program())
+                {
+                    let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
+                    program.evaluate_into(amplitude_values, &mut scratch)
+                } else {
+                    self.expression_ir().evaluate(amplitude_values)
+                }
             }
         }
     }
@@ -4041,11 +4059,23 @@ mod tests {
         );
         let mut ir_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
         let mut program_slots = vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
-        let ir_value =
+        let lowered_runtime = evaluator.lowered_runtime().unwrap();
+        let lowered_program = lowered_runtime.value_program().unwrap();
+        let mut lowered_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let lowered_value =
             evaluator.evaluate_expression_value_with_scratch(&amplitude_values, &mut ir_slots);
+        let direct_lowered_value =
+            lowered_program.evaluate_into(&amplitude_values, &mut lowered_slots);
+        let ir_value = evaluator
+            .expression_ir()
+            .evaluate_into(&amplitude_values, &mut ir_slots);
         let program_value = evaluator
             .expression_program
             .evaluate_into(&amplitude_values, &mut program_slots);
+        assert_relative_eq!(lowered_value.re, direct_lowered_value.re);
+        assert_relative_eq!(lowered_value.im, direct_lowered_value.im);
+        assert_relative_eq!(lowered_value.re, ir_value.re);
+        assert_relative_eq!(lowered_value.im, ir_value.im);
         assert_relative_eq!(ir_value.re, program_value.re);
         assert_relative_eq!(ir_value.im, program_value.im);
     }
