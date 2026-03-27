@@ -128,7 +128,7 @@ struct CachedIntegralCacheState {
     key: CachedIntegralCacheKey,
     expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
-    lowered_parameter_factors: Vec<Option<lowered::LoweredExpressionRuntime>>,
+    lowered_parameter_factors: Vec<Option<lowered::LoweredFactorRuntime>>,
     residual_runtime: Option<lowered::LoweredExpressionRuntime>,
     execution_sets: ir::NormalizationExecutionSets,
 }
@@ -1729,12 +1729,12 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     fn lower_cached_parameter_factors(
         expression_ir: &ir::ExpressionIR,
-    ) -> Vec<Option<lowered::LoweredExpressionRuntime>> {
+    ) -> Vec<Option<lowered::LoweredFactorRuntime>> {
         expression_ir
             .cached_integral_descriptors()
             .iter()
             .map(|descriptor| {
-                lowered::LoweredExpressionRuntime::from_ir_root_value_gradient(
+                lowered::LoweredFactorRuntime::from_ir_root_value_gradient(
                     expression_ir,
                     descriptor.parameter_node_index,
                 )

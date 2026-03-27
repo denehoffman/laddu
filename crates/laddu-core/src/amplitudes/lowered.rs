@@ -561,6 +561,45 @@ pub(crate) struct LoweredExpressionRuntime {
     value_gradient_program: Option<LoweredProgram>,
 }
 
+/// Compact lowered runtime for cached normalization factors.
+///
+/// Cached parameter-factor paths only need standalone value and gradient execution; they do not
+/// need the fused value+gradient program carried by the main lowered runtime family.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct LoweredFactorRuntime {
+    value_program: Option<LoweredProgram>,
+    gradient_program: Option<LoweredProgram>,
+}
+
+impl LoweredFactorRuntime {
+    pub(crate) fn new(
+        value_program: Option<LoweredProgram>,
+        gradient_program: Option<LoweredProgram>,
+    ) -> Self {
+        Self {
+            value_program,
+            gradient_program,
+        }
+    }
+
+    pub(crate) fn value_program(&self) -> Option<&LoweredProgram> {
+        self.value_program.as_ref()
+    }
+
+    pub(crate) fn gradient_program(&self) -> Option<&LoweredProgram> {
+        self.gradient_program.as_ref()
+    }
+
+    pub(crate) fn from_ir_root_value_gradient(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<Self, LoweringError> {
+        let value_program = Some(LoweredProgram::from_ir_root_value_only(ir, root)?);
+        let gradient_program = Some(LoweredProgram::from_ir_root_gradient_only(ir, root)?);
+        Ok(Self::new(value_program, gradient_program))
+    }
+}
+
 impl LoweredExpressionRuntime {
     pub(crate) fn new(
         value_program: Option<LoweredProgram>,
@@ -973,8 +1012,8 @@ impl LoweredProgram {
 mod tests {
     use super::{
         apply_binary_op, apply_unary_op, LoweredBinaryOp, LoweredExpressionRuntime,
-        LoweredInstruction, LoweredProgram, LoweredProgramKind, LoweredRuntimeLayout,
-        LoweredUnaryOp,
+        LoweredFactorRuntime, LoweredInstruction, LoweredProgram, LoweredProgramKind,
+        LoweredRuntimeLayout, LoweredUnaryOp,
     };
     use crate::amplitudes::ir::{
         compile_expression_ir, DependenceClass, ExpressionIR, IrBinaryOp, IrNode, IrUnaryOp,
@@ -1184,6 +1223,23 @@ mod tests {
         assert!(runtime.value_program().is_some());
         assert!(runtime.gradient_program().is_some());
         assert!(runtime.value_gradient_program().is_some());
+    }
+
+    #[test]
+    fn lowered_factor_runtime_omits_fused_program() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+
+        let runtime = LoweredFactorRuntime::from_ir_root_value_gradient(&ir, ir.root()).unwrap();
+
+        assert!(runtime.value_program().is_some());
+        assert!(runtime.gradient_program().is_some());
     }
 
     #[test]
