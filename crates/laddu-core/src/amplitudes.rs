@@ -1259,7 +1259,7 @@ impl Expression {
         );
         #[cfg(feature = "expression-ir")]
         let lowered_runtime =
-            lowered::LoweredExpressionRuntime::from_ir_value_only(&expression_ir).ok();
+            lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
         #[cfg(feature = "expression-ir")]
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         #[cfg(feature = "expression-ir")]
@@ -4090,7 +4090,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let lowered_runtime = evaluator.lowered_runtime().unwrap();
         assert!(lowered_runtime.value_program().is_some());
-        assert!(lowered_runtime.gradient_program().is_none());
+        assert!(lowered_runtime.gradient_program().is_some());
         assert!(lowered_runtime.value_gradient_program().is_none());
     }
 
@@ -4135,6 +4135,13 @@ mod tests {
             (0..evaluator.expression_program.slot_count())
                 .map(|_| DVector::zeros(parameters.len()))
                 .collect();
+        let lowered_runtime = evaluator.lowered_runtime().unwrap();
+        let lowered_program = lowered_runtime.gradient_program().unwrap();
+        let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let mut lowered_gradient_slots: Vec<DVector<Complex64>> = (0..lowered_program
+            .scratch_slots())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect();
         let ir_gradient = evaluator.evaluate_expression_gradient_with_scratch(
             &amplitude_values,
             &amplitude_gradients,
@@ -4147,6 +4154,16 @@ mod tests {
             &mut program_value_slots,
             &mut program_gradient_slots,
         );
+        let lowered_gradient = lowered_program.evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut lowered_value_slots,
+            &mut lowered_gradient_slots,
+        );
+        for (lowered, ir) in lowered_gradient.iter().zip(ir_gradient.iter()) {
+            assert_relative_eq!(lowered.re, ir.re);
+            assert_relative_eq!(lowered.im, ir.im);
+        }
         for (ir, program) in ir_gradient.iter().zip(program_gradient.iter()) {
             assert_relative_eq!(ir.re, program.re);
             assert_relative_eq!(ir.im, program.im);
