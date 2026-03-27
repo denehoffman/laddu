@@ -342,6 +342,41 @@ fn apply_binary_gradient_op(
     }
 }
 
+fn gradient_slot_pair_mut(
+    gradient_scratch: &mut [DVector<Complex64>],
+    src: usize,
+    dst: usize,
+) -> (&DVector<Complex64>, &mut DVector<Complex64>) {
+    debug_assert_ne!(src, dst);
+    if src < dst {
+        let (left, right) = gradient_scratch.split_at_mut(dst);
+        (&left[src], &mut right[0])
+    } else {
+        let (left, right) = gradient_scratch.split_at_mut(src);
+        (&right[0], &mut left[dst])
+    }
+}
+
+fn gradient_slot_triple_mut(
+    gradient_scratch: &mut [DVector<Complex64>],
+    left: usize,
+    right: usize,
+    dst: usize,
+) -> (
+    &DVector<Complex64>,
+    &DVector<Complex64>,
+    &mut DVector<Complex64>,
+) {
+    debug_assert_ne!(left, dst);
+    debug_assert_ne!(right, dst);
+    let ptr = gradient_scratch.as_mut_ptr();
+    // SAFETY: `dst` is assigned before current inputs are released, so the lowered slot
+    // allocator guarantees the destination slot is distinct from the live source slots for
+    // this step. `left` and `right` may alias each other because they are returned as shared
+    // references, but neither may alias `dst`, which is returned as the sole mutable reference.
+    unsafe { (&*ptr.add(left), &*ptr.add(right), &mut *ptr.add(dst)) }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LoweredRuntimeLayout {
     scratch_slots: usize,
@@ -518,8 +553,8 @@ impl LoweredProgram {
                 LoweredInstruction::Unary { dst, input, op } => {
                     let value = value_scratch[input];
                     value_scratch[dst] = apply_unary_op(op, value);
-                    let input_grad = gradient_scratch[input].clone();
-                    let dst_grad = &mut gradient_scratch[dst];
+                    let (input_grad, dst_grad) =
+                        gradient_slot_pair_mut(gradient_scratch, input, dst);
                     apply_unary_gradient_op(op, value, &input_grad, dst_grad);
                 }
                 LoweredInstruction::Binary {
@@ -531,9 +566,8 @@ impl LoweredProgram {
                     let left_value = value_scratch[left];
                     let right_value = value_scratch[right];
                     value_scratch[dst] = apply_binary_op(op, left_value, right_value);
-                    let left_grad = gradient_scratch[left].clone();
-                    let right_grad = gradient_scratch[right].clone();
-                    let dst_grad = &mut gradient_scratch[dst];
+                    let (left_grad, right_grad, dst_grad) =
+                        gradient_slot_triple_mut(gradient_scratch, left, right, dst);
                     apply_binary_gradient_op(
                         op,
                         left_value,
