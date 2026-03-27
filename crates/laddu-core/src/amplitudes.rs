@@ -1581,6 +1581,28 @@ impl Evaluator {
             .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
+    #[cfg(feature = "expression-ir")]
+    fn lowered_gradient_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime()
+            .and_then(|runtime| {
+                runtime
+                    .gradient_program()
+                    .map(|program| program.scratch_slots())
+            })
+            .unwrap_or_else(|| self.expression_ir().node_count())
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn lowered_value_gradient_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime()
+            .and_then(|runtime| {
+                runtime
+                    .value_gradient_program()
+                    .map(|program| program.scratch_slots())
+            })
+            .unwrap_or_else(|| self.expression_ir().node_count())
+    }
+
     fn expression_value_slot_count(&self) -> usize {
         match self.runtime_backend {
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
@@ -1588,6 +1610,28 @@ impl Evaluator {
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::Lowered => self.lowered_value_runtime_slot_count(),
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn expression_gradient_slot_count(&self) -> usize {
+        match self.runtime_backend {
+            ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => self.lowered_gradient_runtime_slot_count(),
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn expression_value_gradient_slot_count(&self) -> usize {
+        match self.runtime_backend {
+            ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => self.lowered_value_gradient_runtime_slot_count(),
         }
     }
 
@@ -1887,6 +1931,88 @@ impl Evaluator {
         )
     }
 
+    #[cfg(feature = "expression-ir")]
+    #[inline]
+    fn evaluate_cache_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [Complex64],
+        grad_dim: usize,
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> DVector<Complex64> {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_runtime_gradient_with_flat_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+            grad_dim,
+        )
+        .unwrap_or_else(|| {
+            let slot_count = self.expression_gradient_slot_count();
+            let mut fallback_gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            self.evaluate_expression_gradient_with_scratch(
+                amplitude_values,
+                gradient_values,
+                value_slots,
+                &mut fallback_gradient_slots,
+            )
+        })
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[inline]
+    fn evaluate_cache_value_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [Complex64],
+        grad_dim: usize,
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> (Complex64, DVector<Complex64>) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_runtime_value_gradient_with_flat_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+            grad_dim,
+        )
+        .unwrap_or_else(|| {
+            let slot_count = self.expression_value_gradient_slot_count();
+            let mut fallback_gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            self.evaluate_expression_value_gradient_with_scratch(
+                amplitude_values,
+                gradient_values,
+                value_slots,
+                &mut fallback_gradient_slots,
+            )
+        })
+    }
+
     pub fn expression_slot_count(&self) -> usize {
         match self.runtime_backend {
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
@@ -2043,6 +2169,56 @@ impl Evaluator {
         }
     }
 
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_expression_runtime_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> Option<DVector<Complex64>> {
+        if !matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            return None;
+        }
+        let lowered_runtime = self.runtime_state.lowered_runtime.read();
+        let program = lowered_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.gradient_program())?;
+        Some(program.evaluate_gradient_into_flat(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+            grad_dim,
+        ))
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_expression_runtime_value_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> Option<(Complex64, DVector<Complex64>)> {
+        if !matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            return None;
+        }
+        let lowered_runtime = self.runtime_state.lowered_runtime.read();
+        let program = lowered_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.value_gradient_program())?;
+        Some(program.evaluate_value_gradient_into_flat(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+            grad_dim,
+        ))
+    }
+
     fn evaluate_expression_runtime_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
         match self.runtime_backend {
             ExpressionRuntimeBackend::LegacyProgram => {
@@ -2090,14 +2266,14 @@ impl Evaluator {
                 {
                     let mut value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
                     let grad_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
-                    let mut gradient_scratch = (0..program.scratch_slots())
-                        .map(|_| DVector::zeros(grad_dim))
-                        .collect::<Vec<_>>();
-                    program.evaluate_gradient_into(
+                    let mut gradient_scratch =
+                        vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
+                    program.evaluate_gradient_into_flat(
                         amplitude_values,
                         gradient_values,
                         &mut value_scratch,
                         &mut gradient_scratch,
+                        grad_dim,
                     )
                 } else {
                     self.expression_ir()
@@ -2396,7 +2572,7 @@ impl Evaluator {
             .max()
             .unwrap_or(0);
         let mut value_slots = vec![Complex64::ZERO; max_value_slots];
-        let mut gradient_slots = vec![DVector::zeros(grad_dim); max_value_slots];
+        let mut gradient_slots = vec![Complex64::ZERO; max_value_slots * grad_dim];
         let mut total = DVector::zeros(grad_dim);
         for (descriptor, runtime) in state
             .values
@@ -2407,11 +2583,12 @@ impl Evaluator {
                 .as_ref()
                 .and_then(|runtime| runtime.gradient_program())
                 .map(|program| {
-                    program.evaluate_gradient_into(
+                    program.evaluate_gradient_into_flat(
                         amplitude_values,
                         amplitude_gradients,
                         &mut value_slots[..program.scratch_slots()],
-                        &mut gradient_slots[..program.scratch_slots()],
+                        &mut gradient_slots[..program.scratch_slots() * grad_dim],
+                        grad_dim,
                     )
                 })?;
             let coefficient = descriptor.coefficient as f64;
@@ -2496,12 +2673,13 @@ impl Evaluator {
             .as_ref()
             .and_then(|runtime| runtime.gradient_program())?;
         let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
-        let mut gradient_slots = vec![DVector::zeros(grad_dim); program.scratch_slots()];
-        Some(program.evaluate_gradient_into(
+        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
+        Some(program.evaluate_gradient_into_flat(
             amplitude_values,
             amplitude_gradients,
             &mut value_slots,
             &mut gradient_slots,
+            grad_dim,
         ))
     }
 
@@ -3545,6 +3723,65 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            let slot_count = self.expression_gradient_slot_count();
+            #[cfg(feature = "rayon")]
+            {
+                return resources
+                    .caches
+                    .par_iter()
+                    .map_init(
+                        || {
+                            (
+                                vec![Complex64::ZERO; amplitude_len],
+                                vec![DVector::zeros(grad_dim); amplitude_len],
+                                vec![Complex64::ZERO; slot_count],
+                                vec![Complex64::ZERO; slot_count * grad_dim],
+                            )
+                        },
+                        |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                         cache| {
+                            self.evaluate_cache_gradient_with_flat_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                                &active_indices,
+                                &resources.active,
+                                &parameters,
+                                cache,
+                            )
+                        },
+                    )
+                    .collect();
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+                return resources
+                    .caches
+                    .iter()
+                    .map(|cache| {
+                        self.evaluate_cache_gradient_with_flat_scratch(
+                            &mut amplitude_values,
+                            &mut gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    })
+                    .collect();
+            }
+        }
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -3779,6 +4016,64 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            let slot_count = self.expression_gradient_slot_count();
+            #[cfg(feature = "rayon")]
+            {
+                return indices
+                    .par_iter()
+                    .map_init(
+                        || {
+                            (
+                                vec![Complex64::ZERO; amplitude_len],
+                                vec![DVector::zeros(grad_dim); amplitude_len],
+                                vec![Complex64::ZERO; slot_count],
+                                vec![Complex64::ZERO; slot_count * grad_dim],
+                            )
+                        },
+                        |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
+                            let cache = &resources.caches[idx];
+                            self.evaluate_cache_gradient_with_flat_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                                &active_indices,
+                                &resources.active,
+                                &parameters,
+                                cache,
+                            )
+                        },
+                    )
+                    .collect();
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+                return indices
+                    .iter()
+                    .map(|&idx| {
+                        let cache = &resources.caches[idx];
+                        self.evaluate_cache_gradient_with_flat_scratch(
+                            &mut amplitude_values,
+                            &mut gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    })
+                    .collect();
+            }
+        }
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -3889,6 +4184,65 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            let slot_count = self.expression_value_gradient_slot_count();
+            #[cfg(feature = "rayon")]
+            {
+                return resources
+                    .caches
+                    .par_iter()
+                    .map_init(
+                        || {
+                            (
+                                vec![Complex64::ZERO; amplitude_len],
+                                vec![DVector::zeros(grad_dim); amplitude_len],
+                                vec![Complex64::ZERO; slot_count],
+                                vec![Complex64::ZERO; slot_count * grad_dim],
+                            )
+                        },
+                        |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                         cache| {
+                            self.evaluate_cache_value_gradient_with_flat_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                                &active_indices,
+                                &resources.active,
+                                &parameters,
+                                cache,
+                            )
+                        },
+                    )
+                    .collect();
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+                return resources
+                    .caches
+                    .iter()
+                    .map(|cache| {
+                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                            &mut amplitude_values,
+                            &mut gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    })
+                    .collect();
+            }
+        }
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -3966,6 +4320,65 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
+        #[cfg(feature = "expression-ir")]
+        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            let slot_count = self.expression_value_gradient_slot_count();
+            #[cfg(feature = "rayon")]
+            {
+                return Ok(resources
+                    .caches
+                    .par_iter()
+                    .map_init(
+                        || {
+                            (
+                                vec![Complex64::ZERO; amplitude_len],
+                                vec![DVector::zeros(grad_dim); amplitude_len],
+                                vec![Complex64::ZERO; slot_count],
+                                vec![Complex64::ZERO; slot_count * grad_dim],
+                            )
+                        },
+                        |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                         cache| {
+                            self.evaluate_cache_value_gradient_with_flat_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                                &active_indices,
+                                active_mask,
+                                &parameters,
+                                cache,
+                            )
+                        },
+                    )
+                    .collect());
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+                return Ok(resources
+                    .caches
+                    .iter()
+                    .map(|cache| {
+                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                            &mut amplitude_values,
+                            &mut gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            active_mask,
+                            &parameters,
+                            cache,
+                        )
+                    })
+                    .collect());
+            }
+        }
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -4032,6 +4445,64 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        #[cfg(feature = "expression-ir")]
+        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+            let slot_count = self.expression_value_gradient_slot_count();
+            #[cfg(feature = "rayon")]
+            {
+                return indices
+                    .par_iter()
+                    .map_init(
+                        || {
+                            (
+                                vec![Complex64::ZERO; amplitude_len],
+                                vec![DVector::zeros(grad_dim); amplitude_len],
+                                vec![Complex64::ZERO; slot_count],
+                                vec![Complex64::ZERO; slot_count * grad_dim],
+                            )
+                        },
+                        |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
+                            let cache = &resources.caches[idx];
+                            self.evaluate_cache_value_gradient_with_flat_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                                &active_indices,
+                                &resources.active,
+                                &parameters,
+                                cache,
+                            )
+                        },
+                    )
+                    .collect();
+            }
+            #[cfg(not(feature = "rayon"))]
+            {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+                let mut value_slots = vec![Complex64::ZERO; slot_count];
+                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+                return indices
+                    .iter()
+                    .map(|&idx| {
+                        let cache = &resources.caches[idx];
+                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                            &mut amplitude_values,
+                            &mut gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    })
+                    .collect();
+            }
+        }
         let slot_count = self.expression_slot_count();
         #[cfg(feature = "rayon")]
         {

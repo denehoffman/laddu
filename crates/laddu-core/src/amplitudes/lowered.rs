@@ -260,8 +260,8 @@ fn apply_binary_op(
 fn apply_unary_gradient_op(
     op: LoweredUnaryOp,
     value: Complex64,
-    input_grad: &DVector<Complex64>,
-    dst_grad: &mut DVector<Complex64>,
+    input_grad: &[Complex64],
+    dst_grad: &mut [Complex64],
 ) {
     match op {
         LoweredUnaryOp::Neg => {
@@ -297,9 +297,9 @@ fn apply_binary_gradient_op(
     op: LoweredBinaryOp,
     left_value: Complex64,
     right_value: Complex64,
-    left_grad: &DVector<Complex64>,
-    right_grad: &DVector<Complex64>,
-    dst_grad: &mut DVector<Complex64>,
+    left_grad: &[Complex64],
+    right_grad: &[Complex64],
+    dst_grad: &mut [Complex64],
 ) {
     match op {
         LoweredBinaryOp::Add => {
@@ -375,6 +375,56 @@ fn gradient_slot_triple_mut(
     // this step. `left` and `right` may alias each other because they are returned as shared
     // references, but neither may alias `dst`, which is returned as the sole mutable reference.
     unsafe { (&*ptr.add(left), &*ptr.add(right), &mut *ptr.add(dst)) }
+}
+
+fn flat_gradient_slot_pair_mut(
+    gradient_scratch: &mut [Complex64],
+    grad_dim: usize,
+    src: usize,
+    dst: usize,
+) -> (&[Complex64], &mut [Complex64]) {
+    debug_assert_ne!(src, dst);
+    let src_start = src * grad_dim;
+    let dst_start = dst * grad_dim;
+    if src < dst {
+        let (left, right) = gradient_scratch.split_at_mut(dst_start);
+        (
+            &left[src_start..src_start + grad_dim],
+            &mut right[..grad_dim],
+        )
+    } else {
+        let (left, right) = gradient_scratch.split_at_mut(src_start);
+        (
+            &right[..grad_dim],
+            &mut left[dst_start..dst_start + grad_dim],
+        )
+    }
+}
+
+fn flat_gradient_slot_triple_mut(
+    gradient_scratch: &mut [Complex64],
+    grad_dim: usize,
+    left: usize,
+    right: usize,
+    dst: usize,
+) -> (&[Complex64], &[Complex64], &mut [Complex64]) {
+    debug_assert_ne!(left, dst);
+    debug_assert_ne!(right, dst);
+    let ptr = gradient_scratch.as_mut_ptr();
+    let left_start = left * grad_dim;
+    let right_start = right * grad_dim;
+    let dst_start = dst * grad_dim;
+    // SAFETY: each slot occupies a disjoint `grad_dim` range in the flat scratch buffer. The
+    // lowered slot allocator guarantees `dst` is distinct from the live source slots for this
+    // instruction, so the destination row does not overlap the source rows. `left` and `right`
+    // may alias each other, but both are returned as shared slices.
+    unsafe {
+        (
+            std::slice::from_raw_parts(ptr.add(left_start), grad_dim),
+            std::slice::from_raw_parts(ptr.add(right_start), grad_dim),
+            std::slice::from_raw_parts_mut(ptr.add(dst_start), grad_dim),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -555,7 +605,12 @@ impl LoweredProgram {
                     value_scratch[dst] = apply_unary_op(op, value);
                     let (input_grad, dst_grad) =
                         gradient_slot_pair_mut(gradient_scratch, input, dst);
-                    apply_unary_gradient_op(op, value, &input_grad, dst_grad);
+                    apply_unary_gradient_op(
+                        op,
+                        value,
+                        input_grad.as_slice(),
+                        dst_grad.as_mut_slice(),
+                    );
                 }
                 LoweredInstruction::Binary {
                     dst,
@@ -572,15 +627,123 @@ impl LoweredProgram {
                         op,
                         left_value,
                         right_value,
-                        &left_grad,
-                        &right_grad,
-                        dst_grad,
+                        left_grad.as_slice(),
+                        right_grad.as_slice(),
+                        dst_grad.as_mut_slice(),
                     );
                 }
             }
         }
 
         gradient_scratch[self.root_slot()].clone()
+    }
+
+    pub(crate) fn evaluate_gradient_into_flat(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> DVector<Complex64> {
+        debug_assert_eq!(self.kind, LoweredProgramKind::Gradient);
+        self.evaluate_gradient_like_flat(
+            amplitude_values,
+            amplitude_gradients,
+            value_scratch,
+            gradient_scratch,
+            grad_dim,
+        )
+    }
+
+    pub(crate) fn evaluate_value_gradient_into_flat(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> (Complex64, DVector<Complex64>) {
+        debug_assert_eq!(self.kind, LoweredProgramKind::ValueGradient);
+        let gradient = self.evaluate_gradient_like_flat(
+            amplitude_values,
+            amplitude_gradients,
+            value_scratch,
+            gradient_scratch,
+            grad_dim,
+        );
+        (value_scratch[self.root_slot()], gradient)
+    }
+
+    fn evaluate_gradient_like_flat(
+        &self,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> DVector<Complex64> {
+        debug_assert!(matches!(
+            self.kind,
+            LoweredProgramKind::Gradient | LoweredProgramKind::ValueGradient
+        ));
+        debug_assert!(value_scratch.len() >= self.scratch_slots());
+        debug_assert!(gradient_scratch.len() >= self.scratch_slots() * grad_dim);
+
+        for instruction in &self.instructions {
+            match *instruction {
+                LoweredInstruction::Constant { dst, value } => {
+                    value_scratch[dst] = value;
+                    gradient_scratch[dst * grad_dim..(dst + 1) * grad_dim].fill(Complex64::ZERO);
+                }
+                LoweredInstruction::LoadAmplitude {
+                    dst,
+                    amplitude_index,
+                } => {
+                    value_scratch[dst] = amplitude_values
+                        .get(amplitude_index)
+                        .copied()
+                        .unwrap_or_default();
+                    let dst_grad = &mut gradient_scratch[dst * grad_dim..(dst + 1) * grad_dim];
+                    if let Some(source) = amplitude_gradients.get(amplitude_index) {
+                        dst_grad.copy_from_slice(source.as_slice());
+                    } else {
+                        dst_grad.fill(Complex64::ZERO);
+                    }
+                }
+                LoweredInstruction::Unary { dst, input, op } => {
+                    let value = value_scratch[input];
+                    value_scratch[dst] = apply_unary_op(op, value);
+                    let (input_grad, dst_grad) =
+                        flat_gradient_slot_pair_mut(gradient_scratch, grad_dim, input, dst);
+                    apply_unary_gradient_op(op, value, input_grad, dst_grad);
+                }
+                LoweredInstruction::Binary {
+                    dst,
+                    left,
+                    right,
+                    op,
+                } => {
+                    let left_value = value_scratch[left];
+                    let right_value = value_scratch[right];
+                    value_scratch[dst] = apply_binary_op(op, left_value, right_value);
+                    let (left_grad, right_grad, dst_grad) =
+                        flat_gradient_slot_triple_mut(gradient_scratch, grad_dim, left, right, dst);
+                    apply_binary_gradient_op(
+                        op,
+                        left_value,
+                        right_value,
+                        left_grad,
+                        right_grad,
+                        dst_grad,
+                    );
+                }
+            }
+        }
+
+        DVector::from_column_slice(
+            &gradient_scratch[self.root_slot() * grad_dim..(self.root_slot() + 1) * grad_dim],
+        )
     }
 }
 
@@ -1249,6 +1412,46 @@ mod tests {
     }
 
     #[test]
+    fn lowered_gradient_program_flat_scratch_matches_dvector_scratch() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::NormSqr(Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ))),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+        let program = LoweredProgram::from_ir_gradient_only(&ir).unwrap();
+        let amplitude_values = [Complex64::new(1.5, -0.25), Complex64::new(-2.0, 0.5)];
+        let amplitude_gradients = vec![
+            DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)]),
+            DVector::from_vec(vec![Complex64::new(-0.5, 0.25), Complex64::new(0.2, -0.1)]),
+        ];
+        let mut dvector_value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut dvector_gradient_scratch = (0..program.scratch_slots())
+            .map(|_| DVector::zeros(2))
+            .collect::<Vec<_>>();
+        let mut flat_value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut flat_gradient_scratch = vec![Complex64::ZERO; program.scratch_slots() * 2];
+
+        let dvector_gradient = program.evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut dvector_value_scratch,
+            &mut dvector_gradient_scratch,
+        );
+        let flat_gradient = program.evaluate_gradient_into_flat(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut flat_value_scratch,
+            &mut flat_gradient_scratch,
+            2,
+        );
+
+        assert_eq!(flat_gradient, dvector_gradient);
+    }
+
+    #[test]
     fn lowered_runtime_from_ir_populates_gradient_program() {
         let ir = compile_expression_ir(&ExpressionNode::Amp(0), &[true], &[DependenceClass::Mixed]);
 
@@ -1436,5 +1639,45 @@ mod tests {
 
         assert_eq!(lowered_value_gradient.0, ir_value_gradient.0);
         assert_eq!(lowered_value_gradient.1, ir_value_gradient.1);
+    }
+
+    #[test]
+    fn lowered_value_gradient_program_flat_scratch_matches_dvector_scratch() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::NormSqr(Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ))),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+        let program = LoweredProgram::from_ir_value_gradient(&ir).unwrap();
+        let amplitude_values = [Complex64::new(1.5, -0.25), Complex64::new(-2.0, 0.5)];
+        let amplitude_gradients = vec![
+            DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)]),
+            DVector::from_vec(vec![Complex64::new(-0.5, 0.25), Complex64::new(0.2, -0.1)]),
+        ];
+        let mut dvector_value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut dvector_gradient_scratch = (0..program.scratch_slots())
+            .map(|_| DVector::zeros(2))
+            .collect::<Vec<_>>();
+        let mut flat_value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut flat_gradient_scratch = vec![Complex64::ZERO; program.scratch_slots() * 2];
+
+        let dvector_value_gradient = program.evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut dvector_value_scratch,
+            &mut dvector_gradient_scratch,
+        );
+        let flat_value_gradient = program.evaluate_value_gradient_into_flat(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut flat_value_scratch,
+            &mut flat_gradient_scratch,
+            2,
+        );
+
+        assert_eq!(flat_value_gradient, dvector_value_gradient);
     }
 }
