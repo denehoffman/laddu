@@ -150,6 +150,30 @@ fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
 }
 
 fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
+    let expression = build_scenario_expression(kind);
+    let label = match kind {
+        ScenarioKind::Separable => "separable",
+        ScenarioKind::Partial => "partial",
+        ScenarioKind::NonSeparable => "non_separable",
+    };
+    let parameters = match kind {
+        ScenarioKind::Separable => vec![0.4, -0.3],
+        ScenarioKind::Partial => vec![0.55, 0.2, -0.15],
+        ScenarioKind::NonSeparable => vec![0.25, -0.4, 0.6, 0.1],
+    };
+
+    ScenarioCase {
+        label,
+        kind,
+        evaluator: expression
+            .load(dataset)
+            .expect("scenario evaluator should load"),
+        parameters,
+        n_events: dataset.n_events_local(),
+    }
+}
+
+fn build_scenario_expression(kind: ScenarioKind) -> Expression {
     match kind {
         ScenarioKind::Separable => {
             let p1 = ParameterOnlyScalar::new("sep_p1", parameter("sep_p1"))
@@ -158,16 +182,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
                 .expect("separable p2 should construct");
             let c1 = CacheOnlyScalar::new("sep_c1").expect("separable c1 should construct");
             let c2 = CacheOnlyScalar::new("sep_c2").expect("separable c2 should construct");
-            let expression = (&p1 * &c1) + &(&p2 * &c2);
-            ScenarioCase {
-                label: "separable",
-                kind,
-                evaluator: expression
-                    .load(dataset)
-                    .expect("separable evaluator should load"),
-                parameters: vec![0.4, -0.3],
-                n_events: dataset.n_events_local(),
-            }
+            (&p1 * &c1) + &(&p2 * &c2)
         }
         ScenarioKind::Partial => {
             let p = ParameterOnlyScalar::new("partial_p", parameter("partial_p"))
@@ -179,16 +194,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
                 parameter("partial_mi"),
             )
             .expect("partial mixed amplitude should construct");
-            let expression = (&p * &c) + &m;
-            ScenarioCase {
-                label: "partial",
-                kind,
-                evaluator: expression
-                    .load(dataset)
-                    .expect("partial evaluator should load"),
-                parameters: vec![0.55, 0.2, -0.15],
-                n_events: dataset.n_events_local(),
-            }
+            (&p * &c) + &m
         }
         ScenarioKind::NonSeparable => {
             let m1 = TestAmplitude::new(
@@ -203,16 +209,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
                 parameter("nonsep_m2i"),
             )
             .expect("non-separable m2 should construct");
-            let expression = &m1 * &m2;
-            ScenarioCase {
-                label: "non_separable",
-                kind,
-                evaluator: expression
-                    .load(dataset)
-                    .expect("non-separable evaluator should load"),
-                parameters: vec![0.25, -0.4, 0.6, 0.1],
-                n_events: dataset.n_events_local(),
-            }
+            &m1 * &m2
         }
     }
 }
@@ -253,6 +250,20 @@ fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGra
 }
 
 fn build_real_unary_case(dataset: &Arc<Dataset>) -> RealUnaryCase {
+    let expression = build_real_unary_expression();
+    let evaluator = expression
+        .load(dataset)
+        .expect("real unary evaluator should load");
+
+    RealUnaryCase {
+        label: "real_unary_heavy",
+        evaluator,
+        parameters: vec![0.2, -0.15, 0.35, 0.1],
+        n_events: dataset.n_events_local(),
+    }
+}
+
+fn build_real_unary_expression() -> Expression {
     let amp0 = TestAmplitude::new(
         "real_unary_amp_0",
         parameter("real_unary_re_0"),
@@ -273,17 +284,7 @@ fn build_real_unary_case(dataset: &Arc<Dataset>) -> RealUnaryCase {
         + &amp0.imag()
         + &amp1.norm_sqr()
         + &(&cache * &amp1.real());
-
-    let evaluator = expression
-        .load(dataset)
-        .expect("real unary evaluator should load");
-
-    RealUnaryCase {
-        label: "real_unary_heavy",
-        evaluator,
-        parameters: vec![0.2, -0.15, 0.35, 0.1],
-        n_events: dataset.n_events_local(),
-    }
+    expression
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1014,6 +1015,93 @@ fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
 fn expression_ir_activation_churn_benchmarks(_c: &mut Criterion) {}
 
 #[cfg(feature = "expression-ir")]
+fn expression_ir_compile_cost_benchmarks(c: &mut Criterion) {
+    let dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
+    let load_cases = [
+        (ScenarioKind::Separable, "separable"),
+        (ScenarioKind::Partial, "partial"),
+        (ScenarioKind::NonSeparable, "non_separable"),
+    ];
+
+    let mut group = c.benchmark_group("expression_ir_compile_costs");
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(4));
+
+    for (kind, label) in load_cases {
+        group.bench_with_input(BenchmarkId::new("initial_load", label), &kind, |b, kind| {
+            b.iter_batched(
+                || build_scenario_expression(*kind),
+                |expression| {
+                    let evaluator = expression.load(&dataset).expect("load bench should load");
+                    black_box(evaluator.expression_compile_metrics())
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
+    let activation_case = build_scenario(&dataset, ScenarioKind::Partial);
+    let isolate_names = activation_churn_isolate_names(activation_case.kind);
+
+    group.bench_with_input(
+        BenchmarkId::new("specialization_cache_miss", activation_case.label),
+        &activation_case,
+        |b, case| {
+            b.iter_batched(
+                || {
+                    let evaluator = build_scenario(&dataset, case.kind).evaluator;
+                    evaluator.reset_expression_compile_metrics();
+                    evaluator.reset_expression_specialization_metrics();
+                    evaluator
+                },
+                |evaluator| {
+                    evaluator.isolate_many(isolate_names);
+                    black_box((
+                        evaluator.expression_compile_metrics(),
+                        evaluator.expression_specialization_metrics(),
+                    ))
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("specialization_cache_hit_restore", activation_case.label),
+        &activation_case,
+        |b, case| {
+            b.iter_batched(
+                || {
+                    let evaluator = build_scenario(&dataset, case.kind).evaluator;
+                    evaluator.isolate_many(isolate_names);
+                    evaluator.activate_all();
+                    evaluator.reset_expression_compile_metrics();
+                    evaluator.reset_expression_specialization_metrics();
+                    evaluator.isolate_many(isolate_names);
+                    evaluator.reset_expression_compile_metrics();
+                    evaluator.reset_expression_specialization_metrics();
+                    evaluator
+                },
+                |evaluator| {
+                    evaluator.activate_all();
+                    black_box((
+                        evaluator.expression_compile_metrics(),
+                        evaluator.expression_specialization_metrics(),
+                    ))
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+
+    group.finish();
+}
+
+#[cfg(not(feature = "expression-ir"))]
+fn expression_ir_compile_cost_benchmarks(_c: &mut Criterion) {}
+
+#[cfg(feature = "expression-ir")]
 fn expression_ir_memory_workload_benchmarks(c: &mut Criterion) {
     let large_gradient_dataset = synthetic_weighted_dataset(MEMORY_BENCH_EVENTS_LARGE_GRADIENT);
     let large_gradient_case =
@@ -1107,6 +1195,7 @@ criterion_group!(
     expression_backend_benchmarks,
     expression_ir_normalization_factorization_benchmarks,
     expression_ir_activation_churn_benchmarks,
+    expression_ir_compile_cost_benchmarks,
     expression_ir_memory_workload_benchmarks
 );
 criterion_main!(benches);

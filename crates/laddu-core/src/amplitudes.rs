@@ -1,3 +1,5 @@
+#[cfg(feature = "expression-ir")]
+use std::time::Instant;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
@@ -148,6 +150,30 @@ pub struct ExpressionSpecializationMetrics {
     pub cache_hits: usize,
     /// Number of specialization cache misses that required a fresh compile/lower pass.
     pub cache_misses: usize,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Staged compile/lowering metrics for expression-IR construction and specialization refreshes.
+pub struct ExpressionCompileMetrics {
+    /// Nanoseconds spent compiling the semantic expression tree into IR during initial load.
+    pub initial_ir_compile_nanos: u64,
+    /// Nanoseconds spent precomputing cached-integral planning artifacts during initial load.
+    pub initial_cached_integrals_nanos: u64,
+    /// Nanoseconds spent lowering IR-derived runtimes during initial load.
+    pub initial_lowering_nanos: u64,
+    /// Number of specialization cache hits restored without recompilation.
+    pub specialization_cache_hits: usize,
+    /// Number of specialization cache misses that required recompilation.
+    pub specialization_cache_misses: usize,
+    /// Accumulated nanoseconds spent compiling active-mask-specialized IR after initial load.
+    pub specialization_ir_compile_nanos: u64,
+    /// Accumulated nanoseconds spent recomputing cached-integral planning artifacts after load.
+    pub specialization_cached_integrals_nanos: u64,
+    /// Accumulated nanoseconds spent lowering specialized runtimes after load.
+    pub specialization_lowering_nanos: u64,
+    /// Accumulated nanoseconds spent restoring specializations from cache.
+    pub specialization_cache_restore_nanos: u64,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1257,6 +1283,8 @@ impl Expression {
             }
         }
         #[cfg(feature = "expression-ir")]
+        let ir_compile_start = Instant::now();
+        #[cfg(feature = "expression-ir")]
         let expression_ir = {
             let mut active_amplitudes = vec![false; amplitudes.len()];
             for &index in resources.active_indices() {
@@ -1269,6 +1297,10 @@ impl Expression {
             ir::compile_expression_ir(&self.tree, &active_amplitudes, &amplitude_dependencies)
         };
         #[cfg(feature = "expression-ir")]
+        let initial_ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
+        #[cfg(feature = "expression-ir")]
+        let cached_integrals_start = Instant::now();
+        #[cfg(feature = "expression-ir")]
         let cached_integrals = Evaluator::precompute_cached_integrals_at_load(
             &expression_ir,
             &amplitudes,
@@ -1277,14 +1309,16 @@ impl Expression {
             parameter_manager.n_free_parameters(),
         );
         #[cfg(feature = "expression-ir")]
-        let lowered_runtime =
-            lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
+        let initial_cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
+        #[cfg(feature = "expression-ir")]
+        let lowering_start = Instant::now();
+        #[cfg(feature = "expression-ir")]
+        let (lowered_parameter_factors, residual_runtime, lowered_runtime) =
+            Evaluator::lower_expression_runtime_artifacts(&expression_ir, &cached_integrals);
+        #[cfg(feature = "expression-ir")]
+        let initial_lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
         #[cfg(feature = "expression-ir")]
         let execution_sets = expression_ir.normalization_execution_sets().clone();
-        #[cfg(feature = "expression-ir")]
-        let lowered_parameter_factors = Evaluator::lower_cached_parameter_factors(&expression_ir);
-        #[cfg(feature = "expression-ir")]
-        let residual_runtime = Evaluator::lower_residual_runtime(&expression_ir, &cached_integrals);
         #[cfg(feature = "expression-ir")]
         let cached_integral_key =
             Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
@@ -1328,6 +1362,12 @@ impl Expression {
                 specialization_metrics: Arc::new(RwLock::new(ExpressionSpecializationMetrics {
                     cache_hits: 0,
                     cache_misses: 1,
+                })),
+                compile_metrics: Arc::new(RwLock::new(ExpressionCompileMetrics {
+                    initial_ir_compile_nanos,
+                    initial_cached_integrals_nanos,
+                    initial_lowering_nanos,
+                    ..Default::default()
                 })),
             },
             #[cfg(feature = "expression-ir")]
@@ -1475,6 +1515,7 @@ struct ExpressionIrPlanningState {
     specialization_cache:
         Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
     specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
+    compile_metrics: Arc<RwLock<ExpressionCompileMetrics>>,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1527,6 +1568,24 @@ impl Evaluator {
     pub fn reset_expression_specialization_metrics(&self) {
         *self.ir_planning.specialization_metrics.write() =
             ExpressionSpecializationMetrics::default();
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Internal benchmarking/debug metrics for staged IR compile and lowering costs.
+    pub fn expression_compile_metrics(&self) -> ExpressionCompileMetrics {
+        *self.ir_planning.compile_metrics.read()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Reset post-load compile/lowering counters while preserving initial-load metrics.
+    pub fn reset_expression_compile_metrics(&self) {
+        let mut metrics = self.ir_planning.compile_metrics.write();
+        metrics.specialization_cache_hits = 0;
+        metrics.specialization_cache_misses = 0;
+        metrics.specialization_ir_compile_nanos = 0;
+        metrics.specialization_cached_integrals_nanos = 0;
+        metrics.specialization_lowering_nanos = 0;
+        metrics.specialization_cache_restore_nanos = 0;
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1648,12 +1707,31 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn lower_expression_runtime_artifacts(
+        expression_ir: &ir::ExpressionIR,
+        values: &[PrecomputedCachedIntegral],
+    ) -> (
+        Vec<Option<lowered::LoweredFactorRuntime>>,
+        Option<lowered::LoweredExpressionRuntime>,
+        Option<lowered::LoweredExpressionRuntime>,
+    ) {
+        let lowered_parameter_factors = Self::lower_cached_parameter_factors(expression_ir);
+        let residual_runtime = Self::lower_residual_runtime(expression_ir, values);
+        let lowered_runtime =
+            lowered::LoweredExpressionRuntime::from_ir_value_gradient(expression_ir).ok();
+        (lowered_parameter_factors, residual_runtime, lowered_runtime)
+    }
+
+    #[cfg(feature = "expression-ir")]
     fn build_expression_specialization(
         &self,
         resources: &Resources,
         key: CachedIntegralCacheKey,
     ) -> ExpressionSpecializationState {
+        let ir_compile_start = Instant::now();
         let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
+        let ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
+        let cached_integrals_start = Instant::now();
         let values = Self::precompute_cached_integrals_at_load(
             &expression_ir,
             &self.amplitudes,
@@ -1661,11 +1739,17 @@ impl Evaluator {
             &self.dataset,
             self.parameter_manager.n_free_parameters(),
         );
-        let lowered_parameter_factors = Self::lower_cached_parameter_factors(&expression_ir);
-        let residual_runtime = Self::lower_residual_runtime(&expression_ir, &values);
+        let cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
+        let lowering_start = Instant::now();
+        let (lowered_parameter_factors, residual_runtime, lowered_runtime) =
+            Self::lower_expression_runtime_artifacts(&expression_ir, &values);
+        let lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
         let execution_sets = expression_ir.normalization_execution_sets().clone();
-        let lowered_runtime =
-            lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
+        let mut compile_metrics = self.ir_planning.compile_metrics.write();
+        compile_metrics.specialization_cache_misses += 1;
+        compile_metrics.specialization_ir_compile_nanos += ir_compile_nanos;
+        compile_metrics.specialization_cached_integrals_nanos += cached_integrals_nanos;
+        compile_metrics.specialization_lowering_nanos += lowering_nanos;
         ExpressionSpecializationState {
             cached_integrals: CachedIntegralCacheState {
                 key,
@@ -1700,8 +1784,13 @@ impl Evaluator {
             .get(&key)
             .cloned()
         {
+            let restore_start = Instant::now();
             self.ir_planning.specialization_metrics.write().cache_hits += 1;
             self.install_expression_specialization(&specialization);
+            let restore_nanos = restore_start.elapsed().as_nanos() as u64;
+            let mut compile_metrics = self.ir_planning.compile_metrics.write();
+            compile_metrics.specialization_cache_hits += 1;
+            compile_metrics.specialization_cache_restore_nanos += restore_nanos;
             return specialization;
         }
         let specialization = self.build_expression_specialization(resources, key.clone());
@@ -6250,6 +6339,13 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
+        let initial_compile_metrics = evaluator.expression_compile_metrics();
+        assert!(initial_compile_metrics.initial_ir_compile_nanos > 0);
+        assert!(initial_compile_metrics.initial_cached_integrals_nanos > 0);
+        assert!(initial_compile_metrics.initial_lowering_nanos > 0);
+        assert_eq!(initial_compile_metrics.specialization_cache_hits, 0);
+        assert_eq!(initial_compile_metrics.specialization_cache_misses, 0);
+
         assert_eq!(evaluator.specialization_cache_len(), 1);
         assert_eq!(
             evaluator.expression_specialization_metrics(),
@@ -6270,6 +6366,12 @@ mod tests {
                 cache_misses: 2,
             }
         );
+        let after_cache_miss_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(after_cache_miss_metrics.specialization_cache_hits, 0);
+        assert_eq!(after_cache_miss_metrics.specialization_cache_misses, 1);
+        assert!(after_cache_miss_metrics.specialization_ir_compile_nanos > 0);
+        assert!(after_cache_miss_metrics.specialization_cached_integrals_nanos > 0);
+        assert!(after_cache_miss_metrics.specialization_lowering_nanos > 0);
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
@@ -6293,6 +6395,10 @@ mod tests {
             evaluator.expression_value_slot_count(),
             all_active_value_slot_count
         );
+        let after_cache_hit_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(after_cache_hit_metrics.specialization_cache_hits, 1);
+        assert_eq!(after_cache_hit_metrics.specialization_cache_misses, 1);
+        assert!(after_cache_hit_metrics.specialization_cache_restore_nanos > 0);
 
         evaluator.deactivate_many(&["k"]);
         assert_eq!(evaluator.specialization_cache_len(), 3);
