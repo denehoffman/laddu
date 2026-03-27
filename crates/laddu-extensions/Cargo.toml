@@ -33,6 +33,7 @@ pyo3 = { workspace = true, features = [
   "num-complex",
   "abi3-py37",
 ], optional = true }
+serde-pickle = { workspace = true }
 
 [features]
 default = ["rayon"]

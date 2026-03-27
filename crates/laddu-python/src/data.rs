@@ -143,7 +143,7 @@ fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f
 /// >>> event.aux['pol_angle']  # doctest: +SKIP
 /// 0.3
 ///
-#[pyclass(name = "Event", module = "laddu")]
+#[pyclass(name = "Event", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyEvent {
     pub event: Event,
@@ -387,11 +387,16 @@ impl PyEvent {
 /// >>> dataset[0].p4('target')  # doctest: +SKIP
 /// Vec4(px=0.0, py=0.0, pz=-1.0, e=1.371073...)
 ///
-#[pyclass(name = "Dataset", module = "laddu", subclass)]
+#[pyclass(name = "Dataset", module = "laddu", subclass, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
 
-#[pyclass(name = "ParquetChunkIter", module = "laddu", unsendable)]
+#[pyclass(
+    name = "ParquetChunkIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
 pub struct PyParquetChunkIter {
     chunks: Box<dyn Iterator<Item = laddu_core::LadduResult<Arc<Dataset>>> + Send>,
 }
@@ -411,7 +416,12 @@ impl PyParquetChunkIter {
     }
 }
 
-#[pyclass(name = "DatasetIter", module = "laddu", unsendable)]
+#[pyclass(
+    name = "DatasetIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
 struct PyDatasetIter {
     kind: PyDatasetIterKind,
 }
@@ -1289,7 +1299,7 @@ pub fn from_columns(
 /// --------
 /// laddu.Dataset.bin_by
 ///
-#[pyclass(name = "BinnedDataset", module = "laddu")]
+#[pyclass(name = "BinnedDataset", module = "laddu", skip_from_py_object)]
 pub struct PyBinnedDataset(BinnedDataset);
 
 #[pymethods]

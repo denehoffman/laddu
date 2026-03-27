@@ -1780,7 +1780,7 @@ impl StochasticNLL {
 ///     (uses the weighted number of accepted Monte Carlo events if None is given)
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "NLL", module = "laddu")]
+#[pyclass(name = "NLL", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyNLL(pub Box<NLL>);
 
@@ -2494,7 +2494,7 @@ impl PyNLL {
 /// -----
 /// See the `NLL.to_stochastic` method for details.
 #[cfg(feature = "python")]
-#[pyclass(name = "StochasticNLL", module = "laddu")]
+#[pyclass(name = "StochasticNLL", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyStochasticNLL(pub StochasticNLL);
 
@@ -3011,7 +3011,7 @@ impl LikelihoodRegistry {
 
 /// Python wrapper for [`LikelihoodExpression`].
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodExpression", module = "laddu")]
+#[pyclass(name = "LikelihoodExpression", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 
@@ -3500,7 +3500,7 @@ impl LikelihoodTerm for LikelihoodEvaluator {
 /// [`LikelihoodExpression`]
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodEvaluator", module = "laddu")]
+#[pyclass(name = "LikelihoodEvaluator", module = "laddu", skip_from_py_object)]
 pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
 
 #[cfg(feature = "python")]

@@ -121,7 +121,7 @@ impl PyP4SelectionInput {
 }
 
 /// A reusable 2-to-2 reaction description shared by multiple Variables.
-#[pyclass(name = "Topology", module = "laddu")]
+#[pyclass(name = "Topology", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyTopology(pub Topology);
 
@@ -277,7 +277,7 @@ impl PyTopology {
 /// --------
 /// laddu.utils.vectors.Vec4.m
 ///
-#[pyclass(name = "Mass", module = "laddu")]
+#[pyclass(name = "Mass", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyMass(pub Mass);
 
@@ -393,7 +393,7 @@ impl PyMass {
 /// --------
 /// laddu.utils.vectors.Vec3.costheta
 ///
-#[pyclass(name = "CosTheta", module = "laddu")]
+#[pyclass(name = "CosTheta", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyCosTheta(pub CosTheta);
 
@@ -515,7 +515,7 @@ impl PyCosTheta {
 /// --------
 /// laddu.utils.vectors.Vec3.phi
 ///
-#[pyclass(name = "Phi", module = "laddu")]
+#[pyclass(name = "Phi", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPhi(pub Phi);
 
@@ -623,7 +623,7 @@ impl PyPhi {
 /// laddu.CosTheta
 /// laddu.Phi
 ///
-#[pyclass(name = "Angles", module = "laddu")]
+#[pyclass(name = "Angles", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAngles(pub Angles);
 #[pymethods]
@@ -677,7 +677,7 @@ impl PyAngles {
 /// pol_angle : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
-#[pyclass(name = "PolAngle", module = "laddu")]
+#[pyclass(name = "PolAngle", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPolAngle(pub PolAngle);
 
@@ -769,7 +769,7 @@ impl PyPolAngle {
 /// --------
 /// laddu.utils.vectors.Vec3.mag
 ///
-#[pyclass(name = "PolMagnitude", module = "laddu")]
+#[pyclass(name = "PolMagnitude", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPolMagnitude(pub PolMagnitude);
 
@@ -866,7 +866,7 @@ impl PyPolMagnitude {
 /// laddu.PolAngle
 /// laddu.PolMagnitude
 ///
-#[pyclass(name = "Polarization", module = "laddu")]
+#[pyclass(name = "Polarization", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPolarization(pub Polarization);
 #[pymethods]
@@ -942,7 +942,7 @@ impl PyPolarization {
 ///
 /// By default, the first equality is used if no particle lists are empty.
 ///
-#[pyclass(name = "Mandelstam", module = "laddu")]
+#[pyclass(name = "Mandelstam", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyMandelstam(pub Mandelstam);
 

@@ -949,7 +949,7 @@ pub mod py_ganesh {
     /// - `epsilon`: optional approximate-Wolfe tolerance.
     /// - `theta`: optional interval-splitting ratio.
     /// - `gamma`: optional safeguard controlling when bisection is forced.
-    #[pyclass(name = "LineSearchConfig", module = "laddu")]
+    #[pyclass(name = "LineSearchConfig", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PyLineSearchConfig(LineSearchSpec);
 
@@ -1013,7 +1013,7 @@ pub mod py_ganesh {
     ///
     /// `SimplexConfig.custom(...)` parameters:
     /// - `simplex`: explicit simplex vertices, excluding the starting point itself.
-    #[pyclass(name = "SimplexConfig", module = "laddu")]
+    #[pyclass(name = "SimplexConfig", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PySimplexConfig(SimplexSpec);
 
@@ -1059,7 +1059,7 @@ pub mod py_ganesh {
     ///
     /// `SwarmInitializerConfig.custom(...)` parameters:
     /// - `swarm`: explicit particle positions.
-    #[pyclass(name = "SwarmInitializerConfig", module = "laddu")]
+    #[pyclass(name = "SwarmInitializerConfig", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PySwarmInitializerConfig(SwarmInitializerSpec);
 
@@ -1100,7 +1100,7 @@ pub mod py_ganesh {
     ///
     /// `AIESMoveConfig.walk(...)` parameters:
     /// - `weight`: relative move frequency.
-    #[pyclass(name = "AIESMoveConfig", module = "laddu")]
+    #[pyclass(name = "AIESMoveConfig", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PyAIESMoveConfig(AIESMoveSpec);
 
@@ -1133,7 +1133,7 @@ pub mod py_ganesh {
     /// - `scale`: optional local-cluster rescaling factor.
     /// - `rescale_cov`: optional covariance-rescaling factor.
     /// - `n_components`: optional mixture-component count for clustering.
-    #[pyclass(name = "ESSMoveConfig", module = "laddu")]
+    #[pyclass(name = "ESSMoveConfig", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PyESSMoveConfig(ESSMoveSpec);
 
@@ -1185,7 +1185,7 @@ pub mod py_ganesh {
     ///     Optional gradient-value stopping tolerance.
     /// eps_norm_g
     ///     Optional gradient-norm stopping tolerance.
-    #[pyclass(name = "LBFGSBSettings", module = "laddu")]
+    #[pyclass(name = "LBFGSBSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone, Default)]
     pub struct PyLBFGSBSettings {
         m: Option<usize>,
@@ -1237,7 +1237,7 @@ pub mod py_ganesh {
     ///     Optional minimum EMA loss improvement.
     /// patience
     ///     Optional number of tolerated non-improving steps.
-    #[pyclass(name = "AdamSettings", module = "laddu")]
+    #[pyclass(name = "AdamSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone, Default)]
     pub struct PyAdamSettings {
         alpha: Option<f64>,
@@ -1300,7 +1300,7 @@ pub mod py_ganesh {
     ///     Optional position-based termination mode.
     /// eps_x
     ///     Optional position-based termination tolerance.
-    #[pyclass(name = "NelderMeadSettings", module = "laddu")]
+    #[pyclass(name = "NelderMeadSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone, Default)]
     pub struct PyNelderMeadSettings {
         simplex: Option<SimplexSpec>,
@@ -1377,7 +1377,7 @@ pub mod py_ganesh {
     ///     Optional cognitive coefficient.
     /// c2
     ///     Optional social coefficient.
-    #[pyclass(name = "PSOSettings", module = "laddu")]
+    #[pyclass(name = "PSOSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PyPSOSettings {
         initializer: SwarmInitializerSpec,
@@ -1427,7 +1427,7 @@ pub mod py_ganesh {
     /// moves
     ///     Optional sequence of `AIESMoveConfig`. The sampler uses its default move set when
     ///     omitted.
-    #[pyclass(name = "AIESSettings", module = "laddu")]
+    #[pyclass(name = "AIESSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone, Default)]
     pub struct PyAIESSettings {
         moves: Vec<AIESMoveSpec>,
@@ -1460,7 +1460,7 @@ pub mod py_ganesh {
     ///     Optional adaptive scaling parameter.
     /// max_steps
     ///     Optional cap on slice expansion/contraction steps per move.
-    #[pyclass(name = "ESSSettings", module = "laddu")]
+    #[pyclass(name = "ESSSettings", module = "laddu", skip_from_py_object)]
     #[derive(Clone, Default)]
     pub struct PyESSSettings {
         moves: Vec<ESSMoveSpec>,
@@ -3644,7 +3644,7 @@ pub mod py_ganesh {
 
     /// A summary of the results of a minimization.
     ///
-    #[pyclass(name = "MinimizationSummary", module = "laddu")]
+    #[pyclass(name = "MinimizationSummary", module = "laddu", skip_from_py_object)]
     #[derive(Clone)]
     pub struct PyMinimizationSummary(pub MinimizationSummary);
 
@@ -3773,20 +3773,23 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                bitcode::serialize(&self.0)
-                    .map_err(LadduError::BitcodeError)?
+                serde_pickle::to_vec(&self.0, serde_pickle::SerOptions::new())
+                    .map_err(LadduError::PickleError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Self(bitcode::deserialize(state.as_bytes()).map_err(LadduError::BitcodeError)?);
+            *self = Self(
+                serde_pickle::from_slice(state.as_bytes(), serde_pickle::DeOptions::new())
+                    .map_err(LadduError::PickleError)?,
+            );
             Ok(())
         }
     }
 
     /// An enum used by a terminator to continue or stop an algorithm.
     ///
-    #[pyclass(eq, eq_int, name = "ControlFlow", module = "laddu")]
+    #[pyclass(eq, eq_int, name = "ControlFlow", module = "laddu", from_py_object)]
     #[derive(PartialEq, Clone)]
     pub enum PyControlFlow {
         /// Continue running the algorithm.
@@ -4170,7 +4173,7 @@ pub mod py_ganesh {
 
     /// A summary of the results of an MCMC sampling.
     ///
-    #[pyclass(name = "MCMCSummary", module = "laddu")]
+    #[pyclass(name = "MCMCSummary", module = "laddu", skip_from_py_object)]
     pub struct PyMCMCSummary(pub MCMCSummary);
 
     #[pymethods]
@@ -4310,13 +4313,16 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                bitcode::serialize(&self.0)
-                    .map_err(LadduError::BitcodeError)?
+                serde_pickle::to_vec(&self.0, serde_pickle::SerOptions::new())
+                    .map_err(LadduError::PickleError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Self(bitcode::deserialize(state.as_bytes()).map_err(LadduError::BitcodeError)?);
+            *self = Self(
+                serde_pickle::from_slice(state.as_bytes(), serde_pickle::DeOptions::new())
+                    .map_err(LadduError::PickleError)?,
+            );
             Ok(())
         }
     }
@@ -4524,7 +4530,7 @@ pub mod py_ganesh {
     ///     print(terminator.taus)
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyclass(name = "AutocorrelationTerminator", module = "laddu")]
+    #[pyclass(name = "AutocorrelationTerminator", module = "laddu", from_py_object)]
     #[derive(Clone)]
     pub struct PyAutocorrelationTerminator(Arc<Mutex<AutocorrelationTerminator>>);
 

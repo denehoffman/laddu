@@ -21,7 +21,7 @@ fn install_with_threads<R: Send>(
 
 /// A mathematical expression formed from amplitudes.
 ///
-#[pyclass(name = "Expression", module = "laddu")]
+#[pyclass(name = "Expression", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyExpression(pub Expression);
 
@@ -272,13 +272,16 @@ impl PyExpression {
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(
             py,
-            bitcode::serialize(&self.0)
-                .map_err(LadduError::BitcodeError)?
+            serde_pickle::to_vec(&self.0, serde_pickle::SerOptions::new())
+                .map_err(LadduError::PickleError)?
                 .as_slice(),
         ))
     }
     fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-        *self = Self(bitcode::deserialize(state.as_bytes()).map_err(LadduError::BitcodeError)?);
+        *self = Self(
+            serde_pickle::from_slice(state.as_bytes(), serde_pickle::DeOptions::new())
+                .map_err(LadduError::PickleError)?,
+        );
         Ok(())
     }
 }
@@ -289,7 +292,7 @@ impl PyExpression {
 /// --------
 /// laddu.Expression.load
 ///
-#[pyclass(name = "Evaluator", module = "laddu")]
+#[pyclass(name = "Evaluator", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyEvaluator(pub Evaluator);
 
@@ -643,7 +646,7 @@ impl PyEvaluator {
 /// laddu.parameter
 /// laddu.constant
 ///
-#[pyclass(name = "ParameterLike", module = "laddu")]
+#[pyclass(name = "ParameterLike", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyParameterLike(pub ParameterLike);
 
