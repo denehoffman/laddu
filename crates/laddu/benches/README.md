@@ -41,6 +41,21 @@ Outputs:
 - `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json`
 - `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.md`
 
+## MPI Workflow Comparison With `expression-ir`
+
+Run the MPI workflow Criterion JSON path with and without `expression-ir`, then generate a joined comparison:
+
+```bash
+just --justfile crates/laddu/benches/Justfile json-report-mpi-ir-compare ranks=4
+```
+
+Outputs:
+
+- `target/criterion/summary/benchmark_summary_mpi.json`
+- `target/criterion/summary/benchmark_summary_mpi_expression_ir.json`
+- `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json`
+- `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.md`
+
 ## Regression Threshold Policy
 
 The report script supports threshold-aware regression checks:
