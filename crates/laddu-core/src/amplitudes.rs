@@ -1290,7 +1290,7 @@ impl Expression {
             },
             #[cfg(feature = "expression-ir")]
             runtime_state: ExpressionRuntimeState {
-                lowered_runtime: None,
+                lowered_runtime: Arc::new(RwLock::new(None)),
             },
             registry: self.registry.clone(),
             parameter_manager,
@@ -1420,6 +1420,12 @@ enum ExpressionRuntimeBackend {
 
 #[cfg(feature = "expression-ir")]
 #[derive(Clone)]
+/// IR-planning state derived from the semantic expression tree plus the current active mask.
+///
+/// Invariants:
+/// - `expression_ir` is never a source of truth; it is always derived from `Evaluator::expression`.
+/// - `cached_integrals` are specialization-dependent and must be treated as invalid once the
+///   active mask or dataset identity changes.
 struct ExpressionIrPlanningState {
     expression_ir: ir::ExpressionIR,
     cached_integrals: Arc<RwLock<Option<CachedIntegralCacheState>>>,
@@ -1428,8 +1434,14 @@ struct ExpressionIrPlanningState {
 #[cfg(feature = "expression-ir")]
 #[allow(dead_code)]
 #[derive(Clone)]
+/// Runtime-only lowered execution artifacts derived from IR planning state.
+///
+/// Invariants:
+/// - Lowered runtimes must never outlive the specialization assumptions used to build them.
+/// - Activation-mask changes invalidate any stored lowered runtime until it is rebuilt.
+/// - Lowered runtime is an execution cache, not a semantic source of truth.
 struct ExpressionRuntimeState {
-    lowered_runtime: Option<lowered::LoweredExpressionRuntime>,
+    lowered_runtime: Arc<RwLock<Option<lowered::LoweredExpressionRuntime>>>,
 }
 
 /// Evaluator for [`Expression`] that mirrors the existing evaluator behavior.
@@ -1459,8 +1471,14 @@ impl Evaluator {
 
     #[cfg(feature = "expression-ir")]
     #[allow(dead_code)]
-    fn lowered_runtime(&self) -> Option<&lowered::LoweredExpressionRuntime> {
-        self.runtime_state.lowered_runtime.as_ref()
+    fn lowered_runtime(&self) -> Option<lowered::LoweredExpressionRuntime> {
+        self.runtime_state.lowered_runtime.read().clone()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn invalidate_runtime_specializations(&self) {
+        *self.ir_planning.cached_integrals.write() = None;
+        *self.runtime_state.lowered_runtime.write() = None;
     }
 
     #[cfg(feature = "expression-ir")]
@@ -2562,16 +2580,20 @@ impl Evaluator {
 
     /// Apply a precomputed active-amplitude mask.
     pub fn set_active_mask(&self, mask: &[bool]) -> LadduResult<()> {
-        let mut resources = self.resources.write();
-        if mask.len() != resources.active.len() {
-            return Err(LadduError::LengthMismatch {
-                context: "active amplitude mask".to_string(),
-                expected: resources.active.len(),
-                actual: mask.len(),
-            });
+        {
+            let mut resources = self.resources.write();
+            if mask.len() != resources.active.len() {
+                return Err(LadduError::LengthMismatch {
+                    context: "active amplitude mask".to_string(),
+                    expected: resources.active.len(),
+                    actual: mask.len(),
+                });
+            }
+            resources.active.clone_from_slice(mask);
+            resources.refresh_active_indices();
         }
-        resources.active.clone_from_slice(mask);
-        resources.refresh_active_indices();
+        #[cfg(feature = "expression-ir")]
+        self.invalidate_runtime_specializations();
         Ok(())
     }
 

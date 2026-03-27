@@ -1,5 +1,8 @@
 use num::complex::Complex64;
 
+/// Execution-only program kinds derived from optimized IR.
+///
+/// These variants classify lowered runtimes by output contract rather than by planning logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoweredProgramKind {
     Value,
@@ -71,6 +74,12 @@ impl LoweredRuntimeLayout {
     }
 }
 
+/// A compact execution-only program derived from optimized IR.
+///
+/// Invariants:
+/// - Instructions are ordered for direct forward execution.
+/// - `layout.root_slot()` identifies the final result slot for the program kind.
+/// - The program carries no semantic/planning metadata beyond what execution requires.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LoweredProgram {
     kind: LoweredProgramKind,
@@ -112,6 +121,10 @@ impl LoweredProgram {
     }
 }
 
+/// Collection of lowered execution programs derived from the same specialized IR instance.
+///
+/// The value/gradient/value+gradient programs are siblings which must all correspond to the same
+/// expression tree, active-mask specialization, and lowering assumptions.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct LoweredExpressionRuntime {
     value_program: Option<LoweredProgram>,
