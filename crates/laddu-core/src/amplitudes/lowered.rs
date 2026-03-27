@@ -32,6 +32,13 @@ fn instruction_destination(instruction: &LoweredInstruction) -> usize {
     }
 }
 
+fn instruction_unary_op(instruction: &LoweredInstruction) -> LoweredUnaryOp {
+    match *instruction {
+        LoweredInstruction::Unary { op, .. } => op,
+        _ => panic!("instruction_unary_op called on non-unary instruction"),
+    }
+}
+
 fn remap_instruction_slots(
     instruction: &LoweredInstruction,
     dst: usize,
@@ -118,6 +125,32 @@ fn optimize_instruction_sequence(
 
                 let rewritten = match (op, kept[input]) {
                     (
+                        LoweredUnaryOp::Conj,
+                        Some(LoweredInstruction::Unary {
+                            op:
+                                LoweredUnaryOp::Real | LoweredUnaryOp::Imag | LoweredUnaryOp::NormSqr,
+                            input,
+                            ..
+                        }),
+                    ) => Some(LoweredInstruction::Unary {
+                        dst,
+                        input,
+                        op: instruction_unary_op(kept[input].as_ref().unwrap()),
+                    }),
+                    (
+                        LoweredUnaryOp::Real,
+                        Some(LoweredInstruction::Unary {
+                            op:
+                                LoweredUnaryOp::Real | LoweredUnaryOp::Imag | LoweredUnaryOp::NormSqr,
+                            input,
+                            ..
+                        }),
+                    ) => Some(LoweredInstruction::Unary {
+                        dst,
+                        input,
+                        op: instruction_unary_op(kept[input].as_ref().unwrap()),
+                    }),
+                    (
                         LoweredUnaryOp::Imag,
                         Some(LoweredInstruction::Unary {
                             op: LoweredUnaryOp::Real | LoweredUnaryOp::NormSqr,
@@ -146,6 +179,18 @@ fn optimize_instruction_sequence(
                             op: LoweredUnaryOp::NormSqr,
                         })
                         .or(Some(LoweredInstruction::Unary { dst, input, op })),
+                    (
+                        LoweredUnaryOp::NormSqr,
+                        Some(LoweredInstruction::Unary {
+                            op: LoweredUnaryOp::Conj | LoweredUnaryOp::Neg,
+                            input,
+                            ..
+                        }),
+                    ) => Some(LoweredInstruction::Unary {
+                        dst,
+                        input,
+                        op: LoweredUnaryOp::NormSqr,
+                    }),
                     _ => Some(LoweredInstruction::Unary { dst, input, op }),
                 };
 
@@ -168,6 +213,27 @@ fn optimize_instruction_sequence(
                 }
 
                 let rewritten = match op {
+                    LoweredBinaryOp::Add if constants[left] == Some(Complex64::ZERO) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: right,
+                            op: LoweredUnaryOp::Identity,
+                        })
+                    }
+                    LoweredBinaryOp::Add if constants[right] == Some(Complex64::ZERO) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: left,
+                            op: LoweredUnaryOp::Identity,
+                        })
+                    }
+                    LoweredBinaryOp::Sub if constants[right] == Some(Complex64::ZERO) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: left,
+                            op: LoweredUnaryOp::Identity,
+                        })
+                    }
                     LoweredBinaryOp::Sub if left == right => {
                         kept[dst] = Some(LoweredInstruction::Constant {
                             dst,
@@ -187,6 +253,20 @@ fn optimize_instruction_sequence(
                         constants[dst] = Some(Complex64::ZERO);
                         None
                     }
+                    LoweredBinaryOp::Mul if constants[left] == Some(Complex64::new(1.0, 0.0)) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: right,
+                            op: LoweredUnaryOp::Identity,
+                        })
+                    }
+                    LoweredBinaryOp::Mul if constants[right] == Some(Complex64::new(1.0, 0.0)) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: left,
+                            op: LoweredUnaryOp::Identity,
+                        })
+                    }
                     LoweredBinaryOp::Div if constants[left] == Some(Complex64::ZERO) => {
                         kept[dst] = Some(LoweredInstruction::Constant {
                             dst,
@@ -194,6 +274,13 @@ fn optimize_instruction_sequence(
                         });
                         constants[dst] = Some(Complex64::ZERO);
                         None
+                    }
+                    LoweredBinaryOp::Div if constants[right] == Some(Complex64::new(1.0, 0.0)) => {
+                        Some(LoweredInstruction::Unary {
+                            dst,
+                            input: left,
+                            op: LoweredUnaryOp::Identity,
+                        })
                     }
                     _ => Some(LoweredInstruction::Binary {
                         dst,
@@ -370,6 +457,7 @@ pub(crate) enum LoweredProgramKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LoweredUnaryOp {
+    Identity,
     Neg,
     Real,
     Imag,
@@ -410,6 +498,7 @@ pub(crate) enum LoweredInstruction {
 
 fn apply_unary_op(op: LoweredUnaryOp, value: Complex64) -> Complex64 {
     match op {
+        LoweredUnaryOp::Identity => value,
         LoweredUnaryOp::Neg => -value,
         LoweredUnaryOp::Real => Complex64::new(value.re, 0.0),
         LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
@@ -438,6 +527,11 @@ fn apply_unary_gradient_op(
     dst_grad: &mut [Complex64],
 ) {
     match op {
+        LoweredUnaryOp::Identity => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item;
+            }
+        }
         LoweredUnaryOp::Neg => {
             for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
                 *dst_item = -*input_item;
@@ -1099,6 +1193,7 @@ impl LoweredProgram {
                     dst: remap[old_index],
                     input: remap[input],
                     op: match op {
+                        // IR never emits identity directly; lowering adds it during peephole specialization.
                         IrUnaryOp::Neg => LoweredUnaryOp::Neg,
                         IrUnaryOp::Real => LoweredUnaryOp::Real,
                         IrUnaryOp::Imag => LoweredUnaryOp::Imag,
@@ -1170,6 +1265,7 @@ impl LoweredProgram {
                             dst: remap[old_index],
                             input: remap[input],
                             op: match op {
+                                // IR never emits identity directly; lowering adds it during peephole specialization.
                                 IrUnaryOp::Neg => LoweredUnaryOp::Neg,
                                 IrUnaryOp::Real => LoweredUnaryOp::Real,
                                 IrUnaryOp::Imag => LoweredUnaryOp::Imag,
@@ -1230,6 +1326,7 @@ impl LoweredProgram {
                     dst: remap[old_index],
                     input: remap[input],
                     op: match op {
+                        // IR never emits identity directly; lowering adds it during peephole specialization.
                         IrUnaryOp::Neg => LoweredUnaryOp::Neg,
                         IrUnaryOp::Real => LoweredUnaryOp::Real,
                         IrUnaryOp::Imag => LoweredUnaryOp::Imag,
@@ -1837,6 +1934,68 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn peephole_rewrites_add_zero_to_identity() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Add(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Zero),
+            ),
+            &[true],
+            &[DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert!(matches!(
+            program.instructions().last(),
+            Some(LoweredInstruction::Unary {
+                op: LoweredUnaryOp::Identity,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn peephole_rewrites_conj_of_real_chain() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::Conj(Box::new(ExpressionNode::Real(Box::new(
+                ExpressionNode::Amp(0),
+            )))),
+            &[true],
+            &[DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert!(matches!(
+            program.instructions().last(),
+            Some(LoweredInstruction::Unary {
+                op: LoweredUnaryOp::Real,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn peephole_rewrites_norm_sqr_of_conj_chain() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::NormSqr(Box::new(ExpressionNode::Conj(Box::new(
+                ExpressionNode::Amp(0),
+            )))),
+            &[true],
+            &[DependenceClass::Mixed],
+        );
+
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+        let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
+
+        assert_eq!(
+            program.evaluate_into(&[Complex64::new(2.0, -3.0)], &mut scratch),
+            Complex64::new(13.0, 0.0)
+        );
     }
 
     #[test]
