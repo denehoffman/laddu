@@ -23,6 +23,8 @@ const PARAMS: [f64; 2] = [1.25, -0.75];
 const SAMPLE_EVENTS: usize = 512;
 const NORMALIZATION_BENCH_EVENTS_SMALL: usize = 4096;
 const NORMALIZATION_BENCH_EVENTS_LARGE: usize = 32768;
+const MEMORY_BENCH_EVENTS_LARGE_GRADIENT: usize = 4096;
+const MEMORY_BENCH_GRADIENT_TERMS: usize = 16;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct ParameterOnlyScalar {
@@ -111,6 +113,14 @@ struct ScenarioCase {
     n_events: usize,
 }
 
+struct LargeGradientCase {
+    label: &'static str,
+    evaluator: Evaluator,
+    parameters: Vec<f64>,
+    n_events: usize,
+    n_parameters: usize,
+}
+
 fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
     let metadata = Arc::new(DatasetMetadata::default());
     let events = (0..n_events)
@@ -197,6 +207,41 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
                 n_events: dataset.n_events_local(),
             }
         }
+    }
+}
+
+fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGradientCase {
+    let mut expression = TestAmplitude::new(
+        "large_grad_amp_0",
+        parameter("large_grad_re_0"),
+        parameter("large_grad_im_0"),
+    )
+    .expect("large gradient term 0 should construct")
+    .norm_sqr();
+    for index in 1..n_terms {
+        let amplitude = TestAmplitude::new(
+            &format!("large_grad_amp_{index}"),
+            parameter(&format!("large_grad_re_{index}")),
+            parameter(&format!("large_grad_im_{index}")),
+        )
+        .expect("large gradient term should construct");
+        expression = &expression + &amplitude.norm_sqr();
+    }
+
+    let evaluator = expression
+        .load(dataset)
+        .expect("large gradient evaluator should load");
+    let n_parameters = n_terms * 2;
+    let parameters = (0..n_parameters)
+        .map(|index| 0.15 + index as f64 * 0.01)
+        .collect::<Vec<_>>();
+
+    LargeGradientCase {
+        label: "large_gradient",
+        evaluator,
+        parameters,
+        n_events: dataset.n_events_local(),
+        n_parameters,
     }
 }
 
@@ -823,10 +868,100 @@ fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
 #[cfg(not(feature = "expression-ir"))]
 fn expression_ir_activation_churn_benchmarks(_c: &mut Criterion) {}
 
+#[cfg(feature = "expression-ir")]
+fn expression_ir_memory_workload_benchmarks(c: &mut Criterion) {
+    let large_gradient_dataset = synthetic_weighted_dataset(MEMORY_BENCH_EVENTS_LARGE_GRADIENT);
+    let large_gradient_case =
+        build_large_gradient_case(&large_gradient_dataset, MEMORY_BENCH_GRADIENT_TERMS);
+
+    let mut group = c.benchmark_group("expression_ir_memory_workloads");
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(4));
+    group.throughput(Throughput::Elements(large_gradient_case.n_events as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new(
+            "gradient_local_large",
+            format!(
+                "{}@{}x{}",
+                large_gradient_case.label,
+                large_gradient_case.n_events,
+                large_gradient_case.n_parameters
+            ),
+        ),
+        &large_gradient_case,
+        |b, case| {
+            b.iter(|| {
+                black_box(
+                    case.evaluator
+                        .evaluate_gradient_local(black_box(&case.parameters)),
+                )
+            })
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new(
+            "value_gradient_local_large",
+            format!(
+                "{}@{}x{}",
+                large_gradient_case.label,
+                large_gradient_case.n_events,
+                large_gradient_case.n_parameters
+            ),
+        ),
+        &large_gradient_case,
+        |b, case| {
+            b.iter(|| {
+                black_box(
+                    case.evaluator
+                        .evaluate_with_gradient_local(black_box(&case.parameters)),
+                )
+            })
+        },
+    );
+
+    let activation_dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_LARGE);
+    let activation_case = build_scenario(&activation_dataset, ScenarioKind::Partial);
+    let isolate_names = activation_churn_isolate_names(activation_case.kind);
+    let deactivate_names = activation_churn_deactivate_names(activation_case.kind);
+    group.bench_with_input(
+        BenchmarkId::new(
+            "activation_cycle_large",
+            format!("{}@{}", activation_case.label, activation_case.n_events),
+        ),
+        &activation_case,
+        |b, case| {
+            b.iter_batched(
+                || {
+                    let evaluator = build_scenario(&activation_dataset, case.kind).evaluator;
+                    evaluator.reset_expression_specialization_metrics();
+                    evaluator
+                },
+                |evaluator| {
+                    evaluator.isolate_many(isolate_names);
+                    evaluator.activate_all();
+                    evaluator.deactivate_many(deactivate_names);
+                    evaluator.activate_many(deactivate_names);
+                    black_box(evaluator.expression_specialization_metrics())
+                },
+                BatchSize::SmallInput,
+            )
+        },
+    );
+
+    group.finish();
+}
+
+#[cfg(not(feature = "expression-ir"))]
+fn expression_ir_memory_workload_benchmarks(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     expression_backend_benchmarks,
     expression_ir_normalization_factorization_benchmarks,
-    expression_ir_activation_churn_benchmarks
+    expression_ir_activation_churn_benchmarks,
+    expression_ir_memory_workload_benchmarks
 );
 criterion_main!(benches);
