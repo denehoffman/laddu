@@ -1787,12 +1787,25 @@ impl Evaluator {
             }
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => {
-                self.expression_ir().evaluate_value_gradient_into(
-                    amplitude_values,
-                    gradient_values,
-                    value_scratch,
-                    gradient_scratch,
-                )
+                let lowered_runtime = self.runtime_state.lowered_runtime.read();
+                if let Some(program) = lowered_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_gradient_program())
+                {
+                    program.evaluate_value_gradient_into(
+                        amplitude_values,
+                        gradient_values,
+                        value_scratch,
+                        gradient_scratch,
+                    )
+                } else {
+                    self.expression_ir().evaluate_value_gradient_into(
+                        amplitude_values,
+                        gradient_values,
+                        value_scratch,
+                        gradient_scratch,
+                    )
+                }
             }
         }
     }
@@ -4264,7 +4277,7 @@ mod tests {
             .map(|_| DVector::zeros(parameters.len()))
             .collect();
 
-        let lowered_active = evaluator.evaluate_expression_value_gradient_with_scratch(
+        let active_value_gradient = evaluator.evaluate_expression_value_gradient_with_scratch(
             &amplitude_values,
             &amplitude_gradients,
             &mut ir_value_slots,
@@ -4289,9 +4302,13 @@ mod tests {
             &mut lowered_gradient_slots,
         );
 
-        assert_relative_eq!(lowered_active.0.re, lowered_value_gradient.0.re);
-        assert_relative_eq!(lowered_active.0.im, lowered_value_gradient.0.im);
-        for (active, lowered) in lowered_active.1.iter().zip(lowered_value_gradient.1.iter()) {
+        assert_relative_eq!(active_value_gradient.0.re, lowered_value_gradient.0.re);
+        assert_relative_eq!(active_value_gradient.0.im, lowered_value_gradient.0.im);
+        for (active, lowered) in active_value_gradient
+            .1
+            .iter()
+            .zip(lowered_value_gradient.1.iter())
+        {
             assert_relative_eq!(active.re, lowered.re);
             assert_relative_eq!(active.im, lowered.im);
         }
