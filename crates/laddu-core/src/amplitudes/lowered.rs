@@ -99,7 +99,7 @@ fn allocate_reused_slots(
     )
 }
 
-fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
+fn collect_live_ir_nodes_from_root(ir: &ExpressionIR, root: usize) -> Vec<usize> {
     fn visit(node_index: usize, nodes: &[IrNode], live: &mut [bool]) {
         if live[node_index] {
             return;
@@ -116,11 +116,15 @@ fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
     }
 
     let mut live = vec![false; ir.node_count()];
-    visit(ir.root(), ir.nodes(), &mut live);
+    visit(root, ir.nodes(), &mut live);
     live.into_iter()
         .enumerate()
         .filter_map(|(index, is_live)| is_live.then_some(index))
         .collect()
+}
+
+fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
+    collect_live_ir_nodes_from_root(ir, ir.root())
 }
 
 /// Execution-only program kinds derived from optimized IR.
@@ -540,15 +544,32 @@ impl LoweredExpressionRuntime {
             value_gradient_program,
         ))
     }
+
+    pub(crate) fn from_ir_root_value_gradient(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<Self, LoweringError> {
+        let value_program = Some(LoweredProgram::from_ir_root_value_only(ir, root)?);
+        let gradient_program = Some(LoweredProgram::from_ir_root_gradient_only(ir, root)?);
+        let value_gradient_program = Some(LoweredProgram::from_ir_root_value_gradient(ir, root)?);
+        Ok(Self::new(
+            value_program,
+            gradient_program,
+            value_gradient_program,
+        ))
+    }
 }
 
 impl LoweredProgram {
-    fn lower_ir_template(ir: &ExpressionIR) -> Result<LoweredProgramTemplate, LoweringError> {
+    fn lower_ir_template_from_root(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<LoweredProgramTemplate, LoweringError> {
         if ir.node_count() == 0 {
             return Err(LoweringError::EmptyIr);
         }
 
-        let live_nodes = collect_live_ir_nodes(ir);
+        let live_nodes = collect_live_ir_nodes_from_root(ir, root);
         let mut remap = vec![usize::MAX; ir.node_count()];
         for (new_index, old_index) in live_nodes.iter().copied().enumerate() {
             remap[old_index] = new_index;
@@ -589,13 +610,17 @@ impl LoweredProgram {
             })
             .collect::<Vec<_>>();
 
-        let root_slot = remap[ir.root()];
+        let root_slot = remap[root];
         let (instructions, layout) = allocate_reused_slots(&instructions, root_slot);
 
         Ok(LoweredProgramTemplate {
             instructions,
             layout,
         })
+    }
+
+    fn lower_ir_template(ir: &ExpressionIR) -> Result<LoweredProgramTemplate, LoweringError> {
+        Self::lower_ir_template_from_root(ir, ir.root())
     }
 
     fn from_template(kind: LoweredProgramKind, template: &LoweredProgramTemplate) -> Self {
@@ -614,6 +639,33 @@ impl LoweredProgram {
 
     pub(crate) fn from_ir_value_gradient(ir: &ExpressionIR) -> Result<Self, LoweringError> {
         let template = Self::lower_ir_template(ir)?;
+        Ok(Self::from_template(
+            LoweredProgramKind::ValueGradient,
+            &template,
+        ))
+    }
+
+    pub(crate) fn from_ir_root_value_only(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root(ir, root)?;
+        Ok(Self::from_template(LoweredProgramKind::Value, &template))
+    }
+
+    pub(crate) fn from_ir_root_gradient_only(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root(ir, root)?;
+        Ok(Self::from_template(LoweredProgramKind::Gradient, &template))
+    }
+
+    pub(crate) fn from_ir_root_value_gradient(
+        ir: &ExpressionIR,
+        root: usize,
+    ) -> Result<Self, LoweringError> {
+        let template = Self::lower_ir_template_from_root(ir, root)?;
         Ok(Self::from_template(
             LoweredProgramKind::ValueGradient,
             &template,
@@ -836,6 +888,54 @@ mod tests {
         assert!(runtime.value_program().is_some());
         assert!(runtime.gradient_program().is_some());
         assert!(runtime.value_gradient_program().is_some());
+    }
+
+    #[test]
+    fn root_specific_lowering_matches_ir_subgraph_evaluation() {
+        let ir = compile_expression_ir(
+            &ExpressionNode::NormSqr(Box::new(ExpressionNode::Mul(
+                Box::new(ExpressionNode::Amp(0)),
+                Box::new(ExpressionNode::Conj(Box::new(ExpressionNode::Amp(1)))),
+            ))),
+            &[true, true],
+            &[DependenceClass::Mixed, DependenceClass::Mixed],
+        );
+        let root = 2;
+        let value_program = LoweredProgram::from_ir_root_value_only(&ir, root).unwrap();
+        let gradient_program = LoweredProgram::from_ir_root_gradient_only(&ir, root).unwrap();
+        let amplitude_values = [Complex64::new(1.5, -0.25), Complex64::new(-2.0, 0.5)];
+        let amplitude_gradients = vec![
+            DVector::from_vec(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 1.0)]),
+            DVector::from_vec(vec![Complex64::new(-0.5, 0.25), Complex64::new(0.2, -0.1)]),
+        ];
+        let mut ir_value_scratch = vec![Complex64::ZERO; ir.node_count()];
+        let mut ir_gradient_scratch = (0..ir.node_count())
+            .map(|_| DVector::zeros(2))
+            .collect::<Vec<_>>();
+        let _ = ir.evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_scratch,
+            &mut ir_gradient_scratch,
+        );
+        let mut lowered_value_scratch = vec![Complex64::ZERO; value_program.scratch_slots()];
+        let mut lowered_gradient_value_scratch =
+            vec![Complex64::ZERO; gradient_program.scratch_slots()];
+        let mut lowered_gradient_scratch = (0..gradient_program.scratch_slots())
+            .map(|_| DVector::zeros(2))
+            .collect::<Vec<_>>();
+
+        let lowered_value =
+            value_program.evaluate_into(&amplitude_values, &mut lowered_value_scratch);
+        let lowered_gradient = gradient_program.evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut lowered_gradient_value_scratch,
+            &mut lowered_gradient_scratch,
+        );
+
+        assert_eq!(lowered_value, ir_value_scratch[root]);
+        assert_eq!(lowered_gradient, ir_gradient_scratch[root]);
     }
 
     #[test]

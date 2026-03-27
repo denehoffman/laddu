@@ -128,6 +128,7 @@ struct CachedIntegralCacheState {
     key: CachedIntegralCacheKey,
     expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
+    lowered_parameter_factors: Vec<Option<lowered::LoweredExpressionRuntime>>,
     execution_sets: ir::NormalizationExecutionSets,
 }
 
@@ -1280,6 +1281,8 @@ impl Expression {
         #[cfg(feature = "expression-ir")]
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         #[cfg(feature = "expression-ir")]
+        let lowered_parameter_factors = Evaluator::lower_cached_parameter_factors(&expression_ir);
+        #[cfg(feature = "expression-ir")]
         let cached_integral_key =
             Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
         #[cfg(feature = "expression-ir")]
@@ -1287,6 +1290,7 @@ impl Expression {
             key: cached_integral_key.clone(),
             expression_ir,
             values: cached_integrals,
+            lowered_parameter_factors,
             execution_sets,
         };
         #[cfg(feature = "expression-ir")]
@@ -1588,6 +1592,7 @@ impl Evaluator {
             &self.dataset,
             self.parameter_manager.n_free_parameters(),
         );
+        let lowered_parameter_factors = Self::lower_cached_parameter_factors(&expression_ir);
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         let lowered_runtime =
             lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
@@ -1596,6 +1601,7 @@ impl Evaluator {
                 key,
                 expression_ir,
                 values,
+                lowered_parameter_factors,
                 execution_sets,
             },
             lowered_runtime,
@@ -1711,6 +1717,23 @@ impl Evaluator {
                     weighted_cache_sum,
                 },
             )
+            .collect()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn lower_cached_parameter_factors(
+        expression_ir: &ir::ExpressionIR,
+    ) -> Vec<Option<lowered::LoweredExpressionRuntime>> {
+        expression_ir
+            .cached_integral_descriptors()
+            .iter()
+            .map(|descriptor| {
+                lowered::LoweredExpressionRuntime::from_ir_root_value_gradient(
+                    expression_ir,
+                    descriptor.parameter_node_index,
+                )
+                .ok()
+            })
             .collect()
     }
 
@@ -2149,21 +2172,60 @@ impl Evaluator {
         let mut gradient_slots = (0..state.expression_ir.node_count())
             .map(|_| DVector::zeros(parameters.len()))
             .collect::<Vec<_>>();
-        let _ = state.expression_ir.evaluate_gradient_into(
-            &amplitude_values,
-            &amplitude_gradients,
-            &mut value_slots,
-            &mut gradient_slots,
-        );
+        let max_lowered_slots = state
+            .lowered_parameter_factors
+            .iter()
+            .filter_map(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .max()
+            .unwrap_or(0);
+        let mut lowered_value_slots = vec![Complex64::ZERO; max_lowered_slots];
+        let mut lowered_gradient_slots = vec![DVector::zeros(parameters.len()); max_lowered_slots];
+        let use_lowered = state.lowered_parameter_factors.len() == state.values.len()
+            && state.lowered_parameter_factors.iter().all(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                    .is_some()
+            });
+
+        if !use_lowered {
+            let _ = state.expression_ir.evaluate_gradient_into(
+                &amplitude_values,
+                &amplitude_gradients,
+                &mut value_slots,
+                &mut gradient_slots,
+            );
+        }
 
         state
             .values
             .into_iter()
-            .map(|descriptor| {
-                let parameter_gradient = gradient_slots
-                    .get(descriptor.parameter_node_index)
-                    .cloned()
-                    .unwrap_or_else(|| DVector::zeros(parameters.len()));
+            .zip(state.lowered_parameter_factors)
+            .map(|(descriptor, runtime)| {
+                let parameter_gradient = if use_lowered {
+                    runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.gradient_program())
+                        .map(|program| {
+                            program.evaluate_gradient_into(
+                                &amplitude_values,
+                                &amplitude_gradients,
+                                &mut lowered_value_slots[..program.scratch_slots()],
+                                &mut lowered_gradient_slots[..program.scratch_slots()],
+                            )
+                        })
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()))
+                } else {
+                    gradient_slots
+                        .get(descriptor.parameter_node_index)
+                        .cloned()
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()))
+                };
                 let weighted_gradient = parameter_gradient.map(|value| {
                     value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
                 });
@@ -2176,6 +2238,143 @@ impl Evaluator {
                 }
             })
             .collect()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_cached_weighted_value_sum_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+    ) -> f64 {
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let _ = state
+            .expression_ir
+            .evaluate_into(amplitude_values, &mut value_slots);
+        state
+            .values
+            .iter()
+            .map(|descriptor| {
+                let parameter_factor = value_slots[descriptor.parameter_node_index];
+                (parameter_factor * descriptor.weighted_cache_sum * descriptor.coefficient as f64)
+                    .re
+            })
+            .sum()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_cached_weighted_value_sum_lowered(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+    ) -> Option<f64> {
+        let max_slots = state
+            .lowered_parameter_factors
+            .iter()
+            .filter_map(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .max()
+            .unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; max_slots];
+        let mut total = 0.0;
+        for (descriptor, runtime) in state
+            .values
+            .iter()
+            .zip(state.lowered_parameter_factors.iter())
+        {
+            let parameter_factor = runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_program())
+                .map(|program| {
+                    program.evaluate_into(
+                        amplitude_values,
+                        &mut value_slots[..program.scratch_slots()],
+                    )
+                })?;
+            total +=
+                (parameter_factor * descriptor.weighted_cache_sum * descriptor.coefficient as f64)
+                    .re;
+        }
+        Some(total)
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_cached_weighted_gradient_sum_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> DVector<f64> {
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); state.expression_ir.node_count()];
+        let _ = state.expression_ir.evaluate_gradient_into(
+            amplitude_values,
+            amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+        );
+        state
+            .values
+            .iter()
+            .fold(DVector::zeros(grad_dim), |mut accum, descriptor| {
+                let parameter_gradient = &gradient_slots[descriptor.parameter_node_index];
+                let coefficient = descriptor.coefficient as f64;
+                for (accum_item, gradient_item) in accum.iter_mut().zip(parameter_gradient.iter()) {
+                    *accum_item +=
+                        (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
+                }
+                accum
+            })
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn evaluate_cached_weighted_gradient_sum_lowered(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> Option<DVector<f64>> {
+        let max_value_slots = state
+            .lowered_parameter_factors
+            .iter()
+            .filter_map(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .max()
+            .unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; max_value_slots];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); max_value_slots];
+        let mut total = DVector::zeros(grad_dim);
+        for (descriptor, runtime) in state
+            .values
+            .iter()
+            .zip(state.lowered_parameter_factors.iter())
+        {
+            let parameter_gradient = runtime
+                .as_ref()
+                .and_then(|runtime| runtime.gradient_program())
+                .map(|program| {
+                    program.evaluate_gradient_into(
+                        amplitude_values,
+                        amplitude_gradients,
+                        &mut value_slots[..program.scratch_slots()],
+                        &mut gradient_slots[..program.scratch_slots()],
+                    )
+                })?;
+            let coefficient = descriptor.coefficient as f64;
+            for (accum_item, gradient_item) in total.iter_mut().zip(parameter_gradient.iter()) {
+                *accum_item += (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
+            }
+        }
+        Some(total)
     }
 
     fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
@@ -2231,21 +2430,10 @@ impl Evaluator {
                     &parameters,
                     cache,
                 );
-                let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
-                let _ = state
-                    .expression_ir
-                    .evaluate_into(&amplitude_values, &mut value_slots);
-                state
-                    .values
-                    .iter()
-                    .map(|descriptor| {
-                        let parameter_factor = value_slots[descriptor.parameter_node_index];
-                        (parameter_factor
-                            * descriptor.weighted_cache_sum
-                            * descriptor.coefficient as f64)
-                            .re
+                self.evaluate_cached_weighted_value_sum_lowered(&state, &amplitude_values)
+                    .unwrap_or_else(|| {
+                        self.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values)
                     })
-                    .sum::<f64>()
             } else {
                 0.0
             }
@@ -2457,28 +2645,20 @@ impl Evaluator {
                     &parameters,
                     cache,
                 );
-                let mut value_slots = vec![Complex64::ZERO; slot_count];
-                let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-                let _ = state.expression_ir.evaluate_gradient_into(
+                self.evaluate_cached_weighted_gradient_sum_lowered(
+                    &state,
                     &amplitude_values,
                     &amplitude_gradients,
-                    &mut value_slots,
-                    &mut gradient_slots,
-                );
-                state
-                    .values
-                    .iter()
-                    .fold(DVector::zeros(grad_dim), |mut accum, descriptor| {
-                        let parameter_gradient = &gradient_slots[descriptor.parameter_node_index];
-                        let coefficient = descriptor.coefficient as f64;
-                        for (accum_item, gradient_item) in
-                            accum.iter_mut().zip(parameter_gradient.iter())
-                        {
-                            *accum_item +=
-                                (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
-                        }
-                        accum
-                    })
+                    grad_dim,
+                )
+                .unwrap_or_else(|| {
+                    self.evaluate_cached_weighted_gradient_sum_ir(
+                        &state,
+                        &amplitude_values,
+                        &amplitude_gradients,
+                        grad_dim,
+                    )
+                })
             } else {
                 DVector::zeros(grad_dim)
             }
@@ -5033,6 +5213,67 @@ mod tests {
         assert!(evaluator
             .expression_precomputed_cached_integral_gradient_terms(&[0.1, -0.2])
             .is_empty());
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_lowered_cached_factor_programs_match_ir_cached_paths() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
+
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            &state.execution_sets.cached_parameter_amplitudes,
+            &parameters,
+            &resources.caches[0],
+        );
+        let cached_value_ir =
+            evaluator.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values);
+        let cached_value_lowered = evaluator
+            .evaluate_cached_weighted_value_sum_lowered(&state, &amplitude_values)
+            .expect("cached value lowering should succeed");
+        assert_relative_eq!(cached_value_lowered, cached_value_ir, epsilon = 1e-12);
+
+        let mut cached_parameter_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in &state.execution_sets.cached_parameter_amplitudes {
+            cached_parameter_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &cached_parameter_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let cached_gradient_ir = evaluator.evaluate_cached_weighted_gradient_sum_ir(
+            &state,
+            &amplitude_values,
+            &amplitude_gradients,
+            parameters.len(),
+        );
+        let cached_gradient_lowered = evaluator
+            .evaluate_cached_weighted_gradient_sum_lowered(
+                &state,
+                &amplitude_values,
+                &amplitude_gradients,
+                parameters.len(),
+            )
+            .expect("cached gradient lowering should succeed");
+        for (lowered, ir) in cached_gradient_lowered
+            .iter()
+            .zip(cached_gradient_ir.iter())
+        {
+            assert_relative_eq!(*lowered, *ir, epsilon = 1e-12);
+        }
     }
 
     #[test]
