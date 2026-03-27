@@ -608,12 +608,9 @@ pub enum LadduError {
         /// The name of the object it failed to parse into
         object: String,
     },
-    /// An error returned by the Rust encoder
+    /// An error returned by internal bitcode serialization
     #[error(transparent)]
-    EncodeError(#[from] bincode::error::EncodeError),
-    /// An error returned by the Rust decoder
-    #[error(transparent)]
-    DecodeError(#[from] bincode::error::DecodeError),
+    BitcodeError(#[from] bitcode::Error),
     /// An error returned by the Python pickle (de)serializer
     #[error(transparent)]
     PickleError(#[from] serde_pickle::Error),
@@ -727,8 +724,7 @@ impl From<LadduError> for PyErr {
             LadduError::ParquetError(_)
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
-            | LadduError::EncodeError(_)
-            | LadduError::DecodeError(_)
+            | LadduError::BitcodeError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::MissingColumn { .. } | LadduError::UnknownName { .. } => {
                 PyKeyError::new_err(err_string)

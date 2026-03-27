@@ -1188,10 +1188,9 @@ where
     let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
     let mut serialized_event_buffer_len: usize = 0;
     let mut serialized_event_buffer: Vec<u8> = Vec::default();
-    let config = bincode::config::standard();
     if world.rank() == owning_rank {
         let event = local_event(local_index);
-        serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
+        serialized_event_buffer = bitcode::serialize(event.data()).unwrap();
         serialized_event_buffer_len = serialized_event_buffer.len();
     }
     world
@@ -1207,8 +1206,7 @@ where
     if world.rank() == owning_rank {
         local_event(local_index).clone()
     } else {
-        let (event, _): (EventData, usize) =
-            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
+        let event: EventData = bitcode::deserialize(&serialized_event_buffer[..]).unwrap();
         Event::new(Arc::new(event), metadata.clone())
     }
 }
@@ -1246,11 +1244,10 @@ where
         .collect();
     let local_event_count = local_events.len() as i32;
 
-    let config = bincode::config::standard();
     let serialized_local = if local_events.is_empty() {
         Vec::new()
     } else {
-        bincode::serde::encode_to_vec(&local_events, config).unwrap()
+        bitcode::serialize(&local_events).unwrap()
     };
     let local_byte_count = serialized_local.len() as i32;
 
@@ -1277,9 +1274,8 @@ where
         }
         let byte_start = gathered_byte_displs[rank] as usize;
         let byte_end = byte_start + gathered_byte_counts[rank] as usize;
-        let (decoded, _): (Vec<EventData>, usize) =
-            bincode::serde::decode_from_slice(&gathered_bytes[byte_start..byte_end], config)
-                .unwrap();
+        let decoded: Vec<EventData> =
+            bitcode::deserialize(&gathered_bytes[byte_start..byte_end]).unwrap();
         debug_assert_eq!(decoded.len(), gathered_event_counts[rank] as usize);
         events.extend(
             decoded

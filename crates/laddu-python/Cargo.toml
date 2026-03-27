@@ -15,7 +15,7 @@ readme = "README.md"
 [dependencies]
 laddu-core = { workspace = true, features = ["python"] }
 
-bincode = { workspace = true }
+bitcode = { workspace = true }
 num = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }

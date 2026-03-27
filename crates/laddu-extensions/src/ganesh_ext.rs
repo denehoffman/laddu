@@ -3773,17 +3773,13 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
+                bitcode::serialize(&self.0)
+                    .map_err(LadduError::BitcodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Self(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
+            *self = Self(bitcode::deserialize(state.as_bytes()).map_err(LadduError::BitcodeError)?);
             Ok(())
         }
     }
@@ -4314,17 +4310,13 @@ pub mod py_ganesh {
         fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
             Ok(PyBytes::new(
                 py,
-                bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                    .map_err(LadduError::EncodeError)?
+                bitcode::serialize(&self.0)
+                    .map_err(LadduError::BitcodeError)?
                     .as_slice(),
             ))
         }
         fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
-            *self = Self(
-                bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                    .map_err(LadduError::DecodeError)?
-                    .0,
-            );
+            *self = Self(bitcode::deserialize(state.as_bytes()).map_err(LadduError::BitcodeError)?);
             Ok(())
         }
     }

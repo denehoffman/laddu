@@ -15,7 +15,7 @@ accurate = { workspace = true }
 approx = { workspace = true }
 arrow = { workspace = true }
 auto_ops = { workspace = true }
-bincode = { workspace = true }
+bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 factorial = { workspace = true }
 fastrand = { workspace = true }
