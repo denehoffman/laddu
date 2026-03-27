@@ -113,7 +113,7 @@ pub struct PrecomputedCachedIntegralGradientTerm {
 }
 
 #[cfg(feature = "expression-ir")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct CachedIntegralCacheKey {
     active_mask: Vec<bool>,
     n_events_local: usize,
@@ -129,6 +129,13 @@ struct CachedIntegralCacheState {
     expression_ir: ir::ExpressionIR,
     values: Vec<PrecomputedCachedIntegral>,
     execution_sets: ir::NormalizationExecutionSets,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone)]
+struct ExpressionSpecializationState {
+    cached_integrals: CachedIntegralCacheState,
+    lowered_runtime: Option<lowered::LoweredExpressionRuntime>,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1265,6 +1272,20 @@ impl Expression {
         #[cfg(feature = "expression-ir")]
         let cached_integral_key =
             Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
+        #[cfg(feature = "expression-ir")]
+        let cached_integral_state = CachedIntegralCacheState {
+            key: cached_integral_key.clone(),
+            expression_ir,
+            values: cached_integrals,
+            execution_sets,
+        };
+        #[cfg(feature = "expression-ir")]
+        let specialization_state = ExpressionSpecializationState {
+            cached_integrals: cached_integral_state.clone(),
+            lowered_runtime: lowered_runtime.clone(),
+        };
+        #[cfg(feature = "expression-ir")]
+        let specialization_cache = HashMap::from([(cached_integral_key, specialization_state)]);
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
@@ -1283,13 +1304,9 @@ impl Expression {
             expression_program: ExpressionProgram::from_node(&self.tree),
             #[cfg(feature = "expression-ir")]
             ir_planning: ExpressionIrPlanningState {
-                expression_ir: expression_ir.clone(),
-                cached_integrals: Arc::new(RwLock::new(Some(CachedIntegralCacheState {
-                    key: cached_integral_key,
-                    expression_ir,
-                    values: cached_integrals,
-                    execution_sets,
-                }))),
+                expression_ir: cached_integral_state.expression_ir.clone(),
+                cached_integrals: Arc::new(RwLock::new(Some(cached_integral_state))),
+                specialization_cache: Arc::new(RwLock::new(specialization_cache)),
             },
             #[cfg(feature = "expression-ir")]
             runtime_state: ExpressionRuntimeState {
@@ -1433,6 +1450,8 @@ pub enum ExpressionRuntimeBackend {
 struct ExpressionIrPlanningState {
     expression_ir: ir::ExpressionIR,
     cached_integrals: Arc<RwLock<Option<CachedIntegralCacheState>>>,
+    specialization_cache:
+        Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1475,8 +1494,13 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
-    fn expression_ir(&self) -> &ir::ExpressionIR {
-        &self.ir_planning.expression_ir
+    fn expression_ir(&self) -> ir::ExpressionIR {
+        self.ir_planning
+            .cached_integrals
+            .read()
+            .as_ref()
+            .map(|state| state.expression_ir.clone())
+            .unwrap_or_else(|| self.ir_planning.expression_ir.clone())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1511,9 +1535,25 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
-    fn rebuild_runtime_specializations(&self, resources: &Resources) {
+    #[cfg(test)]
+    fn specialization_cache_len(&self) -> usize {
+        self.ir_planning.specialization_cache.read().len()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn install_expression_specialization(&self, specialization: &ExpressionSpecializationState) {
+        *self.ir_planning.cached_integrals.write() = Some(specialization.cached_integrals.clone());
+        *self.runtime_state.lowered_runtime.write() = specialization.lowered_runtime.clone();
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn build_expression_specialization(
+        &self,
+        resources: &Resources,
+        key: CachedIntegralCacheKey,
+    ) -> ExpressionSpecializationState {
         let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
-        let cached_integrals = Self::precompute_cached_integrals_at_load(
+        let values = Self::precompute_cached_integrals_at_load(
             &expression_ir,
             &self.amplitudes,
             resources,
@@ -1521,18 +1561,55 @@ impl Evaluator {
             self.parameter_manager.n_free_parameters(),
         );
         let execution_sets = expression_ir.normalization_execution_sets().clone();
-        let cached_integral_key =
-            Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
         let lowered_runtime =
             lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).ok();
+        ExpressionSpecializationState {
+            cached_integrals: CachedIntegralCacheState {
+                key,
+                expression_ir,
+                values,
+                execution_sets,
+            },
+            lowered_runtime,
+        }
+    }
 
-        *self.ir_planning.cached_integrals.write() = Some(CachedIntegralCacheState {
-            key: cached_integral_key,
-            expression_ir: expression_ir.clone(),
-            values: cached_integrals,
-            execution_sets,
-        });
-        *self.runtime_state.lowered_runtime.write() = lowered_runtime;
+    #[cfg(feature = "expression-ir")]
+    fn ensure_expression_specialization(
+        &self,
+        resources: &Resources,
+    ) -> ExpressionSpecializationState {
+        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
+        if let Some(state) = self.ir_planning.cached_integrals.read().as_ref() {
+            if state.key == key {
+                return ExpressionSpecializationState {
+                    cached_integrals: state.clone(),
+                    lowered_runtime: self.runtime_state.lowered_runtime.read().clone(),
+                };
+            }
+        }
+        if let Some(specialization) = self
+            .ir_planning
+            .specialization_cache
+            .read()
+            .get(&key)
+            .cloned()
+        {
+            self.install_expression_specialization(&specialization);
+            return specialization;
+        }
+        let specialization = self.build_expression_specialization(resources, key.clone());
+        self.ir_planning
+            .specialization_cache
+            .write()
+            .insert(key, specialization.clone());
+        self.install_expression_specialization(&specialization);
+        specialization
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn rebuild_runtime_specializations(&self, resources: &Resources) {
+        let _ = self.ensure_expression_specialization(resources);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1737,29 +1814,8 @@ impl Evaluator {
         &self,
         resources: &Resources,
     ) -> CachedIntegralCacheState {
-        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
-        if let Some(state) = self.ir_planning.cached_integrals.read().as_ref() {
-            if state.key == key {
-                return state.clone();
-            }
-        }
-        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
-        let values = Self::precompute_cached_integrals_at_load(
-            &expression_ir,
-            &self.amplitudes,
-            resources,
-            &self.dataset,
-            self.parameter_manager.n_free_parameters(),
-        );
-        let execution_sets = expression_ir.normalization_execution_sets().clone();
-        let state = CachedIntegralCacheState {
-            key,
-            expression_ir,
-            values,
-            execution_sets,
-        };
-        *self.ir_planning.cached_integrals.write() = Some(state.clone());
-        state
+        self.ensure_expression_specialization(resources)
+            .cached_integrals
     }
 
     fn evaluate_expression_runtime_value_with_scratch(
@@ -1957,7 +2013,8 @@ impl Evaluator {
     /// Dependence classification for the compiled expression root.
     pub fn expression_root_dependence(&self) -> ExpressionDependence {
         let resources = self.resources.read();
-        self.compile_expression_ir_for_active_mask(&resources.active)
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
             .root_dependence()
             .into()
     }
@@ -1966,7 +2023,8 @@ impl Evaluator {
     /// Dependence classification for each compiled expression node.
     pub fn expression_node_dependence_annotations(&self) -> Vec<ExpressionDependence> {
         let resources = self.resources.read();
-        self.compile_expression_ir_for_active_mask(&resources.active)
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
             .node_dependence_annotations()
             .iter()
             .copied()
@@ -1978,7 +2036,8 @@ impl Evaluator {
     /// Warning-level diagnostics for potentially inconsistent dependence hints.
     pub fn expression_dependence_warnings(&self) -> Vec<String> {
         let resources = self.resources.read();
-        self.compile_expression_ir_for_active_mask(&resources.active)
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
             .dependence_warnings()
             .to_vec()
     }
@@ -1987,7 +2046,8 @@ impl Evaluator {
     /// Explain/debug view of IR normalization planning decomposition.
     pub fn expression_normalization_plan_explain(&self) -> NormalizationPlanExplain {
         let resources = self.resources.read();
-        self.compile_expression_ir_for_active_mask(&resources.active)
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
             .normalization_plan_explain()
             .into()
     }
@@ -5098,6 +5158,56 @@ mod tests {
         assert_eq!(
             evaluator.expression_root_dependence(),
             ExpressionDependence::Mixed
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_specialization_cache_reuses_prior_mask_specializations() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(evaluator.specialization_cache_len(), 1);
+        let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        let all_active_slot_count = evaluator.lowered_runtime_slot_count();
+
+        evaluator.isolate_many(&["p"]);
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+        let parameter_only_slot_count = evaluator.lowered_runtime_slot_count();
+        assert!(parameter_only_slot_count <= all_active_slot_count);
+
+        evaluator.activate_many(&["k", "m"]);
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals(),
+            all_active_cached_integrals
+        );
+        assert_eq!(
+            evaluator.lowered_runtime_slot_count(),
+            all_active_slot_count
+        );
+
+        evaluator.deactivate_many(&["k"]);
+        assert_eq!(evaluator.specialization_cache_len(), 3);
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+
+        evaluator.activate_many(&["k"]);
+        assert_eq!(evaluator.specialization_cache_len(), 2 + 1);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals(),
+            all_active_cached_integrals
+        );
+        assert_eq!(
+            evaluator.lowered_runtime_slot_count(),
+            all_active_slot_count
         );
     }
 
