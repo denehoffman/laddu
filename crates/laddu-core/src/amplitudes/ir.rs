@@ -345,6 +345,20 @@ impl ExpressionIR {
         self.root
     }
 
+    #[cfg(test)]
+    pub(super) fn from_test_nodes(nodes: Vec<IrNode>, root: IrValueId) -> Self {
+        Self {
+            nodes,
+            root,
+            dependence_annotations: Vec::new(),
+            dependence_warnings: Vec::new(),
+            rewrite_diagnostics: Vec::new(),
+            separable_mul_candidates: Vec::new(),
+            normalization_plan: NormalizationPlan::default(),
+            normalization_execution_sets: NormalizationExecutionSets::default(),
+        }
+    }
+
     pub(super) fn root_dependence(&self) -> DependenceClass {
         if self.nodes.is_empty() {
             return DependenceClass::ParameterOnly;

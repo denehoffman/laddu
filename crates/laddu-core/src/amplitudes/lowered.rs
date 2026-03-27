@@ -13,6 +13,30 @@ struct LoweredProgramTemplate {
     layout: LoweredRuntimeLayout,
 }
 
+fn collect_live_ir_nodes(ir: &ExpressionIR) -> Vec<usize> {
+    fn visit(node_index: usize, nodes: &[IrNode], live: &mut [bool]) {
+        if live[node_index] {
+            return;
+        }
+        live[node_index] = true;
+        match nodes[node_index] {
+            IrNode::Constant(_) | IrNode::Amp(_) => {}
+            IrNode::Unary { input, .. } => visit(input, nodes, live),
+            IrNode::Binary { left, right, .. } => {
+                visit(left, nodes, live);
+                visit(right, nodes, live);
+            }
+        }
+    }
+
+    let mut live = vec![false; ir.node_count()];
+    visit(ir.root(), ir.nodes(), &mut live);
+    live.into_iter()
+        .enumerate()
+        .filter_map(|(index, is_live)| is_live.then_some(index))
+        .collect()
+}
+
 /// Execution-only program kinds derived from optimized IR.
 ///
 /// These variants classify lowered runtimes by output contract rather than by planning logic.
@@ -438,19 +462,25 @@ impl LoweredProgram {
             return Err(LoweringError::EmptyIr);
         }
 
-        let instructions = ir
-            .nodes()
-            .iter()
-            .enumerate()
-            .map(|(dst, node)| match *node {
-                IrNode::Constant(value) => LoweredInstruction::Constant { dst, value },
+        let live_nodes = collect_live_ir_nodes(ir);
+        let mut remap = vec![usize::MAX; ir.node_count()];
+        for (new_index, old_index) in live_nodes.iter().copied().enumerate() {
+            remap[old_index] = new_index;
+        }
+        let instructions = live_nodes
+            .into_iter()
+            .map(|old_index| match ir.nodes()[old_index] {
+                IrNode::Constant(value) => LoweredInstruction::Constant {
+                    dst: remap[old_index],
+                    value,
+                },
                 IrNode::Amp(amplitude_index) => LoweredInstruction::LoadAmplitude {
-                    dst,
+                    dst: remap[old_index],
                     amplitude_index,
                 },
                 IrNode::Unary { op, input } => LoweredInstruction::Unary {
-                    dst,
-                    input,
+                    dst: remap[old_index],
+                    input: remap[input],
                     op: match op {
                         IrUnaryOp::Neg => LoweredUnaryOp::Neg,
                         IrUnaryOp::Real => LoweredUnaryOp::Real,
@@ -460,9 +490,9 @@ impl LoweredProgram {
                     },
                 },
                 IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
-                    dst,
-                    left,
-                    right,
+                    dst: remap[old_index],
+                    left: remap[left],
+                    right: remap[right],
                     op: match op {
                         IrBinaryOp::Add => LoweredBinaryOp::Add,
                         IrBinaryOp::Sub => LoweredBinaryOp::Sub,
@@ -475,7 +505,10 @@ impl LoweredProgram {
 
         Ok(LoweredProgramTemplate {
             instructions,
-            layout: LoweredRuntimeLayout::new(ir.node_count(), ir.root()),
+            layout: LoweredRuntimeLayout::new(
+                remap.iter().filter(|slot| **slot != usize::MAX).count(),
+                remap[ir.root()],
+            ),
         })
     }
 
@@ -509,7 +542,9 @@ mod tests {
         LoweredInstruction, LoweredProgram, LoweredProgramKind, LoweredRuntimeLayout,
         LoweredUnaryOp,
     };
-    use crate::amplitudes::ir::{compile_expression_ir, DependenceClass};
+    use crate::amplitudes::ir::{
+        compile_expression_ir, DependenceClass, ExpressionIR, IrBinaryOp, IrNode, IrUnaryOp,
+    };
     use crate::amplitudes::ExpressionNode;
     use nalgebra::DVector;
     use num::complex::Complex64;
@@ -737,6 +772,31 @@ mod tests {
         assert_eq!(value.instructions(), fused.instructions());
         assert_eq!(value.layout(), gradient.layout());
         assert_eq!(value.layout(), fused.layout());
+    }
+
+    #[test]
+    fn lowering_prunes_dead_nodes_after_specialization() {
+        let ir = ExpressionIR::from_test_nodes(
+            vec![
+                IrNode::Amp(0),
+                IrNode::Unary {
+                    op: IrUnaryOp::Conj,
+                    input: 0,
+                },
+                IrNode::Amp(1),
+                IrNode::Binary {
+                    op: IrBinaryOp::Mul,
+                    left: 2,
+                    right: 2,
+                },
+            ],
+            1,
+        );
+        let program = LoweredProgram::from_ir_value_only(&ir).unwrap();
+
+        assert!(program.scratch_slots() < ir.node_count());
+        assert_eq!(program.instructions().len(), program.scratch_slots());
+        assert_eq!(program.root_slot(), program.scratch_slots() - 1);
     }
 
     #[test]
