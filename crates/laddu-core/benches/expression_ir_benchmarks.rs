@@ -121,6 +121,13 @@ struct LargeGradientCase {
     n_parameters: usize,
 }
 
+struct RealUnaryCase {
+    label: &'static str,
+    evaluator: Evaluator,
+    parameters: Vec<f64>,
+    n_events: usize,
+}
+
 fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
     let metadata = Arc::new(DatasetMetadata::default());
     let events = (0..n_events)
@@ -245,6 +252,40 @@ fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGra
     }
 }
 
+fn build_real_unary_case(dataset: &Arc<Dataset>) -> RealUnaryCase {
+    let amp0 = TestAmplitude::new(
+        "real_unary_amp_0",
+        parameter("real_unary_re_0"),
+        parameter("real_unary_im_0"),
+    )
+    .expect("real unary term 0 should construct");
+    let amp1 = TestAmplitude::new(
+        "real_unary_amp_1",
+        parameter("real_unary_re_1"),
+        parameter("real_unary_im_1"),
+    )
+    .expect("real unary term 1 should construct");
+    let cache =
+        CacheOnlyScalar::new("real_unary_cache").expect("real unary cache factor should construct");
+
+    let expression = &amp0.norm_sqr()
+        + &amp0.real()
+        + &amp0.imag()
+        + &amp1.norm_sqr()
+        + &(&cache * &amp1.real());
+
+    let evaluator = expression
+        .load(dataset)
+        .expect("real unary evaluator should load");
+
+    RealUnaryCase {
+        label: "real_unary_heavy",
+        evaluator,
+        parameters: vec![0.2, -0.15, 0.35, 0.1],
+        n_events: dataset.n_events_local(),
+    }
+}
+
 #[cfg(feature = "expression-ir")]
 fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str] {
     match kind {
@@ -343,6 +384,41 @@ fn expression_backend_benchmarks(c: &mut Criterion) {
         })
     });
     group.finish();
+
+    let real_unary_dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
+    let real_unary_case = build_real_unary_case(&real_unary_dataset);
+    let mut real_unary_group = c.benchmark_group("expression_ir_instruction_mix_generic");
+    real_unary_group.sample_size(40);
+    real_unary_group.warm_up_time(Duration::from_secs(2));
+    real_unary_group.measurement_time(Duration::from_secs(6));
+    real_unary_group.throughput(Throughput::Elements(real_unary_case.n_events as u64));
+
+    real_unary_group.bench_with_input(
+        BenchmarkId::new(
+            "evaluate_local_real_unary",
+            format!("{}@{}", real_unary_case.label, real_unary_case.n_events),
+        ),
+        &real_unary_case,
+        |b, case| b.iter(|| black_box(case.evaluator.evaluate_local(black_box(&case.parameters)))),
+    );
+
+    real_unary_group.bench_with_input(
+        BenchmarkId::new(
+            "evaluate_gradient_local_real_unary",
+            format!("{}@{}", real_unary_case.label, real_unary_case.n_events),
+        ),
+        &real_unary_case,
+        |b, case| {
+            b.iter(|| {
+                black_box(
+                    case.evaluator
+                        .evaluate_gradient_local(black_box(&case.parameters)),
+                )
+            })
+        },
+    );
+
+    real_unary_group.finish();
 }
 
 fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
@@ -768,6 +844,75 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
         );
     }
     mixed_group.finish();
+
+    let real_unary_datasets = [
+        (
+            "n4k",
+            synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL),
+        ),
+        (
+            "n32k",
+            synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_LARGE),
+        ),
+    ];
+    let mut real_unary_group =
+        c.benchmark_group("expression_ir_instruction_mix_real_unary_normalization");
+    real_unary_group.sample_size(40);
+    real_unary_group.warm_up_time(Duration::from_secs(2));
+    real_unary_group.measurement_time(Duration::from_secs(6));
+    for (tier_label, dataset) in &real_unary_datasets {
+        let case = build_real_unary_case(dataset);
+        real_unary_group.throughput(Throughput::Elements(case.n_events as u64));
+        real_unary_group.bench_with_input(
+            BenchmarkId::new(
+                format!("weighted_value_sum/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_value_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        real_unary_group.bench_with_input(
+            BenchmarkId::new(
+                format!("weighted_gradient_sum/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box(
+                        case.evaluator
+                            .evaluate_weighted_gradient_sum_local(black_box(&case.parameters)),
+                    )
+                })
+            },
+        );
+        real_unary_group.bench_with_input(
+            BenchmarkId::new(
+                format!("eventwise_baseline/{}", tier_label),
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            &case,
+            |b, case| {
+                b.iter(|| {
+                    black_box((
+                        eventwise_weighted_value_sum(&case.evaluator, black_box(&case.parameters)),
+                        eventwise_weighted_gradient_sum(
+                            &case.evaluator,
+                            black_box(&case.parameters),
+                        ),
+                    ))
+                })
+            },
+        );
+    }
+    real_unary_group.finish();
 }
 
 #[cfg(feature = "expression-ir")]
