@@ -1571,6 +1571,27 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn lowered_value_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime()
+            .and_then(|runtime| {
+                runtime
+                    .value_program()
+                    .map(|program| program.scratch_slots())
+            })
+            .unwrap_or_else(|| self.expression_ir().node_count())
+    }
+
+    fn expression_value_slot_count(&self) -> usize {
+        match self.runtime_backend {
+            ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => self.lowered_value_runtime_slot_count(),
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
     #[cfg(test)]
     fn specialization_cache_len(&self) -> usize {
         self.ir_planning.specialization_cache.read().len()
@@ -3185,7 +3206,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
         #[cfg(feature = "rayon")]
         {
             resources
@@ -3251,7 +3272,7 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
         #[cfg(feature = "rayon")]
         {
             Ok(resources
@@ -3307,7 +3328,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
         #[cfg(feature = "rayon")]
         {
             if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
@@ -3439,7 +3460,7 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
         #[cfg(feature = "rayon")]
         {
             indices
@@ -5768,6 +5789,7 @@ mod tests {
         );
         let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
         let all_active_slot_count = evaluator.lowered_runtime_slot_count();
+        let all_active_value_slot_count = evaluator.expression_value_slot_count();
 
         evaluator.isolate_many(&["p"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
@@ -5782,7 +5804,9 @@ mod tests {
             .expression_precomputed_cached_integrals()
             .is_empty());
         let parameter_only_slot_count = evaluator.lowered_runtime_slot_count();
+        let parameter_only_value_slot_count = evaluator.expression_value_slot_count();
         assert!(parameter_only_slot_count <= all_active_slot_count);
+        assert!(parameter_only_value_slot_count <= all_active_value_slot_count);
 
         evaluator.activate_many(&["k", "m"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
@@ -5800,6 +5824,10 @@ mod tests {
         assert_eq!(
             evaluator.lowered_runtime_slot_count(),
             all_active_slot_count
+        );
+        assert_eq!(
+            evaluator.expression_value_slot_count(),
+            all_active_value_slot_count
         );
 
         evaluator.deactivate_many(&["k"]);
@@ -5831,6 +5859,10 @@ mod tests {
         assert_eq!(
             evaluator.lowered_runtime_slot_count(),
             all_active_slot_count
+        );
+        assert_eq!(
+            evaluator.expression_value_slot_count(),
+            all_active_value_slot_count
         );
     }
 
