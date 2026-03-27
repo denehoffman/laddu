@@ -104,12 +104,56 @@ pub(crate) fn read_parquet_storage_chunks(
         .collect();
     let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&float_cols);
     let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-    let mut reader = builder.build()?;
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            let plan = configure_parquet_mpi_read(builder, &world);
+            if plan.local_rows == 0 {
+                return Ok(read_parquet_storage_chunks_from_reader(
+                    None,
+                    metadata,
+                    chunk_size,
+                    0,
+                    Some(0),
+                ));
+            }
+            let reader = plan.builder.build()?;
+            return Ok(read_parquet_storage_chunks_from_reader(
+                Some(reader),
+                metadata,
+                chunk_size,
+                plan.skip_rows,
+                Some(plan.local_rows),
+            ));
+        }
+    }
+
+    let reader = builder.build()?;
+    Ok(read_parquet_storage_chunks_from_reader(
+        Some(reader),
+        metadata,
+        chunk_size,
+        0,
+        None,
+    ))
+}
+
+fn read_parquet_storage_chunks_from_reader(
+    mut reader: Option<impl Iterator<Item = arrow::error::Result<RecordBatch>>>,
+    metadata: Arc<DatasetMetadata>,
+    chunk_size: usize,
+    mut remaining_skip: usize,
+    mut remaining_rows: Option<usize>,
+) -> impl Iterator<Item = LadduResult<Arc<DatasetStorage>>> {
     let rows_per_chunk = chunk_size.max(1);
     let mut pending_batch: Option<RecordBatch> = None;
     let mut pending_offset = 0usize;
 
-    Ok(std::iter::from_fn(move || {
+    std::iter::from_fn(move || {
+        if matches!(remaining_rows, Some(0)) {
+            return None;
+        }
+
         let mut p4 = (0..metadata.p4_names.len())
             .map(|_| ColumnarP4Column::with_capacity(rows_per_chunk))
             .collect::<Vec<_>>();
@@ -119,8 +163,12 @@ pub(crate) fn read_parquet_storage_chunks(
         let mut weights = Vec::with_capacity(rows_per_chunk);
 
         while weights.len() < rows_per_chunk {
+            if matches!(remaining_rows, Some(0)) {
+                break;
+            }
+
             if pending_batch.is_none() {
-                let next_batch = match reader.next() {
+                let next_batch = match reader.as_mut().and_then(Iterator::next) {
                     Some(batch) => batch,
                     None => break,
                 };
@@ -128,8 +176,13 @@ pub(crate) fn read_parquet_storage_chunks(
                     Ok(batch) => batch,
                     Err(err) => return Some(Err(err.into())),
                 };
+                if remaining_skip >= batch.num_rows() {
+                    remaining_skip -= batch.num_rows();
+                    continue;
+                }
+                pending_offset = remaining_skip;
                 pending_batch = Some(batch);
-                pending_offset = 0;
+                remaining_skip = 0;
             }
 
             let batch = pending_batch
@@ -142,7 +195,11 @@ pub(crate) fn read_parquet_storage_chunks(
                 continue;
             }
 
-            let take_rows = available_rows.min(rows_per_chunk - weights.len());
+            let remaining_chunk_rows = rows_per_chunk - weights.len();
+            let remaining_window_rows = remaining_rows.unwrap_or(usize::MAX);
+            let take_rows = available_rows
+                .min(remaining_chunk_rows)
+                .min(remaining_window_rows);
             let end_row = pending_offset + take_rows;
             if let Err(err) = append_record_batch_range_to_columnar(
                 batch,
@@ -155,8 +212,11 @@ pub(crate) fn read_parquet_storage_chunks(
             ) {
                 return Some(Err(err));
             }
+            if let Some(rows_left) = remaining_rows.as_mut() {
+                *rows_left -= take_rows;
+            }
             pending_offset = end_row;
-            if pending_offset >= batch.num_rows() {
+            if pending_offset >= batch.num_rows() || matches!(remaining_rows, Some(0)) {
                 pending_batch = None;
                 pending_offset = 0;
             }
@@ -172,7 +232,7 @@ pub(crate) fn read_parquet_storage_chunks(
             aux,
             weights,
         })))
-    }))
+    })
 }
 
 fn append_record_batch_range_to_columnar(
@@ -246,39 +306,23 @@ fn read_parquet_columnar_local(
 
 #[cfg(feature = "mpi")]
 fn read_parquet_columnar_mpi(
-    mut builder: ParquetRecordBatchReaderBuilder<File>,
+    builder: ParquetRecordBatchReaderBuilder<File>,
     metadata: Arc<DatasetMetadata>,
     world: &SimpleCommunicator,
 ) -> LadduResult<Arc<DatasetStorage>> {
-    let parquet_metadata = builder.metadata().clone();
-    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
-    if total_rows == 0 {
+    let plan = configure_parquet_mpi_read(builder, world);
+    if plan.local_rows == 0 {
         return Ok(Arc::new(empty_dataset_columnar(metadata)));
     }
 
-    let partition = world.partition(total_rows);
-    let rank = world.rank() as usize;
-    let local_range = partition.range_for_rank(rank);
-    let local_start = local_range.start;
-    let local_end = local_range.end;
-    if local_start == local_end {
-        return Ok(Arc::new(empty_dataset_columnar(metadata)));
-    }
-
-    let (row_groups, first_row_start) =
-        row_groups_for_range(&parquet_metadata, local_start, local_end);
-    if !row_groups.is_empty() {
-        builder = builder.with_row_groups(row_groups);
-    }
-
-    let reader = builder.build()?;
+    let reader = plan.builder.build()?;
     let mut p4 = (0..metadata.p4_names.len())
-        .map(|_| ColumnarP4Column::with_capacity(local_end - first_row_start))
+        .map(|_| ColumnarP4Column::with_capacity(plan.local_rows + plan.skip_rows))
         .collect::<Vec<_>>();
     let mut aux = (0..metadata.aux_names.len())
-        .map(|_| Vec::with_capacity(local_end - first_row_start))
+        .map(|_| Vec::with_capacity(plan.local_rows + plan.skip_rows))
         .collect::<Vec<_>>();
-    let mut weights = Vec::with_capacity(local_end - first_row_start);
+    let mut weights = Vec::with_capacity(plan.local_rows + plan.skip_rows);
     append_record_batch_stream(reader, metadata.as_ref(), &mut p4, &mut aux, &mut weights)?;
     let mut columnar = DatasetStorage {
         metadata,
@@ -287,18 +331,67 @@ fn read_parquet_columnar_mpi(
         weights,
     };
 
-    let drop_front = local_start.saturating_sub(first_row_start);
-    let expected_local = local_end - local_start;
-    trim_columnar_rows(&mut columnar, drop_front, expected_local);
-    if columnar.n_events() != expected_local {
+    trim_columnar_rows(&mut columnar, plan.skip_rows, plan.local_rows);
+    if columnar.n_events() != plan.local_rows {
         return Err(LadduError::LengthMismatch {
-            context: format!("Loaded rows for MPI rank {rank}"),
-            expected: expected_local,
+            context: format!("Loaded rows for MPI rank {}", plan.rank),
+            expected: plan.local_rows,
             actual: columnar.n_events(),
         });
     }
 
     Ok(Arc::new(columnar))
+}
+
+#[cfg(feature = "mpi")]
+struct ParquetMpiReadPlan {
+    builder: ParquetRecordBatchReaderBuilder<File>,
+    skip_rows: usize,
+    local_rows: usize,
+    rank: usize,
+}
+
+#[cfg(feature = "mpi")]
+fn configure_parquet_mpi_read(
+    mut builder: ParquetRecordBatchReaderBuilder<File>,
+    world: &SimpleCommunicator,
+) -> ParquetMpiReadPlan {
+    let parquet_metadata = builder.metadata().clone();
+    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
+    let rank = world.rank() as usize;
+    if total_rows == 0 {
+        return ParquetMpiReadPlan {
+            builder,
+            skip_rows: 0,
+            local_rows: 0,
+            rank,
+        };
+    }
+
+    let partition = world.partition(total_rows);
+    let local_range = partition.range_for_rank(rank);
+    let local_rows = local_range.len();
+    if local_rows == 0 {
+        return ParquetMpiReadPlan {
+            builder,
+            skip_rows: 0,
+            local_rows: 0,
+            rank,
+        };
+    }
+
+    let (row_groups, first_row_start) =
+        row_groups_for_range(&parquet_metadata, local_range.start, local_range.end);
+    if !row_groups.is_empty() {
+        builder = builder.with_row_groups(row_groups);
+    }
+
+    ParquetMpiReadPlan {
+        builder,
+        skip_rows: local_range.start.saturating_sub(first_row_start),
+        local_rows,
+        rank,
+    }
 }
 
 #[cfg(feature = "mpi")]

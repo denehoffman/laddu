@@ -3726,6 +3726,46 @@ mod tests {
         assert_eq!(global_idx, full.n_events());
     }
 
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_parquet_chunk_iterator_respects_mpi_partition() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new();
+        let reference =
+            read_parquet(path_str, &options).expect("reference parquet read should work");
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let partition = world.partition(reference.n_events());
+        let local_range = partition.range_for_rank(world.rank() as usize);
+        let chunks =
+            read_parquet_chunks(path_str, &options, 17).expect("chunk iterator should open");
+
+        let mut local_idx = 0usize;
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            assert!(chunk.n_events_local() <= 17);
+            for chunk_idx in 0..chunk.n_events_local() {
+                let expected = reference
+                    .event(local_range.start + local_idx)
+                    .expect("reference event should exist");
+                let actual = chunk.event(chunk_idx).expect("chunk event should exist");
+                assert_events_close(&expected, &actual, TEST_P4_NAMES, TEST_AUX_NAMES);
+                local_idx += 1;
+            }
+        }
+
+        assert_eq!(local_idx, local_range.len());
+        let mut gathered_counts = vec![0usize; world.size() as usize];
+        world.all_gather_into(&local_idx, &mut gathered_counts);
+        assert_eq!(
+            gathered_counts.into_iter().sum::<usize>(),
+            reference.n_events()
+        );
+        finalize_mpi();
+    }
+
     #[test]
     fn test_parquet_chunk_iterator_with_options_chunk_size_one() {
         let path = test_data_path("data_f32.parquet");
