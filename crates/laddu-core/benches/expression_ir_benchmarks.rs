@@ -1,6 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use laddu_core::{
     amplitudes::{
         parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike, TestAmplitude,
@@ -103,6 +105,7 @@ enum ScenarioKind {
 
 struct ScenarioCase {
     label: &'static str,
+    kind: ScenarioKind,
     evaluator: Evaluator,
     parameters: Vec<f64>,
     n_events: usize,
@@ -141,6 +144,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
             let expression = (&p1 * &c1) + &(&p2 * &c2);
             ScenarioCase {
                 label: "separable",
+                kind,
                 evaluator: expression
                     .load(dataset)
                     .expect("separable evaluator should load"),
@@ -161,6 +165,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
             let expression = (&p * &c) + &m;
             ScenarioCase {
                 label: "partial",
+                kind,
                 evaluator: expression
                     .load(dataset)
                     .expect("partial evaluator should load"),
@@ -184,6 +189,7 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
             let expression = &m1 * &m2;
             ScenarioCase {
                 label: "non_separable",
+                kind,
                 evaluator: expression
                     .load(dataset)
                     .expect("non-separable evaluator should load"),
@@ -191,6 +197,15 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
                 n_events: dataset.n_events_local(),
             }
         }
+    }
+}
+
+#[cfg(feature = "expression-ir")]
+fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str] {
+    match kind {
+        ScenarioKind::Separable => &["sep_p1"],
+        ScenarioKind::Partial => &["partial_p"],
+        ScenarioKind::NonSeparable => &["nonsep_m1"],
     }
 }
 
@@ -422,9 +437,81 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
     control_group.finish();
 }
 
+#[cfg(feature = "expression-ir")]
+fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
+    let dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
+    let cases = [
+        build_scenario(&dataset, ScenarioKind::Separable),
+        build_scenario(&dataset, ScenarioKind::Partial),
+        build_scenario(&dataset, ScenarioKind::NonSeparable),
+    ];
+
+    let mut group = c.benchmark_group("expression_ir_activation_churn");
+    group.sample_size(30);
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(6));
+
+    for case in &cases {
+        let isolate_names = activation_churn_isolate_names(case.kind);
+        group.throughput(Throughput::Elements(case.n_events as u64));
+        group.bench_with_input(
+            BenchmarkId::new(
+                "cache_miss/isolate_param_only",
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            case,
+            |b, case| {
+                b.iter_batched(
+                    || {
+                        let evaluator = build_scenario(&dataset, case.kind).evaluator;
+                        evaluator.reset_expression_specialization_metrics();
+                        evaluator
+                    },
+                    |evaluator| {
+                        evaluator.isolate_many(isolate_names);
+                        black_box(evaluator.expression_specialization_metrics())
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "cache_hit/restore_full",
+                format!("{}@{}", case.label, case.n_events),
+            ),
+            case,
+            |b, case| {
+                b.iter_batched(
+                    || {
+                        let evaluator = build_scenario(&dataset, case.kind).evaluator;
+                        evaluator.isolate_many(isolate_names);
+                        evaluator.activate_all();
+                        evaluator.reset_expression_specialization_metrics();
+                        evaluator.isolate_many(isolate_names);
+                        evaluator.reset_expression_specialization_metrics();
+                        evaluator
+                    },
+                    |evaluator| {
+                        evaluator.activate_all();
+                        black_box(evaluator.expression_specialization_metrics())
+                    },
+                    BatchSize::SmallInput,
+                )
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(not(feature = "expression-ir"))]
+fn expression_ir_activation_churn_benchmarks(_c: &mut Criterion) {}
+
 criterion_group!(
     benches,
     expression_backend_benchmarks,
-    expression_ir_normalization_factorization_benchmarks
+    expression_ir_normalization_factorization_benchmarks,
+    expression_ir_activation_churn_benchmarks
 );
 criterion_main!(benches);

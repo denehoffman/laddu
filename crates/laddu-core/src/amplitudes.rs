@@ -139,6 +139,16 @@ struct ExpressionSpecializationState {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Debug/benchmark counters for active-mask specialization reuse under `expression-ir`.
+pub struct ExpressionSpecializationMetrics {
+    /// Number of specialization cache hits served without recompilation.
+    pub cache_hits: usize,
+    /// Number of specialization cache misses that required a fresh compile/lower pass.
+    pub cache_misses: usize,
+}
+
+#[cfg(feature = "expression-ir")]
 impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
     fn from(value: ir::NormalizationPlanExplain) -> Self {
         Self {
@@ -1307,6 +1317,10 @@ impl Expression {
                 expression_ir: cached_integral_state.expression_ir.clone(),
                 cached_integrals: Arc::new(RwLock::new(Some(cached_integral_state))),
                 specialization_cache: Arc::new(RwLock::new(specialization_cache)),
+                specialization_metrics: Arc::new(RwLock::new(ExpressionSpecializationMetrics {
+                    cache_hits: 0,
+                    cache_misses: 1,
+                })),
             },
             #[cfg(feature = "expression-ir")]
             runtime_state: ExpressionRuntimeState {
@@ -1452,6 +1466,7 @@ struct ExpressionIrPlanningState {
     cached_integrals: Arc<RwLock<Option<CachedIntegralCacheState>>>,
     specialization_cache:
         Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
+    specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1491,6 +1506,19 @@ impl Evaluator {
     /// Internal benchmarking/debug hook for forcing a specific expression execution backend.
     pub fn set_expression_runtime_backend(&mut self, backend: ExpressionRuntimeBackend) {
         self.runtime_backend = backend;
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Internal benchmarking/debug counters for specialization cache reuse.
+    pub fn expression_specialization_metrics(&self) -> ExpressionSpecializationMetrics {
+        *self.ir_planning.specialization_metrics.read()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Reset specialization cache counters while leaving cached specializations intact.
+    pub fn reset_expression_specialization_metrics(&self) {
+        *self.ir_planning.specialization_metrics.write() =
+            ExpressionSpecializationMetrics::default();
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1595,10 +1623,12 @@ impl Evaluator {
             .get(&key)
             .cloned()
         {
+            self.ir_planning.specialization_metrics.write().cache_hits += 1;
             self.install_expression_specialization(&specialization);
             return specialization;
         }
         let specialization = self.build_expression_specialization(resources, key.clone());
+        self.ir_planning.specialization_metrics.write().cache_misses += 1;
         self.ir_planning
             .specialization_cache
             .write()
@@ -5171,11 +5201,25 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         assert_eq!(evaluator.specialization_cache_len(), 1);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 1,
+            }
+        );
         let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
         let all_active_slot_count = evaluator.lowered_runtime_slot_count();
 
         evaluator.isolate_many(&["p"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 2,
+            }
+        );
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
@@ -5184,6 +5228,13 @@ mod tests {
 
         evaluator.activate_many(&["k", "m"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 1,
+                cache_misses: 2,
+            }
+        );
         assert_eq!(
             evaluator.expression_precomputed_cached_integrals(),
             all_active_cached_integrals
@@ -5195,12 +5246,26 @@ mod tests {
 
         evaluator.deactivate_many(&["k"]);
         assert_eq!(evaluator.specialization_cache_len(), 3);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 1,
+                cache_misses: 3,
+            }
+        );
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
 
         evaluator.activate_many(&["k"]);
-        assert_eq!(evaluator.specialization_cache_len(), 2 + 1);
+        assert_eq!(evaluator.specialization_cache_len(), 3);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 2,
+                cache_misses: 3,
+            }
+        );
         assert_eq!(
             evaluator.expression_precomputed_cached_integrals(),
             all_active_cached_integrals
