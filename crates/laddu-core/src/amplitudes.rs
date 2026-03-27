@@ -1745,12 +1745,27 @@ impl Evaluator {
                 )
             }
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().evaluate_gradient_into(
-                amplitude_values,
-                gradient_values,
-                value_scratch,
-                gradient_scratch,
-            ),
+            ExpressionRuntimeBackend::IrInterpreter => {
+                let lowered_runtime = self.runtime_state.lowered_runtime.read();
+                if let Some(program) = lowered_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                {
+                    program.evaluate_gradient_into(
+                        amplitude_values,
+                        gradient_values,
+                        value_scratch,
+                        gradient_scratch,
+                    )
+                } else {
+                    self.expression_ir().evaluate_gradient_into(
+                        amplitude_values,
+                        gradient_values,
+                        value_scratch,
+                        gradient_scratch,
+                    )
+                }
+            }
         }
     }
 
@@ -1813,9 +1828,28 @@ impl Evaluator {
                 .expression_program
                 .evaluate_gradient(amplitude_values, gradient_values),
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => self
-                .expression_ir()
-                .evaluate_gradient(amplitude_values, gradient_values),
+            ExpressionRuntimeBackend::IrInterpreter => {
+                let lowered_runtime = self.runtime_state.lowered_runtime.read();
+                if let Some(program) = lowered_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                {
+                    let mut value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+                    let grad_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+                    let mut gradient_scratch = (0..program.scratch_slots())
+                        .map(|_| DVector::zeros(grad_dim))
+                        .collect::<Vec<_>>();
+                    program.evaluate_gradient_into(
+                        amplitude_values,
+                        gradient_values,
+                        &mut value_scratch,
+                        &mut gradient_scratch,
+                    )
+                } else {
+                    self.expression_ir()
+                        .evaluate_gradient(amplitude_values, gradient_values)
+                }
+            }
         }
     }
 
@@ -4142,7 +4176,13 @@ mod tests {
             .scratch_slots())
             .map(|_| DVector::zeros(parameters.len()))
             .collect();
-        let ir_gradient = evaluator.evaluate_expression_gradient_with_scratch(
+        let active_gradient = evaluator.evaluate_expression_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let ir_gradient = evaluator.expression_ir().evaluate_gradient_into(
             &amplitude_values,
             &amplitude_gradients,
             &mut ir_value_slots,
@@ -4160,6 +4200,10 @@ mod tests {
             &mut lowered_value_slots,
             &mut lowered_gradient_slots,
         );
+        for (active, lowered) in active_gradient.iter().zip(lowered_gradient.iter()) {
+            assert_relative_eq!(active.re, lowered.re);
+            assert_relative_eq!(active.im, lowered.im);
+        }
         for (lowered, ir) in lowered_gradient.iter().zip(ir_gradient.iter()) {
             assert_relative_eq!(lowered.re, ir.re);
             assert_relative_eq!(lowered.im, ir.im);
