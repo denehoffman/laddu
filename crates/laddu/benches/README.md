@@ -26,6 +26,21 @@ To inspect script options:
 python3 crates/laddu/benches/scripts/criterion_json_report.py --help
 ```
 
+## CPU Workflow Comparison With `expression-ir`
+
+Run the CPU workflow Criterion JSON path with and without `expression-ir`, then generate a joined comparison:
+
+```bash
+just --justfile crates/laddu/benches/Justfile json-report-ir-compare
+```
+
+Outputs:
+
+- `target/criterion/summary/benchmark_summary_cpu.json`
+- `target/criterion/summary/benchmark_summary_cpu_expression_ir.json`
+- `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json`
+- `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.md`
+
 ## Regression Threshold Policy
 
 The report script supports threshold-aware regression checks:
