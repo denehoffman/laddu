@@ -4497,6 +4497,104 @@ mod tests {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn assert_runtime_backends_match_fixture(kind: DeterministicFixtureKind) {
+        let fixture = make_deterministic_fixture(kind);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&fixture.parameters, &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let grad_dim = parameters.len();
+        drop(resources);
+
+        let backends = [
+            ExpressionRuntimeBackend::LegacyProgram,
+            ExpressionRuntimeBackend::IrInterpreter,
+            ExpressionRuntimeBackend::Lowered,
+        ];
+
+        let mut local_values = Vec::new();
+        let mut local_gradients = Vec::new();
+        let mut fused_values = Vec::new();
+        let mut fused_gradients = Vec::new();
+        for backend in backends {
+            let mut backend_evaluator = evaluator.clone();
+            backend_evaluator.set_expression_runtime_backend(backend);
+            local_values.push(backend_evaluator.evaluate_local(&fixture.parameters));
+            local_gradients.push(backend_evaluator.evaluate_gradient_local(&fixture.parameters));
+
+            let slot_count = backend_evaluator.expression_slot_count();
+            let mut value_scratch = vec![Complex64::ZERO; slot_count];
+            let mut gradient_scratch = (0..slot_count)
+                .map(|_| DVector::zeros(grad_dim))
+                .collect::<Vec<_>>();
+            let (value, gradient) = backend_evaluator
+                .evaluate_expression_value_gradient_with_scratch(
+                    &amplitude_values,
+                    &amplitude_gradients,
+                    &mut value_scratch,
+                    &mut gradient_scratch,
+                );
+            fused_values.push(value);
+            fused_gradients.push(gradient);
+        }
+
+        for pair in local_values.windows(2) {
+            for (left, right) in pair[0].iter().zip(pair[1].iter()) {
+                assert_relative_eq!(left.re, right.re);
+                assert_relative_eq!(left.im, right.im);
+            }
+        }
+        for pair in local_gradients.windows(2) {
+            for (left_vec, right_vec) in pair[0].iter().zip(pair[1].iter()) {
+                for (left, right) in left_vec.iter().zip(right_vec.iter()) {
+                    assert_relative_eq!(left.re, right.re);
+                    assert_relative_eq!(left.im, right.im);
+                }
+            }
+        }
+        for pair in fused_values.windows(2) {
+            assert_relative_eq!(pair[0].re, pair[1].re);
+            assert_relative_eq!(pair[0].im, pair[1].im);
+        }
+        for pair in fused_gradients.windows(2) {
+            for (left, right) in pair[0].iter().zip(pair[1].iter()) {
+                assert_relative_eq!(left.re, right.re);
+                assert_relative_eq!(left.im, right.im);
+            }
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_runtime_backends_match_representative_fixture_models() {
+        assert_runtime_backends_match_fixture(DeterministicFixtureKind::Separable);
+        assert_runtime_backends_match_fixture(DeterministicFixtureKind::Partial);
+        assert_runtime_backends_match_fixture(DeterministicFixtureKind::NonSeparable);
+    }
+
+    #[cfg(feature = "expression-ir")]
     #[test]
     fn test_expression_ir_dependence_diagnostics_surface() {
         let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
