@@ -1273,7 +1273,7 @@ impl Expression {
             runtime_backend: {
                 #[cfg(feature = "expression-ir")]
                 {
-                    ExpressionRuntimeBackend::IrInterpreter
+                    ExpressionRuntimeBackend::Lowered
                 }
                 #[cfg(not(feature = "expression-ir"))]
                 {
@@ -1413,12 +1413,13 @@ impl_op_ex!(- |a: &Expression| -> Expression {
 
 /// Evaluator for [`Expression`] that mirrors the existing evaluator behavior.
 #[allow(missing_docs)]
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExpressionRuntimeBackend {
+pub enum ExpressionRuntimeBackend {
     LegacyProgram,
     #[cfg(feature = "expression-ir")]
     IrInterpreter,
+    #[cfg(feature = "expression-ir")]
+    Lowered,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1468,6 +1469,12 @@ pub struct Evaluator {
 #[allow(missing_docs)]
 impl Evaluator {
     #[cfg(feature = "expression-ir")]
+    /// Internal benchmarking/debug hook for forcing a specific expression execution backend.
+    pub fn set_expression_runtime_backend(&mut self, backend: ExpressionRuntimeBackend) {
+        self.runtime_backend = backend;
+    }
+
+    #[cfg(feature = "expression-ir")]
     fn expression_ir(&self) -> &ir::ExpressionIR {
         &self.ir_planning.expression_ir
     }
@@ -1476,6 +1483,31 @@ impl Evaluator {
     #[allow(dead_code)]
     fn lowered_runtime(&self) -> Option<lowered::LoweredExpressionRuntime> {
         self.runtime_state.lowered_runtime.read().clone()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn lowered_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime()
+            .map(|runtime| {
+                [
+                    runtime
+                        .value_program()
+                        .map(|program| program.scratch_slots())
+                        .unwrap_or(0),
+                    runtime
+                        .gradient_program()
+                        .map(|program| program.scratch_slots())
+                        .unwrap_or(0),
+                    runtime
+                        .value_gradient_program()
+                        .map(|program| program.scratch_slots())
+                        .unwrap_or(0),
+                ]
+                .into_iter()
+                .max()
+                .unwrap_or(0)
+            })
+            .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1660,6 +1692,8 @@ impl Evaluator {
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => self.lowered_runtime_slot_count(),
         }
     }
 
@@ -1713,7 +1747,11 @@ impl Evaluator {
                 .expression_program
                 .evaluate_into(amplitude_values, scratch),
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => {
+            ExpressionRuntimeBackend::IrInterpreter => self
+                .expression_ir()
+                .evaluate_into(amplitude_values, scratch),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => {
                 let lowered_runtime = self.runtime_state.lowered_runtime.read();
                 if let Some(program) = lowered_runtime
                     .as_ref()
@@ -1745,7 +1783,14 @@ impl Evaluator {
                 )
             }
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => {
+            ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().evaluate_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            ),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => {
                 let lowered_runtime = self.runtime_state.lowered_runtime.read();
                 if let Some(program) = lowered_runtime
                     .as_ref()
@@ -1787,6 +1832,15 @@ impl Evaluator {
             }
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => {
+                self.expression_ir().evaluate_value_gradient_into(
+                    amplitude_values,
+                    gradient_values,
+                    value_scratch,
+                    gradient_scratch,
+                )
+            }
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => {
                 let lowered_runtime = self.runtime_state.lowered_runtime.read();
                 if let Some(program) = lowered_runtime
                     .as_ref()
@@ -1817,6 +1871,10 @@ impl Evaluator {
             }
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => {
+                self.expression_ir().evaluate(amplitude_values)
+            }
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => {
                 let lowered_runtime = self.runtime_state.lowered_runtime.read();
                 if let Some(program) = lowered_runtime
                     .as_ref()
@@ -1841,7 +1899,11 @@ impl Evaluator {
                 .expression_program
                 .evaluate_gradient(amplitude_values, gradient_values),
             #[cfg(feature = "expression-ir")]
-            ExpressionRuntimeBackend::IrInterpreter => {
+            ExpressionRuntimeBackend::IrInterpreter => self
+                .expression_ir()
+                .evaluate_gradient(amplitude_values, gradient_values),
+            #[cfg(feature = "expression-ir")]
+            ExpressionRuntimeBackend::Lowered => {
                 let lowered_runtime = self.runtime_state.lowered_runtime.read();
                 if let Some(program) = lowered_runtime
                     .as_ref()
@@ -4331,6 +4393,106 @@ mod tests {
         {
             assert_relative_eq!(ir.re, program.re);
             assert_relative_eq!(ir.im, program.im);
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_runtime_backends_match_on_identical_workload() {
+        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        .conj()
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let (amplitude_values, amplitude_gradients, grad_dim) = {
+            let resources = evaluator.resources.read();
+            let parameters =
+                Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+            let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+            evaluator.fill_amplitude_values(
+                &mut amplitude_values,
+                resources.active_indices(),
+                &parameters,
+                &resources.caches[0],
+            );
+            let mut active_mask = vec![false; evaluator.amplitudes.len()];
+            for &index in resources.active_indices() {
+                active_mask[index] = true;
+            }
+            let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect::<Vec<_>>();
+            evaluator.fill_amplitude_gradients(
+                &mut amplitude_gradients,
+                &active_mask,
+                &parameters,
+                &resources.caches[0],
+            );
+            (amplitude_values, amplitude_gradients, parameters.len())
+        };
+
+        let backends = [
+            ExpressionRuntimeBackend::LegacyProgram,
+            ExpressionRuntimeBackend::IrInterpreter,
+            ExpressionRuntimeBackend::Lowered,
+        ];
+
+        let mut value_results = Vec::new();
+        let mut gradient_results = Vec::new();
+        let mut value_gradient_results = Vec::new();
+        for backend in backends {
+            let mut backend_evaluator = evaluator.clone();
+            backend_evaluator.set_expression_runtime_backend(backend);
+            let slot_count = backend_evaluator.expression_slot_count();
+            let mut value_scratch = vec![Complex64::ZERO; slot_count];
+            let mut gradient_value_scratch = vec![Complex64::ZERO; slot_count];
+            let mut fused_value_scratch = vec![Complex64::ZERO; slot_count];
+            let mut gradient_scratch = (0..slot_count)
+                .map(|_| DVector::zeros(grad_dim))
+                .collect::<Vec<_>>();
+            let mut fused_gradient_scratch = (0..slot_count)
+                .map(|_| DVector::zeros(grad_dim))
+                .collect::<Vec<_>>();
+
+            value_results.push(
+                backend_evaluator
+                    .evaluate_expression_value_with_scratch(&amplitude_values, &mut value_scratch),
+            );
+            gradient_results.push(backend_evaluator.evaluate_expression_gradient_with_scratch(
+                &amplitude_values,
+                &amplitude_gradients,
+                &mut gradient_value_scratch,
+                &mut gradient_scratch,
+            ));
+            value_gradient_results.push(
+                backend_evaluator.evaluate_expression_value_gradient_with_scratch(
+                    &amplitude_values,
+                    &amplitude_gradients,
+                    &mut fused_value_scratch,
+                    &mut fused_gradient_scratch,
+                ),
+            );
+        }
+
+        for pair in value_results.windows(2) {
+            assert_relative_eq!(pair[0].re, pair[1].re);
+            assert_relative_eq!(pair[0].im, pair[1].im);
+        }
+        for pair in gradient_results.windows(2) {
+            for (left, right) in pair[0].iter().zip(pair[1].iter()) {
+                assert_relative_eq!(left.re, right.re);
+                assert_relative_eq!(left.im, right.im);
+            }
+        }
+        for pair in value_gradient_results.windows(2) {
+            assert_relative_eq!(pair[0].0.re, pair[1].0.re);
+            assert_relative_eq!(pair[0].0.im, pair[1].0.im);
+            for (left, right) in pair[0].1.iter().zip(pair[1].1.iter()) {
+                assert_relative_eq!(left.re, right.re);
+                assert_relative_eq!(left.im, right.im);
+            }
         }
     }
 
