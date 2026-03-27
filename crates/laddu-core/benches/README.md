@@ -59,3 +59,28 @@ Notes:
 
 - `max_rss_kb` is measured from the benchmark subprocess via `ru_maxrss`.
 - `allocation_proxy_bytes_per_iter` is a workload-sized logical output proxy, not a measured allocator statistic.
+
+## Expression-IR compile metrics
+
+Collect compile-cost benchmark timing together with staged expression-IR compile metrics:
+
+```bash
+python3 crates/laddu-core/benches/scripts/expression_ir_compile_metrics.py
+```
+
+Outputs:
+
+- `target/criterion/summary/laddu_core_expression_ir_compile_metrics.json`
+- `target/criterion/summary/laddu_core_expression_ir_compile_metrics.md`
+
+To run a subset of compile benchmark cases:
+
+```bash
+python3 crates/laddu-core/benches/scripts/expression_ir_compile_metrics.py \
+  --cases initial_load/partial,specialization_cache_hit_restore/partial
+```
+
+Notes:
+
+- `wall_clock_sec` comes from the compile-cost Criterion benchmark filter.
+- staged compile numbers come from the `expression_ir_compile_probe` helper binary and are reported separately from steady-state runtime metrics.
