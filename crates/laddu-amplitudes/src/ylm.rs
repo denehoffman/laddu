@@ -48,6 +48,10 @@ impl Amplitude for Ylm {
         resources.register_amplitude(&self.name)
     }
 
+    fn real_valued_hint(&self) -> bool {
+        self.m == 0
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.angles.costheta.bind(metadata)?;
         self.angles.phi.bind(metadata)?;
@@ -138,5 +142,27 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+
+    #[test]
+    fn test_ylm_m_zero_reports_real_valued_hint() {
+        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        let real_ylm = Ylm {
+            name: "ylm0".to_string(),
+            l: 1,
+            m: 0,
+            angles: angles.clone(),
+            csid: ComplexScalarID::default(),
+        };
+        let complex_ylm = Ylm {
+            name: "ylm1".to_string(),
+            l: 1,
+            m: 1,
+            angles,
+            csid: ComplexScalarID::default(),
+        };
+
+        assert!(Amplitude::real_valued_hint(&real_ylm));
+        assert!(!Amplitude::real_valued_hint(&complex_ylm));
     }
 }

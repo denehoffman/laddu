@@ -349,6 +349,14 @@ pub trait Amplitude: DynClone + Send + Sync {
     fn dependence_hint(&self) -> ExpressionDependence {
         ExpressionDependence::Mixed
     }
+    /// Optional hint that this amplitude always evaluates to a purely real complex value.
+    ///
+    /// This must be conservative. Returning `true` allows `expression-ir` to erase
+    /// redundant `imag`, `real`, and `conj` work under the assumption that the
+    /// amplitude output always has zero imaginary component.
+    fn real_valued_hint(&self) -> bool {
+        false
+    }
     /// This method can be used to do some critical calculations ahead of time and
     /// store them in a [`Cache`]. These values can only depend on event data,
     /// not on any free parameters in the fit. This method is opt-in since it is
@@ -1316,7 +1324,16 @@ impl Expression {
                 .iter()
                 .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
                 .collect::<Vec<_>>();
-            ir::compile_expression_ir(&self.tree, &active_amplitudes, &amplitude_dependencies)
+            let amplitude_realness = amplitudes
+                .iter()
+                .map(|amp| amp.real_valued_hint())
+                .collect::<Vec<_>>();
+            ir::compile_expression_ir_with_real_hints(
+                &self.tree,
+                &active_amplitudes,
+                &amplitude_dependencies,
+                &amplitude_realness,
+            )
         };
         #[cfg(feature = "expression-ir")]
         let initial_ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
@@ -2442,7 +2459,17 @@ impl Evaluator {
             .iter()
             .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
             .collect::<Vec<_>>();
-        ir::compile_expression_ir(&self.expression, active_mask, &amplitude_dependencies)
+        let amplitude_realness = self
+            .amplitudes
+            .iter()
+            .map(|amp| amp.real_valued_hint())
+            .collect::<Vec<_>>();
+        ir::compile_expression_ir_with_real_hints(
+            &self.expression,
+            active_mask,
+            &amplitude_dependencies,
+            &amplitude_realness,
+        )
     }
 
     #[cfg(feature = "expression-ir")]
@@ -5356,6 +5383,10 @@ mod tests {
             ExpressionDependence::ParameterOnly
         }
 
+        fn real_valued_hint(&self) -> bool {
+            true
+        }
+
         fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid), 0.0)
         }
@@ -5388,6 +5419,10 @@ mod tests {
 
         fn dependence_hint(&self) -> ExpressionDependence {
             ExpressionDependence::CacheOnly
+        }
+
+        fn real_valued_hint(&self) -> bool {
+            true
         }
 
         fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
@@ -6617,6 +6652,37 @@ mod tests {
             evaluator.expression_root_dependence(),
             ExpressionDependence::CacheOnly
         );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_real_valued_hint_folds_imag_projection_to_zero() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+            .unwrap()
+            .imag();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let ir = evaluator.expression_ir();
+
+        assert!(matches!(
+            ir.nodes()[ir.root()],
+            ir::IrNode::Constant(value) if value == Complex64::ZERO
+        ));
+        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::ZERO);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_ir_real_valued_hint_simplifies_conjugation() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+            .unwrap()
+            .conj();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let ir = evaluator.expression_ir();
+
+        assert!(matches!(ir.nodes()[ir.root()], ir::IrNode::Amp(0)));
+        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::new(2.5, 0.0));
     }
 
     #[cfg(feature = "expression-ir")]

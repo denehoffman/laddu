@@ -33,6 +33,22 @@ impl DependenceClass {
     }
 }
 
+fn unary_output_is_real(op: IrUnaryOp, input_is_real: bool) -> bool {
+    match op {
+        IrUnaryOp::Neg => input_is_real,
+        IrUnaryOp::Real | IrUnaryOp::Imag | IrUnaryOp::NormSqr => true,
+        IrUnaryOp::Conj => input_is_real,
+    }
+}
+
+fn binary_output_is_real(op: IrBinaryOp, left_is_real: bool, right_is_real: bool) -> bool {
+    match op {
+        IrBinaryOp::Add | IrBinaryOp::Sub | IrBinaryOp::Mul | IrBinaryOp::Div => {
+            left_is_real && right_is_real
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum IrUnaryOp {
     Neg,
@@ -199,6 +215,7 @@ struct IrPassReport {
 
 struct IrPassContext<'a> {
     amplitude_dependencies: &'a [DependenceClass],
+    amplitude_realness: &'a [bool],
     rewrite_limits: RewriteLimits,
     diagnostics: Vec<String>,
 }
@@ -795,9 +812,25 @@ pub(super) fn compile_expression_ir(
     active_amplitudes: &[bool],
     amplitude_dependencies: &[DependenceClass],
 ) -> ExpressionIR {
+    let amplitude_realness = vec![false; amplitude_dependencies.len()];
+    compile_expression_ir_with_real_hints(
+        tree,
+        active_amplitudes,
+        amplitude_dependencies,
+        &amplitude_realness,
+    )
+}
+
+pub(super) fn compile_expression_ir_with_real_hints(
+    tree: &ExpressionNode,
+    active_amplitudes: &[bool],
+    amplitude_dependencies: &[DependenceClass],
+    amplitude_realness: &[bool],
+) -> ExpressionIR {
     let mut ir = ExpressionIR::from_expression_node(tree);
     ir.rewrite_diagnostics = ExpressionIrPipeline::new()
         .with_rewrite_limits(RewriteLimits::default())
+        .with_amplitude_realness(amplitude_realness.to_vec())
         .cse()
         .activation_specialize(active_amplitudes.to_vec())
         .constant_fold()
@@ -1954,9 +1987,11 @@ impl FixedPointRewritePass {
             passes: vec![
                 Box::new(AlgebraicNormalizePass),
                 Box::new(ConstantFoldPass),
+                Box::new(RealValueSimplifyPass),
                 Box::new(CsePass),
                 Box::new(ControlledExpansionPass::new()),
                 Box::new(ConstantFoldPass),
+                Box::new(RealValueSimplifyPass),
                 Box::new(CsePass),
             ],
         }
@@ -2028,6 +2063,7 @@ struct ExpressionIrPipeline {
     passes: Vec<Box<dyn IrPass>>,
     rewrite_limits: RewriteLimits,
     amplitude_dependencies: Vec<DependenceClass>,
+    amplitude_realness: Vec<bool>,
 }
 
 impl ExpressionIrPipeline {
@@ -2036,11 +2072,17 @@ impl ExpressionIrPipeline {
             passes: Vec::new(),
             rewrite_limits: RewriteLimits::default(),
             amplitude_dependencies: Vec::new(),
+            amplitude_realness: Vec::new(),
         }
     }
 
     fn with_rewrite_limits(mut self, rewrite_limits: RewriteLimits) -> Self {
         self.rewrite_limits = rewrite_limits;
+        self
+    }
+
+    fn with_amplitude_realness(mut self, amplitude_realness: Vec<bool>) -> Self {
+        self.amplitude_realness = amplitude_realness;
         self
     }
 
@@ -2080,6 +2122,7 @@ impl ExpressionIrPipeline {
     fn run(&self, ir: &mut ExpressionIR) -> Vec<String> {
         let mut ctx = IrPassContext {
             amplitude_dependencies: &self.amplitude_dependencies,
+            amplitude_realness: &self.amplitude_realness,
             rewrite_limits: self.rewrite_limits,
             diagnostics: Vec::new(),
         };
@@ -2087,6 +2130,69 @@ impl ExpressionIrPipeline {
             let _ = pass.run(ir, &mut ctx);
         }
         ctx.diagnostics
+    }
+}
+
+struct RealValueSimplifyPass;
+
+impl RealValueSimplifyPass {
+    fn compute_annotations(nodes: &[IrNode], amplitude_realness: &[bool]) -> Vec<bool> {
+        let mut annotations = vec![false; nodes.len()];
+        for (node_index, node) in nodes.iter().enumerate() {
+            annotations[node_index] = match *node {
+                IrNode::Constant(value) => value.im == 0.0,
+                IrNode::Amp(index) => amplitude_realness.get(index).copied().unwrap_or(false),
+                IrNode::Unary { op, input } => unary_output_is_real(op, annotations[input]),
+                IrNode::Binary { op, left, right } => {
+                    binary_output_is_real(op, annotations[left], annotations[right])
+                }
+            };
+        }
+        annotations
+    }
+
+    fn apply(&self, ir: &mut ExpressionIR, amplitude_realness: &[bool]) -> bool {
+        let annotations = Self::compute_annotations(&ir.nodes, amplitude_realness);
+        let mut changed = false;
+        for index in 0..ir.nodes.len() {
+            let rewritten = match ir.nodes[index].clone() {
+                IrNode::Unary {
+                    op: IrUnaryOp::Real,
+                    input,
+                } if annotations[input] => Some(ir.nodes[input].clone()),
+                IrNode::Unary {
+                    op: IrUnaryOp::Imag,
+                    input,
+                } if annotations[input] => Some(IrNode::Constant(Complex64::ZERO)),
+                IrNode::Unary {
+                    op: IrUnaryOp::Conj,
+                    input,
+                } if annotations[input] => Some(ir.nodes[input].clone()),
+                _ => None,
+            };
+            if let Some(node) = rewritten {
+                if ir.nodes[index] != node {
+                    ir.nodes[index] = node;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+}
+
+impl IrPass for RealValueSimplifyPass {
+    fn name(&self) -> &'static str {
+        "rewrite-real-valued"
+    }
+
+    fn run(&self, ir: &mut ExpressionIR, ctx: &mut IrPassContext<'_>) -> IrPassReport {
+        let changed = self.apply(ir, ctx.amplitude_realness);
+        IrPassReport {
+            changed,
+            rewrites: usize::from(changed),
+            saturated: false,
+        }
     }
 }
 
@@ -2142,8 +2248,8 @@ mod tests {
     use num::complex::Complex64;
 
     use super::{
-        compile_expression_ir, ControlledExpansionPass, DependenceClass, ExpressionIR,
-        ExpressionIrPipeline,
+        compile_expression_ir, compile_expression_ir_with_real_hints, ControlledExpansionPass,
+        DependenceClass, ExpressionIR, ExpressionIrPipeline,
     };
     use crate::amplitudes::ExpressionNode;
 
@@ -2161,6 +2267,46 @@ mod tests {
         assert!(matches!(
             ir.nodes.get(ir.root),
             Some(super::IrNode::Constant(value)) if *value == Complex64::new(2.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn test_real_valued_amplitude_hint_folds_imag_projection_to_zero() {
+        let ir = compile_expression_ir_with_real_hints(
+            &ExpressionNode::Imag(Box::new(ExpressionNode::Amp(0))),
+            &[true],
+            &[DependenceClass::Mixed],
+            &[true],
+        );
+
+        assert!(matches!(
+            ir.nodes().get(ir.root()),
+            Some(super::IrNode::Constant(value)) if *value == Complex64::ZERO
+        ));
+    }
+
+    #[test]
+    fn test_real_valued_amplitude_hint_simplifies_real_and_conj() {
+        let real_ir = compile_expression_ir_with_real_hints(
+            &ExpressionNode::Real(Box::new(ExpressionNode::Amp(0))),
+            &[true],
+            &[DependenceClass::Mixed],
+            &[true],
+        );
+        assert!(matches!(
+            real_ir.nodes().get(real_ir.root()),
+            Some(super::IrNode::Amp(0))
+        ));
+
+        let conj_ir = compile_expression_ir_with_real_hints(
+            &ExpressionNode::Conj(Box::new(ExpressionNode::Amp(0))),
+            &[true],
+            &[DependenceClass::Mixed],
+            &[true],
+        );
+        assert!(matches!(
+            conj_ir.nodes().get(conj_ir.root()),
+            Some(super::IrNode::Amp(0))
         ));
     }
 
@@ -2402,6 +2548,7 @@ mod tests {
                 DependenceClass::ParameterOnly,
                 DependenceClass::CacheOnly,
             ],
+            amplitude_realness: &[],
             rewrite_limits: super::RewriteLimits::default(),
             diagnostics: Vec::new(),
         };

@@ -37,6 +37,9 @@ impl Amplitude for Scalar {
         self.pid = resources.register_parameter(&self.value)?;
         resources.register_amplitude(&self.name)
     }
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
@@ -261,6 +264,25 @@ mod tests {
         // For |f(x)|^2 where f(x) = x, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
+    }
+
+    #[test]
+    fn test_scalar_reports_real_valued_hint() {
+        let scalar = Scalar {
+            name: "test_scalar".to_string(),
+            value: parameter("test_param"),
+            pid: Default::default(),
+        };
+        let complex = ComplexScalar {
+            name: "test_complex".to_string(),
+            re: parameter("re_param"),
+            pid_re: Default::default(),
+            im: parameter("im_param"),
+            pid_im: Default::default(),
+        };
+
+        assert!(Amplitude::real_valued_hint(&scalar));
+        assert!(!Amplitude::real_valued_hint(&complex));
     }
 
     #[test]

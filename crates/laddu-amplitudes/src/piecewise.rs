@@ -67,6 +67,10 @@ impl Amplitude for PiecewiseScalar {
         resources.register_amplitude(&self.name)
     }
 
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.variable.bind(metadata)?;
         Ok(())
