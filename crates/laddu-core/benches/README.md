@@ -115,3 +115,6 @@ Notes:
 
 - `backend-legacy-generic` is the feature-off baseline.
 - the `expression-ir` comparison groups keep IR planning fixed and compare executor labels inside the same feature-enabled build.
+- `lowered` is the intended production executor for `expression-ir`.
+- `legacy` remains the unspecialized reference path for default builds, override-mask APIs, and parity checks.
+- `ir_interpreter` is retained as a diagnostic and benchmark control, not as the ordinary production fallback.

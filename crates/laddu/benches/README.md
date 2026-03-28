@@ -75,6 +75,12 @@ The combined report keeps these categories separate:
 - steady-state CPU and MPI workflow deltas
 - peak RSS and allocation-proxy memory metrics
 
+For current architecture reviews:
+
+- the feature-off workflow summaries are the legacy/reference baseline
+- `expression-ir` workflow summaries reflect the lowered runtime as the intended production executor
+- executor-level legacy/interpreter/lowered comparisons live in the `laddu-core` expression-IR microbench surface
+
 ## Regression Threshold Policy
 
 The report script supports threshold-aware regression checks:
