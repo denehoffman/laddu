@@ -1550,6 +1550,8 @@ pub struct ExpressionSpecializationStatus {
 pub struct ExpressionRuntimeDiagnostics {
     /// Runtime backend selected for expression execution.
     pub runtime_backend: ExpressionRuntimeBackend,
+    /// Whether IR planning state is present for the evaluator.
+    pub ir_planning_enabled: bool,
     /// Whether a lowered value-only program is available for the active specialization.
     pub lowered_value_program_present: bool,
     /// Whether a lowered gradient-only program is available for the active specialization.
@@ -1676,6 +1678,7 @@ impl Evaluator {
             .is_some();
         ExpressionRuntimeDiagnostics {
             runtime_backend: self.runtime_backend,
+            ir_planning_enabled: true,
             lowered_value_program_present: lowered_runtime
                 .as_ref()
                 .and_then(|runtime| runtime.value_program())
@@ -6051,6 +6054,7 @@ mod tests {
             diagnostics.runtime_backend,
             ExpressionRuntimeBackend::Lowered
         );
+        assert!(diagnostics.ir_planning_enabled);
         assert!(diagnostics.lowered_value_program_present);
         assert!(diagnostics.lowered_gradient_program_present);
         assert!(diagnostics.lowered_value_gradient_program_present);
@@ -6070,6 +6074,11 @@ mod tests {
                 .runtime_backend,
             ExpressionRuntimeBackend::LegacyProgram
         );
+        assert!(
+            legacy_evaluator
+                .expression_runtime_diagnostics()
+                .ir_planning_enabled
+        );
 
         let mut interpreter_evaluator = evaluator.clone();
         interpreter_evaluator
@@ -6079,6 +6088,11 @@ mod tests {
                 .expression_runtime_diagnostics()
                 .runtime_backend,
             ExpressionRuntimeBackend::IrInterpreter
+        );
+        assert!(
+            interpreter_evaluator
+                .expression_runtime_diagnostics()
+                .ir_planning_enabled
         );
     }
 
@@ -6109,6 +6123,39 @@ mod tests {
                 origin: ExpressionSpecializationOrigin::CacheMissRebuild,
             })
         );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_switching_execution_backend_preserves_ir_planning_state() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let mut evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        let baseline = evaluator.expression_runtime_diagnostics();
+        assert!(baseline.ir_planning_enabled);
+        assert!(baseline.lowered_value_program_present);
+        let specialization_entries = baseline.specialization_cache_entries;
+        let lowered_entries = baseline.lowered_artifact_cache_entries;
+
+        evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::IrInterpreter);
+        let interpreter = evaluator.expression_runtime_diagnostics();
+        assert!(interpreter.ir_planning_enabled);
+        assert_eq!(
+            interpreter.specialization_cache_entries,
+            specialization_entries
+        );
+        assert_eq!(interpreter.lowered_artifact_cache_entries, lowered_entries);
+        assert!(interpreter.lowered_value_program_present);
+
+        evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
+        let legacy = evaluator.expression_runtime_diagnostics();
+        assert!(legacy.ir_planning_enabled);
+        assert_eq!(legacy.specialization_cache_entries, specialization_entries);
+        assert_eq!(legacy.lowered_artifact_cache_entries, lowered_entries);
+        assert!(legacy.lowered_value_program_present);
     }
 
     #[cfg(feature = "expression-ir")]
