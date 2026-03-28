@@ -1534,6 +1534,13 @@ pub enum ExpressionRuntimeBackend {
     Lowered,
 }
 
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct ExpressionValueProgramSnapshot {
+    #[cfg(feature = "expression-ir")]
+    lowered_program: Option<lowered::LoweredProgram>,
+}
+
 #[cfg(feature = "expression-ir")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Origin of the currently installed expression specialization.
@@ -1748,6 +1755,21 @@ impl Evaluator {
         self.ir_planning.active_lowered_artifacts.read().clone()
     }
 
+    #[doc(hidden)]
+    pub fn uses_ir_interpreter_backend(&self) -> bool {
+        #[cfg(feature = "expression-ir")]
+        {
+            matches!(
+                self.runtime_backend,
+                ExpressionRuntimeBackend::IrInterpreter
+            )
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            false
+        }
+    }
+
     #[cfg(feature = "expression-ir")]
     fn lowered_runtime_slot_count(&self) -> usize {
         self.lowered_runtime()
@@ -1782,6 +1804,27 @@ impl Evaluator {
                     .map(|program| program.scratch_slots())
             })
             .unwrap_or_else(|| self.expression_program.slot_count())
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_program_snapshot(&self) -> ExpressionValueProgramSnapshot {
+        #[cfg(feature = "expression-ir")]
+        {
+            if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
+                return ExpressionValueProgramSnapshot {
+                    lowered_program: self
+                        .runtime_state
+                        .lowered_runtime
+                        .read()
+                        .as_ref()
+                        .and_then(|runtime| runtime.value_program().cloned()),
+                };
+            }
+        }
+        ExpressionValueProgramSnapshot {
+            #[cfg(feature = "expression-ir")]
+            lowered_program: None,
+        }
     }
 
     #[cfg(feature = "expression-ir")]
@@ -2404,6 +2447,30 @@ impl Evaluator {
             .evaluate_into(amplitude_values, scratch)
     }
 
+    #[doc(hidden)]
+    pub fn evaluate_expression_value_with_program_snapshot(
+        &self,
+        program_snapshot: &ExpressionValueProgramSnapshot,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        #[cfg(feature = "expression-ir")]
+        {
+            if let Some(program) = program_snapshot.lowered_program.as_ref() {
+                program.evaluate_into(amplitude_values, scratch)
+            } else {
+                self.expression_program
+                    .evaluate_into(amplitude_values, scratch)
+            }
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            let _ = program_snapshot;
+            self.expression_program
+                .evaluate_into(amplitude_values, scratch)
+        }
+    }
+
     fn evaluate_expression_runtime_gradient_with_scratch(
         &self,
         amplitude_values: &[Complex64],
@@ -3000,13 +3067,16 @@ impl Evaluator {
         _state: &CachedIntegralCacheState,
         lowered_artifacts: &LoweredArtifactCacheState,
         amplitude_values: &[Complex64],
+        value_slots: &mut [Complex64],
     ) -> Option<Complex64> {
         let program = lowered_artifacts
             .residual_runtime
             .as_ref()
             .and_then(|runtime| runtime.value_program())?;
-        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
-        Some(program.evaluate_into(amplitude_values, &mut value_slots))
+        Some(program.evaluate_into(
+            amplitude_values,
+            &mut value_slots[..program.scratch_slots()],
+        ))
     }
 
     #[cfg(feature = "expression-ir")]
@@ -3071,6 +3141,19 @@ impl Evaluator {
         #[cfg(feature = "expression-ir")]
         let lowered_artifacts = self.active_lowered_artifacts();
         #[cfg(feature = "expression-ir")]
+        let residual_value_slot_count = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| {
+                artifacts
+                    .residual_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .unwrap_or_else(|| self.expression_slot_count());
+        #[cfg(not(feature = "expression-ir"))]
+        let residual_value_slot_count = self.expression_slot_count();
+        #[cfg(feature = "expression-ir")]
         let active_index_set = resources.active_indices();
         #[cfg(feature = "expression-ir")]
         let cached_parameter_indices = state
@@ -3127,7 +3210,7 @@ impl Evaluator {
                     || {
                         (
                             vec![Complex64::ZERO; amplitude_len],
-                            vec![Complex64::ZERO; self.expression_slot_count()],
+                            vec![Complex64::ZERO; residual_value_slot_count],
                         )
                     },
                     |(amplitude_values, value_slots), (cache, event)| {
@@ -3149,6 +3232,7 @@ impl Evaluator {
                                         &state,
                                         artifacts,
                                         amplitude_values,
+                                        value_slots,
                                     )
                                 })
                                 .unwrap_or_else(|| {
@@ -3172,8 +3256,7 @@ impl Evaluator {
         #[cfg(not(feature = "rayon"))]
         let residual_sum: f64 = {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-            #[cfg(not(feature = "expression-ir"))]
-            let mut value_slots = vec![Complex64::ZERO; self.expression_slot_count()];
+            let mut value_slots = vec![Complex64::ZERO; residual_value_slot_count];
             resources
                 .caches
                 .iter()
@@ -3195,6 +3278,7 @@ impl Evaluator {
                                     &state,
                                     artifacts,
                                     &amplitude_values,
+                                    &mut value_slots,
                                 )
                             })
                             .unwrap_or_else(|| {
@@ -3805,6 +3889,7 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
             resources
@@ -3824,7 +3909,32 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                        #[cfg(feature = "expression-ir")]
+                        {
+                            if matches!(
+                                self.runtime_backend,
+                                ExpressionRuntimeBackend::IrInterpreter
+                            ) {
+                                self.evaluate_expression_value_with_scratch(
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            } else {
+                                self.evaluate_expression_value_with_program_snapshot(
+                                    &program_snapshot,
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            }
+                        }
+                        #[cfg(not(feature = "expression-ir"))]
+                        {
+                            self.evaluate_expression_value_with_program_snapshot(
+                                &program_snapshot,
+                                amplitude_values,
+                                expr_slots,
+                            )
+                        }
                     },
                 )
                 .collect()
@@ -3843,7 +3953,32 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                    #[cfg(feature = "expression-ir")]
+                    {
+                        if matches!(
+                            self.runtime_backend,
+                            ExpressionRuntimeBackend::IrInterpreter
+                        ) {
+                            self.evaluate_expression_value_with_scratch(
+                                &amplitude_values,
+                                &mut expr_slots,
+                            )
+                        } else {
+                            self.evaluate_expression_value_with_program_snapshot(
+                                &program_snapshot,
+                                &amplitude_values,
+                                &mut expr_slots,
+                            )
+                        }
+                    }
+                    #[cfg(not(feature = "expression-ir"))]
+                    {
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            &amplitude_values,
+                            &mut expr_slots,
+                        )
+                    }
                 })
                 .collect()
         }
@@ -3938,6 +4073,7 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
             if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
@@ -3959,10 +4095,32 @@ impl Evaluator {
                                     &parameters,
                                     cache,
                                 );
-                                self.evaluate_expression_value_with_scratch(
-                                    amplitude_values,
-                                    expr_slots,
-                                )
+                                #[cfg(feature = "expression-ir")]
+                                {
+                                    if matches!(
+                                        self.runtime_backend,
+                                        ExpressionRuntimeBackend::IrInterpreter
+                                    ) {
+                                        self.evaluate_expression_value_with_scratch(
+                                            amplitude_values,
+                                            expr_slots,
+                                        )
+                                    } else {
+                                        self.evaluate_expression_value_with_program_snapshot(
+                                            &program_snapshot,
+                                            amplitude_values,
+                                            expr_slots,
+                                        )
+                                    }
+                                }
+                                #[cfg(not(feature = "expression-ir"))]
+                                {
+                                    self.evaluate_expression_value_with_program_snapshot(
+                                        &program_snapshot,
+                                        amplitude_values,
+                                        expr_slots,
+                                    )
+                                }
                             },
                         )
                         .collect()
@@ -3982,7 +4140,32 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    #[cfg(feature = "expression-ir")]
+                    {
+                        if matches!(
+                            self.runtime_backend,
+                            ExpressionRuntimeBackend::IrInterpreter
+                        ) {
+                            self.evaluate_expression_value_with_scratch(
+                                amplitude_values,
+                                expr_slots,
+                            )
+                        } else {
+                            self.evaluate_expression_value_with_program_snapshot(
+                                &program_snapshot,
+                                amplitude_values,
+                                expr_slots,
+                            )
+                        }
+                    }
+                    #[cfg(not(feature = "expression-ir"))]
+                    {
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
+                    }
                 })
                 .collect()
         })
@@ -4070,6 +4253,7 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
             indices
@@ -4089,7 +4273,32 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                        #[cfg(feature = "expression-ir")]
+                        {
+                            if matches!(
+                                self.runtime_backend,
+                                ExpressionRuntimeBackend::IrInterpreter
+                            ) {
+                                self.evaluate_expression_value_with_scratch(
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            } else {
+                                self.evaluate_expression_value_with_program_snapshot(
+                                    &program_snapshot,
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            }
+                        }
+                        #[cfg(not(feature = "expression-ir"))]
+                        {
+                            self.evaluate_expression_value_with_program_snapshot(
+                                &program_snapshot,
+                                amplitude_values,
+                                expr_slots,
+                            )
+                        }
                     },
                 )
                 .collect()
@@ -4108,7 +4317,32 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                    #[cfg(feature = "expression-ir")]
+                    {
+                        if matches!(
+                            self.runtime_backend,
+                            ExpressionRuntimeBackend::IrInterpreter
+                        ) {
+                            self.evaluate_expression_value_with_scratch(
+                                &amplitude_values,
+                                &mut expr_slots,
+                            )
+                        } else {
+                            self.evaluate_expression_value_with_program_snapshot(
+                                &program_snapshot,
+                                &amplitude_values,
+                                &mut expr_slots,
+                            )
+                        }
+                    }
+                    #[cfg(not(feature = "expression-ir"))]
+                    {
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            &amplitude_values,
+                            &mut expr_slots,
+                        )
+                    }
                 })
                 .collect()
         }
@@ -6628,8 +6862,14 @@ mod tests {
             &resources.caches[0],
         );
         let residual_value_ir = evaluator.evaluate_residual_value_ir(&state, &amplitude_values);
+        let mut value_slots = vec![Complex64::ZERO; evaluator.expression_slot_count()];
         let residual_value_lowered = evaluator
-            .evaluate_residual_value_lowered(&state, lowered_artifacts.as_ref(), &amplitude_values)
+            .evaluate_residual_value_lowered(
+                &state,
+                lowered_artifacts.as_ref(),
+                &amplitude_values,
+                &mut value_slots,
+            )
             .expect("residual value lowering should succeed");
         assert_relative_eq!(
             residual_value_lowered.re,

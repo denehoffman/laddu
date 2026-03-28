@@ -111,6 +111,7 @@ where
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
     let slot_count = evaluator.expression_slot_count();
+    let program_snapshot = evaluator.expression_value_program_snapshot();
     #[cfg(feature = "rayon")]
     {
         resources
@@ -129,8 +130,16 @@ where
                         amplitude_values[amp_idx] =
                             evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                     }
-                    let l = evaluator
-                        .evaluate_expression_value_with_scratch(amplitude_values, expr_slots);
+                    let l = if evaluator.uses_ir_interpreter_backend() {
+                        evaluator
+                            .evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    } else {
+                        evaluator.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
+                    };
                     event.weight * value_map(l)
                 },
             )
@@ -149,8 +158,16 @@ where
                     amplitude_values[amp_idx] =
                         evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                 }
-                let l = evaluator
-                    .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots);
+                let l = if evaluator.uses_ir_interpreter_backend() {
+                    evaluator
+                        .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                } else {
+                    evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
+                };
                 event.weight * value_map(l)
             })
             .sum_with_accumulator::<Klein<f64>>()
@@ -407,6 +424,7 @@ impl NLL {
         let mut union_amplitudes = vec![Complex64::ZERO; amplitude_len];
         let mut subset_amplitudes = vec![vec![Complex64::ZERO; amplitude_len]; n_subsets];
         let mut subset_expr_slots = vec![vec![Complex64::ZERO; slot_count]; n_subsets];
+        let program_snapshot = evaluator.expression_value_program_snapshot();
         for (cache, event) in resources
             .caches
             .iter()
@@ -421,10 +439,18 @@ impl NLL {
                 for &amp_idx in active_indices {
                     amplitude_values[amp_idx] = union_amplitudes[amp_idx];
                 }
-                let value = evaluator.evaluate_expression_value_with_scratch(
-                    amplitude_values,
-                    &mut subset_expr_slots[subset_index],
-                );
+                let value = if evaluator.uses_ir_interpreter_backend() {
+                    evaluator.evaluate_expression_value_with_scratch(
+                        amplitude_values,
+                        &mut subset_expr_slots[subset_index],
+                    )
+                } else {
+                    evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        &mut subset_expr_slots[subset_index],
+                    )
+                };
                 output[subset_index].push(event.weight * value.re / self.n_mc);
             }
         }

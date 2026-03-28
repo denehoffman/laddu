@@ -32,13 +32,6 @@ fn instruction_destination(instruction: &LoweredInstruction) -> usize {
     }
 }
 
-fn instruction_unary_op(instruction: &LoweredInstruction) -> LoweredUnaryOp {
-    match *instruction {
-        LoweredInstruction::Unary { op, .. } => op,
-        _ => panic!("instruction_unary_op called on non-unary instruction"),
-    }
-}
-
 fn remap_instruction_slots(
     instruction: &LoweredInstruction,
     dst: usize,
@@ -128,27 +121,31 @@ fn optimize_instruction_sequence(
                         LoweredUnaryOp::Conj,
                         Some(LoweredInstruction::Unary {
                             op:
-                                LoweredUnaryOp::Real | LoweredUnaryOp::Imag | LoweredUnaryOp::NormSqr,
-                            input,
+                                unary_op @ (LoweredUnaryOp::Real
+                                | LoweredUnaryOp::Imag
+                                | LoweredUnaryOp::NormSqr),
+                            input: unary_input,
                             ..
                         }),
                     ) => Some(LoweredInstruction::Unary {
                         dst,
-                        input,
-                        op: instruction_unary_op(kept[input].as_ref().unwrap()),
+                        input: unary_input,
+                        op: unary_op,
                     }),
                     (
                         LoweredUnaryOp::Real,
                         Some(LoweredInstruction::Unary {
                             op:
-                                LoweredUnaryOp::Real | LoweredUnaryOp::Imag | LoweredUnaryOp::NormSqr,
-                            input,
+                                unary_op @ (LoweredUnaryOp::Real
+                                | LoweredUnaryOp::Imag
+                                | LoweredUnaryOp::NormSqr),
+                            input: unary_input,
                             ..
                         }),
                     ) => Some(LoweredInstruction::Unary {
                         dst,
-                        input,
-                        op: instruction_unary_op(kept[input].as_ref().unwrap()),
+                        input: unary_input,
+                        op: unary_op,
                     }),
                     (
                         LoweredUnaryOp::Imag,
@@ -1010,6 +1007,44 @@ impl LoweredProgram {
         ));
         debug_assert!(value_scratch.len() >= self.scratch_slots());
         debug_assert!(gradient_scratch.len() >= self.scratch_slots() * grad_dim);
+
+        if grad_dim == 0 {
+            for instruction in &self.instructions {
+                match *instruction {
+                    LoweredInstruction::Constant { dst, value } => {
+                        value_scratch[dst] = value;
+                    }
+                    LoweredInstruction::LoadAmplitude {
+                        dst,
+                        amplitude_index,
+                    } => {
+                        value_scratch[dst] = amplitude_values
+                            .get(amplitude_index)
+                            .copied()
+                            .unwrap_or_default();
+                    }
+                    LoweredInstruction::Unary { dst, input, op } => {
+                        let value = value_scratch[input];
+                        value_scratch[dst] =
+                            if let Some(real_value) = apply_unary_op_real(op, value) {
+                                Complex64::new(real_value, 0.0)
+                            } else {
+                                apply_unary_op(op, value)
+                            };
+                    }
+                    LoweredInstruction::Binary {
+                        dst,
+                        left,
+                        right,
+                        op,
+                    } => {
+                        value_scratch[dst] =
+                            apply_binary_op(op, value_scratch[left], value_scratch[right]);
+                    }
+                }
+            }
+            return DVector::zeros(0);
+        }
 
         for instruction in &self.instructions {
             match *instruction {

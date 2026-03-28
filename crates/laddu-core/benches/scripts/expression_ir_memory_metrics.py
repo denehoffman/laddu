@@ -75,6 +75,27 @@ def parse_filters(raw: str) -> list[str]:
     return filters
 
 
+def build_benchmark_target(root: Path, bench: str) -> None:
+    cargo_cmd = [
+        'cargo',
+        'bench',
+        '-p',
+        'laddu-core',
+        '--features',
+        'expression-ir',
+        '--bench',
+        bench,
+        '--no-run',
+    ]
+    subprocess.run(
+        cargo_cmd,
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def parse_probe_metrics(stdout: str) -> tuple[float, int]:
     for line in reversed(stdout.splitlines()):
         if line.startswith('__METRICS__'):
@@ -183,6 +204,7 @@ def main() -> None:
     args = parse_args()
     root = repo_root()
     filters = parse_filters(args.filters)
+    build_benchmark_target(root, args.bench)
     runs = [
         run_single(root, args.bench, benchmark_filter) for benchmark_filter in filters
     ]

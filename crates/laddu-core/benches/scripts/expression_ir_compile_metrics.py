@@ -94,6 +94,27 @@ def parse_case(case: str) -> tuple[str, str]:
     return operation, scenario
 
 
+def build_benchmark_target(root: Path, bench: str) -> None:
+    cargo_cmd = [
+        'cargo',
+        'bench',
+        '-p',
+        'laddu-core',
+        '--features',
+        'expression-ir',
+        '--bench',
+        bench,
+        '--no-run',
+    ]
+    subprocess.run(
+        cargo_cmd,
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def run_benchmark_case(
     root: Path, bench: str, benchmark_filter: str
 ) -> tuple[float, str]:
@@ -225,6 +246,7 @@ def main() -> None:
     args = parse_args()
     root = repo_root()
     cases = parse_cases(args.cases)
+    build_benchmark_target(root, args.bench)
     runs = [run_single(root, args.bench, case) for case in cases]
     write_json(Path(args.json_out), runs)
     write_markdown(Path(args.md_out), runs)
