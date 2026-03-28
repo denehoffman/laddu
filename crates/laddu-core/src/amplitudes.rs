@@ -5874,6 +5874,104 @@ mod tests {
     }
 
     #[cfg(feature = "expression-ir")]
+    fn assert_complex_slices_match(left: &[Complex64], right: &[Complex64]) {
+        assert_eq!(left.len(), right.len());
+        for (left_item, right_item) in left.iter().zip(right.iter()) {
+            assert_relative_eq!(left_item.re, right_item.re);
+            assert_relative_eq!(left_item.im, right_item.im);
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn assert_complex_gradient_slices_match(
+        left: &[DVector<Complex64>],
+        right: &[DVector<Complex64>],
+    ) {
+        assert_eq!(left.len(), right.len());
+        for (left_vec, right_vec) in left.iter().zip(right.iter()) {
+            assert_eq!(left_vec.len(), right_vec.len());
+            for (left_item, right_item) in left_vec.iter().zip(right_vec.iter()) {
+                assert_relative_eq!(left_item.re, right_item.re);
+                assert_relative_eq!(left_item.im, right_item.im);
+            }
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn assert_fused_slices_match(
+        left: &[(Complex64, DVector<Complex64>)],
+        right: &[(Complex64, DVector<Complex64>)],
+    ) {
+        assert_eq!(left.len(), right.len());
+        for ((left_value, left_grad), (right_value, right_grad)) in left.iter().zip(right.iter()) {
+            assert_relative_eq!(left_value.re, right_value.re);
+            assert_relative_eq!(left_value.im, right_value.im);
+            assert_eq!(left_grad.len(), right_grad.len());
+            for (left_item, right_item) in left_grad.iter().zip(right_grad.iter()) {
+                assert_relative_eq!(left_item.re, right_item.re);
+                assert_relative_eq!(left_item.im, right_item.im);
+            }
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    fn assert_runtime_backends_match_api_surface(
+        evaluator: &Evaluator,
+        parameters: &[f64],
+        batch_indices: &[usize],
+        active_mask: &[bool],
+    ) {
+        let backends = [
+            ExpressionRuntimeBackend::LegacyProgram,
+            ExpressionRuntimeBackend::IrInterpreter,
+            ExpressionRuntimeBackend::Lowered,
+        ];
+
+        let mut active_mask_values = Vec::new();
+        let mut batch_values = Vec::new();
+        let mut batch_gradients = Vec::new();
+        let mut active_mask_fused = Vec::new();
+        let mut batch_fused = Vec::new();
+
+        for backend in backends {
+            let mut backend_evaluator = evaluator.clone();
+            backend_evaluator.set_expression_runtime_backend(backend);
+            active_mask_values.push(
+                backend_evaluator
+                    .evaluate_local_with_active_mask(parameters, active_mask)
+                    .expect("active-mask evaluation should succeed"),
+            );
+            batch_values.push(backend_evaluator.evaluate_batch_local(parameters, batch_indices));
+            batch_gradients
+                .push(backend_evaluator.evaluate_gradient_batch_local(parameters, batch_indices));
+            active_mask_fused.push(
+                backend_evaluator
+                    .evaluate_with_gradient_local_with_active_mask(parameters, active_mask)
+                    .expect("active-mask fused evaluation should succeed"),
+            );
+            batch_fused.push(
+                backend_evaluator.evaluate_with_gradient_batch_local(parameters, batch_indices),
+            );
+        }
+
+        for pair in active_mask_values.windows(2) {
+            assert_complex_slices_match(&pair[0], &pair[1]);
+        }
+        for pair in batch_values.windows(2) {
+            assert_complex_slices_match(&pair[0], &pair[1]);
+        }
+        for pair in batch_gradients.windows(2) {
+            assert_complex_gradient_slices_match(&pair[0], &pair[1]);
+        }
+        for pair in active_mask_fused.windows(2) {
+            assert_fused_slices_match(&pair[0], &pair[1]);
+        }
+        for pair in batch_fused.windows(2) {
+            assert_fused_slices_match(&pair[0], &pair[1]);
+        }
+    }
+
+    #[cfg(feature = "expression-ir")]
     fn assert_runtime_backends_match_fixture(kind: DeterministicFixtureKind) {
         let fixture = make_deterministic_fixture(kind);
         let evaluator = fixture
@@ -5889,6 +5987,25 @@ mod tests {
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::Separable);
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::Partial);
         assert_runtime_backends_match_fixture(DeterministicFixtureKind::NonSeparable);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_runtime_backends_match_api_level_value_gradient_entry_points() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let active_mask = vec![true, false, true];
+        let batch_indices = vec![0, 2, 3];
+
+        assert_runtime_backends_match_api_surface(
+            &evaluator,
+            &fixture.parameters,
+            &batch_indices,
+            &active_mask,
+        );
     }
 
     #[cfg(feature = "expression-ir")]
@@ -5916,9 +6033,21 @@ mod tests {
 
         evaluator.isolate_many(&["m"]);
         assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+        assert_runtime_backends_match_api_surface(
+            &evaluator,
+            &fixture.parameters,
+            &[0, 1],
+            &[false, false, true],
+        );
 
         evaluator.activate_all();
         assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
+        assert_runtime_backends_match_api_surface(
+            &evaluator,
+            &fixture.parameters,
+            &[0, 2, 3],
+            &[true, true, false],
+        );
 
         let metrics = evaluator.expression_specialization_metrics();
         assert!(metrics.cache_hits >= 2);
