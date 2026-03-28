@@ -131,6 +131,16 @@ report-mpi-scaling:
       --json-out ../../../target/criterion/summary/mpi_rank_scaling_report.json \
       --md-out ../../../target/criterion/summary/mpi_rank_scaling_report.md
 
+# Publish a combined expression-ir release-review summary from existing artifacts
+report-expression-ir-release:
+    cd {{justfile_directory()}} && python3 scripts/expression_ir_release_review.py \
+      --compile-json ../../../target/criterion/summary/laddu_core_expression_ir_compile_metrics.json \
+      --memory-json ../../../target/criterion/summary/laddu_core_expression_ir_memory_metrics.json \
+      --cpu-json ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json \
+      --mpi-json ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json \
+      --json-out ../../../target/criterion/summary/expression_ir_release_review.json \
+      --md-out ../../../target/criterion/summary/expression_ir_release_review.md
+
 # Open-path profiling: parquet/root canonical loaders (single run per mode)
 open-parquet:
     cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open

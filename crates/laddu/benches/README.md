@@ -56,6 +56,25 @@ Outputs:
 - `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json`
 - `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.md`
 
+## Combined `expression-ir` Release Review
+
+Assemble a combined release-review summary from the existing compile, workflow, and memory artifacts:
+
+```bash
+just --justfile crates/laddu/benches/Justfile report-expression-ir-release
+```
+
+Outputs:
+
+- `target/criterion/summary/expression_ir_release_review.json`
+- `target/criterion/summary/expression_ir_release_review.md`
+
+The combined report keeps these categories separate:
+
+- compile-time costs
+- steady-state CPU and MPI workflow deltas
+- peak RSS and allocation-proxy memory metrics
+
 ## Regression Threshold Policy
 
 The report script supports threshold-aware regression checks:
