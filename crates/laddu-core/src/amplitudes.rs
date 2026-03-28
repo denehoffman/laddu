@@ -6129,7 +6129,7 @@ mod tests {
     #[test]
     fn test_switching_execution_backend_preserves_ir_planning_state() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
-        let mut evaluator = fixture
+        let evaluator = fixture
             .expression
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
@@ -6156,6 +6156,55 @@ mod tests {
         assert_eq!(legacy.specialization_cache_entries, specialization_entries);
         assert_eq!(legacy.lowered_artifact_cache_entries, lowered_entries);
         assert!(legacy.lowered_value_program_present);
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_all_executor_backends_remain_available_on_specialized_evaluator() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let mut evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        evaluator.isolate_many(&["p"]);
+        let baseline = evaluator.expression_runtime_diagnostics();
+        assert!(baseline.ir_planning_enabled);
+        assert_eq!(
+            baseline.specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::CacheMissRebuild,
+            })
+        );
+
+        let batch_indices = vec![0, 1];
+        let active_mask = vec![true, false, true];
+        assert_runtime_backends_match_api_surface(
+            &evaluator,
+            &fixture.parameters,
+            &batch_indices,
+            &active_mask,
+        );
+
+        for backend in [
+            ExpressionRuntimeBackend::LegacyProgram,
+            ExpressionRuntimeBackend::IrInterpreter,
+            ExpressionRuntimeBackend::Lowered,
+        ] {
+            let mut backend_evaluator = evaluator.clone();
+            backend_evaluator.set_expression_runtime_backend(backend);
+            let diagnostics = backend_evaluator.expression_runtime_diagnostics();
+            assert_eq!(diagnostics.runtime_backend, backend);
+            assert!(diagnostics.ir_planning_enabled);
+            assert_eq!(
+                diagnostics.specialization_cache_entries,
+                baseline.specialization_cache_entries
+            );
+            assert_eq!(
+                diagnostics.lowered_artifact_cache_entries,
+                baseline.lowered_artifact_cache_entries
+            );
+        }
     }
 
     #[cfg(feature = "expression-ir")]
