@@ -658,6 +658,16 @@ pub enum ExpressionNode {
 }
 
 #[derive(Clone, Debug)]
+/// Reference executor compiled directly from the semantic expression tree.
+///
+/// This remains the compatibility/reference path for:
+/// - default builds without `expression-ir`
+/// - per-call active-mask override APIs that must ignore current specialization
+/// - parity/debug benchmarking against the optimized IR/lowered runtime stack
+///
+/// It is intentionally distinct from the lowered runtime rather than being its target shape:
+/// current lowering carries slot reuse, peephole rewrites, root-specific lowering, and
+/// specialized normalization helpers that would be awkward to force back into this form.
 struct ExpressionProgram {
     ops: Vec<ExpressionOp>,
     slot_count: usize,
@@ -1601,6 +1611,8 @@ struct ExpressionIrPlanningState {
 /// - Lowered runtimes must never outlive the specialization assumptions used to build them.
 /// - Activation-mask changes invalidate any stored lowered runtime until it is rebuilt.
 /// - Lowered runtime is an execution cache, not a semantic source of truth.
+/// - Lowered runtime is the intended production execution shape for `expression-ir`, while
+///   `ExpressionProgram` remains the unspecialized reference/fallback executor.
 struct ExpressionRuntimeState {
     lowered_runtime: Arc<RwLock<Option<lowered::LoweredExpressionRuntime>>>,
 }
@@ -1614,6 +1626,7 @@ pub struct Evaluator {
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
     runtime_backend: ExpressionRuntimeBackend,
+    /// Unspecialized reference executor retained for default builds, overrides, and parity.
     expression_program: ExpressionProgram,
     #[cfg(feature = "expression-ir")]
     ir_planning: ExpressionIrPlanningState,
@@ -6129,7 +6142,7 @@ mod tests {
     #[test]
     fn test_switching_execution_backend_preserves_ir_planning_state() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
-        let evaluator = fixture
+        let mut evaluator = fixture
             .expression
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
@@ -6162,7 +6175,7 @@ mod tests {
     #[test]
     fn test_all_executor_backends_remain_available_on_specialized_evaluator() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
-        let mut evaluator = fixture
+        let evaluator = fixture
             .expression
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
