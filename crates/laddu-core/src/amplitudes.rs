@@ -2357,6 +2357,15 @@ impl Evaluator {
         }
     }
 
+    fn evaluate_expression_program_value_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        self.expression_program
+            .evaluate_into(amplitude_values, scratch)
+    }
+
     fn evaluate_expression_runtime_gradient_with_scratch(
         &self,
         amplitude_values: &[Complex64],
@@ -2403,6 +2412,21 @@ impl Evaluator {
                 }
             }
         }
+    }
+
+    fn evaluate_expression_program_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        self.expression_program.evaluate_value_gradient_into(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+        )
     }
 
     fn evaluate_expression_runtime_value_gradient_with_scratch(
@@ -3808,7 +3832,7 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
-        let slot_count = self.expression_value_slot_count();
+        let slot_count = self.expression_program.slot_count();
         #[cfg(feature = "rayon")]
         {
             Ok(resources
@@ -3828,7 +3852,10 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                        self.evaluate_expression_program_value_with_scratch(
+                            amplitude_values,
+                            expr_slots,
+                        )
                     },
                 )
                 .collect())
@@ -3847,7 +3874,10 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                    self.evaluate_expression_program_value_with_scratch(
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
                 })
                 .collect())
         }
@@ -4678,66 +4708,7 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
-        #[cfg(feature = "expression-ir")]
-        if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
-            let slot_count = self.expression_value_gradient_slot_count();
-            #[cfg(feature = "rayon")]
-            {
-                return Ok(resources
-                    .caches
-                    .par_iter()
-                    .map_init(
-                        || {
-                            (
-                                vec![Complex64::ZERO; amplitude_len],
-                                vec![DVector::zeros(grad_dim); amplitude_len],
-                                vec![Complex64::ZERO; slot_count],
-                                vec![Complex64::ZERO; slot_count * grad_dim],
-                            )
-                        },
-                        |(amplitude_values, gradient_values, value_slots, gradient_slots),
-                         cache| {
-                            self.evaluate_cache_value_gradient_with_flat_scratch(
-                                amplitude_values,
-                                gradient_values,
-                                value_slots,
-                                gradient_slots,
-                                grad_dim,
-                                &active_indices,
-                                active_mask,
-                                &parameters,
-                                cache,
-                            )
-                        },
-                    )
-                    .collect());
-            }
-            #[cfg(not(feature = "rayon"))]
-            {
-                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
-                let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
-                let mut value_slots = vec![Complex64::ZERO; slot_count];
-                let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
-                return Ok(resources
-                    .caches
-                    .iter()
-                    .map(|cache| {
-                        self.evaluate_cache_value_gradient_with_flat_scratch(
-                            &mut amplitude_values,
-                            &mut gradient_values,
-                            &mut value_slots,
-                            &mut gradient_slots,
-                            grad_dim,
-                            &active_indices,
-                            active_mask,
-                            &parameters,
-                            cache,
-                        )
-                    })
-                    .collect());
-            }
-        }
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_program.slot_count();
         #[cfg(feature = "rayon")]
         {
             Ok(resources
@@ -4753,15 +4724,19 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.evaluate_cache_value_gradient_with_scratch(
+                        self.fill_amplitude_values_and_gradients(
                             amplitude_values,
                             gradient_values,
-                            value_slots,
-                            gradient_slots,
                             &active_indices,
                             active_mask,
                             &parameters,
                             cache,
+                        );
+                        self.evaluate_expression_program_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
                         )
                     },
                 )
@@ -4777,15 +4752,19 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.evaluate_cache_value_gradient_with_scratch(
+                    self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
                         &active_indices,
                         active_mask,
                         &parameters,
                         cache,
+                    );
+                    self.evaluate_expression_program_value_gradient_with_scratch(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
                     )
                 })
                 .collect())
@@ -6098,6 +6077,31 @@ mod tests {
                 origin: ExpressionSpecializationOrigin::CacheMissRebuild,
             })
         );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_active_mask_override_ignores_current_ir_specialization() {
+        let expr = ComplexScalar::new("amp", parameter("scale"), constant("amp_im", 0.0))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![2.0];
+
+        evaluator.deactivate("amp");
+        assert_eq!(evaluator.evaluate(&params)[0], Complex64::new(0.0, 0.0));
+
+        let overridden = evaluator
+            .evaluate_local_with_active_mask(&params, &[true])
+            .unwrap();
+        assert_eq!(overridden[0], Complex64::new(4.0, 0.0));
+
+        let overridden_fused = evaluator
+            .evaluate_with_gradient_local_with_active_mask(&params, &[true])
+            .unwrap();
+        assert_eq!(overridden_fused[0].0, Complex64::new(4.0, 0.0));
+        assert_eq!(overridden_fused[0].1[0], Complex64::new(4.0, 0.0));
     }
 
     #[cfg(feature = "expression-ir")]
