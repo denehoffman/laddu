@@ -110,8 +110,8 @@ where
     let parameters = Parameters::new(parameters, &resources.constants);
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
-    let slot_count = evaluator.expression_slot_count();
-    let program_snapshot = evaluator.expression_value_program_snapshot();
+    let slot_count = evaluator.expression_reference_value_slot_count();
+    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
     #[cfg(feature = "rayon")]
     {
         resources
@@ -171,6 +171,69 @@ where
                 event.weight * value_map(l)
             })
             .sum_with_accumulator::<Klein<f64>>()
+    }
+}
+
+fn project_weights_local_from_evaluator(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+) -> Vec<f64> {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resources.active_indices().to_vec();
+    let slot_count = evaluator.expression_reference_value_slot_count();
+    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
+    #[cfg(feature = "rayon")]
+    {
+        resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
+                    event.weight * value.re / n_mc
+                },
+            )
+            .collect()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
+                event.weight * value.re / n_mc
+            })
+            .collect()
     }
 }
 
@@ -743,31 +806,19 @@ impl NLL {
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<Vec<f64>> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
-        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_local(parameters),
-            )
+        if let Some(mc_evaluator) = mc_evaluator {
+            Ok(project_weights_local_from_evaluator(
+                &mc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
         } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate_local(parameters),
-            )
-        };
-        #[cfg(feature = "rayon")]
-        let output: Vec<f64> = result
-            .par_iter()
-            .zip(mc_dataset.events_local().par_iter())
-            .map(|(l, e)| e.weight * l.re / self.n_mc)
-            .collect();
-
-        #[cfg(not(feature = "rayon"))]
-        let output: Vec<f64> = result
-            .iter()
-            .zip(mc_dataset.events_local().iter())
-            .map(|(l, e)| e.weight * l.re / self.n_mc)
-            .collect();
-        Ok(output)
+            Ok(project_weights_local_from_evaluator(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
+        }
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
