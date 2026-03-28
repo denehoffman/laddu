@@ -3179,12 +3179,10 @@ impl Evaluator {
             })
             .unwrap_or_else(|| self.expression_slot_count());
         #[cfg(feature = "expression-ir")]
-        let residual_value_program = lowered_artifacts.as_ref().and_then(|artifacts| {
-            artifacts
-                .residual_runtime
-                .as_ref()
-                .and_then(|runtime| runtime.value_program().cloned())
-        });
+        let residual_value_program = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .and_then(|runtime| runtime.value_program());
         #[cfg(not(feature = "expression-ir"))]
         let residual_value_slot_count = self.expression_slot_count();
         #[cfg(feature = "expression-ir")]
