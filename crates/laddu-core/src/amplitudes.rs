@@ -7629,6 +7629,30 @@ mod tests {
         assert_relative_eq!(gradient[0][0].im, 0.0);
     }
 
+    #[cfg(not(feature = "expression-ir"))]
+    #[test]
+    fn test_default_build_uses_legacy_expression_runtime() {
+        let expr = ComplexScalar::new(
+            "opt_in_gate",
+            constant("opt_in_gate_re", 2.0),
+            constant("opt_in_gate_im", 0.0),
+        )
+        .unwrap()
+        .norm_sqr();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(
+            evaluator.runtime_backend,
+            ExpressionRuntimeBackend::LegacyProgram
+        );
+        assert_eq!(
+            evaluator.expression_slot_count(),
+            evaluator.expression_program.slot_count()
+        );
+        assert_eq!(evaluator.evaluate(&[])[0], Complex64::new(4.0, 0.0));
+    }
+
     #[test]
     fn test_parameter_registration() {
         let expr = ComplexScalar::new(
