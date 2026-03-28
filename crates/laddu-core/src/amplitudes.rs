@@ -1804,14 +1804,14 @@ impl Evaluator {
         let cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         let active_mask_key = resources.active.clone();
-        let lowered_artifacts = if let Some(artifacts) = self
-            .ir_planning
-            .lowered_artifact_cache
-            .read()
-            .get(&active_mask_key)
-            .cloned()
-            .filter(|artifacts| Self::lowered_artifact_signature_matches(artifacts, &values))
-        {
+        let cached_lowered_artifacts = {
+            let lowered_artifact_cache = self.ir_planning.lowered_artifact_cache.read();
+            lowered_artifact_cache
+                .get(&active_mask_key)
+                .cloned()
+                .filter(|artifacts| Self::lowered_artifact_signature_matches(artifacts, &values))
+        };
+        let lowered_artifacts = if let Some(artifacts) = cached_lowered_artifacts {
             self.ir_planning
                 .compile_metrics
                 .write()
@@ -1864,13 +1864,11 @@ impl Evaluator {
                 };
             }
         }
-        if let Some(specialization) = self
-            .ir_planning
-            .specialization_cache
-            .read()
-            .get(&key)
-            .cloned()
-        {
+        let cached_specialization = {
+            let specialization_cache = self.ir_planning.specialization_cache.read();
+            specialization_cache.get(&key).cloned()
+        };
+        if let Some(specialization) = cached_specialization {
             let restore_start = Instant::now();
             self.ir_planning.specialization_metrics.write().cache_hits += 1;
             self.install_expression_specialization(&specialization);
