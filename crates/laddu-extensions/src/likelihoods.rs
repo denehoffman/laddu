@@ -237,6 +237,84 @@ fn project_weights_local_from_evaluator(
     }
 }
 
+fn project_weights_local_from_resolved_mask(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+    resolved_mask: &[bool],
+) -> Vec<f64> {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resolved_mask
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &active)| if active { Some(index) } else { None })
+        .collect::<Vec<_>>();
+    let slot_count = evaluator.expression_reference_value_slot_count();
+    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
+    #[cfg(feature = "rayon")]
+    {
+        resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let value = if evaluator.uses_ir_interpreter_backend() {
+                        evaluator
+                            .evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                    } else {
+                        evaluator.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
+                    };
+                    event.weight * value.re / n_mc
+                },
+            )
+            .collect()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let value = if evaluator.uses_ir_interpreter_backend() {
+                    evaluator
+                        .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                } else {
+                    evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
+                };
+                event.weight * value.re / n_mc
+            })
+            .collect()
+    }
+}
+
 fn project_weights_and_gradients_local_from_evaluator(
     evaluator: &Evaluator,
     parameters: &[f64],
@@ -530,82 +608,6 @@ impl NLL {
 
     fn invalidate_projection_mask_cache(&self) {
         self.projection_active_mask_cache.lock().clear();
-    }
-
-    fn project_weights_subsets_from_masks_local(
-        &self,
-        evaluator: &Evaluator,
-        resolved_masks: &[Vec<bool>],
-        parameters: &[f64],
-    ) -> Vec<Vec<f64>> {
-        if resolved_masks.is_empty() {
-            return Vec::new();
-        }
-        let resources = evaluator.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
-        let amplitude_len = evaluator.amplitudes.len();
-        let slot_count = evaluator.expression_reference_value_slot_count();
-        let subset_active_indices = resolved_masks
-            .iter()
-            .map(|mask| {
-                mask.iter()
-                    .enumerate()
-                    .filter_map(|(index, &active)| if active { Some(index) } else { None })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let union_active_indices = {
-            let mut union_mask = vec![false; amplitude_len];
-            for mask in resolved_masks {
-                for (index, &active) in mask.iter().enumerate() {
-                    if active {
-                        union_mask[index] = true;
-                    }
-                }
-            }
-            union_mask
-                .iter()
-                .enumerate()
-                .filter_map(|(index, &active)| if active { Some(index) } else { None })
-                .collect::<Vec<_>>()
-        };
-
-        let n_subsets = resolved_masks.len();
-        let mut output = vec![Vec::with_capacity(resources.caches.len()); n_subsets];
-        let mut union_amplitudes = vec![Complex64::ZERO; amplitude_len];
-        let mut subset_amplitudes = vec![vec![Complex64::ZERO; amplitude_len]; n_subsets];
-        let mut subset_expr_slots = vec![vec![Complex64::ZERO; slot_count]; n_subsets];
-        let program_snapshot = evaluator.expression_reference_value_program_snapshot();
-        for (cache, event) in resources
-            .caches
-            .iter()
-            .zip(evaluator.dataset.events_local().iter())
-        {
-            for &amp_idx in &union_active_indices {
-                union_amplitudes[amp_idx] =
-                    evaluator.amplitudes[amp_idx].compute(&parameters, cache);
-            }
-            for (subset_index, active_indices) in subset_active_indices.iter().enumerate() {
-                let amplitude_values = &mut subset_amplitudes[subset_index];
-                for &amp_idx in active_indices {
-                    amplitude_values[amp_idx] = union_amplitudes[amp_idx];
-                }
-                let value = if evaluator.uses_ir_interpreter_backend() {
-                    evaluator.evaluate_expression_value_with_scratch(
-                        amplitude_values,
-                        &mut subset_expr_slots[subset_index],
-                    )
-                } else {
-                    evaluator.evaluate_expression_value_with_program_snapshot(
-                        &program_snapshot,
-                        amplitude_values,
-                        &mut subset_expr_slots[subset_index],
-                    )
-                };
-                output[subset_index].push(event.weight * value.re / self.n_mc);
-            }
-        }
-        output
     }
 
     /// The parameter names for this NLL.
@@ -1008,41 +1010,22 @@ impl NLL {
                 mc_evaluator.set_active_mask(&current_active_mc)?;
                 return Err(err);
             }
-            let mc_dataset = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate_local(parameters);
-            #[cfg(feature = "rayon")]
-            let output: Vec<f64> = result
-                .par_iter()
-                .zip(mc_dataset.events_local().par_iter())
-                .map(|(l, e)| e.weight * l.re / self.n_mc)
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let output: Vec<f64> = result
-                .iter()
-                .zip(mc_dataset.events_local().iter())
-                .map(|(l, e)| e.weight * l.re / self.n_mc)
-                .collect();
+            let resolved_mask = mc_evaluator.active_mask();
             mc_evaluator.set_active_mask(&current_active_mc)?;
-            Ok(output)
+            Ok(project_weights_local_from_resolved_mask(
+                mc_evaluator,
+                parameters,
+                self.n_mc,
+                &resolved_mask,
+            ))
         } else {
             let resolved_mask = self.get_or_build_projection_active_mask(names)?;
-            let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self
-                .accmc_evaluator
-                .evaluate_local_with_active_mask(parameters, &resolved_mask)?;
-            #[cfg(feature = "rayon")]
-            let output: Vec<f64> = result
-                .par_iter()
-                .zip(mc_dataset.events_local().par_iter())
-                .map(|(l, e)| e.weight * l.re / self.n_mc)
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let output: Vec<f64> = result
-                .iter()
-                .zip(mc_dataset.events_local().iter())
-                .map(|(l, e)| e.weight * l.re / self.n_mc)
-                .collect();
-            Ok(output)
+            Ok(project_weights_local_from_resolved_mask(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
+                &resolved_mask,
+            ))
         }
     }
 
@@ -1134,21 +1117,33 @@ impl NLL {
                 resolved_masks.push(mc_evaluator.active_mask());
             }
             mc_evaluator.set_active_mask(&current_active_mc)?;
-            Ok(self.project_weights_subsets_from_masks_local(
-                mc_evaluator,
-                &resolved_masks,
-                parameters,
-            ))
+            Ok(resolved_masks
+                .iter()
+                .map(|mask| {
+                    project_weights_local_from_resolved_mask(
+                        mc_evaluator,
+                        parameters,
+                        self.n_mc,
+                        mask,
+                    )
+                })
+                .collect())
         } else {
             let mut resolved_masks = Vec::with_capacity(subsets.len());
             for names in subsets {
                 resolved_masks.push(self.get_or_build_projection_active_mask(names)?);
             }
-            Ok(self.project_weights_subsets_from_masks_local(
-                &self.accmc_evaluator,
-                &resolved_masks,
-                parameters,
-            ))
+            Ok(resolved_masks
+                .iter()
+                .map(|mask| {
+                    project_weights_local_from_resolved_mask(
+                        &self.accmc_evaluator,
+                        parameters,
+                        self.n_mc,
+                        mask,
+                    )
+                })
+                .collect())
         }
     }
 

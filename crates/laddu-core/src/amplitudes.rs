@@ -3188,25 +3188,23 @@ impl Evaluator {
         #[cfg(not(feature = "expression-ir"))]
         let residual_value_slot_count = self.expression_slot_count();
         #[cfg(feature = "expression-ir")]
-        let active_index_set = resources.active_indices();
+        let cached_parameter_indices = &state.execution_sets.cached_parameter_amplitudes;
         #[cfg(feature = "expression-ir")]
-        let cached_parameter_indices = state
-            .execution_sets
-            .cached_parameter_amplitudes
-            .iter()
-            .copied()
-            .filter(|index| active_index_set.binary_search(index).is_ok())
-            .collect::<Vec<_>>();
-        #[cfg(feature = "expression-ir")]
-        let residual_active_indices = state
-            .execution_sets
-            .residual_amplitudes
-            .iter()
-            .copied()
-            .filter(|index| active_index_set.binary_search(index).is_ok())
-            .collect::<Vec<_>>();
+        let residual_active_indices = &state.execution_sets.residual_amplitudes;
         #[cfg(not(feature = "expression-ir"))]
         let residual_active_indices = active_indices.clone();
+        #[cfg(feature = "expression-ir")]
+        debug_assert!(cached_parameter_indices.iter().all(|&index| resources
+            .active
+            .get(index)
+            .copied()
+            .unwrap_or(false)));
+        #[cfg(feature = "expression-ir")]
+        debug_assert!(residual_active_indices.iter().all(|&index| resources
+            .active
+            .get(index)
+            .copied()
+            .unwrap_or(false)));
         #[cfg(feature = "expression-ir")]
         let cached_value_sum = {
             if let Some(cache) = resources.caches.first() {
