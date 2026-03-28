@@ -1827,6 +1827,14 @@ impl Evaluator {
         }
     }
 
+    #[doc(hidden)]
+    pub fn expression_reference_value_program_snapshot(&self) -> ExpressionValueProgramSnapshot {
+        ExpressionValueProgramSnapshot {
+            #[cfg(feature = "expression-ir")]
+            lowered_program: None,
+        }
+    }
+
     #[cfg(feature = "expression-ir")]
     fn lowered_gradient_runtime_slot_count(&self) -> usize {
         self.lowered_runtime()
@@ -1857,6 +1865,11 @@ impl Evaluator {
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::Lowered => self.lowered_value_runtime_slot_count(),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn expression_reference_value_slot_count(&self) -> usize {
+        self.expression_program.slot_count()
     }
 
     #[cfg(feature = "expression-ir")]
@@ -3094,24 +3107,6 @@ impl Evaluator {
     }
 
     #[cfg(feature = "expression-ir")]
-    fn evaluate_residual_value_lowered(
-        &self,
-        _state: &CachedIntegralCacheState,
-        lowered_artifacts: &LoweredArtifactCacheState,
-        amplitude_values: &[Complex64],
-        value_slots: &mut [Complex64],
-    ) -> Option<Complex64> {
-        let program = lowered_artifacts
-            .residual_runtime
-            .as_ref()
-            .and_then(|runtime| runtime.value_program())?;
-        Some(program.evaluate_into(
-            amplitude_values,
-            &mut value_slots[..program.scratch_slots()],
-        ))
-    }
-
-    #[cfg(feature = "expression-ir")]
     fn evaluate_residual_gradient_ir(
         &self,
         state: &CachedIntegralCacheState,
@@ -3183,6 +3178,13 @@ impl Evaluator {
                     .map(|program| program.scratch_slots())
             })
             .unwrap_or_else(|| self.expression_slot_count());
+        #[cfg(feature = "expression-ir")]
+        let residual_value_program = lowered_artifacts.as_ref().and_then(|artifacts| {
+            artifacts
+                .residual_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_program().cloned())
+        });
         #[cfg(not(feature = "expression-ir"))]
         let residual_value_slot_count = self.expression_slot_count();
         #[cfg(feature = "expression-ir")]
@@ -3256,15 +3258,12 @@ impl Evaluator {
                         );
                         #[cfg(feature = "expression-ir")]
                         {
-                            let value = self
-                                .active_lowered_artifacts()
+                            let value = residual_value_program
                                 .as_ref()
-                                .and_then(|artifacts| {
-                                    self.evaluate_residual_value_lowered(
-                                        &state,
-                                        artifacts,
+                                .map(|program| {
+                                    program.evaluate_into(
                                         amplitude_values,
-                                        value_slots,
+                                        &mut value_slots[..program.scratch_slots()],
                                     )
                                 })
                                 .unwrap_or_else(|| {
@@ -3302,15 +3301,12 @@ impl Evaluator {
                     );
                     #[cfg(feature = "expression-ir")]
                     {
-                        let value = self
-                            .active_lowered_artifacts()
+                        let value = residual_value_program
                             .as_ref()
-                            .and_then(|artifacts| {
-                                self.evaluate_residual_value_lowered(
-                                    &state,
-                                    artifacts,
+                            .map(|program| {
+                                program.evaluate_into(
                                     &amplitude_values,
-                                    &mut value_slots,
+                                    &mut value_slots[..program.scratch_slots()],
                                 )
                             })
                             .unwrap_or_else(|| {
@@ -6894,15 +6890,14 @@ mod tests {
             &resources.caches[0],
         );
         let residual_value_ir = evaluator.evaluate_residual_value_ir(&state, &amplitude_values);
-        let mut value_slots = vec![Complex64::ZERO; evaluator.expression_slot_count()];
-        let residual_value_lowered = evaluator
-            .evaluate_residual_value_lowered(
-                &state,
-                lowered_artifacts.as_ref(),
-                &amplitude_values,
-                &mut value_slots,
-            )
+        let residual_program = lowered_artifacts
+            .residual_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.value_program())
             .expect("residual value lowering should succeed");
+        let mut value_slots = vec![Complex64::ZERO; residual_program.scratch_slots()];
+        let residual_value_lowered =
+            residual_program.evaluate_into(&amplitude_values, &mut value_slots);
         assert_relative_eq!(
             residual_value_lowered.re,
             residual_value_ir.re,

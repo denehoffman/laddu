@@ -481,7 +481,7 @@ impl NLL {
         let resources = evaluator.resources.read();
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = evaluator.amplitudes.len();
-        let slot_count = evaluator.expression_slot_count();
+        let slot_count = evaluator.expression_reference_value_slot_count();
         let subset_active_indices = resolved_masks
             .iter()
             .map(|mask| {
@@ -512,7 +512,7 @@ impl NLL {
         let mut union_amplitudes = vec![Complex64::ZERO; amplitude_len];
         let mut subset_amplitudes = vec![vec![Complex64::ZERO; amplitude_len]; n_subsets];
         let mut subset_expr_slots = vec![vec![Complex64::ZERO; slot_count]; n_subsets];
-        let program_snapshot = evaluator.expression_value_program_snapshot();
+        let program_snapshot = evaluator.expression_reference_value_program_snapshot();
         for (cache, event) in resources
             .caches
             .iter()
