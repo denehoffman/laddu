@@ -174,6 +174,94 @@ where
     }
 }
 
+fn project_weights_and_gradients_local_from_evaluator(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+) -> (Vec<f64>, Vec<DVector<f64>>) {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let grad_dim = parameters.len();
+    let active_indices = resources.active_indices().to_vec();
+    let active_mask = resources.active.clone();
+    let slot_count = evaluator.expression_value_gradient_slot_count_public();
+
+    #[cfg(feature = "rayon")]
+    {
+        let weighted = resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![DVector::zeros(grad_dim); amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                        vec![DVector::zeros(grad_dim); slot_count],
+                    )
+                },
+                |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                 (cache, event)| {
+                    evaluator.fill_amplitude_values_and_gradients_public(
+                        amplitude_values,
+                        gradient_values,
+                        &active_indices,
+                        &active_mask,
+                        &parameters,
+                        cache,
+                    );
+                    let (value, gradient) = evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        );
+                    (
+                        event.weight * value.re / n_mc,
+                        gradient.map(|g| g.re).scale(event.weight / n_mc),
+                    )
+                },
+            )
+            .collect::<Vec<_>>();
+        weighted.into_iter().unzip()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+        let mut value_slots = vec![Complex64::ZERO; slot_count];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                evaluator.fill_amplitude_values_and_gradients_public(
+                    &mut amplitude_values,
+                    &mut gradient_values,
+                    &active_indices,
+                    &active_mask,
+                    &parameters,
+                    cache,
+                );
+                let (value, gradient) = evaluator.evaluate_expression_value_gradient_with_scratch(
+                    &amplitude_values,
+                    &gradient_values,
+                    &mut value_slots,
+                    &mut gradient_slots,
+                );
+                (
+                    event.weight * value.re / n_mc,
+                    gradient.map(|g| g.re).scale(event.weight / n_mc),
+                )
+            })
+            .unzip()
+    }
+}
+
 #[cfg(feature = "rayon")]
 fn sum_dvectors_parallel(
     iter: impl rayon::iter::ParallelIterator<Item = DVector<f64>>,
@@ -755,46 +843,17 @@ impl NLL {
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
-        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_with_gradient_local(parameters),
-            )
-        } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator
-                    .evaluate_with_gradient_local(parameters),
-            )
-        };
-        #[cfg(feature = "rayon")]
-        {
-            Ok((
-                result
-                    .par_iter()
-                    .zip(mc_dataset.events_local().par_iter())
-                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
-                    .collect(),
-                result
-                    .par_iter()
-                    .zip(mc_dataset.events_local().par_iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
-                    .collect(),
+        if let Some(mc_evaluator) = mc_evaluator {
+            Ok(project_weights_and_gradients_local_from_evaluator(
+                &mc_evaluator,
+                parameters,
+                self.n_mc,
             ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok((
-                result
-                    .iter()
-                    .zip(mc_dataset.events_local().iter())
-                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
-                    .collect(),
-                result
-                    .iter()
-                    .zip(mc_dataset.events_local().iter())
-                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
-                    .collect(),
+        } else {
+            Ok(project_weights_and_gradients_local_from_evaluator(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
             ))
         }
     }

@@ -1881,6 +1881,18 @@ impl Evaluator {
         }
     }
 
+    #[doc(hidden)]
+    pub fn expression_value_gradient_slot_count_public(&self) -> usize {
+        #[cfg(feature = "expression-ir")]
+        {
+            self.expression_value_gradient_slot_count()
+        }
+        #[cfg(not(feature = "expression-ir"))]
+        {
+            self.expression_program.slot_count()
+        }
+    }
+
     #[cfg(feature = "expression-ir")]
     #[cfg(test)]
     fn specialization_cache_len(&self) -> usize {
@@ -2240,6 +2252,26 @@ impl Evaluator {
     ) {
         self.fill_amplitude_values(amplitude_values, active_indices, parameters, cache);
         self.fill_amplitude_gradients(gradient_values, active_mask, parameters, cache);
+    }
+
+    #[doc(hidden)]
+    pub fn fill_amplitude_values_and_gradients_public(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
     }
 
     #[inline]
