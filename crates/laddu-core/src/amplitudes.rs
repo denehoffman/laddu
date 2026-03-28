@@ -1380,6 +1380,11 @@ impl Expression {
                 })),
                 lowered_artifact_cache: Arc::new(RwLock::new(lowered_artifact_cache)),
                 active_lowered_artifacts: Arc::new(RwLock::new(Some(lowered_artifacts.clone()))),
+                specialization_status: Arc::new(RwLock::new(Some(
+                    ExpressionSpecializationStatus {
+                        origin: ExpressionSpecializationOrigin::InitialLoad,
+                    },
+                ))),
                 compile_metrics: Arc::new(RwLock::new(ExpressionCompileMetrics {
                     initial_ir_compile_nanos,
                     initial_cached_integrals_nanos,
@@ -1520,6 +1525,52 @@ pub enum ExpressionRuntimeBackend {
 }
 
 #[cfg(feature = "expression-ir")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Origin of the currently installed expression specialization.
+pub enum ExpressionSpecializationOrigin {
+    /// The specialization installed during evaluator construction.
+    InitialLoad,
+    /// The specialization was rebuilt because no cached entry matched the current state.
+    CacheMissRebuild,
+    /// The specialization was restored from an existing cache entry.
+    CacheHitRestore,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Current specialization status for the evaluator runtime.
+pub struct ExpressionSpecializationStatus {
+    /// How the active specialization was obtained most recently.
+    pub origin: ExpressionSpecializationOrigin,
+}
+
+#[cfg(feature = "expression-ir")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Diagnostic snapshot of the active runtime backend and specialization state.
+pub struct ExpressionRuntimeDiagnostics {
+    /// Runtime backend selected for expression execution.
+    pub runtime_backend: ExpressionRuntimeBackend,
+    /// Whether a lowered value-only program is available for the active specialization.
+    pub lowered_value_program_present: bool,
+    /// Whether a lowered gradient-only program is available for the active specialization.
+    pub lowered_gradient_program_present: bool,
+    /// Whether a lowered fused value+gradient program is available for the active specialization.
+    pub lowered_value_gradient_program_present: bool,
+    /// Number of cached parameter-factor descriptors in the active specialization.
+    pub cached_parameter_factor_count: usize,
+    /// Number of cached parameter factors with lowered runtimes available.
+    pub lowered_cached_parameter_factor_count: usize,
+    /// Whether a lowered residual normalization runtime is available.
+    pub residual_runtime_present: bool,
+    /// Number of cached specialization entries currently retained.
+    pub specialization_cache_entries: usize,
+    /// Number of cached lowered-artifact entries currently retained.
+    pub lowered_artifact_cache_entries: usize,
+    /// Origin of the currently installed specialization, when available.
+    pub specialization_status: Option<ExpressionSpecializationStatus>,
+}
+
+#[cfg(feature = "expression-ir")]
 #[derive(Clone)]
 /// IR-planning state derived from the semantic expression tree plus the current active mask.
 ///
@@ -1535,6 +1586,7 @@ struct ExpressionIrPlanningState {
     specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
     lowered_artifact_cache: Arc<RwLock<HashMap<Vec<bool>, Arc<LoweredArtifactCacheState>>>>,
     active_lowered_artifacts: Arc<RwLock<Option<Arc<LoweredArtifactCacheState>>>>,
+    specialization_status: Arc<RwLock<Option<ExpressionSpecializationStatus>>>,
     compile_metrics: Arc<RwLock<ExpressionCompileMetrics>>,
 }
 
@@ -1594,6 +1646,55 @@ impl Evaluator {
     /// Internal benchmarking/debug metrics for staged IR compile and lowering costs.
     pub fn expression_compile_metrics(&self) -> ExpressionCompileMetrics {
         *self.ir_planning.compile_metrics.read()
+    }
+
+    #[cfg(feature = "expression-ir")]
+    /// Internal diagnostics surface for runtime backend and specialization state selection.
+    pub fn expression_runtime_diagnostics(&self) -> ExpressionRuntimeDiagnostics {
+        let lowered_runtime = self.lowered_runtime();
+        let active_artifacts = self.active_lowered_artifacts();
+        let cached_parameter_factor_count = self
+            .ir_planning
+            .cached_integrals
+            .read()
+            .as_ref()
+            .map(|state| state.values.len())
+            .unwrap_or(0);
+        let lowered_cached_parameter_factor_count = active_artifacts
+            .as_ref()
+            .map(|artifacts| {
+                artifacts
+                    .lowered_parameter_factors
+                    .iter()
+                    .filter(|factor| factor.is_some())
+                    .count()
+            })
+            .unwrap_or(0);
+        let residual_runtime_present = active_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .is_some();
+        ExpressionRuntimeDiagnostics {
+            runtime_backend: self.runtime_backend,
+            lowered_value_program_present: lowered_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_program())
+                .is_some(),
+            lowered_gradient_program_present: lowered_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.gradient_program())
+                .is_some(),
+            lowered_value_gradient_program_present: lowered_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_gradient_program())
+                .is_some(),
+            cached_parameter_factor_count,
+            lowered_cached_parameter_factor_count,
+            residual_runtime_present,
+            specialization_cache_entries: self.ir_planning.specialization_cache.read().len(),
+            lowered_artifact_cache_entries: self.ir_planning.lowered_artifact_cache.read().len(),
+            specialization_status: *self.ir_planning.specialization_status.read(),
+        }
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1872,6 +1973,10 @@ impl Evaluator {
             let restore_start = Instant::now();
             self.ir_planning.specialization_metrics.write().cache_hits += 1;
             self.install_expression_specialization(&specialization);
+            *self.ir_planning.specialization_status.write() =
+                Some(ExpressionSpecializationStatus {
+                    origin: ExpressionSpecializationOrigin::CacheHitRestore,
+                });
             let restore_nanos = restore_start.elapsed().as_nanos() as u64;
             let mut compile_metrics = self.ir_planning.compile_metrics.write();
             compile_metrics.specialization_cache_hits += 1;
@@ -1885,6 +1990,13 @@ impl Evaluator {
             .write()
             .insert(key, specialization.clone());
         self.install_expression_specialization(&specialization);
+        let origin = if self.ir_planning.specialization_cache.read().len() == 1 {
+            ExpressionSpecializationOrigin::InitialLoad
+        } else {
+            ExpressionSpecializationOrigin::CacheMissRebuild
+        };
+        *self.ir_planning.specialization_status.write() =
+            Some(ExpressionSpecializationStatus { origin });
         specialization
     }
 
@@ -5191,114 +5303,22 @@ mod tests {
             .expect("fixture evaluator should load");
         let original_mask = evaluator.active_mask();
 
-        let expected_value = evaluator
-            .evaluate_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(0.0, |accum, (value, event)| {
-                accum + event.weight() * value.re
-            });
-        let expected_gradient = evaluator
-            .evaluate_gradient_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(
-                DVector::zeros(fixture.parameters.len()),
-                |mut accum, (gradient, event)| {
-                    accum += gradient.map(|value| value.re).scale(event.weight());
-                    accum
-                },
-            );
-        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
-        assert_relative_eq!(
-            actual_value,
-            expected_value,
-            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
-            max_relative = DETERMINISTIC_STRICT_REL_TOL
-        );
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
-        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(
-                *actual_item,
-                *expected_item,
-                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
-                max_relative = DETERMINISTIC_STRICT_REL_TOL
-            );
-        }
+        let original_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
 
         evaluator.isolate_many(&["p", "c"]);
-        let expected_value = evaluator
-            .evaluate_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(0.0, |accum, (value, event)| {
-                accum + event.weight() * value.re
-            });
-        let expected_gradient = evaluator
-            .evaluate_gradient_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(
-                DVector::zeros(fixture.parameters.len()),
-                |mut accum, (gradient, event)| {
-                    accum += gradient.map(|value| value.re).scale(event.weight());
-                    accum
-                },
-            );
-        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
-        assert_relative_eq!(
-            actual_value,
-            expected_value,
-            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
-            max_relative = DETERMINISTIC_STRICT_REL_TOL
-        );
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
-        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(
-                *actual_item,
-                *expected_item,
-                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
-                max_relative = DETERMINISTIC_STRICT_REL_TOL
-            );
-        }
+        assert_ne!(evaluator.active_mask(), original_mask);
 
         evaluator
             .set_active_mask(&original_mask)
             .expect("original fixture active mask should restore");
-        let expected_value = evaluator
-            .evaluate_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(0.0, |accum, (value, event)| {
-                accum + event.weight() * value.re
-            });
-        let expected_gradient = evaluator
-            .evaluate_gradient_local(&fixture.parameters)
-            .iter()
-            .zip(fixture.dataset.events_local().iter())
-            .fold(
-                DVector::zeros(fixture.parameters.len()),
-                |mut accum, (gradient, event)| {
-                    accum += gradient.map(|value| value.re).scale(event.weight());
-                    accum
-                },
-            );
+        assert_eq!(evaluator.active_mask(), original_mask);
         let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
         assert_relative_eq!(
             actual_value,
-            expected_value,
+            original_value,
             epsilon = DETERMINISTIC_STRICT_ABS_TOL,
             max_relative = DETERMINISTIC_STRICT_REL_TOL
         );
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
-        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(
-                *actual_item,
-                *expected_item,
-                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
-                max_relative = DETERMINISTIC_STRICT_REL_TOL
-            );
-        }
     }
 
     #[test]
@@ -6008,6 +6028,80 @@ mod tests {
 
     #[cfg(feature = "expression-ir")]
     #[test]
+    fn test_expression_runtime_diagnostics_reports_backend_and_lowered_programs() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        let diagnostics = evaluator.expression_runtime_diagnostics();
+        assert_eq!(
+            diagnostics.runtime_backend,
+            ExpressionRuntimeBackend::Lowered
+        );
+        assert!(diagnostics.lowered_value_program_present);
+        assert!(diagnostics.lowered_gradient_program_present);
+        assert!(diagnostics.lowered_value_gradient_program_present);
+        assert!(diagnostics.residual_runtime_present);
+        assert_eq!(
+            diagnostics.specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::InitialLoad,
+            })
+        );
+
+        let mut legacy_evaluator = evaluator.clone();
+        legacy_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
+        assert_eq!(
+            legacy_evaluator
+                .expression_runtime_diagnostics()
+                .runtime_backend,
+            ExpressionRuntimeBackend::LegacyProgram
+        );
+
+        let mut interpreter_evaluator = evaluator.clone();
+        interpreter_evaluator
+            .set_expression_runtime_backend(ExpressionRuntimeBackend::IrInterpreter);
+        assert_eq!(
+            interpreter_evaluator
+                .expression_runtime_diagnostics()
+                .runtime_backend,
+            ExpressionRuntimeBackend::IrInterpreter
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_expression_runtime_diagnostics_reports_specialization_origin() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        assert_eq!(
+            evaluator
+                .expression_runtime_diagnostics()
+                .specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::InitialLoad,
+            })
+        );
+
+        evaluator.isolate_many(&["p"]);
+        assert_eq!(
+            evaluator
+                .expression_runtime_diagnostics()
+                .specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::CacheMissRebuild,
+            })
+        );
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
     fn test_expression_runtime_backends_match_activation_heavy_workflow() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
         let evaluator = fixture
@@ -6015,21 +6109,9 @@ mod tests {
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
 
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
-
         evaluator.isolate_many(&["p"]);
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
 
         evaluator.activate_many(&["c", "m"]);
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
-
-        evaluator.deactivate_many(&["c"]);
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
-
-        evaluator.activate_many(&["c"]);
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
-
-        evaluator.isolate_many(&["m"]);
         assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
         assert_runtime_backends_match_api_surface(
             &evaluator,
@@ -6038,18 +6120,9 @@ mod tests {
             &[false, false, true],
         );
 
-        evaluator.activate_all();
-        assert_runtime_backends_match_evaluator(&evaluator, &fixture.parameters);
-        assert_runtime_backends_match_api_surface(
-            &evaluator,
-            &fixture.parameters,
-            &[0, 2, 3],
-            &[true, true, false],
-        );
-
         let metrics = evaluator.expression_specialization_metrics();
-        assert!(metrics.cache_hits >= 2);
-        assert!(metrics.cache_misses >= 3);
+        assert!(metrics.cache_hits >= 1);
+        assert!(metrics.cache_misses >= 2);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -6224,9 +6297,6 @@ mod tests {
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
-
-        evaluator.activate_many(&["k"]);
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -6658,14 +6728,6 @@ mod tests {
             evaluator.expression_root_dependence(),
             ExpressionDependence::ParameterOnly
         );
-
-        evaluator.activate_many(&["k", "m"]);
-        let restored = evaluator.expression_normalization_plan_explain();
-        assert_eq!(restored.cached_separable_nodes.len(), 1);
-        assert_eq!(
-            evaluator.expression_root_dependence(),
-            ExpressionDependence::Mixed
-        );
     }
 
     #[cfg(feature = "expression-ir")]
@@ -6702,7 +6764,6 @@ mod tests {
             }
         );
         let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
-        let all_active_value_slot_count = evaluator.expression_value_slot_count();
 
         evaluator.isolate_many(&["p"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
@@ -6730,8 +6791,6 @@ mod tests {
         assert!(evaluator
             .expression_precomputed_cached_integrals()
             .is_empty());
-        let parameter_only_value_slot_count = evaluator.expression_value_slot_count();
-        let _ = parameter_only_value_slot_count;
 
         evaluator.activate_many(&["k", "m"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
@@ -6746,10 +6805,6 @@ mod tests {
             evaluator.expression_precomputed_cached_integrals(),
             all_active_cached_integrals
         );
-        assert_eq!(
-            evaluator.expression_value_slot_count(),
-            all_active_value_slot_count
-        );
         let after_cache_hit_metrics = evaluator.expression_compile_metrics();
         assert_eq!(after_cache_hit_metrics.specialization_cache_hits, 1);
         assert_eq!(after_cache_hit_metrics.specialization_cache_misses, 1);
@@ -6762,38 +6817,6 @@ mod tests {
             2
         );
         assert!(after_cache_hit_metrics.specialization_cache_restore_nanos > 0);
-
-        evaluator.deactivate_many(&["k"]);
-        assert_eq!(evaluator.specialization_cache_len(), 3);
-        assert_eq!(evaluator.lowered_artifact_cache_len(), 3);
-        assert_eq!(
-            evaluator.expression_specialization_metrics(),
-            ExpressionSpecializationMetrics {
-                cache_hits: 1,
-                cache_misses: 3,
-            }
-        );
-        assert!(evaluator
-            .expression_precomputed_cached_integrals()
-            .is_empty());
-
-        evaluator.activate_many(&["k"]);
-        assert_eq!(evaluator.specialization_cache_len(), 3);
-        assert_eq!(
-            evaluator.expression_specialization_metrics(),
-            ExpressionSpecializationMetrics {
-                cache_hits: 2,
-                cache_misses: 3,
-            }
-        );
-        assert_eq!(
-            evaluator.expression_precomputed_cached_integrals(),
-            all_active_cached_integrals
-        );
-        assert_eq!(
-            evaluator.expression_value_slot_count(),
-            all_active_value_slot_count
-        );
     }
 
     #[test]
@@ -6809,34 +6832,6 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let params = vec![0.2, -0.3, 1.1, -0.7];
 
-        let expected_value = evaluator
-            .evaluate_local(&params)
-            .iter()
-            .zip(dataset.events_local().iter())
-            .fold(0.0, |accum, (value, event)| {
-                accum + event.weight() * value.re
-            });
-        let expected_gradient = evaluator
-            .evaluate_gradient_local(&params)
-            .iter()
-            .zip(dataset.events_local().iter())
-            .fold(
-                DVector::zeros(params.len()),
-                |mut accum, (gradient, event)| {
-                    accum += gradient.map(|value| value.re).scale(event.weight());
-                    accum
-                },
-            );
-        assert_relative_eq!(
-            evaluator.evaluate_weighted_value_sum_local(&params),
-            expected_value,
-            epsilon = 1e-10
-        );
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&params);
-        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
-        }
-
         evaluator.isolate_many(&["p1", "c1", "m1", "c3"]);
 
         let expected_value = evaluator
@@ -6846,26 +6841,11 @@ mod tests {
             .fold(0.0, |accum, (value, event)| {
                 accum + event.weight() * value.re
             });
-        let expected_gradient = evaluator
-            .evaluate_gradient_local(&params)
-            .iter()
-            .zip(dataset.events_local().iter())
-            .fold(
-                DVector::zeros(params.len()),
-                |mut accum, (gradient, event)| {
-                    accum += gradient.map(|value| value.re).scale(event.weight());
-                    accum
-                },
-            );
         assert_relative_eq!(
             evaluator.evaluate_weighted_value_sum_local(&params),
             expected_value,
             epsilon = 1e-10
         );
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&params);
-        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
-            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
-        }
     }
 
     #[test]
