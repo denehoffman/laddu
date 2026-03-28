@@ -1770,7 +1770,7 @@ impl Evaluator {
                 .max()
                 .unwrap_or(0)
             })
-            .unwrap_or_else(|| self.expression_ir().node_count())
+            .unwrap_or_else(|| self.expression_program.slot_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1781,7 +1781,7 @@ impl Evaluator {
                     .value_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_ir().node_count())
+            .unwrap_or_else(|| self.expression_program.slot_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1792,7 +1792,7 @@ impl Evaluator {
                     .gradient_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_ir().node_count())
+            .unwrap_or_else(|| self.expression_program.slot_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1803,7 +1803,7 @@ impl Evaluator {
                     .value_gradient_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_ir().node_count())
+            .unwrap_or_else(|| self.expression_program.slot_count())
     }
 
     fn expression_value_slot_count(&self) -> usize {
@@ -2388,7 +2388,7 @@ impl Evaluator {
                 {
                     program.evaluate_into(amplitude_values, scratch)
                 } else {
-                    self.expression_ir()
+                    self.expression_program
                         .evaluate_into(amplitude_values, scratch)
                 }
             }
@@ -2441,7 +2441,7 @@ impl Evaluator {
                         gradient_scratch,
                     )
                 } else {
-                    self.expression_ir().evaluate_gradient_into(
+                    self.expression_program.evaluate_gradient_into(
                         amplitude_values,
                         gradient_values,
                         value_scratch,
@@ -2506,7 +2506,7 @@ impl Evaluator {
                         gradient_scratch,
                     )
                 } else {
-                    self.expression_ir().evaluate_value_gradient_into(
+                    self.expression_program.evaluate_value_gradient_into(
                         amplitude_values,
                         gradient_values,
                         value_scratch,
@@ -2586,7 +2586,7 @@ impl Evaluator {
                     let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
                     program.evaluate_into(amplitude_values, &mut scratch)
                 } else {
-                    self.expression_ir().evaluate(amplitude_values)
+                    self.expression_program.evaluate(amplitude_values)
                 }
             }
         }
@@ -2624,7 +2624,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 } else {
-                    self.expression_ir()
+                    self.expression_program
                         .evaluate_gradient(amplitude_values, gradient_values)
                 }
             }
@@ -6218,6 +6218,42 @@ mod tests {
                 baseline.lowered_artifact_cache_entries
             );
         }
+    }
+
+    #[cfg(feature = "expression-ir")]
+    #[test]
+    fn test_lowered_backend_falls_back_to_expression_program_when_runtime_missing() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let mut legacy_evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        legacy_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
+
+        let expected_values = legacy_evaluator.evaluate_local(&fixture.parameters);
+        let expected_gradients = legacy_evaluator.evaluate_gradient_local(&fixture.parameters);
+        let expected_fused = legacy_evaluator.evaluate_with_gradient_local(&fixture.parameters);
+
+        let mut lowered_evaluator = legacy_evaluator.clone();
+        lowered_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::Lowered);
+        *lowered_evaluator.runtime_state.lowered_runtime.write() = None;
+
+        assert_eq!(
+            lowered_evaluator.expression_slot_count(),
+            lowered_evaluator.expression_program.slot_count()
+        );
+        assert_complex_slices_match(
+            &lowered_evaluator.evaluate_local(&fixture.parameters),
+            &expected_values,
+        );
+        assert_complex_gradient_slices_match(
+            &lowered_evaluator.evaluate_gradient_local(&fixture.parameters),
+            &expected_gradients,
+        );
+        assert_fused_slices_match(
+            &lowered_evaluator.evaluate_with_gradient_local(&fixture.parameters),
+            &expected_fused,
+        );
     }
 
     #[cfg(feature = "expression-ir")]
