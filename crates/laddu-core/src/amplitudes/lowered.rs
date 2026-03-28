@@ -324,9 +324,12 @@ fn allocate_reused_slots(
     instructions: &[LoweredInstruction],
     root_dst: usize,
 ) -> (Vec<LoweredInstruction>, LoweredRuntimeLayout) {
+    debug_assert!(!instructions.is_empty());
+    debug_assert!(root_dst < instructions.len());
     let mut last_use = vec![0usize; instructions.len()];
     for (index, instruction) in instructions.iter().enumerate() {
         for input in instruction_inputs(instruction).into_iter().flatten() {
+            debug_assert!(input < instructions.len());
             last_use[input] = index;
         }
     }
@@ -337,7 +340,9 @@ fn allocate_reused_slots(
     let mut remapped = Vec::with_capacity(instructions.len());
 
     for (index, instruction) in instructions.iter().enumerate() {
+        debug_assert_eq!(instruction_destination(instruction), index);
         let inputs = instruction_inputs(instruction).map(|slot| slot.map(|src| value_slots[src]));
+        debug_assert!(inputs.into_iter().flatten().all(|slot| slot != usize::MAX));
         let dst_slot = free_slots.pop().unwrap_or_else(|| {
             let slot = next_slot;
             next_slot += 1;
@@ -666,6 +671,9 @@ fn gradient_slot_triple_mut(
 ) {
     debug_assert_ne!(left, dst);
     debug_assert_ne!(right, dst);
+    debug_assert!(left < gradient_scratch.len());
+    debug_assert!(right < gradient_scratch.len());
+    debug_assert!(dst < gradient_scratch.len());
     let ptr = gradient_scratch.as_mut_ptr();
     // SAFETY: `dst` is assigned before current inputs are released, so the lowered slot
     // allocator guarantees the destination slot is distinct from the live source slots for
@@ -707,6 +715,12 @@ fn flat_gradient_slot_triple_mut(
 ) -> (&[Complex64], &[Complex64], &mut [Complex64]) {
     debug_assert_ne!(left, dst);
     debug_assert_ne!(right, dst);
+    debug_assert!(grad_dim > 0);
+    let slot_count = gradient_scratch.len() / grad_dim;
+    debug_assert_eq!(slot_count * grad_dim, gradient_scratch.len());
+    debug_assert!(left < slot_count);
+    debug_assert!(right < slot_count);
+    debug_assert!(dst < slot_count);
     let ptr = gradient_scratch.as_mut_ptr();
     let left_start = left * grad_dim;
     let right_start = right * grad_dim;
@@ -732,7 +746,8 @@ pub(crate) struct LoweredRuntimeLayout {
 
 impl LoweredRuntimeLayout {
     pub(crate) fn new(scratch_slots: usize, root_slot: usize) -> Self {
-        debug_assert!(scratch_slots == 0 || root_slot < scratch_slots);
+        debug_assert!(scratch_slots > 0);
+        debug_assert!(root_slot < scratch_slots);
         Self {
             scratch_slots,
             root_slot,
@@ -1418,6 +1433,20 @@ impl LoweredProgram {
     }
 
     fn from_template(kind: LoweredProgramKind, template: &LoweredProgramTemplate) -> Self {
+        debug_assert!(!template.instructions.is_empty());
+        debug_assert_eq!(
+            template.layout.scratch_slots() > 0,
+            !template.instructions.is_empty()
+        );
+        debug_assert!(template.layout.root_slot() < template.layout.scratch_slots());
+        debug_assert!(template.instructions.iter().all(|instruction| {
+            let dst = instruction_destination(instruction);
+            dst < template.layout.scratch_slots()
+                && instruction_inputs(instruction)
+                    .into_iter()
+                    .flatten()
+                    .all(|input| input < template.layout.scratch_slots())
+        }));
         Self::new(kind, template.instructions.clone(), template.layout.clone())
     }
 

@@ -1836,11 +1836,33 @@ impl Evaluator {
 
     #[cfg(feature = "expression-ir")]
     fn install_expression_specialization(&self, specialization: &ExpressionSpecializationState) {
+        debug_assert!(Self::lowered_artifact_signature_matches(
+            &specialization.lowered_artifacts,
+            &specialization.cached_integrals.values,
+        ));
         *self.ir_planning.cached_integrals.write() = Some(specialization.cached_integrals.clone());
         *self.ir_planning.active_lowered_artifacts.write() =
             Some(specialization.lowered_artifacts.clone());
         *self.runtime_state.lowered_runtime.write() =
             specialization.lowered_artifacts.lowered_runtime.clone();
+        debug_assert_eq!(
+            self.active_lowered_artifacts()
+                .as_ref()
+                .map(|artifacts| Arc::ptr_eq(artifacts, &specialization.lowered_artifacts)),
+            Some(true)
+        );
+        debug_assert_eq!(
+            self.lowered_runtime()
+                .as_ref()
+                .and_then(|runtime| runtime.value_program())
+                .is_some(),
+            specialization
+                .lowered_artifacts
+                .lowered_runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_program())
+                .is_some()
+        );
     }
 
     #[cfg(feature = "expression-ir")]
@@ -3832,6 +3854,11 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
+        #[cfg(feature = "expression-ir")]
+        debug_assert_eq!(
+            self.expression_program.slot_count(),
+            self.expression.program().slot_count()
+        );
         let slot_count = self.expression_program.slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -4708,6 +4735,11 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
+        #[cfg(feature = "expression-ir")]
+        debug_assert_eq!(
+            self.expression_program.slot_count(),
+            self.expression.program().slot_count()
+        );
         let slot_count = self.expression_program.slot_count();
         #[cfg(feature = "rayon")]
         {
