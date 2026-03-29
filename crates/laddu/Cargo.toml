@@ -18,17 +18,17 @@ laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
 mpi = { workspace = true, optional = true }
+num = { workspace = true }
+fastrand = { workspace = true }
+rayon = { workspace = true }
 
 serde = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
-num = { workspace = true }
 nalgebra = { workspace = true }
 criterion = { workspace = true }
 num_cpus = { workspace = true }
-fastrand = { workspace = true }
-rayon = { workspace = true }
 
 [[bench]]
 name = "workflow_behavior_cpu_benchmarks"
