@@ -59,7 +59,7 @@ name = "expression_ir_benchmarks"
 harness = false
 
 [features]
-default = ["rayon"]
+default = ["rayon", "expression-ir"]
 rayon = ["dep:rayon"]
 execution-context-prototype = []
 expression-ir = []

@@ -364,7 +364,6 @@ fn build_test_evaluator(dataset: &Arc<Dataset>) -> Evaluator {
 #[cfg(feature = "expression-ir")]
 fn backend_label(backend: ExpressionRuntimeBackend) -> &'static str {
     match backend {
-        ExpressionRuntimeBackend::LegacyProgram => "legacy",
         ExpressionRuntimeBackend::IrInterpreter => "ir_interpreter",
         ExpressionRuntimeBackend::Lowered => "lowered",
     }
@@ -407,7 +406,6 @@ fn expression_backend_benchmarks(c: &mut Criterion) {
     #[cfg(feature = "expression-ir")]
     {
         let backends = [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ];
@@ -914,7 +912,6 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
             ScenarioKind::Partial,
         );
         let backends = [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ];

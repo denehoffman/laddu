@@ -17,7 +17,7 @@ run-mpi ranks="4":
 # Emit Criterion JSON messages for workflow behavior benchmarks (CPU)
 json:
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
+    cd {{justfile_directory()}} && cargo criterion --no-default-features --features rayon --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
 
 # Emit Criterion JSON messages for workflow behavior benchmarks (CPU, expression-ir)
 json-ir:
@@ -27,7 +27,7 @@ json-ir:
 # Emit Criterion JSON messages for workflow behavior benchmarks (MPI)
 json-mpi ranks="4":
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --features mpi --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --no-default-features --features "rayon mpi" --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
 
 # Emit Criterion JSON messages for workflow behavior benchmarks (MPI, expression-ir)
 json-mpi-ir ranks="4":

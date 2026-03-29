@@ -39,7 +39,7 @@ name = "workflow_behavior_mpi_benchmarks"
 harness = false
 
 [features]
-default = ["rayon"]
+default = ["rayon", "expression-ir"]
 rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",

@@ -28,7 +28,7 @@ python3 crates/laddu/benches/scripts/criterion_json_report.py --help
 
 ## CPU Workflow Comparison With `expression-ir`
 
-Run the CPU workflow Criterion JSON path with and without `expression-ir`, then generate a joined comparison:
+Run the CPU workflow Criterion JSON path with an explicit feature-off legacy baseline and the default `expression-ir` build, then generate a joined comparison:
 
 ```bash
 just --justfile crates/laddu/benches/Justfile json-report-ir-compare
@@ -43,7 +43,7 @@ Outputs:
 
 ## MPI Workflow Comparison With `expression-ir`
 
-Run the MPI workflow Criterion JSON path with and without `expression-ir`, then generate a joined comparison:
+Run the MPI workflow Criterion JSON path with an explicit feature-off legacy baseline and the default `expression-ir` build, then generate a joined comparison:
 
 ```bash
 just --justfile crates/laddu/benches/Justfile json-report-mpi-ir-compare ranks=4
@@ -77,9 +77,9 @@ The combined report keeps these categories separate:
 
 For current architecture reviews:
 
-- the feature-off workflow summaries are the legacy/reference baseline
-- `expression-ir` workflow summaries reflect the lowered runtime as the intended production executor
-- executor-level legacy/interpreter/lowered comparisons live in the `laddu-core` expression-IR microbench surface
+- the feature-off workflow summaries come from `--no-default-features` legacy/reference builds
+- the default workflow summaries reflect the lowered runtime as the production executor
+- executor-level interpreter/lowered comparisons live in the `laddu-core` expression-IR microbench surface
 
 ## Regression Threshold Policy
 

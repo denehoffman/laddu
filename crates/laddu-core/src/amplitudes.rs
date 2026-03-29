@@ -924,6 +924,7 @@ impl ExpressionProgram {
         gradient_slots[self.root_slot].clone()
     }
 
+    #[cfg(not(feature = "expression-ir"))]
     pub fn evaluate_value_gradient_into(
         &self,
         amplitude_values: &[Complex64],
@@ -1395,6 +1396,7 @@ impl Expression {
                     ExpressionRuntimeBackend::LegacyProgram
                 }
             },
+            #[cfg(not(feature = "expression-ir"))]
             expression_program: ExpressionProgram::from_node(&self.tree),
             #[cfg(feature = "expression-ir")]
             ir_planning: ExpressionIrPlanningState {
@@ -1544,6 +1546,7 @@ impl_op_ex!(- |a: &Expression| -> Expression {
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExpressionRuntimeBackend {
+    #[cfg(not(feature = "expression-ir"))]
     LegacyProgram,
     #[cfg(feature = "expression-ir")]
     IrInterpreter,
@@ -1554,8 +1557,13 @@ pub enum ExpressionRuntimeBackend {
 #[derive(Clone, Debug)]
 #[doc(hidden)]
 pub struct ExpressionValueProgramSnapshot {
+    slot_count: usize,
     #[cfg(feature = "expression-ir")]
     lowered_program: Option<lowered::LoweredProgram>,
+    #[cfg(feature = "expression-ir")]
+    expression_ir: ir::ExpressionIR,
+    #[cfg(not(feature = "expression-ir"))]
+    expression_program: ExpressionProgram,
 }
 
 #[cfg(feature = "expression-ir")]
@@ -1635,8 +1643,7 @@ struct ExpressionIrPlanningState {
 /// - Lowered runtimes must never outlive the specialization assumptions used to build them.
 /// - Activation-mask changes invalidate any stored lowered runtime until it is rebuilt.
 /// - Lowered runtime is an execution cache, not a semantic source of truth.
-/// - Lowered runtime is the intended production execution shape for `expression-ir`, while
-///   `ExpressionProgram` remains the unspecialized reference/fallback executor.
+/// - Lowered runtime is the intended production execution shape for `expression-ir`.
 struct ExpressionRuntimeState {
     lowered_runtime: Arc<RwLock<Option<lowered::LoweredExpressionRuntime>>>,
 }
@@ -1650,7 +1657,7 @@ pub struct Evaluator {
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
     runtime_backend: ExpressionRuntimeBackend,
-    /// Unspecialized reference executor retained for default builds, overrides, and parity.
+    #[cfg(not(feature = "expression-ir"))]
     expression_program: ExpressionProgram,
     #[cfg(feature = "expression-ir")]
     ir_planning: ExpressionIrPlanningState,
@@ -1772,21 +1779,6 @@ impl Evaluator {
         self.ir_planning.active_lowered_artifacts.read().clone()
     }
 
-    #[doc(hidden)]
-    pub fn uses_ir_interpreter_backend(&self) -> bool {
-        #[cfg(feature = "expression-ir")]
-        {
-            matches!(
-                self.runtime_backend,
-                ExpressionRuntimeBackend::IrInterpreter
-            )
-        }
-        #[cfg(not(feature = "expression-ir"))]
-        {
-            false
-        }
-    }
-
     #[cfg(feature = "expression-ir")]
     fn lowered_runtime_slot_count(&self) -> usize {
         self.lowered_runtime()
@@ -1809,7 +1801,7 @@ impl Evaluator {
                 .max()
                 .unwrap_or(0)
             })
-            .unwrap_or_else(|| self.expression_program.slot_count())
+            .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1820,36 +1812,69 @@ impl Evaluator {
                     .value_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_program.slot_count())
+            .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
     #[doc(hidden)]
     pub fn expression_value_program_snapshot(&self) -> ExpressionValueProgramSnapshot {
         #[cfg(feature = "expression-ir")]
         {
-            if matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered) {
-                return ExpressionValueProgramSnapshot {
-                    lowered_program: self
-                        .runtime_state
+            let expression_ir = self.expression_ir();
+            let lowered_program = matches!(self.runtime_backend, ExpressionRuntimeBackend::Lowered)
+                .then(|| {
+                    self.runtime_state
                         .lowered_runtime
                         .read()
                         .as_ref()
-                        .and_then(|runtime| runtime.value_program().cloned()),
-                };
-            }
+                        .and_then(|runtime| runtime.value_program().cloned())
+                })
+                .flatten();
+            return ExpressionValueProgramSnapshot {
+                slot_count: lowered_program
+                    .as_ref()
+                    .map(|program| program.scratch_slots())
+                    .unwrap_or_else(|| expression_ir.node_count()),
+                lowered_program,
+                expression_ir,
+            };
         }
+        #[cfg(not(feature = "expression-ir"))]
         ExpressionValueProgramSnapshot {
-            #[cfg(feature = "expression-ir")]
-            lowered_program: None,
+            slot_count: self.expression_program.slot_count(),
+            #[cfg(not(feature = "expression-ir"))]
+            expression_program: self.expression_program.clone(),
         }
     }
 
     #[doc(hidden)]
-    pub fn expression_reference_value_program_snapshot(&self) -> ExpressionValueProgramSnapshot {
-        ExpressionValueProgramSnapshot {
-            #[cfg(feature = "expression-ir")]
-            lowered_program: None,
+    pub fn expression_value_program_snapshot_for_active_mask(
+        &self,
+        active_mask: &[bool],
+    ) -> ExpressionValueProgramSnapshot {
+        #[cfg(feature = "expression-ir")]
+        {
+            let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
+            return ExpressionValueProgramSnapshot {
+                slot_count: expression_ir.node_count(),
+                lowered_program: None,
+                expression_ir,
+            };
         }
+        #[cfg(not(feature = "expression-ir"))]
+        ExpressionValueProgramSnapshot {
+            slot_count: self.expression_program.slot_count(),
+            #[cfg(not(feature = "expression-ir"))]
+            expression_program: self.expression_program.clone(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_program_snapshot_slot_count(
+        &self,
+        snapshot: &ExpressionValueProgramSnapshot,
+    ) -> usize {
+        let _ = self;
+        snapshot.slot_count
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1860,7 +1885,7 @@ impl Evaluator {
                     .gradient_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_program.slot_count())
+            .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
     #[cfg(feature = "expression-ir")]
@@ -1871,11 +1896,12 @@ impl Evaluator {
                     .value_gradient_program()
                     .map(|program| program.scratch_slots())
             })
-            .unwrap_or_else(|| self.expression_program.slot_count())
+            .unwrap_or_else(|| self.expression_ir().node_count())
     }
 
     fn expression_value_slot_count(&self) -> usize {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
@@ -1884,14 +1910,10 @@ impl Evaluator {
         }
     }
 
-    #[doc(hidden)]
-    pub fn expression_reference_value_slot_count(&self) -> usize {
-        self.expression_program.slot_count()
-    }
-
     #[cfg(feature = "expression-ir")]
     fn expression_gradient_slot_count(&self) -> usize {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
@@ -1903,6 +1925,7 @@ impl Evaluator {
     #[cfg(feature = "expression-ir")]
     fn expression_value_gradient_slot_count(&self) -> usize {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
@@ -2444,6 +2467,7 @@ impl Evaluator {
 
     pub fn expression_slot_count(&self) -> usize {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self.expression_program.slot_count(),
             #[cfg(feature = "expression-ir")]
             ExpressionRuntimeBackend::IrInterpreter => self.expression_ir().node_count(),
@@ -2487,6 +2511,7 @@ impl Evaluator {
         scratch: &mut [Complex64],
     ) -> Complex64 {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self
                 .expression_program
                 .evaluate_into(amplitude_values, scratch),
@@ -2503,13 +2528,14 @@ impl Evaluator {
                 {
                     program.evaluate_into(amplitude_values, scratch)
                 } else {
-                    self.expression_program
+                    self.expression_ir()
                         .evaluate_into(amplitude_values, scratch)
                 }
             }
         }
     }
 
+    #[cfg(not(feature = "expression-ir"))]
     fn evaluate_expression_program_value_with_scratch(
         &self,
         amplitude_values: &[Complex64],
@@ -2531,14 +2557,15 @@ impl Evaluator {
             if let Some(program) = program_snapshot.lowered_program.as_ref() {
                 program.evaluate_into(amplitude_values, scratch)
             } else {
-                self.expression_program
+                program_snapshot
+                    .expression_ir
                     .evaluate_into(amplitude_values, scratch)
             }
         }
         #[cfg(not(feature = "expression-ir"))]
         {
-            let _ = program_snapshot;
-            self.expression_program
+            program_snapshot
+                .expression_program
                 .evaluate_into(amplitude_values, scratch)
         }
     }
@@ -2551,6 +2578,7 @@ impl Evaluator {
         gradient_scratch: &mut [DVector<Complex64>],
     ) -> DVector<Complex64> {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => {
                 self.expression_program.evaluate_gradient_into(
                     amplitude_values,
@@ -2580,7 +2608,7 @@ impl Evaluator {
                         gradient_scratch,
                     )
                 } else {
-                    self.expression_program.evaluate_gradient_into(
+                    self.expression_ir().evaluate_gradient_into(
                         amplitude_values,
                         gradient_values,
                         value_scratch,
@@ -2591,6 +2619,7 @@ impl Evaluator {
         }
     }
 
+    #[cfg(not(feature = "expression-ir"))]
     fn evaluate_expression_program_value_gradient_with_scratch(
         &self,
         amplitude_values: &[Complex64],
@@ -2614,6 +2643,7 @@ impl Evaluator {
         gradient_scratch: &mut [DVector<Complex64>],
     ) -> (Complex64, DVector<Complex64>) {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => {
                 self.expression_program.evaluate_value_gradient_into(
                     amplitude_values,
@@ -2645,7 +2675,7 @@ impl Evaluator {
                         gradient_scratch,
                     )
                 } else {
-                    self.expression_program.evaluate_value_gradient_into(
+                    self.expression_ir().evaluate_value_gradient_into(
                         amplitude_values,
                         gradient_values,
                         value_scratch,
@@ -2708,6 +2738,7 @@ impl Evaluator {
 
     fn evaluate_expression_runtime_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => {
                 self.expression_program.evaluate(amplitude_values)
             }
@@ -2725,7 +2756,7 @@ impl Evaluator {
                     let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
                     program.evaluate_into(amplitude_values, &mut scratch)
                 } else {
-                    self.expression_program.evaluate(amplitude_values)
+                    self.expression_ir().evaluate(amplitude_values)
                 }
             }
         }
@@ -2737,6 +2768,7 @@ impl Evaluator {
         gradient_values: &[DVector<Complex64>],
     ) -> DVector<Complex64> {
         match self.runtime_backend {
+            #[cfg(not(feature = "expression-ir"))]
             ExpressionRuntimeBackend::LegacyProgram => self
                 .expression_program
                 .evaluate_gradient(amplitude_values, gradient_values),
@@ -2763,7 +2795,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 } else {
-                    self.expression_program
+                    self.expression_ir()
                         .evaluate_gradient(amplitude_values, gradient_values)
                 }
             }
@@ -4061,12 +4093,8 @@ impl Evaluator {
             .enumerate()
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
-        #[cfg(feature = "expression-ir")]
-        debug_assert_eq!(
-            self.expression_program.slot_count(),
-            self.expression.program().slot_count()
-        );
-        let slot_count = self.expression_program.slot_count();
+        let program_snapshot = self.expression_value_program_snapshot_for_active_mask(active_mask);
+        let slot_count = self.expression_value_program_snapshot_slot_count(&program_snapshot);
         #[cfg(feature = "rayon")]
         {
             Ok(resources
@@ -4086,7 +4114,8 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        self.evaluate_expression_program_value_with_scratch(
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
                             amplitude_values,
                             expr_slots,
                         )
@@ -4108,7 +4137,8 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_program_value_with_scratch(
+                    self.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
                         &amplitude_values,
                         &mut expr_slots,
                     )
@@ -5042,10 +5072,10 @@ impl Evaluator {
             .filter_map(|(index, &active)| if active { Some(index) } else { None })
             .collect::<Vec<_>>();
         #[cfg(feature = "expression-ir")]
-        debug_assert_eq!(
-            self.expression_program.slot_count(),
-            self.expression.program().slot_count()
-        );
+        let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
+        #[cfg(feature = "expression-ir")]
+        let slot_count = expression_ir.node_count();
+        #[cfg(not(feature = "expression-ir"))]
         let slot_count = self.expression_program.slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -5070,12 +5100,24 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        self.evaluate_expression_program_value_gradient_with_scratch(
-                            amplitude_values,
-                            gradient_values,
-                            value_slots,
-                            gradient_slots,
-                        )
+                        #[cfg(feature = "expression-ir")]
+                        {
+                            expression_ir.evaluate_value_gradient_into(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                            )
+                        }
+                        #[cfg(not(feature = "expression-ir"))]
+                        {
+                            self.evaluate_expression_program_value_gradient_with_scratch(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                            )
+                        }
                     },
                 )
                 .collect())
@@ -5098,12 +5140,24 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    self.evaluate_expression_program_value_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                    )
+                    #[cfg(feature = "expression-ir")]
+                    {
+                        expression_ir.evaluate_value_gradient_into(
+                            &amplitude_values,
+                            &gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        )
+                    }
+                    #[cfg(not(feature = "expression-ir"))]
+                    {
+                        self.evaluate_expression_program_value_gradient_with_scratch(
+                            &amplitude_values,
+                            &gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        )
+                    }
                 })
                 .collect())
         }
@@ -5783,7 +5837,7 @@ mod tests {
 
     #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_expression_ir_value_matches_program() {
+    fn test_expression_ir_value_matches_lowered_runtime() {
         let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
             + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
             * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
@@ -5801,7 +5855,6 @@ mod tests {
             &resources.caches[0],
         );
         let mut ir_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
-        let mut program_slots = vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
         let lowered_runtime = evaluator.lowered_runtime().unwrap();
         let lowered_program = lowered_runtime.value_program().unwrap();
         let mut lowered_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
@@ -5812,15 +5865,10 @@ mod tests {
         let ir_value = evaluator
             .expression_ir()
             .evaluate_into(&amplitude_values, &mut ir_slots);
-        let program_value = evaluator
-            .expression_program
-            .evaluate_into(&amplitude_values, &mut program_slots);
         assert_relative_eq!(lowered_value.re, direct_lowered_value.re);
         assert_relative_eq!(lowered_value.im, direct_lowered_value.im);
         assert_relative_eq!(lowered_value.re, ir_value.re);
         assert_relative_eq!(lowered_value.im, ir_value.im);
-        assert_relative_eq!(ir_value.re, program_value.re);
-        assert_relative_eq!(ir_value.im, program_value.im);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -5839,7 +5887,7 @@ mod tests {
 
     #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_expression_ir_gradient_matches_program() {
+    fn test_expression_ir_gradient_matches_lowered_runtime() {
         let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
             * TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
         .norm_sqr();
@@ -5872,12 +5920,6 @@ mod tests {
             (0..evaluator.expression_ir().node_count())
                 .map(|_| DVector::zeros(parameters.len()))
                 .collect();
-        let mut program_value_slots =
-            vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
-        let mut program_gradient_slots: Vec<DVector<Complex64>> =
-            (0..evaluator.expression_program.slot_count())
-                .map(|_| DVector::zeros(parameters.len()))
-                .collect();
         let lowered_runtime = evaluator.lowered_runtime().unwrap();
         let lowered_program = lowered_runtime.gradient_program().unwrap();
         let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
@@ -5897,12 +5939,6 @@ mod tests {
             &mut ir_value_slots,
             &mut ir_gradient_slots,
         );
-        let program_gradient = evaluator.expression_program.evaluate_gradient_into(
-            &amplitude_values,
-            &amplitude_gradients,
-            &mut program_value_slots,
-            &mut program_gradient_slots,
-        );
         let lowered_gradient = lowered_program.evaluate_gradient_into(
             &amplitude_values,
             &amplitude_gradients,
@@ -5917,15 +5953,11 @@ mod tests {
             assert_relative_eq!(lowered.re, ir.re);
             assert_relative_eq!(lowered.im, ir.im);
         }
-        for (ir, program) in ir_gradient.iter().zip(program_gradient.iter()) {
-            assert_relative_eq!(ir.re, program.re);
-            assert_relative_eq!(ir.im, program.im);
-        }
     }
 
     #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_expression_ir_value_gradient_matches_program() {
+    fn test_expression_ir_value_gradient_matches_lowered_runtime() {
         let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
             + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
             * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
@@ -5959,12 +5991,6 @@ mod tests {
             (0..evaluator.expression_ir().node_count())
                 .map(|_| DVector::zeros(parameters.len()))
                 .collect();
-        let mut program_value_slots =
-            vec![Complex64::ZERO; evaluator.expression_program.slot_count()];
-        let mut program_gradient_slots: Vec<DVector<Complex64>> =
-            (0..evaluator.expression_program.slot_count())
-                .map(|_| DVector::zeros(parameters.len()))
-                .collect();
         let lowered_runtime = evaluator.lowered_runtime().unwrap();
         let lowered_program = lowered_runtime.value_gradient_program().unwrap();
         let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
@@ -5984,12 +6010,6 @@ mod tests {
             &amplitude_gradients,
             &mut ir_value_slots,
             &mut ir_gradient_slots,
-        );
-        let program_value_gradient = evaluator.expression_program.evaluate_value_gradient_into(
-            &amplitude_values,
-            &amplitude_gradients,
-            &mut program_value_slots,
-            &mut program_gradient_slots,
         );
         let lowered_value_gradient = lowered_program.evaluate_value_gradient_into(
             &amplitude_values,
@@ -6017,16 +6037,6 @@ mod tests {
         {
             assert_relative_eq!(lowered.re, ir.re);
             assert_relative_eq!(lowered.im, ir.im);
-        }
-        assert_relative_eq!(ir_value_gradient.0.re, program_value_gradient.0.re);
-        assert_relative_eq!(ir_value_gradient.0.im, program_value_gradient.0.im);
-        for (ir, program) in ir_value_gradient
-            .1
-            .iter()
-            .zip(program_value_gradient.1.iter())
-        {
-            assert_relative_eq!(ir.re, program.re);
-            assert_relative_eq!(ir.im, program.im);
         }
     }
 
@@ -6068,7 +6078,6 @@ mod tests {
         };
 
         let backends = [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ];
@@ -6159,7 +6168,6 @@ mod tests {
         };
 
         let backends = [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ];
@@ -6265,7 +6273,6 @@ mod tests {
         active_mask: &[bool],
     ) {
         let backends = [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ];
@@ -6377,20 +6384,6 @@ mod tests {
             })
         );
 
-        let mut legacy_evaluator = evaluator.clone();
-        legacy_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
-        assert_eq!(
-            legacy_evaluator
-                .expression_runtime_diagnostics()
-                .runtime_backend,
-            ExpressionRuntimeBackend::LegacyProgram
-        );
-        assert!(
-            legacy_evaluator
-                .expression_runtime_diagnostics()
-                .ir_planning_enabled
-        );
-
         let mut interpreter_evaluator = evaluator.clone();
         interpreter_evaluator
             .set_expression_runtime_backend(ExpressionRuntimeBackend::IrInterpreter);
@@ -6460,13 +6453,6 @@ mod tests {
         );
         assert_eq!(interpreter.lowered_artifact_cache_entries, lowered_entries);
         assert!(interpreter.lowered_value_program_present);
-
-        evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
-        let legacy = evaluator.expression_runtime_diagnostics();
-        assert!(legacy.ir_planning_enabled);
-        assert_eq!(legacy.specialization_cache_entries, specialization_entries);
-        assert_eq!(legacy.lowered_artifact_cache_entries, lowered_entries);
-        assert!(legacy.lowered_value_program_present);
     }
 
     #[cfg(feature = "expression-ir")]
@@ -6498,7 +6484,6 @@ mod tests {
         );
 
         for backend in [
-            ExpressionRuntimeBackend::LegacyProgram,
             ExpressionRuntimeBackend::IrInterpreter,
             ExpressionRuntimeBackend::Lowered,
         ] {
@@ -6520,25 +6505,27 @@ mod tests {
 
     #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_lowered_backend_falls_back_to_expression_program_when_runtime_missing() {
+    fn test_lowered_backend_falls_back_to_ir_interpreter_when_runtime_missing() {
         let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
-        let mut legacy_evaluator = fixture
+        let mut interpreter_evaluator = fixture
             .expression
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
-        legacy_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::LegacyProgram);
+        interpreter_evaluator
+            .set_expression_runtime_backend(ExpressionRuntimeBackend::IrInterpreter);
 
-        let expected_values = legacy_evaluator.evaluate_local(&fixture.parameters);
-        let expected_gradients = legacy_evaluator.evaluate_gradient_local(&fixture.parameters);
-        let expected_fused = legacy_evaluator.evaluate_with_gradient_local(&fixture.parameters);
+        let expected_values = interpreter_evaluator.evaluate_local(&fixture.parameters);
+        let expected_gradients = interpreter_evaluator.evaluate_gradient_local(&fixture.parameters);
+        let expected_fused =
+            interpreter_evaluator.evaluate_with_gradient_local(&fixture.parameters);
 
-        let mut lowered_evaluator = legacy_evaluator.clone();
+        let mut lowered_evaluator = interpreter_evaluator.clone();
         lowered_evaluator.set_expression_runtime_backend(ExpressionRuntimeBackend::Lowered);
         *lowered_evaluator.runtime_state.lowered_runtime.write() = None;
 
         assert_eq!(
             lowered_evaluator.expression_slot_count(),
-            lowered_evaluator.expression_program.slot_count()
+            lowered_evaluator.expression_ir().node_count()
         );
         assert_complex_slices_match(
             &lowered_evaluator.evaluate_local(&fixture.parameters),
@@ -8108,9 +8095,9 @@ mod tests {
         assert_relative_eq!(gradient[0][0].im, 0.0);
     }
 
-    #[cfg(not(feature = "expression-ir"))]
+    #[cfg(feature = "expression-ir")]
     #[test]
-    fn test_default_build_uses_legacy_expression_runtime() {
+    fn test_default_build_uses_lowered_expression_runtime() {
         let expr = ComplexScalar::new(
             "opt_in_gate",
             constant("opt_in_gate_re", 2.0),
@@ -8121,13 +8108,11 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
 
-        assert_eq!(
-            evaluator.runtime_backend,
-            ExpressionRuntimeBackend::LegacyProgram
-        );
-        assert_eq!(
-            evaluator.expression_slot_count(),
-            evaluator.expression_program.slot_count()
+        assert_eq!(evaluator.runtime_backend, ExpressionRuntimeBackend::Lowered);
+        assert!(
+            evaluator
+                .expression_runtime_diagnostics()
+                .ir_planning_enabled
         );
         assert_eq!(evaluator.evaluate(&[])[0], Complex64::new(4.0, 0.0));
     }

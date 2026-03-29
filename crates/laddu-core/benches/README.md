@@ -87,13 +87,13 @@ Notes:
 
 ## Expression-IR backend comparisons
 
-Run the default-build legacy generic benchmark group:
+Run the explicit no-default-features legacy generic benchmark group:
 
 ```bash
 just --justfile crates/laddu-core/benches/Justfile backend-legacy-generic
 ```
 
-Run the `expression-ir` generic backend comparison group, which reports `legacy`, `ir_interpreter`, and `lowered` in one benchmark run:
+Run the `expression-ir` generic backend comparison group, which reports `ir_interpreter` and `lowered` in one benchmark run:
 
 ```bash
 just --justfile crates/laddu-core/benches/Justfile backend-compare-generic
@@ -113,8 +113,7 @@ just --justfile crates/laddu-core/benches/Justfile backend-compare-full
 
 Notes:
 
-- `backend-legacy-generic` is the feature-off baseline.
-- the `expression-ir` comparison groups keep IR planning fixed and compare executor labels inside the same feature-enabled build.
-- `lowered` is the intended production executor for `expression-ir`.
-- `legacy` remains the unspecialized reference path for default builds, override-mask APIs, and parity checks.
+- `backend-legacy-generic` is the explicit `--no-default-features --features rayon` baseline.
+- the `expression-ir` comparison groups keep IR planning fixed and compare interpreter vs lowered inside the feature-enabled build.
+- `lowered` is the default production executor.
 - `ir_interpreter` is retained as a diagnostic and benchmark control, not as the ordinary production fallback.

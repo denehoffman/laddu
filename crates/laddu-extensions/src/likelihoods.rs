@@ -110,8 +110,8 @@ where
     let parameters = Parameters::new(parameters, &resources.constants);
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
-    let slot_count = evaluator.expression_reference_value_slot_count();
-    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
+    let program_snapshot = evaluator.expression_value_program_snapshot();
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
         resources
@@ -130,16 +130,11 @@ where
                         amplitude_values[amp_idx] =
                             evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                     }
-                    let l = if evaluator.uses_ir_interpreter_backend() {
-                        evaluator
-                            .evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
-                    } else {
-                        evaluator.evaluate_expression_value_with_program_snapshot(
-                            &program_snapshot,
-                            amplitude_values,
-                            expr_slots,
-                        )
-                    };
+                    let l = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
                     event.weight * value_map(l)
                 },
             )
@@ -158,16 +153,11 @@ where
                     amplitude_values[amp_idx] =
                         evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                 }
-                let l = if evaluator.uses_ir_interpreter_backend() {
-                    evaluator
-                        .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
-                } else {
-                    evaluator.evaluate_expression_value_with_program_snapshot(
-                        &program_snapshot,
-                        &amplitude_values,
-                        &mut expr_slots,
-                    )
-                };
+                let l = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
                 event.weight * value_map(l)
             })
             .sum_with_accumulator::<Klein<f64>>()
@@ -183,8 +173,8 @@ fn project_weights_local_from_evaluator(
     let parameters = Parameters::new(parameters, &resources.constants);
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
-    let slot_count = evaluator.expression_reference_value_slot_count();
-    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
+    let program_snapshot = evaluator.expression_value_program_snapshot();
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
         resources
@@ -251,8 +241,9 @@ fn project_weights_local_from_resolved_mask(
         .enumerate()
         .filter_map(|(index, &active)| if active { Some(index) } else { None })
         .collect::<Vec<_>>();
-    let slot_count = evaluator.expression_reference_value_slot_count();
-    let program_snapshot = evaluator.expression_reference_value_program_snapshot();
+    let program_snapshot =
+        evaluator.expression_value_program_snapshot_for_active_mask(resolved_mask);
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
         resources
@@ -271,16 +262,11 @@ fn project_weights_local_from_resolved_mask(
                         amplitude_values[amp_idx] =
                             evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                     }
-                    let value = if evaluator.uses_ir_interpreter_backend() {
-                        evaluator
-                            .evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
-                    } else {
-                        evaluator.evaluate_expression_value_with_program_snapshot(
-                            &program_snapshot,
-                            amplitude_values,
-                            expr_slots,
-                        )
-                    };
+                    let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
                     event.weight * value.re / n_mc
                 },
             )
@@ -299,16 +285,11 @@ fn project_weights_local_from_resolved_mask(
                     amplitude_values[amp_idx] =
                         evaluator.amplitudes[amp_idx].compute(&parameters, cache);
                 }
-                let value = if evaluator.uses_ir_interpreter_backend() {
-                    evaluator
-                        .evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
-                } else {
-                    evaluator.evaluate_expression_value_with_program_snapshot(
-                        &program_snapshot,
-                        &amplitude_values,
-                        &mut expr_slots,
-                    )
-                };
+                let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
                 event.weight * value.re / n_mc
             })
             .collect()

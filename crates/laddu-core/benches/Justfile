@@ -1,16 +1,16 @@
-# Run the default-build legacy benchmark group for generic evaluator paths.
+# Run the explicit no-default-features legacy benchmark group for generic evaluator paths.
 backend-legacy-generic:
-    cd {{justfile_directory()}} && cargo bench -p laddu-core --bench expression_ir_benchmarks -- expression_backend_paths --noplot
+    cd {{justfile_directory()}} && cargo bench -p laddu-core --no-default-features --features rayon --bench expression_ir_benchmarks -- expression_backend_paths --noplot
 
-# Run the expression-ir generic backend comparison group (legacy/interpreter/lowered).
+# Run the expression-ir generic backend comparison group (interpreter/lowered).
 backend-compare-generic:
     cd {{justfile_directory()}} && cargo bench -p laddu-core --features expression-ir --bench expression_ir_benchmarks -- expression_ir_backend_microcomparisons --noplot
 
-# Run the expression-ir normalization backend comparison group (legacy/interpreter/lowered).
+# Run the expression-ir normalization backend comparison group (interpreter/lowered).
 backend-compare-normalization:
     cd {{justfile_directory()}} && cargo bench -p laddu-core --features expression-ir --bench expression_ir_benchmarks -- expression_ir_backend_normalization_microcomparisons --noplot
 
-# Run the default-build legacy baseline followed by the expression-ir generic comparison group.
+# Run the explicit legacy baseline followed by the expression-ir generic comparison group.
 backend-compare-all:
     just --justfile {{justfile()}} backend-legacy-generic
     just --justfile {{justfile()}} backend-compare-generic
