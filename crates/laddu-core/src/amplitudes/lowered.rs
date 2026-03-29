@@ -1111,11 +1111,11 @@ impl LoweredProgram {
 ///
 /// The value/gradient/value+gradient programs are siblings which must all correspond to the same
 /// expression tree, active-mask specialization, and lowering assumptions.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LoweredExpressionRuntime {
-    value_program: Option<LoweredProgram>,
-    gradient_program: Option<LoweredProgram>,
-    value_gradient_program: Option<LoweredProgram>,
+    value_program: LoweredProgram,
+    gradient_program: LoweredProgram,
+    value_gradient_program: LoweredProgram,
 }
 
 /// Compact lowered runtime for cached normalization factors.
@@ -1159,9 +1159,9 @@ impl LoweredFactorRuntime {
 
 impl LoweredExpressionRuntime {
     pub(crate) fn new(
-        value_program: Option<LoweredProgram>,
-        gradient_program: Option<LoweredProgram>,
-        value_gradient_program: Option<LoweredProgram>,
+        value_program: LoweredProgram,
+        gradient_program: LoweredProgram,
+        value_gradient_program: LoweredProgram,
     ) -> Self {
         Self {
             value_program,
@@ -1170,27 +1170,22 @@ impl LoweredExpressionRuntime {
         }
     }
 
-    pub(crate) fn value_program(&self) -> Option<&LoweredProgram> {
-        self.value_program.as_ref()
+    pub(crate) fn value_program(&self) -> &LoweredProgram {
+        &self.value_program
     }
 
-    pub(crate) fn gradient_program(&self) -> Option<&LoweredProgram> {
-        self.gradient_program.as_ref()
+    pub(crate) fn gradient_program(&self) -> &LoweredProgram {
+        &self.gradient_program
     }
 
-    pub(crate) fn value_gradient_program(&self) -> Option<&LoweredProgram> {
-        self.value_gradient_program.as_ref()
-    }
-
-    pub(crate) fn from_ir_value_only(ir: &ExpressionIR) -> Result<Self, LoweringError> {
-        let value_program = Some(LoweredProgram::from_ir_value_only(ir)?);
-        Ok(Self::new(value_program, None, None))
+    pub(crate) fn value_gradient_program(&self) -> &LoweredProgram {
+        &self.value_gradient_program
     }
 
     pub(crate) fn from_ir_value_gradient(ir: &ExpressionIR) -> Result<Self, LoweringError> {
-        let value_program = Some(LoweredProgram::from_ir_value_only(ir)?);
-        let gradient_program = Some(LoweredProgram::from_ir_gradient_only(ir)?);
-        let value_gradient_program = Some(LoweredProgram::from_ir_value_gradient(ir)?);
+        let value_program = LoweredProgram::from_ir_value_only(ir)?;
+        let gradient_program = LoweredProgram::from_ir_gradient_only(ir)?;
+        let value_gradient_program = LoweredProgram::from_ir_value_gradient(ir)?;
         Ok(Self::new(
             value_program,
             gradient_program,
@@ -1202,9 +1197,9 @@ impl LoweredExpressionRuntime {
         ir: &ExpressionIR,
         root: usize,
     ) -> Result<Self, LoweringError> {
-        let value_program = Some(LoweredProgram::from_ir_root_value_only(ir, root)?);
-        let gradient_program = Some(LoweredProgram::from_ir_root_gradient_only(ir, root)?);
-        let value_gradient_program = Some(LoweredProgram::from_ir_root_value_gradient(ir, root)?);
+        let value_program = LoweredProgram::from_ir_root_value_only(ir, root)?;
+        let gradient_program = LoweredProgram::from_ir_root_gradient_only(ir, root)?;
+        let value_gradient_program = LoweredProgram::from_ir_root_value_gradient(ir, root)?;
         Ok(Self::new(
             value_program,
             gradient_program,
@@ -1216,18 +1211,11 @@ impl LoweredExpressionRuntime {
         ir: &ExpressionIR,
         residual_terms: &[usize],
     ) -> Result<Self, LoweringError> {
-        let value_program = Some(LoweredProgram::from_ir_residual_terms_value_only(
-            ir,
-            residual_terms,
-        )?);
-        let gradient_program = Some(LoweredProgram::from_ir_residual_terms_gradient_only(
-            ir,
-            residual_terms,
-        )?);
-        let value_gradient_program = Some(LoweredProgram::from_ir_residual_terms_value_gradient(
-            ir,
-            residual_terms,
-        )?);
+        let value_program = LoweredProgram::from_ir_residual_terms_value_only(ir, residual_terms)?;
+        let gradient_program =
+            LoweredProgram::from_ir_residual_terms_gradient_only(ir, residual_terms)?;
+        let value_gradient_program =
+            LoweredProgram::from_ir_residual_terms_value_gradient(ir, residual_terms)?;
         Ok(Self::new(
             value_program,
             gradient_program,
@@ -1239,15 +1227,10 @@ impl LoweredExpressionRuntime {
         ir: &ExpressionIR,
         zeroed_nodes: &[bool],
     ) -> Result<Self, LoweringError> {
-        let value_program = Some(LoweredProgram::from_ir_zeroed_value_only(ir, zeroed_nodes)?);
-        let gradient_program = Some(LoweredProgram::from_ir_zeroed_gradient_only(
-            ir,
-            zeroed_nodes,
-        )?);
-        let value_gradient_program = Some(LoweredProgram::from_ir_zeroed_value_gradient(
-            ir,
-            zeroed_nodes,
-        )?);
+        let value_program = LoweredProgram::from_ir_zeroed_value_only(ir, zeroed_nodes)?;
+        let gradient_program = LoweredProgram::from_ir_zeroed_gradient_only(ir, zeroed_nodes)?;
+        let value_gradient_program =
+            LoweredProgram::from_ir_zeroed_value_gradient(ir, zeroed_nodes)?;
         Ok(Self::new(
             value_program,
             gradient_program,
@@ -1708,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn lowered_runtime_can_hold_independent_program_kinds() {
+    fn lowered_runtime_can_hold_full_program_family() {
         let value_program = LoweredProgram::new(
             LoweredProgramKind::Value,
             vec![LoweredInstruction::Constant {
@@ -1725,16 +1708,24 @@ mod tests {
             }],
             LoweredRuntimeLayout::new(1, 0),
         );
-
-        let runtime = LoweredExpressionRuntime::new(
-            Some(value_program.clone()),
-            Some(gradient_program.clone()),
-            None,
+        let value_gradient_program = LoweredProgram::new(
+            LoweredProgramKind::ValueGradient,
+            vec![LoweredInstruction::Constant {
+                dst: 0,
+                value: Complex64::new(2.0, 0.0),
+            }],
+            LoweredRuntimeLayout::new(1, 0),
         );
 
-        assert_eq!(runtime.value_program(), Some(&value_program));
-        assert_eq!(runtime.gradient_program(), Some(&gradient_program));
-        assert!(runtime.value_gradient_program().is_none());
+        let runtime = LoweredExpressionRuntime::new(
+            value_program.clone(),
+            gradient_program.clone(),
+            value_gradient_program.clone(),
+        );
+
+        assert_eq!(runtime.value_program(), &value_program);
+        assert_eq!(runtime.gradient_program(), &gradient_program);
+        assert_eq!(runtime.value_gradient_program(), &value_gradient_program);
     }
 
     #[test]
@@ -1778,17 +1769,6 @@ mod tests {
         let lowered_value = program.evaluate_into(&amplitude_values, &mut lowered_scratch);
 
         assert_eq!(lowered_value, ir_value);
-    }
-
-    #[test]
-    fn lowered_runtime_from_ir_populates_value_program_only() {
-        let ir = compile_expression_ir(&ExpressionNode::Amp(0), &[true], &[DependenceClass::Mixed]);
-
-        let runtime = LoweredExpressionRuntime::from_ir_value_only(&ir).unwrap();
-
-        assert!(runtime.value_program().is_some());
-        assert!(runtime.gradient_program().is_none());
-        assert!(runtime.value_gradient_program().is_none());
     }
 
     #[test]
@@ -1878,9 +1858,15 @@ mod tests {
 
         let runtime = LoweredExpressionRuntime::from_ir_value_gradient(&ir).unwrap();
 
-        assert!(runtime.value_program().is_some());
-        assert!(runtime.gradient_program().is_some());
-        assert!(runtime.value_gradient_program().is_some());
+        assert_eq!(runtime.value_program().kind(), LoweredProgramKind::Value);
+        assert_eq!(
+            runtime.gradient_program().kind(),
+            LoweredProgramKind::Gradient
+        );
+        assert_eq!(
+            runtime.value_gradient_program().kind(),
+            LoweredProgramKind::ValueGradient
+        );
     }
 
     #[test]

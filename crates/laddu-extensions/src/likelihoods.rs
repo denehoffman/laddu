@@ -232,7 +232,7 @@ fn project_weights_local_from_resolved_mask(
     parameters: &[f64],
     n_mc: f64,
     resolved_mask: &[bool],
-) -> Vec<f64> {
+) -> LadduResult<Vec<f64>> {
     let resources = evaluator.resources.read();
     let parameters = Parameters::new(parameters, &resources.constants);
     let amplitude_len = evaluator.amplitudes.len();
@@ -242,11 +242,11 @@ fn project_weights_local_from_resolved_mask(
         .filter_map(|(index, &active)| if active { Some(index) } else { None })
         .collect::<Vec<_>>();
     let program_snapshot =
-        evaluator.expression_value_program_snapshot_for_active_mask(resolved_mask);
+        evaluator.expression_value_program_snapshot_for_active_mask(resolved_mask)?;
     let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
-        resources
+        Ok(resources
             .caches
             .par_iter()
             .zip(evaluator.dataset.events_local().par_iter())
@@ -270,13 +270,13 @@ fn project_weights_local_from_resolved_mask(
                     event.weight * value.re / n_mc
                 },
             )
-            .collect()
+            .collect())
     }
     #[cfg(not(feature = "rayon"))]
     {
         let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
         let mut expr_slots = vec![Complex64::ZERO; slot_count];
-        resources
+        Ok(resources
             .caches
             .iter()
             .zip(evaluator.dataset.events_local().iter())
@@ -292,7 +292,7 @@ fn project_weights_local_from_resolved_mask(
                 );
                 event.weight * value.re / n_mc
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -993,20 +993,20 @@ impl NLL {
             }
             let resolved_mask = mc_evaluator.active_mask();
             mc_evaluator.set_active_mask(&current_active_mc)?;
-            Ok(project_weights_local_from_resolved_mask(
+            project_weights_local_from_resolved_mask(
                 mc_evaluator,
                 parameters,
                 self.n_mc,
                 &resolved_mask,
-            ))
+            )
         } else {
             let resolved_mask = self.get_or_build_projection_active_mask(names)?;
-            Ok(project_weights_local_from_resolved_mask(
+            project_weights_local_from_resolved_mask(
                 &self.accmc_evaluator,
                 parameters,
                 self.n_mc,
                 &resolved_mask,
-            ))
+            )
         }
     }
 
@@ -1098,7 +1098,7 @@ impl NLL {
                 resolved_masks.push(mc_evaluator.active_mask());
             }
             mc_evaluator.set_active_mask(&current_active_mc)?;
-            Ok(resolved_masks
+            resolved_masks
                 .iter()
                 .map(|mask| {
                     project_weights_local_from_resolved_mask(
@@ -1108,13 +1108,13 @@ impl NLL {
                         mask,
                     )
                 })
-                .collect())
+                .collect()
         } else {
             let mut resolved_masks = Vec::with_capacity(subsets.len());
             for names in subsets {
                 resolved_masks.push(self.get_or_build_projection_active_mask(names)?);
             }
-            Ok(resolved_masks
+            resolved_masks
                 .iter()
                 .map(|mask| {
                     project_weights_local_from_resolved_mask(
@@ -1124,7 +1124,7 @@ impl NLL {
                         mask,
                     )
                 })
-                .collect())
+                .collect()
         }
     }
 

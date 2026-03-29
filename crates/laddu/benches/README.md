@@ -72,7 +72,7 @@ The combined report keeps these categories separate:
 For current architecture reviews:
 
 - the default workflow summaries reflect the lowered runtime as the production executor
-- executor-level interpreter/lowered comparisons live in the `laddu-core` microbench surface
+- lower-level runtime-path microbenches live in the `laddu-core` benchmark surface
 
 ## Regression Threshold Policy
 

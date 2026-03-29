@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
-use laddu_core::amplitudes::ExpressionRuntimeBackend;
 use laddu_core::{
     amplitudes::{
         parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike, TestAmplitude,
@@ -355,25 +354,13 @@ fn build_test_evaluator(dataset: &Arc<Dataset>) -> Evaluator {
         .load(dataset)
         .expect("evaluator should load benchmark dataset")
 }
-fn backend_label(backend: ExpressionRuntimeBackend) -> &'static str {
-    match backend {
-        ExpressionRuntimeBackend::IrInterpreter => "ir_interpreter",
-        ExpressionRuntimeBackend::Lowered => "lowered",
-    }
-}
-fn evaluator_with_backend(evaluator: &Evaluator, backend: ExpressionRuntimeBackend) -> Evaluator {
-    let mut evaluator = evaluator.clone();
-    evaluator.set_expression_runtime_backend(backend);
-    evaluator
-}
-
-fn expression_backend_benchmarks(c: &mut Criterion) {
+fn expression_runtime_benchmarks(c: &mut Criterion) {
     let dataset = load_bench_dataset();
     let sampled = sampled_dataset(&dataset, SAMPLE_EVENTS);
     let evaluator = build_test_evaluator(&sampled);
     let n_events = sampled.n_events() as u64;
 
-    let mut group = c.benchmark_group("expression_backend_paths");
+    let mut group = c.benchmark_group("expression_runtime_paths");
     group.sample_size(30);
     group.throughput(Throughput::Elements(n_events));
 
@@ -393,46 +380,6 @@ fn expression_backend_benchmarks(c: &mut Criterion) {
         })
     });
     group.finish();
-    {
-        let backends = [
-            ExpressionRuntimeBackend::IrInterpreter,
-            ExpressionRuntimeBackend::Lowered,
-        ];
-        let mut backend_group = c.benchmark_group("expression_ir_backend_microcomparisons");
-        backend_group.sample_size(30);
-        backend_group.warm_up_time(Duration::from_secs(2));
-        backend_group.measurement_time(Duration::from_secs(6));
-        backend_group.throughput(Throughput::Elements(n_events));
-
-        for backend in backends {
-            let backend_evaluator = evaluator_with_backend(&evaluator, backend);
-            let backend_name = backend_label(backend);
-            backend_group.bench_with_input(
-                BenchmarkId::new("evaluate_local", backend_name),
-                &backend_evaluator,
-                |b, evaluator| b.iter(|| black_box(evaluator.evaluate(black_box(&PARAMS)))),
-            );
-            backend_group.bench_with_input(
-                BenchmarkId::new("evaluate_gradient_local", backend_name),
-                &backend_evaluator,
-                |b, evaluator| {
-                    b.iter(|| black_box(evaluator.evaluate_gradient(black_box(&PARAMS))))
-                },
-            );
-            backend_group.bench_with_input(
-                BenchmarkId::new("evaluate_value_gradient_local", backend_name),
-                &backend_evaluator,
-                |b, evaluator| {
-                    b.iter(|| {
-                        let values = evaluator.evaluate(black_box(&PARAMS));
-                        let gradients = evaluator.evaluate_gradient(black_box(&PARAMS));
-                        black_box((values, gradients))
-                    })
-                },
-            );
-        }
-        backend_group.finish();
-    }
 
     let real_unary_dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
     let real_unary_case = build_real_unary_case(&real_unary_dataset);
@@ -893,52 +840,6 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
         );
     }
     mixed_group.finish();
-    {
-        let backend_case = build_scenario(
-            &synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL),
-            ScenarioKind::Partial,
-        );
-        let backends = [
-            ExpressionRuntimeBackend::IrInterpreter,
-            ExpressionRuntimeBackend::Lowered,
-        ];
-        let mut backend_group =
-            c.benchmark_group("expression_ir_backend_normalization_microcomparisons");
-        backend_group.sample_size(30);
-        backend_group.warm_up_time(Duration::from_secs(2));
-        backend_group.measurement_time(Duration::from_secs(6));
-        backend_group.throughput(Throughput::Elements(backend_case.n_events as u64));
-
-        for backend in backends {
-            let backend_evaluator = evaluator_with_backend(&backend_case.evaluator, backend);
-            let backend_name = backend_label(backend);
-            backend_group.bench_with_input(
-                BenchmarkId::new("weighted_value_sum_partial", backend_name),
-                &backend_evaluator,
-                |b, evaluator| {
-                    b.iter(|| {
-                        black_box(
-                            evaluator.evaluate_weighted_value_sum_local(black_box(
-                                &backend_case.parameters,
-                            )),
-                        )
-                    })
-                },
-            );
-            backend_group.bench_with_input(
-                BenchmarkId::new("weighted_gradient_sum_partial", backend_name),
-                &backend_evaluator,
-                |b, evaluator| {
-                    b.iter(|| {
-                        black_box(evaluator.evaluate_weighted_gradient_sum_local(black_box(
-                            &backend_case.parameters,
-                        )))
-                    })
-                },
-            );
-        }
-        backend_group.finish();
-    }
 
     let real_unary_datasets = [
         (
@@ -1273,7 +1174,7 @@ fn expression_ir_memory_workload_benchmarks(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    expression_backend_benchmarks,
+    expression_runtime_benchmarks,
     expression_ir_normalization_factorization_benchmarks,
     expression_ir_activation_churn_benchmarks,
     expression_ir_compile_cost_benchmarks,

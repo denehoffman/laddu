@@ -85,28 +85,27 @@ Notes:
 - `wall_clock_sec` comes from the compile-cost Criterion benchmark filter.
 - staged compile numbers come from the `expression_ir_compile_probe` helper binary and are reported separately from steady-state runtime metrics.
 
-## Backend comparisons
+## Runtime microbenches
 
-Run the generic backend comparison group, which reports `ir_interpreter` and `lowered` in one benchmark run:
+Run the generic runtime microbench group:
 
 ```bash
-just --justfile crates/laddu-core/benches/Justfile backend-compare-generic
+just --justfile crates/laddu-core/benches/Justfile runtime-microbench-generic
 ```
 
-Run the normalization-focused backend comparison group:
+Run the normalization-focused runtime microbench group:
 
 ```bash
-just --justfile crates/laddu-core/benches/Justfile backend-compare-normalization
+just --justfile crates/laddu-core/benches/Justfile runtime-microbench-normalization
 ```
 
-Run the full executor-comparison surface:
+Run the full runtime microbench surface:
 
 ```bash
-just --justfile crates/laddu-core/benches/Justfile backend-compare-full
+just --justfile crates/laddu-core/benches/Justfile runtime-microbench-full
 ```
 
 Notes:
 
-- the comparison groups keep IR planning fixed and compare interpreter vs lowered inside the default runtime build.
-- `lowered` is the default production executor.
-- `ir_interpreter` is retained as a diagnostic and benchmark control, not as the ordinary production fallback.
+- these groups exercise the single default lowered runtime directly.
+- use them for runtime-path microbenchmarks and instruction-mix regressions.
