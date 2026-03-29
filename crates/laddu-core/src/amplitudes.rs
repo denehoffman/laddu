@@ -811,11 +811,6 @@ impl ExpressionProgram {
         builder.build(root)
     }
 
-    #[allow(dead_code)]
-    fn slot_count(&self) -> usize {
-        self.slot_count
-    }
-
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
         debug_assert!(slots.len() >= self.slot_count);
         for op in &self.ops {

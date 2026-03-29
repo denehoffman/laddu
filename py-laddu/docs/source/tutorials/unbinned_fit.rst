@@ -191,13 +191,13 @@ The ``status`` object contains a lot of information about the fit result, partic
    │     4 ║    +7.931E-2 │    +3.144E-4 ║    +1.000E-1 │    +1.000E-3 │    +4.000E-1 │           │
    └───────╨──────────────┴──────────────╨──────────────┴──────────────┴──────────────┴───────────┘
 
-Now that we have the fitted free parameters, we can plot the result by calculating weights for the accepted Monte Carlo. This will be done using the ``NLL.project`` and ``NLL.project_with`` methods. Every amplitude in the model is either activated or deactivated. Deactivated amplitudes act like zeros in the model, so we can deactive certain amplitudes to isolate others. The ``NLL.project_with`` method provides a shorthand way to do this, isolating the given amplitudes for just a single calculation before reverting the ``NLL`` back to its prior state. ``NLL.project`` just calculates weights given all currently active amplitudes, and if we don't deactivate any, this will give us the total fit result.
+Now that we have the fitted free parameters, we can plot the result by calculating weights for the accepted Monte Carlo. This will be done using the ``NLL.project_weights`` and ``NLL.project_weights_subset`` methods. Every amplitude in the model is either activated or deactivated. Deactivated amplitudes act like zeros in the model, so we can deactivate certain amplitudes to isolate others. The ``NLL.project_weights_subset`` method provides a shorthand way to do this, isolating the given amplitudes for just a single calculation before reverting the ``NLL`` back to its prior state. ``NLL.project_weights`` just calculates weights given all currently active amplitudes, and if we don't deactivate any, this will give us the total fit result.
 
 .. code:: python
 
-   tot_weights = nll.project(status.x)
-   f0_weights = nll.project_with(status.x, ["[f_0(1500)]", "BW_0", "Z00+"])
-   f2_weights = nll.project_with(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"])
+   tot_weights = nll.project_weights(status.x)
+   f0_weights = nll.project_weights_subset(status.x, ["[f_0(1500)]", "BW_0", "Z00+"])
+   f2_weights = nll.project_weights_subset(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"])
 
    fig, ax = plt.subplots(ncols=2, sharey=True)
    # Plot the data on both axes
@@ -268,9 +268,13 @@ To create an ``Evaluator`` object, we just need to load up the model and dataset
 .. code:: python
 
    gen_eval = model.load(genmc_ds)
-   tot_weights_acc = nll.project(status.x, mc_evaluator=gen_eval)
-   f0_weights_acc = nll.project_with(status.x, ["[f_0(1500)]", "BW_0", "Z00+"], mc_evaluator=gen_eval)
-   f2_weights_acc = nll.project_with(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"], mc_evaluator=gen_eval)
+   tot_weights_acc = nll.project_weights(status.x, mc_evaluator=gen_eval)
+   f0_weights_acc = nll.project_weights_subset(
+       status.x, ["[f_0(1500)]", "BW_0", "Z00+"], mc_evaluator=gen_eval
+   )
+   f2_weights_acc = nll.project_weights_subset(
+       status.x, ["[f_2'(1525)]", "BW_2", "Z22+"], mc_evaluator=gen_eval
+   )
 
    # acceptance-correct the data distribution
    m_data_hist, _ = np.histogram(m_data, bins=100, range=(1.0, 2.0))

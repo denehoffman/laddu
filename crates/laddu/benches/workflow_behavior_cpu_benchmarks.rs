@@ -668,7 +668,7 @@ fn kmatrix_nll_thread_scaling_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-fn cached_evaluator_and_precompute_backend_benchmarks(c: &mut Criterion) {
+fn cached_evaluator_and_precompute_runtime_benchmarks(c: &mut Criterion) {
     // Dataset/setup notes:
     // - Source parquet: benches/bench.parquet
     // - Subsampled events: 512
@@ -841,7 +841,7 @@ fn main() {
     breit_wigner_partial_wave_benchmarks(&mut criterion);
     moment_analysis_benchmarks(&mut criterion);
     kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
-    cached_evaluator_and_precompute_backend_benchmarks(&mut criterion);
+    cached_evaluator_and_precompute_runtime_benchmarks(&mut criterion);
     io_open_benchmarks(&mut criterion);
     criterion.final_summary();
 }

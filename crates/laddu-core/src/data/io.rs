@@ -1214,6 +1214,7 @@ fn split_p4_component_case_insensitive(
     None
 }
 
+#[cfg(feature = "python")]
 fn resolve_column_name_case_insensitive(
     column_names: &[String],
     logical_name: &str,
