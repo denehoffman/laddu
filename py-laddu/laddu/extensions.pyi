@@ -1,7 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
-from typing import Literal
+from typing import Literal, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -397,34 +397,81 @@ class NLL:
         parameters: list[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
+    @overload
     def project_weights(
         self,
         parameters: list[float] | npt.ArrayLike,
         *,
+        subset: None = None,
+        subsets: None = None,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project_weights_subset(
+    @overload
+    def project_weights(
         self,
         parameters: list[float] | npt.ArrayLike,
-        name: str | list[str],
         *,
+        subset: str | list[str],
+        subsets: None = None,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project_weights_subsets(
+    @overload
+    def project_weights(
         self,
         parameters: list[float] | npt.ArrayLike,
-        subsets: list[list[str]],
         *,
+        subset: None = None,
+        subsets: list[list[str] | None],
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
-    def project_weights_and_gradients_subset(
+    def project_weights(
         self,
         parameters: list[float] | npt.ArrayLike,
-        name: str | list[str],
         *,
+        subset: str | list[str] | None = None,
+        subsets: list[list[str] | None] | None = None,
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
+    @overload
+    def project_weights_and_gradients(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        *,
+        subset: None = None,
+        subsets: None = None,
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
+    @overload
+    def project_weights_and_gradients(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        *,
+        subset: str | list[str],
+        subsets: None = None,
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
+    @overload
+    def project_weights_and_gradients(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        *,
+        subset: None = None,
+        subsets: list[list[str] | None],
+        mc_evaluator: Evaluator | None = None,
+        threads: int | None = None,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
+    def project_weights_and_gradients(
+        self,
+        parameters: list[float] | npt.ArrayLike,
+        *,
+        subset: str | list[str] | None = None,
+        subsets: list[list[str] | None] | None = None,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...

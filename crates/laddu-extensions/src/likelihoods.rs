@@ -42,12 +42,13 @@ use laddu_python::{
     data::PyDataset,
 };
 #[cfg(feature = "python")]
-use numpy::{PyArray1, PyArray2};
+use numpy::{PyArray1, PyArray2, PyArray3};
 #[cfg(feature = "python")]
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyList},
+    IntoPyObjectExt,
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -82,6 +83,39 @@ fn install_laddu_with_threads<R: Send>(
     op: impl FnOnce() -> LadduResult<R> + Send,
 ) -> LadduResult<R> {
     ThreadPoolManager::shared().install(threads, op)?
+}
+
+#[cfg(feature = "python")]
+fn extract_subset_names(subset: Option<Bound<'_, PyAny>>) -> PyResult<Option<Vec<String>>> {
+    let Some(subset) = subset else {
+        return Ok(None);
+    };
+    if let Ok(string_arg) = subset.extract::<String>() {
+        Ok(Some(vec![string_arg]))
+    } else if let Ok(list_arg) = subset.extract::<Vec<String>>() {
+        Ok(Some(list_arg))
+    } else {
+        Err(PyTypeError::new_err(
+            "subset must be either a string or a list of strings",
+        ))
+    }
+}
+
+#[cfg(feature = "python")]
+fn extract_subsets_arg(
+    subsets: Option<Bound<'_, PyAny>>,
+) -> PyResult<Option<Vec<Option<Vec<String>>>>> {
+    let Some(subsets) = subsets else {
+        return Ok(None);
+    };
+    subsets
+        .extract::<Vec<Option<Vec<String>>>>()
+        .map(Some)
+        .map_err(|_| {
+            PyTypeError::new_err(
+                "subsets must be a list whose items are either None or lists of strings",
+            )
+        })
 }
 
 #[cfg(feature = "mpi")]
@@ -2222,6 +2256,11 @@ impl PyNLL {
     /// ----------
     /// parameters : list of float
     ///     The values to use for the free parameters
+    /// subset : str or list of str, optional
+    ///     Isolate one amplitude subset for this call only
+    /// subsets : list of list of str or None, optional
+    ///     Batch multiple isolated amplitude subsets into one call. A ``None`` entry uses
+    ///     the full currently active model for that slot.
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
@@ -2232,60 +2271,12 @@ impl PyNLL {
     /// Returns
     /// -------
     /// result : array_like
-    ///     Weights for every Monte Carlo event which represent the fit to data
-    ///
-    /// Raises
-    /// ------
-    /// Exception
-    ///     If there was an error building the thread pool or problem creating the resulting
-    ///     ``numpy`` array
-    ///
-    #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
-    fn project_weights<'py>(
-        &self,
-        py: Python<'py>,
-        parameters: Vec<f64>,
-        mc_evaluator: Option<PyEvaluator>,
-        threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
-        let projection = install_laddu_with_threads(threads, || {
-            self.0.project_weights(&parameters, mc_evaluator.clone())
-        })?;
-        Ok(PyArray1::from_slice(py, projection.as_slice()))
-    }
-
-    /// Project the model over the Monte Carlo dataset with the given parameter values, first
-    /// isolating the given terms by name. The NLL is then reset to its previous state of
-    /// activation.
-    ///
-    /// This is defined as
-    ///
-    /// .. math:: e_w(\vec{p}) = \frac{e_w}{N_{MC}} \mathcal{L}(e)
-    ///
-    /// Parameters
-    /// ----------
-    /// parameters : list of float
-    ///     The values to use for the free parameters
-    /// arg : str or list of str
-    ///     Names of Amplitudes to be isolated
-    /// mc_evaluator: Evaluator, optional
-    ///     Project using the given Evaluator or use the stored ``accmc`` if None
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
-    ///     global or context-managed default; any positive value overrides that default for
-    ///     this call only)
-    ///
-    /// Returns
-    /// -------
-    /// result : array_like
-    ///     Weights for every Monte Carlo event which represent the fit to data
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If `arg` is not a str or list of str
+    ///     If neither ``subset`` nor ``subsets`` is provided, returns weights with shape
+    ///     ``(n_events,)``.
+    ///     If ``subset`` is provided, returns weights with shape ``(n_events,)`` for the
+    ///     isolated subset.
+    ///     If ``subsets`` is provided, returns weights with shape
+    ///     ``(n_subsets, n_events)``.
     ///
     /// Raises
     /// ------
@@ -2293,81 +2284,88 @@ impl PyNLL {
     ///     If there was an error building the thread pool or problem creating the resulting
     ///     ``numpy`` array
     /// ValueError
-    ///     If `arg` or any items of `arg` are not registered Amplitudes
+    ///     If both ``subset`` and ``subsets`` are provided
     ///
-    #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
-    fn project_weights_subset<'py>(
+    #[pyo3(signature = (
+        parameters,
+        *,
+        subset = None,
+        subsets = None,
+        mc_evaluator = None,
+        threads = None
+    ))]
+    fn project_weights<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
-        arg: &Bound<'_, PyAny>,
+        subset: Option<Bound<'_, PyAny>>,
+        subsets: Option<Bound<'_, PyAny>>,
         mc_evaluator: Option<PyEvaluator>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        let names = if let Ok(string_arg) = arg.extract::<String>() {
-            vec![string_arg]
-        } else if let Ok(list_arg) = arg.cast::<PyList>() {
-            let vec: Vec<String> = list_arg.extract()?;
-            vec
-        } else {
-            return Err(PyTypeError::new_err(
-                "Argument must be either a string or a list of strings",
+        if subset.is_some() && subsets.is_some() {
+            return Err(PyValueError::new_err(
+                "subset and subsets are mutually exclusive",
             ));
-        };
+        }
+        let subset = extract_subset_names(subset)?;
+        let subsets = extract_subsets_arg(subsets)?;
         let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
-        let projection = install_laddu_with_threads(threads, || {
-            self.0
-                .project_weights_subset(&parameters, &names, mc_evaluator.clone())
-        })?;
-        Ok(PyArray1::from_slice(py, projection.as_slice()))
+        match (subset, subsets) {
+            (Some(names), None) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    self.0
+                        .project_weights_subset(&parameters, &names, mc_evaluator.clone())
+                })?;
+                Ok(PyArray1::from_slice(py, projection.as_slice()).into_any())
+            }
+            (None, Some(subsets)) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    let mut rows = Vec::with_capacity(subsets.len());
+                    for subset in &subsets {
+                        let weights = match subset {
+                            Some(names) => self.0.project_weights_subset(
+                                &parameters,
+                                names,
+                                mc_evaluator.clone(),
+                            )?,
+                            None => self.0.project_weights(&parameters, mc_evaluator.clone())?,
+                        };
+                        rows.push(weights);
+                    }
+                    Ok::<_, LadduError>(rows)
+                })?;
+                Ok(PyArray2::from_vec2(py, &projection)
+                    .map_err(LadduError::NumpyError)?
+                    .into_any())
+            }
+            (None, None) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    self.0.project_weights(&parameters, mc_evaluator.clone())
+                })?;
+                Ok(PyArray1::from_slice(py, projection.as_slice()).into_any())
+            }
+            (Some(_), Some(_)) => unreachable!("checked above"),
+        }
     }
 
-    /// Project the model over the Monte Carlo dataset for multiple isolated amplitude subsets.
+    /// Project the model and gradients over the Monte Carlo dataset.
+    ///
+    /// With ``subset=...``, only the named amplitudes are isolated for the duration of
+    /// the calculation. With ``subsets=...``, the method returns batched projections for
+    /// each isolated subset. A ``None`` entry in ``subsets`` uses the full currently active
+    /// model for that slot. ``subset`` and ``subsets`` are mutually exclusive.
     ///
     /// Parameters
     /// ----------
     /// parameters : list of float
     ///     The values to use for the free parameters
-    /// subsets : list of list of str
-    ///     Each inner list is an isolated amplitude subset
-    /// mc_evaluator: Evaluator, optional
-    ///     Project using the given Evaluator or use the stored ``accmc`` if None
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
-    ///     global or context-managed default; any positive value overrides that default for
-    ///     this call only)
-    ///
-    /// Returns
-    /// -------
-    /// result : array_like
-    ///     2D array of shape ``(len(subsets), n_events)``
-    #[pyo3(signature = (parameters, subsets, *, mc_evaluator = None, threads=None))]
-    fn project_weights_subsets<'py>(
-        &self,
-        py: Python<'py>,
-        parameters: Vec<f64>,
-        subsets: Vec<Vec<String>>,
-        mc_evaluator: Option<PyEvaluator>,
-        threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
-        let projection = install_laddu_with_threads(threads, || {
-            self.0
-                .project_weights_subsets(&parameters, &subsets, mc_evaluator.clone())
-        })?;
-        Ok(PyArray2::from_vec2(py, &projection).map_err(LadduError::NumpyError)?)
-    }
-
-    /// Project the model and gradients over the Monte Carlo dataset while isolating selected terms.
-    ///
-    /// Parameters
-    /// ----------
-    /// parameters : list of float
-    ///     The values to use for the free parameters
-    /// arg : str or list of str
-    ///     Names of Amplitudes to be isolated
+    /// subset : str or list of str, optional
+    ///     Isolate one amplitude subset for this call only
+    /// subsets : list of list of str or None, optional
+    ///     Batch multiple isolated amplitude subsets into one call. A ``None`` entry uses
+    ///     the full currently active model for that slot.
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
@@ -2378,41 +2376,114 @@ impl PyNLL {
     /// Returns
     /// -------
     /// tuple
-    ///     ``(weights, gradients)`` where ``weights`` has shape ``(n_events,)`` and
-    ///     ``gradients`` has shape ``(n_events, n_parameters)``
-    #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
-    fn project_weights_and_gradients_subset<'py>(
+    ///     If neither ``subset`` nor ``subsets`` is provided, returns
+    ///     ``(weights, gradients)`` with shapes
+    ///     ``(n_events,)`` and ``(n_events, n_parameters)``.
+    ///     If ``subset`` is provided, returns ``(weights, gradients)`` with shapes
+    ///     ``(n_events,)`` and ``(n_events, n_parameters)``.
+    ///     If ``subsets`` is provided, returns ``(weights, gradients)`` with shapes
+    ///     ``(n_subsets, n_events)`` and ``(n_subsets, n_events, n_parameters)``.
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool or problem creating the resulting
+    ///     ``numpy`` arrays
+    /// ValueError
+    ///     If both ``subset`` and ``subsets`` are provided
+    #[pyo3(signature = (
+        parameters,
+        *,
+        subset = None,
+        subsets = None,
+        mc_evaluator = None,
+        threads = None
+    ))]
+    fn project_weights_and_gradients<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
-        arg: &Bound<'_, PyAny>,
+        subset: Option<Bound<'_, PyAny>>,
+        subsets: Option<Bound<'_, PyAny>>,
         mc_evaluator: Option<PyEvaluator>,
         threads: Option<usize>,
-    ) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray2<f64>>)> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
-        let names = if let Ok(string_arg) = arg.extract::<String>() {
-            vec![string_arg]
-        } else if let Ok(list_arg) = arg.cast::<PyList>() {
-            let vec: Vec<String> = list_arg.extract()?;
-            vec
-        } else {
-            return Err(PyTypeError::new_err(
-                "Argument must be either a string or a list of strings",
+        if subset.is_some() && subsets.is_some() {
+            return Err(PyValueError::new_err(
+                "subset and subsets are mutually exclusive",
             ));
-        };
+        }
+        let subset = extract_subset_names(subset)?;
+        let subsets = extract_subsets_arg(subsets)?;
         let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
-        let (weights, gradients) = install_laddu_with_threads(threads, || {
-            self.0
-                .project_weights_and_gradients_subset(&parameters, &names, mc_evaluator.clone())
-        })?;
-        let gradients = gradients
-            .iter()
-            .map(|gradient| gradient.as_slice().to_vec())
-            .collect::<Vec<_>>();
-        Ok((
-            PyArray1::from_slice(py, weights.as_slice()),
-            PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
-        ))
+        match (subset, subsets) {
+            (Some(names), None) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    self.0.project_weights_and_gradients_subset(
+                        &parameters,
+                        &names,
+                        mc_evaluator.clone(),
+                    )
+                })?;
+                let gradients = gradients
+                    .iter()
+                    .map(|gradient| gradient.as_slice().to_vec())
+                    .collect::<Vec<_>>();
+                (
+                    PyArray1::from_slice(py, weights.as_slice()),
+                    PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (None, Some(subsets)) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    let mut weight_rows = Vec::with_capacity(subsets.len());
+                    let mut gradient_rows = Vec::with_capacity(subsets.len());
+                    for subset in &subsets {
+                        let (subset_weights, subset_gradients) = match subset {
+                            Some(names) => self.0.project_weights_and_gradients_subset(
+                                &parameters,
+                                names,
+                                mc_evaluator.clone(),
+                            )?,
+                            None => self
+                                .0
+                                .project_weights_and_gradients(&parameters, mc_evaluator.clone())?,
+                        };
+                        weight_rows.push(subset_weights);
+                        gradient_rows.push(
+                            subset_gradients
+                                .iter()
+                                .map(|gradient| gradient.as_slice().to_vec())
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    Ok::<_, LadduError>((weight_rows, gradient_rows))
+                })?;
+                (
+                    PyArray2::from_vec2(py, &weights).map_err(LadduError::NumpyError)?,
+                    PyArray3::from_vec3(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (None, None) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    self.0
+                        .project_weights_and_gradients(&parameters, mc_evaluator.clone())
+                })?;
+                let gradients = gradients
+                    .iter()
+                    .map(|gradient| gradient.as_slice().to_vec())
+                    .collect::<Vec<_>>();
+                (
+                    PyArray1::from_slice(py, weights.as_slice()),
+                    PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (Some(_), Some(_)) => unreachable!("checked above"),
+        }
     }
 
     #[cfg_attr(doctest, doc = "```ignore")]

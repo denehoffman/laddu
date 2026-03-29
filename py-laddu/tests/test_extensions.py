@@ -35,7 +35,7 @@ from laddu.experimental import Regularizer
 _ERROR_EXPECTATIONS: dict[str, tuple[type[Exception], str]] = {
     'evaluate short': (ValueError, 'length mismatch'),
     'evaluate_gradient long': (ValueError, 'length mismatch'),
-    'project_weights_subset unknown amplitude': (ValueError, 'No registered amplitude'),
+    'project_weights subset unknown amplitude': (ValueError, 'No registered amplitude'),
     'minimize settings wrong type': (TypeError, 'LBFGSBSettings'),
     'mcmc settings wrong type': (TypeError, 'AIESSettings'),
 }
@@ -78,8 +78,8 @@ def test_python_regression_table_driven_error_paths() -> None:
         ('evaluate short', lambda: nll.evaluate([])),
         ('evaluate_gradient long', lambda: nll.evaluate_gradient([1.0, 2.0])),
         (
-            'project_weights_subset unknown amplitude',
-            lambda: nll.project_weights_subset([2.0], 'missing_amplitude'),
+            'project_weights subset unknown amplitude',
+            lambda: nll.project_weights([2.0], subset='missing_amplitude'),
         ),
         (
             'minimize settings wrong type',
@@ -427,7 +427,7 @@ def test_nll_project_returns_expected_weights() -> None:
     assert projection.tolist() == pytest.approx([1.0, 3.0])
 
 
-def test_nll_project_weights_subsets_matches_repeated_project_weights_subset() -> None:
+def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> None:
     amp_a = Scalar('amp_a', parameter('alpha'))
     amp_b = Scalar('amp_b', parameter('beta'))
     expr = (amp_a + amp_b).norm_sqr()
@@ -437,8 +437,8 @@ def test_nll_project_weights_subsets_matches_repeated_project_weights_subset() -
     params = [1.25, -0.5]
     subsets = [['amp_a'], ['amp_b'], ['amp_a', 'amp_b']]
 
-    batched = nll.project_weights_subsets(params, subsets)
-    repeated = [nll.project_weights_subset(params, subset).tolist() for subset in subsets]
+    batched = nll.project_weights(params, subsets=subsets)
+    repeated = [nll.project_weights(params, subset=subset).tolist() for subset in subsets]
     for batched_row, repeated_row in zip(batched.tolist(), repeated):
         assert batched_row == pytest.approx(repeated_row)
 
@@ -452,7 +452,7 @@ def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> No
     nll = NLL(expr, data, mc)
     params = [1.25, -0.5]
 
-    empty = nll.project_weights_subsets(params, [])
+    empty = nll.project_weights(params, subsets=[])
     assert empty.shape == (0, 0)
 
     subsets = [
@@ -462,8 +462,30 @@ def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> No
         ['amp_a'],
         ['amp_b'],
     ]
-    batched = nll.project_weights_subsets(params, subsets)
-    repeated = [nll.project_weights_subset(params, subset).tolist() for subset in subsets]
+    batched = nll.project_weights(params, subsets=subsets)
+    repeated = [nll.project_weights(params, subset=subset).tolist() for subset in subsets]
+    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+        assert batched_row == pytest.approx(repeated_row)
+
+
+def test_nll_project_weights_subsets_allow_none_for_total_projection() -> None:
+    amp_a = Scalar('amp_a', parameter('alpha'))
+    amp_b = Scalar('amp_b', parameter('beta'))
+    expr = (amp_a + amp_b).norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    nll = NLL(expr, data, mc)
+    params = [1.25, -0.5]
+    subsets = [None, ['amp_a'], ['amp_b'], ['amp_a', 'amp_b']]
+
+    batched = nll.project_weights(params, subsets=subsets)
+    repeated = [
+        nll.project_weights(params).tolist(),
+        nll.project_weights(params, subset=['amp_a']).tolist(),
+        nll.project_weights(params, subset=['amp_b']).tolist(),
+        nll.project_weights(params, subset=['amp_a', 'amp_b']).tolist(),
+    ]
+    assert batched.shape == (len(subsets), 2)
     for batched_row, repeated_row in zip(batched.tolist(), repeated):
         assert batched_row == pytest.approx(repeated_row)
 
@@ -479,11 +501,79 @@ def test_nll_project_weights_and_gradients_subset_matches_expected_weights() -> 
     subsets = [['amp_b'], ['amp_a'], ['amp_a', 'amp_b'], ['amp_a']]
 
     for subset in subsets:
-        weights, gradients = nll.project_weights_and_gradients_subset(params, subset)
-        expected_weights = nll.project_weights_subset(params, subset)
+        weights, gradients = nll.project_weights_and_gradients(params, subset=subset)
+        expected_weights = nll.project_weights(params, subset=subset)
         assert weights.tolist() == pytest.approx(expected_weights.tolist())
         assert gradients.shape[0] == weights.shape[0]
         assert gradients.shape[1] == len(params)
+
+
+def test_nll_project_weights_and_gradients_subsets_matches_repeated_subset_calls() -> (
+    None
+):
+    amp_a = Scalar('amp_a', parameter('alpha'))
+    amp_b = Scalar('amp_b', parameter('beta'))
+    expr = (amp_a + amp_b).norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    nll = NLL(expr, data, mc)
+    params = [1.25, -0.5]
+    subsets = [['amp_b'], ['amp_a'], ['amp_a', 'amp_b'], ['amp_a']]
+
+    batched_weights, batched_gradients = nll.project_weights_and_gradients(
+        params, subsets=subsets
+    )
+    assert batched_weights.shape == (len(subsets), 2)
+    assert batched_gradients.shape == (len(subsets), 2, len(params))
+
+    for index, subset in enumerate(subsets):
+        expected_weights, expected_gradients = nll.project_weights_and_gradients(
+            params, subset=subset
+        )
+        assert batched_weights[index].tolist() == pytest.approx(expected_weights.tolist())
+        np.testing.assert_allclose(batched_gradients[index], expected_gradients)
+
+
+def test_nll_project_weights_and_gradients_subsets_allow_none_for_total_projection() -> (
+    None
+):
+    amp_a = Scalar('amp_a', parameter('alpha'))
+    amp_b = Scalar('amp_b', parameter('beta'))
+    expr = (amp_a + amp_b).norm_sqr()
+    data = _dataset_from_weights([1.0, 2.0])
+    mc = _dataset_from_weights([0.5, 1.5])
+    nll = NLL(expr, data, mc)
+    params = [1.25, -0.5]
+    subsets = [None, ['amp_a'], ['amp_b'], ['amp_a', 'amp_b']]
+
+    batched_weights, batched_gradients = nll.project_weights_and_gradients(
+        params, subsets=subsets
+    )
+    assert batched_weights.shape == (len(subsets), 2)
+    assert batched_gradients.shape == (len(subsets), 2, len(params))
+
+    repeated = [
+        nll.project_weights_and_gradients(params),
+        nll.project_weights_and_gradients(params, subset=['amp_a']),
+        nll.project_weights_and_gradients(params, subset=['amp_b']),
+        nll.project_weights_and_gradients(params, subset=['amp_a', 'amp_b']),
+    ]
+    for index, (expected_weights, expected_gradients) in enumerate(repeated):
+        assert batched_weights[index].tolist() == pytest.approx(expected_weights.tolist())
+        np.testing.assert_allclose(batched_gradients[index], expected_gradients)
+
+
+def test_nll_project_weights_rejects_subset_and_subsets_together() -> None:
+    nll = _simple_scalar_nll()
+    dynamic_nll = cast(Any, nll)
+
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        dynamic_nll.project_weights([2.0], subset='scale', subsets=[['scale']])
+
+    with pytest.raises(ValueError, match='mutually exclusive'):
+        dynamic_nll.project_weights_and_gradients(
+            [2.0], subset='scale', subsets=[['scale']]
+        )
 
 
 def test_repeated_short_calls_with_threads_remain_stable() -> None:
@@ -502,7 +592,7 @@ def test_repeated_short_calls_with_threads_remain_stable() -> None:
     expected_nll_gradient = nll.evaluate_gradient(params, threads=2)
     expected_projection = nll.project_weights(params, threads=2)
     expected_subset_weights, expected_subset_gradients = (
-        nll.project_weights_and_gradients_subset(params, ['scale'], threads=2)
+        nll.project_weights_and_gradients(params, subset=['scale'], threads=2)
     )
 
     for _ in range(32):
@@ -525,8 +615,8 @@ def test_repeated_short_calls_with_threads_remain_stable() -> None:
         assert nll.project_weights(params, threads=2).tolist() == pytest.approx(
             expected_projection.tolist()
         )
-        subset_weights, subset_gradients = nll.project_weights_and_gradients_subset(
-            params, ['scale'], threads=2
+        subset_weights, subset_gradients = nll.project_weights_and_gradients(
+            params, subset=['scale'], threads=2
         )
         assert subset_weights.tolist() == pytest.approx(expected_subset_weights.tolist())
         np.testing.assert_allclose(subset_gradients, expected_subset_gradients)

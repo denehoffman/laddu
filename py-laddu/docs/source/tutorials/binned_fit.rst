@@ -94,8 +94,8 @@ Finally, let's visualize the results. We could get the weights in each bin and a
    s0p_weights = np.concatenate(
        [
            np.array(
-               nlls[ibin].project_weights_subset(
-                   binned_statuses[ibin].x, ["S0+", "Z00+"]
+               nlls[ibin].project_weights(
+                   binned_statuses[ibin].x, subset=["S0+", "Z00+"]
                )
            )
            for ibin in range(bins)
@@ -104,8 +104,8 @@ Finally, let's visualize the results. We could get the weights in each bin and a
    d2p_weights = np.concatenate(
        [
            np.array(
-               nlls[ibin].project_weights_subset(
-                   binned_statuses[ibin].x, ["D2+", "Z22+"]
+               nlls[ibin].project_weights(
+                   binned_statuses[ibin].x, subset=["D2+", "Z22+"]
                )
            )
            for ibin in range(bins)
@@ -124,13 +124,14 @@ Then, plotting would just involve something like ``plt.hist(res_mass.value_on(so
    d2p_counts = []
 
    for ibin in range(bins):
-       tot_counts.append(sum(nlls[ibin].project_weights(binned_statuses[ibin].x)))
-       s0p_counts.append(
-           sum(nlls[ibin].project_weights_subset(binned_statuses[ibin].x, ["S0+", "Z00+"]))
+       weights = nlls[ibin].project_weights(
+           binned_statuses[ibin].x,
+           subsets=[None, ["S0+", "Z00+"], ["D2+", "Z22+"]],
        )
-       d2p_counts.append(
-           sum(nlls[ibin].project_weights_subset(binned_statuses[ibin].x, ["D2+", "Z22+"]))
-       )
+       tot_count, s0p_count, d2p_count = weights.sum(axis=1)
+       tot_counts.append(tot_count)
+       s0p_counts.append(s0p_count)
+       d2p_counts.append(d2p_count)
 
 We now have some stuff that looks like the *output* of ``np.histogram``, but we need to turn this into a plot. We can either use ``plt.stairs(counts, edges)`` or ``plt.hist(edges[:-1], edges, weights=counts)`` to do this, although the first option will be used here for simplicity.
 
