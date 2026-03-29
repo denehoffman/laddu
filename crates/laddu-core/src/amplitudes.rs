@@ -146,7 +146,7 @@ struct LoweredArtifactCacheState {
 #[cfg(feature = "expression-ir")]
 #[derive(Clone)]
 struct ExpressionSpecializationState {
-    cached_integrals: CachedIntegralCacheState,
+    cached_integrals: Arc<CachedIntegralCacheState>,
     lowered_artifacts: Arc<LoweredArtifactCacheState>,
 }
 
@@ -1364,12 +1364,12 @@ impl Expression {
         let cached_integral_key =
             Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
         #[cfg(feature = "expression-ir")]
-        let cached_integral_state = CachedIntegralCacheState {
+        let cached_integral_state = Arc::new(CachedIntegralCacheState {
             key: cached_integral_key.clone(),
             expression_ir,
             values: cached_integrals,
             execution_sets,
-        };
+        });
         #[cfg(feature = "expression-ir")]
         let specialization_state = ExpressionSpecializationState {
             cached_integrals: cached_integral_state.clone(),
@@ -1616,7 +1616,7 @@ pub struct ExpressionRuntimeDiagnostics {
 ///   active mask or dataset identity changes.
 struct ExpressionIrPlanningState {
     expression_ir: ir::ExpressionIR,
-    cached_integrals: Arc<RwLock<Option<CachedIntegralCacheState>>>,
+    cached_integrals: Arc<RwLock<Option<Arc<CachedIntegralCacheState>>>>,
     specialization_cache:
         Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
     specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
@@ -2062,12 +2062,12 @@ impl Evaluator {
         compile_metrics.specialization_ir_compile_nanos += ir_compile_nanos;
         compile_metrics.specialization_cached_integrals_nanos += cached_integrals_nanos;
         ExpressionSpecializationState {
-            cached_integrals: CachedIntegralCacheState {
+            cached_integrals: Arc::new(CachedIntegralCacheState {
                 key,
                 expression_ir,
                 values,
                 execution_sets,
-            },
+            }),
             lowered_artifacts,
         }
     }
@@ -2476,7 +2476,7 @@ impl Evaluator {
     fn ensure_cached_integral_cache_state(
         &self,
         resources: &Resources,
-    ) -> CachedIntegralCacheState {
+    ) -> Arc<CachedIntegralCacheState> {
         self.ensure_expression_specialization(resources)
             .cached_integrals
     }
@@ -2827,7 +2827,9 @@ impl Evaluator {
     /// Cached integral terms precomputed at evaluator load.
     pub fn expression_precomputed_cached_integrals(&self) -> Vec<PrecomputedCachedIntegral> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources).values
+        self.ensure_cached_integral_cache_state(&resources)
+            .values
+            .clone()
     }
 
     #[cfg(feature = "expression-ir")]
@@ -2848,7 +2850,8 @@ impl Evaluator {
         let Some(cache) = resources.caches.first() else {
             return state
                 .values
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
                     mul_node_index: descriptor.mul_node_index,
                     parameter_node_index: descriptor.parameter_node_index,
@@ -2922,7 +2925,8 @@ impl Evaluator {
             let lowered_artifacts = lowered_artifacts.expect("lowered artifacts should exist");
             state
                 .values
-                .into_iter()
+                .iter()
+                .cloned()
                 .zip(lowered_artifacts.lowered_parameter_factors.iter())
                 .map(|(descriptor, runtime)| {
                     let parameter_gradient = runtime
@@ -2952,7 +2956,8 @@ impl Evaluator {
         } else {
             state
                 .values
-                .into_iter()
+                .iter()
+                .cloned()
                 .map(|descriptor| {
                     let parameter_gradient = gradient_slots
                         .get(descriptor.parameter_node_index)
