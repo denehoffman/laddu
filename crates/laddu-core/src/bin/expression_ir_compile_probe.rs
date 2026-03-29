@@ -1,7 +1,3 @@
-#[cfg(feature = "expression-ir")]
-use std::sync::Arc;
-
-#[cfg(feature = "expression-ir")]
 use laddu_core::{
     amplitudes::{
         parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike, TestAmplitude,
@@ -11,20 +7,15 @@ use laddu_core::{
     utils::vectors::Vec4,
     Dataset, Expression, LadduResult,
 };
-#[cfg(feature = "expression-ir")]
 use num::complex::Complex64;
-#[cfg(feature = "expression-ir")]
 use serde::{Deserialize, Serialize};
-
-#[cfg(feature = "expression-ir")]
+use std::sync::Arc;
 #[derive(Clone, Serialize, Deserialize)]
 struct ParameterOnlyScalar {
     name: String,
     value: ParameterLike,
     pid: ParameterID,
 }
-
-#[cfg(feature = "expression-ir")]
 impl ParameterOnlyScalar {
     #[allow(clippy::new_ret_no_self)]
     fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
@@ -36,8 +27,6 @@ impl ParameterOnlyScalar {
         .into_expression()
     }
 }
-
-#[cfg(feature = "expression-ir")]
 #[typetag::serde]
 impl Amplitude for ParameterOnlyScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
@@ -53,15 +42,11 @@ impl Amplitude for ParameterOnlyScalar {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
 }
-
-#[cfg(feature = "expression-ir")]
 #[derive(Clone, Serialize, Deserialize)]
 struct CacheOnlyScalar {
     name: String,
     beam_energy: ScalarID,
 }
-
-#[cfg(feature = "expression-ir")]
 impl CacheOnlyScalar {
     #[allow(clippy::new_ret_no_self)]
     fn new(name: &str) -> LadduResult<Expression> {
@@ -72,8 +57,6 @@ impl CacheOnlyScalar {
         .into_expression()
     }
 }
-
-#[cfg(feature = "expression-ir")]
 #[typetag::serde]
 impl Amplitude for CacheOnlyScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
@@ -93,16 +76,12 @@ impl Amplitude for CacheOnlyScalar {
         Complex64::new(cache.get_scalar(self.beam_energy), 0.0)
     }
 }
-
-#[cfg(feature = "expression-ir")]
 #[derive(Clone, Copy)]
 enum ScenarioKind {
     Separable,
     Partial,
     NonSeparable,
 }
-
-#[cfg(feature = "expression-ir")]
 impl ScenarioKind {
     fn parse(raw: &str) -> Result<Self, String> {
         match raw {
@@ -113,8 +92,6 @@ impl ScenarioKind {
         }
     }
 }
-
-#[cfg(feature = "expression-ir")]
 fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
     let metadata = Arc::new(DatasetMetadata::default());
     let events = (0..n_events)
@@ -135,8 +112,6 @@ fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
         .collect::<Vec<_>>();
     Arc::new(Dataset::new_with_metadata(events, metadata))
 }
-
-#[cfg(feature = "expression-ir")]
 fn build_scenario_expression(kind: ScenarioKind) -> Expression {
     match kind {
         ScenarioKind::Separable => {
@@ -174,16 +149,12 @@ fn build_scenario_expression(kind: ScenarioKind) -> Expression {
         }
     }
 }
-
-#[cfg(feature = "expression-ir")]
 fn print_usage_and_exit() -> ! {
     eprintln!(
         "usage: expression_ir_compile_probe <initial_load|specialization_cache_miss|specialization_cache_hit_restore> <separable|partial|non_separable>"
     );
     std::process::exit(2);
 }
-
-#[cfg(feature = "expression-ir")]
 fn compile_metrics_json(evaluator: &laddu_core::Evaluator) -> String {
     let metrics = evaluator.expression_compile_metrics();
     format!(
@@ -215,8 +186,6 @@ fn compile_metrics_json(evaluator: &laddu_core::Evaluator) -> String {
         metrics.specialization_cache_restore_nanos,
     )
 }
-
-#[cfg(feature = "expression-ir")]
 fn specialization_metrics_json(evaluator: &laddu_core::Evaluator) -> String {
     let metrics = evaluator.expression_specialization_metrics();
     format!(
@@ -224,8 +193,6 @@ fn specialization_metrics_json(evaluator: &laddu_core::Evaluator) -> String {
         metrics.cache_hits, metrics.cache_misses
     )
 }
-
-#[cfg(feature = "expression-ir")]
 fn main() {
     let mut args = std::env::args().skip(1);
     let operation = args.next().unwrap_or_else(|| print_usage_and_exit());
@@ -280,10 +247,4 @@ fn main() {
         compile_metrics_json(&evaluator),
         specialization_metrics_json(&evaluator)
     );
-}
-
-#[cfg(not(feature = "expression-ir"))]
-fn main() {
-    eprintln!("expression_ir_compile_probe requires the expression-ir feature");
-    std::process::exit(2);
 }

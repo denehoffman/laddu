@@ -26,37 +26,31 @@ To inspect script options:
 python3 crates/laddu/benches/scripts/criterion_json_report.py --help
 ```
 
-## CPU Workflow Comparison With `expression-ir`
+## CPU Workflow Summary
 
-Run the CPU workflow Criterion JSON path with an explicit feature-off legacy baseline and the default `expression-ir` build, then generate a joined comparison:
+Run the CPU workflow Criterion JSON path for the default runtime build, then generate a summary:
 
 ```bash
-just --justfile crates/laddu/benches/Justfile json-report-ir-compare
+just --justfile crates/laddu/benches/Justfile json-report
 ```
 
 Outputs:
 
 - `target/criterion/summary/benchmark_summary_cpu.json`
-- `target/criterion/summary/benchmark_summary_cpu_expression_ir.json`
-- `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json`
-- `target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.md`
 
-## MPI Workflow Comparison With `expression-ir`
+## MPI Workflow Summary
 
-Run the MPI workflow Criterion JSON path with an explicit feature-off legacy baseline and the default `expression-ir` build, then generate a joined comparison:
+Run the MPI workflow Criterion JSON path for the default runtime build, then generate a summary:
 
 ```bash
-just --justfile crates/laddu/benches/Justfile json-report-mpi-ir-compare ranks=4
+just --justfile crates/laddu/benches/Justfile json-report-mpi ranks=4
 ```
 
 Outputs:
 
 - `target/criterion/summary/benchmark_summary_mpi.json`
-- `target/criterion/summary/benchmark_summary_mpi_expression_ir.json`
-- `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json`
-- `target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.md`
 
-## Combined `expression-ir` Release Review
+## Combined Release Review
 
 Assemble a combined release-review summary from the existing compile, workflow, and memory artifacts:
 
@@ -72,14 +66,13 @@ Outputs:
 The combined report keeps these categories separate:
 
 - compile-time costs
-- steady-state CPU and MPI workflow deltas
+- steady-state CPU and MPI workflow summaries
 - peak RSS and allocation-proxy memory metrics
 
 For current architecture reviews:
 
-- the feature-off workflow summaries come from `--no-default-features` legacy/reference builds
 - the default workflow summaries reflect the lowered runtime as the production executor
-- executor-level interpreter/lowered comparisons live in the `laddu-core` expression-IR microbench surface
+- executor-level interpreter/lowered comparisons live in the `laddu-core` microbench surface
 
 ## Regression Threshold Policy
 

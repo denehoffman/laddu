@@ -17,22 +17,12 @@ run-mpi ranks="4":
 # Emit Criterion JSON messages for workflow behavior benchmarks (CPU)
 json:
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && cargo criterion --no-default-features --features rayon --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
-
-# Emit Criterion JSON messages for workflow behavior benchmarks (CPU, expression-ir)
-json-ir:
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && cargo criterion --features expression-ir --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu_expression_ir.jsonl
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
 
 # Emit Criterion JSON messages for workflow behavior benchmarks (MPI)
 json-mpi ranks="4":
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --no-default-features --features "rayon mpi" --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
-
-# Emit Criterion JSON messages for workflow behavior benchmarks (MPI, expression-ir)
-json-mpi-ir ranks="4":
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
-    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --features "mpi expression-ir" --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi_expression_ir.jsonl
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --features mpi --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
 
 # Generate benchmark summary artifacts from Criterion JSON message stream
 report-cpu policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
@@ -45,26 +35,6 @@ report-cpu policy="off" regression_threshold_pct="3.0" improvement_threshold_pct
       --regression-threshold-pct {{regression_threshold_pct}} \
       --improvement-threshold-pct {{improvement_threshold_pct}}
 
-# Generate expression-ir CPU benchmark summary artifacts from Criterion JSON message stream
-report-cpu-ir policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
-    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
-      --input ../../../target/criterion/messages_cpu_expression_ir.jsonl \
-      --json-out ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir.json \
-      --md-out ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir.md \
-      --policy {{policy}} \
-      --regression-threshold-pct {{regression_threshold_pct}} \
-      --improvement-threshold-pct {{improvement_threshold_pct}}
-
-# Compare CPU workflow benchmark summaries with and without expression-ir
-compare-cpu-ir:
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
-    cd {{justfile_directory()}} && python3 scripts/compare_expression_ir_cpu.py \
-      --baseline-json ../../../target/criterion/summary/benchmark_summary_cpu.json \
-      --candidate-json ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir.json \
-      --json-out ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json \
-      --md-out ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.md
-
 # Generate MPI benchmark summary artifacts from Criterion JSON message stream
 report-mpi policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
     cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
@@ -76,37 +46,11 @@ report-mpi policy="off" regression_threshold_pct="3.0" improvement_threshold_pct
       --regression-threshold-pct {{regression_threshold_pct}} \
       --improvement-threshold-pct {{improvement_threshold_pct}}
 
-# Generate expression-ir MPI benchmark summary artifacts from Criterion JSON message stream
-report-mpi-ir policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
-    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
-      --input ../../../target/criterion/messages_mpi_expression_ir.jsonl \
-      --json-out ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir.json \
-      --md-out ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir.md \
-      --policy {{policy}} \
-      --regression-threshold-pct {{regression_threshold_pct}} \
-      --improvement-threshold-pct {{improvement_threshold_pct}}
-
-# Compare MPI workflow benchmark summaries with and without expression-ir
-compare-mpi-ir:
-    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
-    cd {{justfile_directory()}} && python3 scripts/compare_expression_ir_mpi.py \
-      --baseline-json ../../../target/criterion/summary/benchmark_summary_mpi.json \
-      --candidate-json ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir.json \
-      --json-out ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json \
-      --md-out ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.md
-
 # Run CPU Criterion JSON benchmark and generate summary artifacts
 json-report: json report-cpu
 
-# Run CPU Criterion JSON benchmarks with and without expression-ir, then compare summaries
-json-report-ir-compare: json json-ir report-cpu report-cpu-ir compare-cpu-ir
-
 # Run MPI Criterion JSON benchmark and generate summary artifacts
 json-report-mpi ranks="4": (json-mpi ranks) report-mpi
-
-# Run MPI Criterion JSON benchmarks with and without expression-ir, then compare summaries
-json-report-mpi-ir-compare ranks="4": (json-mpi ranks) (json-mpi-ir ranks) report-mpi report-mpi-ir compare-mpi-ir
 
 # Capture MPI rank-count wall-clock and per-rank RSS metrics
 metrics-mpi rank_counts="2,4":
@@ -131,13 +75,13 @@ report-mpi-scaling:
       --json-out ../../../target/criterion/summary/mpi_rank_scaling_report.json \
       --md-out ../../../target/criterion/summary/mpi_rank_scaling_report.md
 
-# Publish a combined expression-ir release-review summary from existing artifacts
+# Publish a combined release-review summary from existing artifacts
 report-expression-ir-release:
     cd {{justfile_directory()}} && python3 scripts/expression_ir_release_review.py \
       --compile-json ../../../target/criterion/summary/laddu_core_expression_ir_compile_metrics.json \
       --memory-json ../../../target/criterion/summary/laddu_core_expression_ir_memory_metrics.json \
-      --cpu-json ../../../target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json \
-      --mpi-json ../../../target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json \
+      --cpu-json ../../../target/criterion/summary/benchmark_summary_cpu.json \
+      --mpi-json ../../../target/criterion/summary/benchmark_summary_mpi.json \
       --json-out ../../../target/criterion/summary/expression_ir_release_review.json \
       --md-out ../../../target/criterion/summary/expression_ir_release_review.md
 

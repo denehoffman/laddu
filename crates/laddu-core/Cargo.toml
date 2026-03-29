@@ -59,10 +59,9 @@ name = "expression_ir_benchmarks"
 harness = false
 
 [features]
-default = ["rayon", "expression-ir"]
+default = ["rayon"]
 rayon = ["dep:rayon"]
 execution-context-prototype = []
-expression-ir = []
 python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]

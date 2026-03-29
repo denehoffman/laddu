@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
-#[cfg(feature = "expression-ir")]
 use laddu_core::amplitudes::ExpressionRuntimeBackend;
 use laddu_core::{
     amplitudes::{
@@ -288,8 +287,6 @@ fn build_real_unary_expression() -> Expression {
         + &(&cache * &amp1.real());
     expression
 }
-
-#[cfg(feature = "expression-ir")]
 fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str] {
     match kind {
         ScenarioKind::Separable => &["sep_p1"],
@@ -297,8 +294,6 @@ fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str]
         ScenarioKind::NonSeparable => &["nonsep_m1"],
     }
 }
-
-#[cfg(feature = "expression-ir")]
 fn activation_churn_deactivate_names(kind: ScenarioKind) -> &'static [&'static str] {
     match kind {
         ScenarioKind::Separable => &["sep_c2"],
@@ -360,16 +355,12 @@ fn build_test_evaluator(dataset: &Arc<Dataset>) -> Evaluator {
         .load(dataset)
         .expect("evaluator should load benchmark dataset")
 }
-
-#[cfg(feature = "expression-ir")]
 fn backend_label(backend: ExpressionRuntimeBackend) -> &'static str {
     match backend {
         ExpressionRuntimeBackend::IrInterpreter => "ir_interpreter",
         ExpressionRuntimeBackend::Lowered => "lowered",
     }
 }
-
-#[cfg(feature = "expression-ir")]
 fn evaluator_with_backend(evaluator: &Evaluator, backend: ExpressionRuntimeBackend) -> Evaluator {
     let mut evaluator = evaluator.clone();
     evaluator.set_expression_runtime_backend(backend);
@@ -402,8 +393,6 @@ fn expression_backend_benchmarks(c: &mut Criterion) {
         })
     });
     group.finish();
-
-    #[cfg(feature = "expression-ir")]
     {
         let backends = [
             ExpressionRuntimeBackend::IrInterpreter,
@@ -904,8 +893,6 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
         );
     }
     mixed_group.finish();
-
-    #[cfg(feature = "expression-ir")]
     {
         let backend_case = build_scenario(
             &synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL),
@@ -1022,8 +1009,6 @@ fn expression_ir_normalization_factorization_benchmarks(c: &mut Criterion) {
     }
     real_unary_group.finish();
 }
-
-#[cfg(feature = "expression-ir")]
 fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
     let dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
     let cases = [
@@ -1118,10 +1103,6 @@ fn expression_ir_activation_churn_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "expression-ir"))]
-fn expression_ir_activation_churn_benchmarks(_c: &mut Criterion) {}
-
-#[cfg(feature = "expression-ir")]
 fn expression_ir_compile_cost_benchmarks(c: &mut Criterion) {
     let dataset = synthetic_weighted_dataset(NORMALIZATION_BENCH_EVENTS_SMALL);
     let load_cases = [
@@ -1205,10 +1186,6 @@ fn expression_ir_compile_cost_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "expression-ir"))]
-fn expression_ir_compile_cost_benchmarks(_c: &mut Criterion) {}
-
-#[cfg(feature = "expression-ir")]
 fn expression_ir_memory_workload_benchmarks(c: &mut Criterion) {
     let large_gradient_dataset = synthetic_weighted_dataset(MEMORY_BENCH_EVENTS_LARGE_GRADIENT);
     let large_gradient_case =
@@ -1293,9 +1270,6 @@ fn expression_ir_memory_workload_benchmarks(c: &mut Criterion) {
 
     group.finish();
 }
-
-#[cfg(not(feature = "expression-ir"))]
-fn expression_ir_memory_workload_benchmarks(_c: &mut Criterion) {}
 
 criterion_group!(
     benches,

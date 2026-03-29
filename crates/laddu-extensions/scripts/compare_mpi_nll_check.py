@@ -86,8 +86,6 @@ def main() -> int:
         'run',
         '-p',
         'laddu-extensions',
-        '--features',
-        'laddu-core/expression-ir',
         '--bin',
         'mpi_nll_check',
     ]
@@ -100,7 +98,7 @@ def main() -> int:
         '-p',
         'laddu-extensions',
         '--features',
-        'mpi,laddu-core/expression-ir',
+        'mpi',
         '--bin',
         'mpi_nll_check',
     ]

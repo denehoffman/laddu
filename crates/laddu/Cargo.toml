@@ -39,7 +39,7 @@ name = "workflow_behavior_mpi_benchmarks"
 harness = false
 
 [features]
-default = ["rayon", "expression-ir"]
+default = ["rayon"]
 rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",
@@ -48,7 +48,6 @@ python = [
 ]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
 execution-context-prototype = ["laddu-core/execution-context-prototype"]
-expression-ir = ["laddu-core/expression-ir"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

@@ -85,21 +85,15 @@ Notes:
 - `wall_clock_sec` comes from the compile-cost Criterion benchmark filter.
 - staged compile numbers come from the `expression_ir_compile_probe` helper binary and are reported separately from steady-state runtime metrics.
 
-## Expression-IR backend comparisons
+## Backend comparisons
 
-Run the explicit no-default-features legacy generic benchmark group:
-
-```bash
-just --justfile crates/laddu-core/benches/Justfile backend-legacy-generic
-```
-
-Run the `expression-ir` generic backend comparison group, which reports `ir_interpreter` and `lowered` in one benchmark run:
+Run the generic backend comparison group, which reports `ir_interpreter` and `lowered` in one benchmark run:
 
 ```bash
 just --justfile crates/laddu-core/benches/Justfile backend-compare-generic
 ```
 
-Run the `expression-ir` normalization-focused backend comparison group:
+Run the normalization-focused backend comparison group:
 
 ```bash
 just --justfile crates/laddu-core/benches/Justfile backend-compare-normalization
@@ -113,7 +107,6 @@ just --justfile crates/laddu-core/benches/Justfile backend-compare-full
 
 Notes:
 
-- `backend-legacy-generic` is the explicit `--no-default-features --features rayon` baseline.
-- the `expression-ir` comparison groups keep IR planning fixed and compare interpreter vs lowered inside the feature-enabled build.
+- the comparison groups keep IR planning fixed and compare interpreter vs lowered inside the default runtime build.
 - `lowered` is the default production executor.
 - `ir_interpreter` is retained as a diagnostic and benchmark control, not as the ordinary production fallback.

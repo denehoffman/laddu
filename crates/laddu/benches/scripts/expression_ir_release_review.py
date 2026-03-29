@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble a release-review report for expression-ir benchmark artifacts."""
+"""Assemble a release-review report for the default runtime benchmark artifacts."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Assemble a release-review report for expression-ir benchmark artifacts.'
+        description='Assemble a release-review report for the default runtime benchmark artifacts.'
     )
     parser.add_argument(
         '--compile-json',
@@ -26,13 +26,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         '--cpu-json',
-        default='target/criterion/summary/benchmark_summary_cpu_expression_ir_compare.json',
-        help='Path to CPU workflow comparison JSON artifact.',
+        default='target/criterion/summary/benchmark_summary_cpu.json',
+        help='Path to CPU workflow benchmark summary JSON artifact.',
     )
     parser.add_argument(
         '--mpi-json',
-        default='target/criterion/summary/benchmark_summary_mpi_expression_ir_compare.json',
-        help='Path to MPI workflow comparison JSON artifact.',
+        default='target/criterion/summary/benchmark_summary_mpi.json',
+        help='Path to MPI workflow benchmark summary JSON artifact.',
     )
     parser.add_argument(
         '--json-out',
@@ -72,7 +72,7 @@ def memory_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def cpu_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    return list(payload.get('rows', []))
+    return list(payload.get('benchmarks', []))
 
 
 def mpi_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -146,18 +146,19 @@ def write_markdown(path: Path, payload: dict[str, Any]) -> None:
     lines.extend(
         [
             '',
-            '## Steady-State CPU Workflow Deltas',
+            '## Steady-State CPU Workflow Summary',
             '',
-            '| Benchmark ID | Time Delta % | Events/s Delta % | Gradient Evals/s Delta % |',
+            '| Benchmark ID | Typical Estimate | Events/s | Gradient Evals/s |',
             '| --- | ---: | ---: | ---: |',
         ]
     )
     lines.extend(
         (
             f'| `{row["benchmark_id"]}` | '
-            f'{fmt_pct(row.get("typical_estimate_delta_pct"))} | '
-            f'{fmt_pct(row.get("events_per_sec_delta_pct"))} | '
-            f'{fmt_pct(row.get("gradient_evals_per_sec_delta_pct"))} |'
+            f'{fmt_float(row.get("typical_estimate"))} {row.get("typical_unit", "")}'.rstrip()
+            + ' | '
+            + f'{fmt_float(row.get("events_per_sec"))} | '
+            + f'{fmt_float(row.get("gradient_evals_per_sec"))} |'
         )
         for row in payload['steady_state']['cpu_workflow']
     )
@@ -165,14 +166,14 @@ def write_markdown(path: Path, payload: dict[str, Any]) -> None:
     lines.extend(
         [
             '',
-            '## Steady-State MPI Workflow Deltas',
+            '## Steady-State MPI Workflow Summary',
             '',
-            '| Benchmark ID | Time Delta % |',
+            '| Benchmark ID | Typical Estimate (ns) |',
             '| --- | ---: |',
         ]
     )
     lines.extend(
-        f'| `{row["benchmark_id"]}` | {fmt_pct(row.get("delta_pct"))} |'
+        f'| `{row["benchmark_id"]}` | {fmt_float(row.get("typical_estimate_ns"))} |'
         for row in payload['steady_state']['mpi_workflow']
     )
 
