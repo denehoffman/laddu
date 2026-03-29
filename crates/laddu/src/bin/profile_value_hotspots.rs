@@ -40,6 +40,8 @@ enum Mode {
     BreitWignerProjectionTotal,
     BreitWignerProjectionGeneratedMc,
     KmatrixValue,
+    KmatrixDataTerm,
+    KmatrixMcTerm,
 }
 
 impl Mode {
@@ -50,6 +52,8 @@ impl Mode {
             "bw_projection_total" => Some(Self::BreitWignerProjectionTotal),
             "bw_projection_generated_mc" => Some(Self::BreitWignerProjectionGeneratedMc),
             "kmatrix_value" => Some(Self::KmatrixValue),
+            "kmatrix_data_term" => Some(Self::KmatrixDataTerm),
+            "kmatrix_mc_term" => Some(Self::KmatrixMcTerm),
             _ => None,
         }
     }
@@ -61,6 +65,8 @@ impl Mode {
             Self::BreitWignerProjectionTotal => "bw_projection_total",
             Self::BreitWignerProjectionGeneratedMc => "bw_projection_generated_mc",
             Self::KmatrixValue => "kmatrix_value",
+            Self::KmatrixDataTerm => "kmatrix_data_term",
+            Self::KmatrixMcTerm => "kmatrix_mc_term",
         }
     }
 }
@@ -171,10 +177,10 @@ fn main() {
             let ctx = build_breit_wigner_context(&args.dataset_path);
             run_breit_wigner_mode(&args, &ctx);
         }
-        Mode::KmatrixValue => {
+        Mode::KmatrixValue | Mode::KmatrixDataTerm | Mode::KmatrixMcTerm => {
             let nll = build_kmatrix_nll(&args.dataset_path, args.max_events);
             let params = deterministic_parameter_vector(nll.n_free(), -100.0);
-            run_kmatrix_value_mode(&args, &nll, &params);
+            run_kmatrix_mode(&args, &nll, &params);
         }
     }
 }
@@ -187,7 +193,9 @@ fn print_usage() {
            bw_nll_value\n\
            bw_projection_total\n\
            bw_projection_generated_mc\n\
-           kmatrix_value"
+           kmatrix_value\n\
+           kmatrix_data_term\n\
+           kmatrix_mc_term"
     );
 }
 
@@ -541,11 +549,13 @@ fn run_breit_wigner_mode(args: &Args, ctx: &BreitWignerContext) {
                 t0.elapsed(),
             );
         }
-        Mode::KmatrixValue => unreachable!("kmatrix mode handled separately"),
+        Mode::KmatrixValue | Mode::KmatrixDataTerm | Mode::KmatrixMcTerm => {
+            unreachable!("kmatrix mode handled separately")
+        }
     }
 }
 
-fn run_kmatrix_value_mode(args: &Args, nll: &NLL, params: &[f64]) {
+fn run_kmatrix_mode(args: &Args, nll: &NLL, params: &[f64]) {
     let warmup = args.warmup_iters;
     let iters = args.iterations;
     let threads = args.thread_count.unwrap_or_else(|| {
@@ -558,19 +568,25 @@ fn run_kmatrix_value_mode(args: &Args, nll: &NLL, params: &[f64]) {
         .build()
         .expect("rayon pool should build");
 
+    let run_once = || match args.mode {
+        Mode::KmatrixValue => nll
+            .evaluate(black_box(params))
+            .expect("k-matrix value should succeed"),
+        Mode::KmatrixDataTerm => nll.profile_data_term_local_value(black_box(params)),
+        Mode::KmatrixMcTerm => nll.profile_mc_term_local_value(black_box(params)),
+        Mode::BreitWignerEvaluateLocal
+        | Mode::BreitWignerNllValue
+        | Mode::BreitWignerProjectionTotal
+        | Mode::BreitWignerProjectionGeneratedMc => unreachable!("non-kmatrix mode"),
+    };
+
     for _ in 0..warmup {
-        black_box(pool.install(|| {
-            nll.evaluate(black_box(params))
-                .expect("k-matrix value should succeed")
-        }));
+        black_box(pool.install(run_once));
     }
     let mut sink = 0.0;
     let t0 = Instant::now();
     for _ in 0..iters {
-        sink += black_box(pool.install(|| {
-            nll.evaluate(black_box(params))
-                .expect("k-matrix value should succeed")
-        }));
+        sink += black_box(pool.install(run_once));
     }
     eprintln!(
         "mode={} iters={iters} warmup={warmup} threads={threads} n_events={} sink={sink} elapsed={:?}",

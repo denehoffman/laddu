@@ -1381,23 +1381,34 @@ impl NLL {
         self.project_weights_and_gradients_subset_local(parameters, names, mc_evaluator)
     }
 
+    fn evaluate_data_term_local(&self, parameters: &[f64]) -> f64 {
+        evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| f64::ln(l.re))
+    }
+
+    fn evaluate_mc_term_local(&self, parameters: &[f64]) -> f64 {
+        self.accmc_evaluator
+            .evaluate_weighted_value_sum_local(parameters)
+    }
+
+    #[doc(hidden)]
+    pub fn profile_data_term_local_value(&self, parameters: &[f64]) -> f64 {
+        self.evaluate_data_term_local(parameters)
+    }
+
+    #[doc(hidden)]
+    pub fn profile_mc_term_local_value(&self, parameters: &[f64]) -> f64 {
+        self.evaluate_mc_term_local(parameters)
+    }
+
     fn evaluate_local(&self, parameters: &[f64]) -> f64 {
-        let data_term =
-            evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
-                f64::ln(l.re)
-            });
-        let mc_term = self
-            .accmc_evaluator
-            .evaluate_weighted_value_sum_local(parameters);
+        let data_term = self.evaluate_data_term_local(parameters);
+        let mc_term = self.evaluate_mc_term_local(parameters);
         -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
     fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
-        let data_term_local =
-            evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| {
-                f64::ln(l.re)
-            });
+        let data_term_local = self.evaluate_data_term_local(parameters);
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = self
             .accmc_evaluator
