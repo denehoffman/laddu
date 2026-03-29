@@ -404,6 +404,7 @@ class NLL:
         *,
         subset: None = None,
         subsets: None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
@@ -414,6 +415,7 @@ class NLL:
         *,
         subset: str | list[str],
         subsets: None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
@@ -424,6 +426,7 @@ class NLL:
         *,
         subset: None = None,
         subsets: list[list[str] | None],
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
@@ -433,6 +436,7 @@ class NLL:
         *,
         subset: str | list[str] | None = None,
         subsets: list[list[str] | None] | None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
@@ -443,6 +447,7 @@ class NLL:
         *,
         subset: None = None,
         subsets: None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
@@ -453,6 +458,7 @@ class NLL:
         *,
         subset: str | list[str],
         subsets: None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
@@ -463,6 +469,7 @@ class NLL:
         *,
         subset: None = None,
         subsets: list[list[str] | None],
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
@@ -472,6 +479,7 @@ class NLL:
         *,
         subset: str | list[str] | None = None,
         subsets: list[list[str] | None] | None = None,
+        strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
