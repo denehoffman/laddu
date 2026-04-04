@@ -2,6 +2,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "corner",
+#     "ganesh-rs",
 #     "laddu",
 #     "loguru",
 #     "matplotlib",
@@ -14,6 +15,7 @@ import os
 import pickle
 from pathlib import Path
 
+import ganesh
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,7 +52,7 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
     def check_for_termination(
         self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = status.get_chain()[:, -1, :]
+        latest_step = status.chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
@@ -204,7 +206,7 @@ def main() -> None:
             requested_steps = 100
             excess_steps = n_steps_burned - requested_steps  # 110
             thin = 1 if excess_steps < 0 else n_steps_burned // requested_steps
-            flat_chain = ensemble.get_flat_chain(burn=int(tau * 3), thin=thin)
+            flat_chain = ensemble.chain(burn=int(tau * 3), thin=thin, flat=True)
             tot = []
             s0s = []
             d2s = []
@@ -221,9 +223,14 @@ def main() -> None:
             p0 = best.x + np.random.normal(0, scale=0.01, size=(100, len(best.x)))
             nll_clone = nll
             caco = CustomAutocorrelationTerminator(nll_clone)
-            aco = ld.AutocorrelationTerminator(n_check=10, terminate=False, verbose=True)
+            aco = ganesh.AutocorrelationTerminator(
+                n_check=10, terminate=False, verbose=True
+            )
             ensemble = nll.mcmc(
-                p0, method='ess', max_steps=30000, terminators=[caco, aco]
+                p0,
+                method='ess',
+                options=ganesh.ESSOptions(max_steps=30000),
+                terminators=[caco, aco],
             )
             tau = caco.latest_tau
             taus = aco.taus
@@ -236,11 +243,11 @@ def main() -> None:
             requested_steps = 100
             excess_steps = n_steps_burned - requested_steps  # 110
             thin = 1 if excess_steps < 0 else n_steps_burned // requested_steps
-            flat_chain = ensemble.get_flat_chain(burn=int(tau * 3), thin=thin)
+            flat_chain = ensemble.chain(burn=int(tau * 3), thin=thin, flat=True)
             with Path(f'bin_{ibin}_mcmc.pkl').open('wb') as bin_out_file:
                 pickle.dump(bin_out, bin_out_file)
 
-        chain = ensemble.get_chain(burn=int(tau * 10), thin=thin).transpose(1, 0, 2)
+        chain = ensemble.chain(burn=int(tau * 10), thin=thin).transpose(1, 0, 2)
         _, axes = plt.subplots(3, figsize=(10, 7), sharex=True)
         labels = ['$S_0^+$ real', '$D_2^+$ real', '$D_2^+$ imag']
         for i in range(3):

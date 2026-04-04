@@ -2,38 +2,32 @@ from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
 
+import ganesh
+
 from laddu.laddu import (
     NLL,
-    AdamSettings,
-    AIESMoveConfig,
-    AIESSettings,
-    AutocorrelationTerminator,
     ControlFlow,
     EnsembleStatus,
-    ESSMoveConfig,
-    ESSSettings,
-    LBFGSBSettings,
+    GradientFreeStatus,
+    GradientStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
     LikelihoodZero,
-    LineSearchConfig,
-    MCMCSummary,
-    MinimizationStatus,
-    MinimizationSummary,
-    NelderMeadSettings,
-    PSOSettings,
-    SimplexConfig,
     StochasticNLL,
     Swarm,
-    SwarmInitializerConfig,
     SwarmParticle,
+    SwarmStatus,
     Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
+
+MinimizationStatus = GradientStatus | GradientFreeStatus | SwarmStatus
+MinimizationSummary = ganesh.MinimizationSummary
+MCMCSummary = ganesh.MCMCSummary
 
 
 class MinimizationObserver(metaclass=ABCMeta):
@@ -62,21 +56,15 @@ class MCMCTerminator(metaclass=ABCMeta):
 
 __all__ = [
     'NLL',
-    'AIESMoveConfig',
-    'AIESSettings',
-    'AdamSettings',
-    'AutocorrelationTerminator',
     'ControlFlow',
-    'ESSMoveConfig',
-    'ESSSettings',
     'EnsembleStatus',
-    'LBFGSBSettings',
+    'GradientFreeStatus',
+    'GradientStatus',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodZero',
-    'LineSearchConfig',
     'MCMCObserver',
     'MCMCSummary',
     'MCMCTerminator',
@@ -84,13 +72,10 @@ __all__ = [
     'MinimizationStatus',
     'MinimizationSummary',
     'MinimizationTerminator',
-    'NelderMeadSettings',
-    'PSOSettings',
-    'SimplexConfig',
     'StochasticNLL',
     'Swarm',
-    'SwarmInitializerConfig',
     'SwarmParticle',
+    'SwarmStatus',
     'Walker',
     'integrated_autocorrelation_times',
     'likelihood_product',

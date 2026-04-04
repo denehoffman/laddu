@@ -3,6 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "docopt-ng",
+#     "ganesh-rs",
 #     "laddu",
 #     "loguru",
 #     "matplotlib",
@@ -27,6 +28,7 @@ import pickle
 from pathlib import Path
 from time import perf_counter
 
+import ganesh
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
@@ -487,8 +489,8 @@ def fit_unbinned(
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
-    ld.MinimizationSummary,
-    list[ld.MinimizationSummary],
+    ganesh.MinimizationSummary,
+    list[ganesh.MinimizationSummary],
     list[str],
 ]:
     logger.info('Starting Unbinned Fit')
@@ -543,7 +545,7 @@ def fit_unbinned(
         logger.info(f'Fitting Iteration #{iiter}')
         p0 = rng.uniform(-1000.0, 1000.0, 3)
         p0 = [p0[0], 0.8, p0[1], p0[2], 0.5]
-        fit = nll.minimize(p0, bounds=bounds)
+        fit = nll.minimize(p0, config=ganesh.LBFGSBConfig(bounds=bounds))
         if fit.fx < best_nll:
             best_nll = fit.fx
             best_fit = fit

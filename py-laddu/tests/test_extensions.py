@@ -3,25 +3,15 @@ from __future__ import annotations
 import math
 from typing import Any, cast
 
+import ganesh
 import numpy as np
 import pytest
 from laddu import (
     NLL,
-    AdamSettings,
-    AIESMoveConfig,
-    AIESSettings,
     Dataset,
-    ESSMoveConfig,
-    ESSSettings,
     Event,
-    LBFGSBSettings,
     LikelihoodScalar,
-    LineSearchConfig,
-    NelderMeadSettings,
-    PSOSettings,
     Scalar,
-    SimplexConfig,
-    SwarmInitializerConfig,
     Vec3,
     constant,
     get_threads,
@@ -39,8 +29,8 @@ _ERROR_EXPECTATIONS: dict[str, tuple[type[Exception], str]] = {
         ValueError,
         'No registered amplitude',
     ),
-    'minimize settings wrong type': (TypeError, 'LBFGSBSettings'),
-    'mcmc settings wrong type': (TypeError, 'AIESSettings'),
+    'minimize config wrong type': (TypeError, 'LBFGSBConfig-compatible'),
+    'mcmc config wrong type': (TypeError, 'AIESConfig-compatible'),
 }
 
 
@@ -75,6 +65,21 @@ def _two_parameter_nll() -> NLL:
     return NLL(expr, data, mc)
 
 
+def _assert_ganesh_summary_class(summary: object, expected_name: str) -> None:
+    assert summary.__class__.__module__ == 'ganesh'
+    assert summary.__class__.__name__ == expected_name
+
+
+def test_integrated_autocorrelation_times_shape() -> None:
+    import laddu as ld
+
+    samples = np.random.default_rng(0).normal(size=(4, 16, 3))
+    taus = ld.integrated_autocorrelation_times(samples)
+
+    assert taus.shape == (3,)
+    assert np.all(np.isfinite(taus))
+
+
 def test_python_regression_table_driven_error_paths() -> None:
     nll = _simple_scalar_nll()
     cases = [
@@ -85,10 +90,13 @@ def test_python_regression_table_driven_error_paths() -> None:
             lambda: nll.project_weights([2.0], subset='missing_amplitude', strict=True),
         ),
         (
-            'minimize settings wrong type',
-            lambda: nll.minimize([2.0], settings=cast(Any, [])),
+            'minimize config wrong type',
+            lambda: nll.minimize([2.0], config=cast(Any, [])),
         ),
-        ('mcmc settings wrong type', lambda: nll.mcmc([[2.0]], settings=cast(Any, []))),
+        (
+            'mcmc config wrong type',
+            lambda: nll.mcmc([[2.0], [2.1]], config=cast(Any, [])),
+        ),
     ]
 
     for label, fn in cases:
@@ -97,186 +105,189 @@ def test_python_regression_table_driven_error_paths() -> None:
             fn()
 
 
-def test_minimize_typed_settings_require_matching_method() -> None:
+def test_minimize_typed_config_requires_matching_method() -> None:
     nll = _simple_scalar_nll()
 
     with pytest.raises(
         TypeError,
-        match=r"settings for method 'lbfgsb' must be LBFGSBSettings or None",
+        match=r"config for method 'lbfgsb' must be LBFGSBConfig-compatible or None",
     ):
         nll.minimize(
             [2.0],
             method='lbfgsb',
-            settings=AdamSettings(alpha=0.1),
+            config=ganesh.AdamConfig(alpha=0.1),
         )
 
 
-def test_mcmc_typed_settings_require_matching_method() -> None:
+def test_mcmc_typed_config_requires_matching_method() -> None:
     nll = _simple_scalar_nll()
 
     with pytest.raises(
         TypeError,
-        match=r"settings for method 'ess' must be ESSSettings or None",
+        match=r"config for method 'ess' must be ESSConfig-compatible or None",
     ):
         nll.mcmc(
             [[2.0], [2.1]],
             method='ess',
-            settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
+            config=ganesh.AIESConfig(moves=[ganesh.AIESStretchMove(1.0)]),
         )
 
 
-def test_typed_minimize_settings_smoke() -> None:
+def test_minimize_accepts_duck_typed_ganesh_config() -> None:
+    class ConfigLike:
+        def __ganesh_config__(self) -> ganesh.LBFGSBConfig:
+            return ganesh.LBFGSBConfig(memory_limit=4)
+
+    nll = _simple_scalar_nll()
+    summary = nll.minimize(
+        [2.0],
+        method='lbfgsb',
+        config=cast(Any, ConfigLike()),
+        options=ganesh.LBFGSBOptions(max_steps=2),
+    )
+
+    _assert_ganesh_summary_class(summary, 'MinimizationSummary')
+    assert summary.parameter_names == ['scale']
+
+
+def test_mcmc_accepts_duck_typed_ganesh_init() -> None:
+    class InitLike:
+        def __ganesh_init__(self) -> ganesh.AIESInit:
+            return ganesh.AIESInit([[2.0], [2.1]])
+
+    nll = _simple_scalar_nll()
+    summary = nll.mcmc(
+        cast(Any, InitLike()),
+        method='aies',
+        options=ganesh.AIESOptions(max_steps=2),
+    )
+
+    _assert_ganesh_summary_class(summary, 'MCMCSummary')
+    assert summary.parameter_names == ['scale']
+
+
+def test_ganesh_minimize_config_options_smoke() -> None:
     nll = _two_parameter_nll()
 
     lbfgsb = nll.minimize(
         [2.0, -0.5],
         method='lbfgsb',
-        max_steps=4,
-        settings=LBFGSBSettings(
-            m=4,
-            line_search=LineSearchConfig.morethuente(max_iterations=8),
+        config=ganesh.LBFGSBConfig(
+            memory_limit=4,
+            line_search=ganesh.MoreThuenteLineSearch(max_iterations=8),
         ),
+        options=ganesh.LBFGSBOptions(max_steps=4),
     )
     adam = nll.minimize(
         [2.0, -0.5],
         method='adam',
-        max_steps=4,
-        settings=AdamSettings(alpha=0.05, patience=2),
+        config=ganesh.AdamConfig(alpha=0.05),
+        options=ganesh.AdamOptions(
+            max_steps=4,
+            ema=ganesh.AdamEMATerminator(patience=2),
+        ),
+    )
+    conjugate_gradient = nll.minimize(
+        [2.0, -0.5],
+        method='conjugate-gradient',
+        config=ganesh.ConjugateGradientConfig(),
+        options=ganesh.ConjugateGradientOptions(max_steps=4),
+    )
+    trust_region = nll.minimize(
+        [2.0, -0.5],
+        method='trust-region',
+        config=ganesh.TrustRegionConfig(),
+        options=ganesh.TrustRegionOptions(max_steps=4),
     )
     nelder_mead = nll.minimize(
-        [2.0, -0.5],
+        ganesh.NelderMeadInit(
+            construction_method=ganesh.OrthogonalSimplex([2.0, -0.5], simplex_size=0.25),
+        ),
         method='nelder-mead',
-        max_steps=4,
-        settings=NelderMeadSettings(
-            simplex=SimplexConfig.orthogonal(simplex_size=0.25),
-            expansion_method='greedyexpansion',
-            f_terminator='absolute',
-            x_terminator='diameter',
+        config=ganesh.NelderMeadConfig(expansion_method='greedy_expansion'),
+        options=ganesh.NelderMeadOptions(
+            max_steps=4,
+            f_terminators=ganesh.NelderMeadAbsoluteFTerminator(),
+            x_terminators=ganesh.NelderMeadDiameterXTerminator(),
         ),
     )
     pso = nll.minimize(
-        [2.0, -0.5],
-        method='pso',
-        max_steps=2,
-        settings=PSOSettings(
-            SwarmInitializerConfig.random_in_limits([(0.0, 3.0), (-2.0, 2.0)], 4),
-            omega=0.7,
-            c1=0.2,
-            c2=0.2,
+        ganesh.PSOInit(
+            np.array(
+                [
+                    [2.25, -0.5],
+                    [1.75, -0.75],
+                    [2.5, 0.0],
+                    [1.5, -0.25],
+                ],
+                dtype=np.float64,
+            )
         ),
+        method='pso',
+        config=ganesh.PSOConfig(
+            bounds=[(0.0, 3.0), (-2.0, 2.0)], omega=0.7, c1=0.2, c2=0.2
+        ),
+        options=ganesh.PSOOptions(max_steps=2),
     )
 
-    for summary in (lbfgsb, adam, nelder_mead, pso):
+    for summary in (
+        lbfgsb,
+        adam,
+        conjugate_gradient,
+        trust_region,
+        nelder_mead,
+        pso,
+    ):
+        _assert_ganesh_summary_class(summary, 'MinimizationSummary')
         assert summary.parameter_names == ['alpha', 'beta']
         assert summary.x.shape == (2,)
 
 
-def test_simplex_custom_accepts_numpy_array() -> None:
+def test_nelder_mead_custom_simplex_accepts_numpy_array() -> None:
     nll = _two_parameter_nll()
 
     summary = nll.minimize(
-        [2.0, -0.5],
-        method='nelder-mead',
-        max_steps=4,
-        settings=NelderMeadSettings(
-            simplex=SimplexConfig.custom(
+        ganesh.NelderMeadInit(
+            construction_method=ganesh.CustomSimplex(
                 np.array(
                     [
+                        [2.0, -0.5],
                         [2.25, -0.5],
                         [2.0, -0.25],
                     ],
                     dtype=np.float64,
                 )
-            ),
-            expansion_method='greedyexpansion',
-            f_terminator='absolute',
-            x_terminator='diameter',
+            )
         ),
+        method='nelder-mead',
+        options=ganesh.NelderMeadOptions(max_steps=4),
     )
 
     assert summary.parameter_names == ['alpha', 'beta']
     assert summary.x.shape == (2,)
 
 
-def test_swarm_initializer_custom_accepts_numpy_array() -> None:
+def test_pso_init_accepts_numpy_array() -> None:
     nll = _two_parameter_nll()
 
     summary = nll.minimize(
-        [2.0, -0.5],
-        method='pso',
-        max_steps=2,
-        settings=PSOSettings(
-            SwarmInitializerConfig.custom(
-                np.array(
-                    [
-                        [2.25, -0.5],
-                        [1.75, -0.75],
-                        [2.5, 0.0],
-                    ],
-                    dtype=np.float64,
-                )
-            ),
-            omega=0.7,
-            c1=0.2,
-            c2=0.2,
+        ganesh.PSOInit(
+            np.array(
+                [
+                    [2.25, -0.5],
+                    [1.75, -0.75],
+                    [2.5, 0.0],
+                ],
+                dtype=np.float64,
+            )
         ),
+        method='pso',
+        config=ganesh.PSOConfig(omega=0.7, c1=0.2, c2=0.2),
+        options=ganesh.PSOOptions(max_steps=2),
     )
 
     assert summary.parameter_names == ['alpha', 'beta']
     assert summary.x.shape == (2,)
-
-
-@pytest.mark.parametrize(
-    ('factory', 'argument_name', 'payload', 'message'),
-    [
-        (
-            SimplexConfig.custom,
-            'simplex',
-            np.array([1.0, 2.0], dtype=np.float64),
-            'simplex must be a 2D numpy.ndarray, got 1D',
-        ),
-        (
-            SwarmInitializerConfig.custom,
-            'swarm',
-            np.array([1.0, 2.0], dtype=np.float64),
-            'swarm must be a 2D numpy.ndarray, got 1D',
-        ),
-        (
-            SimplexConfig.custom,
-            'simplex',
-            np.array([[1, 2], [3, 4]], dtype=np.int64),
-            'simplex numpy.ndarray must have dtype float64, got int64',
-        ),
-        (
-            SwarmInitializerConfig.custom,
-            'swarm',
-            np.array([[1, 2], [3, 4]], dtype=np.int64),
-            'swarm numpy.ndarray must have dtype float64, got int64',
-        ),
-    ],
-)
-def test_custom_payload_rejects_non_matrix_numpy_arrays(
-    factory: Any, argument_name: str, payload: np.ndarray[Any, Any], message: str
-) -> None:
-    with pytest.raises(TypeError, match=message):
-        factory(payload)
-
-
-@pytest.mark.parametrize(
-    ('factory', 'argument_name'),
-    [
-        (SimplexConfig.custom, 'simplex'),
-        (SwarmInitializerConfig.custom, 'swarm'),
-    ],
-)
-def test_custom_payload_rejects_ragged_nested_sequences(
-    factory: Any, argument_name: str
-) -> None:
-    with pytest.raises(
-        TypeError,
-        match=rf'{argument_name} nested sequences must form a rectangular 2D matrix',
-    ):
-        factory([[1.0, 2.0], [3.0]])
 
 
 def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
@@ -285,14 +296,18 @@ def test_minimize_method_and_line_search_aliases_match_canonical() -> None:
     canonical = nll.minimize(
         [2.0],
         method='lbfgsb',
-        max_steps=4,
-        settings=LBFGSBSettings(line_search=LineSearchConfig.morethuente()),
+        config=ganesh.LBFGSBConfig(
+            line_search=ganesh.MoreThuenteLineSearch(),
+        ),
+        options=ganesh.LBFGSBOptions(max_steps=4),
     )
     alias = nll.minimize(
         [2.0],
         method=cast(Any, 'L-BFGS-B'),
-        max_steps=4,
-        settings=LBFGSBSettings(line_search=LineSearchConfig.morethuente()),
+        config=ganesh.LBFGSBConfig(
+            line_search=ganesh.MoreThuenteLineSearch(),
+        ),
+        options=ganesh.LBFGSBOptions(max_steps=4),
     )
 
     np.testing.assert_allclose([alias.fx], [canonical.fx], equal_nan=True)
@@ -306,14 +321,14 @@ def test_mcmc_method_alias_matches_canonical_shape() -> None:
     canonical = nll.mcmc(
         [[2.0], [2.1]],
         method='aies',
-        max_steps=2,
-        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
+        config=ganesh.AIESConfig(moves=[ganesh.AIESStretchMove(1.0)]),
+        options=ganesh.AIESOptions(max_steps=2),
     )
     alias = nll.mcmc(
         [[2.0], [2.1]],
         method=cast(Any, 'A I E S'),
-        max_steps=2,
-        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0)]),
+        config=ganesh.AIESConfig(moves=[ganesh.AIESStretchMove(1.0)]),
+        options=ganesh.AIESOptions(max_steps=2),
     )
 
     assert alias.dimension == canonical.dimension
@@ -327,49 +342,46 @@ def test_minimize_method_typo_still_raises_value_error() -> None:
         nll.minimize([2.0], method=cast(Any, 'lbgfsb'))
 
 
-def test_typed_mcmc_settings_smoke() -> None:
+def test_ganesh_mcmc_config_options_smoke() -> None:
     nll = _simple_scalar_nll()
 
     aies = nll.mcmc(
         [[2.0], [2.1]],
         method='aies',
-        max_steps=2,
-        settings=AIESSettings(moves=[AIESMoveConfig.stretch(1.0, a=3.0)]),
+        config=ganesh.AIESConfig(moves=[ganesh.AIESStretchMove(1.0, a=3.0)]),
+        options=ganesh.AIESOptions(max_steps=2),
     )
     ess = nll.mcmc(
-        [[2.0], [2.1]],
+        [[2.0], [2.1], [1.9]],
         method='ess',
-        max_steps=2,
-        settings=ESSSettings(
-            moves=[ESSMoveConfig.global_(1.0, scale=1.5, n_components=2)],
+        config=ganesh.ESSConfig(
+            moves=[ganesh.ESSGlobalMove(1.0, scale=1.5, n_components=2)],
             n_adaptive=1,
             mu=1.1,
         ),
+        options=ganesh.ESSOptions(max_steps=2),
     )
 
     assert aies.parameter_names == ['scale']
     assert ess.parameter_names == ['scale']
+    _assert_ganesh_summary_class(aies, 'MCMCSummary')
+    _assert_ganesh_summary_class(ess, 'MCMCSummary')
 
 
-def test_pso_requires_explicit_typed_settings() -> None:
-    nll = _two_parameter_nll()
-
-    with pytest.raises(
-        TypeError,
-        match=r"settings for method 'pso' must be PSOSettings or None",
-    ):
-        nll.minimize([2.0, -0.5], method='pso', settings=None)
-
-
-def test_typed_sampler_defaults_construct_and_run() -> None:
+def test_ganesh_sampler_defaults_construct_and_run() -> None:
     nll = _simple_scalar_nll()
 
-    aies = nll.mcmc([[2.0], [2.1]], method='aies', max_steps=2, settings=AIESSettings())
+    aies = nll.mcmc(
+        [[2.0], [2.1]],
+        method='aies',
+        config=ganesh.AIESConfig(),
+        options=ganesh.AIESOptions(max_steps=2),
+    )
     ess = nll.mcmc(
         [[2.0], [2.1], [1.9], [2.2]],
         method='ess',
-        max_steps=2,
-        settings=ESSSettings(),
+        config=ganesh.ESSConfig(),
+        options=ganesh.ESSOptions(max_steps=2),
     )
 
     assert aies.dimension[2] == 1

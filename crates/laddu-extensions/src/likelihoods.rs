@@ -32,10 +32,9 @@ use mpi::{
 use parking_lot::Mutex;
 
 #[cfg(feature = "python")]
-use crate::ganesh_ext::py_ganesh::{
-    mcmc_settings_from_python, minimization_settings_from_python, PyMCMCSummary,
-    PyMinimizationSummary,
-};
+use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
+#[cfg(feature = "python")]
+use ganesh::python::IntoPySummary;
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyEvaluator, PyExpression},
@@ -67,14 +66,6 @@ fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduRe
             expected: n_events,
             actual: batch_size,
         });
-    }
-    Ok(())
-}
-
-#[cfg(feature = "python")]
-fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> LadduResult<()> {
-    for walker in walkers {
-        validate_free_parameter_len(walker.len(), expected_len)?;
     }
     Ok(())
 }
@@ -2795,23 +2786,23 @@ impl PyNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial values for the free parameters (length ``n_free``)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
+    ///     array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : LBFGSBSettings or AdamSettings or NelderMeadSettings or PSOSettings, optional
-    ///     Typed settings for the selected minimization algorithm. The settings type must
-    ///     match ``method``. For ``pso``, explicit settings are required.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -2820,7 +2811,7 @@ impl PyNLL {
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -2830,19 +2821,9 @@ impl PyNLL {
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``LBFGSBSettings`` with ``method="lbfgsb"``, ``AdamSettings`` with ``method="adam"``,
-    /// ``NelderMeadSettings`` with ``method="nelder-mead"``, and ``PSOSettings`` with
-    /// ``method="pso"``.
-    ///
-    /// Nested typed helpers are also explicit:
-    ///
-    /// - ``LBFGSBSettings(line_search=LineSearchConfig.morethuente(...))``
-    /// - ``NelderMeadSettings(simplex=SimplexConfig.orthogonal(...))``
-    /// - ``PSOSettings(SwarmInitializerConfig.random_in_limits(...), ...)``
-    ///
-    /// ``PSOSettings`` is required for ``method="pso"`` because the swarm initializer must be
-    /// provided explicitly.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -2857,33 +2838,33 @@ impl PyNLL {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize(
+    fn minimize<'py>(
         &self,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let result = self.0.minimize(minimization_settings_from_python(
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            self.0.as_ref(),
             &p0,
-            bounds,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMinimizationSummary(result))
+        )?
+        .to_py_class(py)
     }
 
     /// Run an MCMC algorithm on the free parameters of the NLL's model
@@ -2893,22 +2874,22 @@ impl PyNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : AIESSettings or ESSSettings, optional
-    ///     Typed settings for the selected sampler. The settings type must match ``method``.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -2931,17 +2912,19 @@ impl PyNLL {
     ///
     /// Examples
     /// --------
-    /// >>> nll.mcmc([[0.0, 0.5]], method='ess', max_steps=512)  # doctest: +SKIP
+    /// >>> import ganesh
+    /// >>> nll.mcmc(
+    /// ...     [[0.0, 0.5], [0.1, 0.6]],
+    /// ...     method='ess',
+    /// ...     options=ganesh.ESSOptions(max_steps=512),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``AIESSettings`` with ``method="aies"`` and ``ESSSettings`` with ``method="ess"``.
-    ///
-    /// Sampler moves are also declared explicitly:
-    ///
-    /// - ``AIESSettings(moves=[AIESMoveConfig.stretch(...), AIESMoveConfig.walk(...)])``
-    /// - ``ESSSettings(moves=[ESSMoveConfig.differential(...), ESSMoveConfig.global_(...)])``
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -2949,33 +2932,33 @@ impl PyNLL {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc(
+    fn mcmc<'py>(
         &self,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let result = self.0.mcmc(mcmc_settings_from_python(
-            &p0.into_iter().map(DVector::from_vec).collect(),
-            bounds,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            self.0.as_ref(),
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+        )?
+        .to_py_class(py)
     }
 }
 
@@ -3014,23 +2997,23 @@ impl PyStochasticNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
+    ///     array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : LBFGSBSettings or AdamSettings or NelderMeadSettings or PSOSettings, optional
-    ///     Typed settings for the selected minimization algorithm. The settings type must
-    ///     match ``method``. For ``pso``, explicit settings are required.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -3039,7 +3022,7 @@ impl PyStochasticNLL {
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -3049,19 +3032,9 @@ impl PyStochasticNLL {
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``LBFGSBSettings`` with ``method="lbfgsb"``, ``AdamSettings`` with ``method="adam"``,
-    /// ``NelderMeadSettings`` with ``method="nelder-mead"``, and ``PSOSettings`` with
-    /// ``method="pso"``.
-    ///
-    /// Nested typed helpers are also explicit:
-    ///
-    /// - ``LBFGSBSettings(line_search=LineSearchConfig.morethuente(...))``
-    /// - ``NelderMeadSettings(simplex=SimplexConfig.orthogonal(...))``
-    /// - ``PSOSettings(SwarmInitializerConfig.random_in_limits(...), ...)``
-    ///
-    /// ``PSOSettings`` is required for ``method="pso"`` because the swarm initializer must be
-    /// provided explicitly.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -3076,33 +3049,33 @@ impl PyStochasticNLL {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize(
+    fn minimize<'py>(
         &self,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let result = self.0.minimize(minimization_settings_from_python(
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            &self.0,
             &p0,
-            bounds,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMinimizationSummary(result))
+        )?
+        .to_py_class(py)
     }
     /// Run an MCMC algorithm on the free parameters of the StochasticNLL's model
     ///
@@ -3111,22 +3084,22 @@ impl PyStochasticNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : AIESSettings or ESSSettings, optional
-    ///     Typed settings for the selected sampler. The settings type must match ``method``.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -3149,18 +3122,19 @@ impl PyStochasticNLL {
     ///
     /// Examples
     /// --------
+    /// >>> import ganesh
     /// >>> s_nll = nll.to_stochastic(batch_size=2048, seed=1234)  # doctest: +SKIP
-    /// >>> s_nll.mcmc([[0.0, 0.5]], max_steps=1024)  # doctest: +SKIP
+    /// >>> s_nll.mcmc(
+    /// ...     [[0.0, 0.5], [0.1, 0.6]],
+    /// ...     options=ganesh.AIESOptions(max_steps=1024),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``AIESSettings`` with ``method="aies"`` and ``ESSSettings`` with ``method="ess"``.
-    ///
-    /// Sampler moves are also declared explicitly:
-    ///
-    /// - ``AIESSettings(moves=[AIESMoveConfig.stretch(...), AIESMoveConfig.walk(...)])``
-    /// - ``ESSSettings(moves=[ESSMoveConfig.differential(...), ESSMoveConfig.global_(...)])``
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -3168,33 +3142,33 @@ impl PyStochasticNLL {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc(
+    fn mcmc<'py>(
         &self,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let result = self.0.mcmc(mcmc_settings_from_python(
-            &p0.into_iter().map(DVector::from_vec).collect(),
-            bounds,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+        )?
+        .to_py_class(py)
     }
 }
 
@@ -4111,23 +4085,23 @@ impl PyLikelihoodEvaluator {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
+    ///     array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : LBFGSBSettings or AdamSettings or NelderMeadSettings or PSOSettings, optional
-    ///     Typed settings for the selected minimization algorithm. The settings type must
-    ///     match ``method``. For ``pso``, explicit settings are required.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -4136,7 +4110,7 @@ impl PyLikelihoodEvaluator {
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -4145,23 +4119,18 @@ impl PyLikelihoodEvaluator {
     ///
     /// Examples
     /// --------
-    /// >>> s_nll.minimize([1.0, 0.1], method='adam', max_steps=500)  # doctest: +SKIP
+    /// >>> import ganesh
+    /// >>> evaluator.minimize(
+    /// ...     [1.0],
+    /// ...     method='lbfgsb',
+    /// ...     options=ganesh.LBFGSBOptions(max_steps=150),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``LBFGSBSettings`` with ``method="lbfgsb"``, ``AdamSettings`` with ``method="adam"``,
-    /// ``NelderMeadSettings`` with ``method="nelder-mead"``, and ``PSOSettings`` with
-    /// ``method="pso"``.
-    ///
-    /// Nested typed helpers are also explicit:
-    ///
-    /// - ``LBFGSBSettings(line_search=LineSearchConfig.morethuente(...))``
-    /// - ``NelderMeadSettings(simplex=SimplexConfig.orthogonal(...))``
-    /// - ``PSOSettings(SwarmInitializerConfig.random_in_limits(...), ...)``
-    ///
-    /// ``PSOSettings`` is required for ``method="pso"`` because the swarm initializer must be
-    /// provided explicitly.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -4176,33 +4145,33 @@ impl PyLikelihoodEvaluator {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn minimize(
+    fn minimize<'py>(
         &self,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        validate_free_parameter_len(p0.len(), self.0.n_free())?;
-        let result = self.0.minimize(minimization_settings_from_python(
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            &self.0,
             &p0,
-            bounds,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMinimizationSummary(result))
+        )?
+        .to_py_class(py)
     }
     /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
     ///
@@ -4211,22 +4180,22 @@ impl PyLikelihoodEvaluator {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : AIESSettings or ESSSettings, optional
-    ///     Typed settings for the selected sampler. The settings type must match ``method``.
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
     ///     The number of threads to use (setting this to ``0`` uses the current global or
     ///     context-managed default; any positive value overrides that default for this call
@@ -4249,29 +4218,25 @@ impl PyLikelihoodEvaluator {
     ///
     /// Examples
     /// --------
-    /// >>> expr = likelihood_sum([LikelihoodScalar('scale')])  # doctest: +SKIP
-    /// >>> evaluator = expr.load()  # doctest: +SKIP
-    /// >>> evaluator.minimize([1.0], method='pso', max_steps=150)  # doctest: +SKIP
-    ///
-    /// Examples
-    /// --------
     /// >>> from laddu import LikelihoodScalar, likelihood_sum
+    /// >>> import ganesh
     /// >>> evaluator = likelihood_sum([LikelihoodScalar('alpha')]).load()
-    /// >>> summary = evaluator.mcmc([[0.0], [0.4]], max_steps=4, method='aies')
+    /// >>> summary = evaluator.mcmc(
+    /// ...     [[0.0], [0.4]],
+    /// ...     method='aies',
+    /// ...     options=ganesh.AIESOptions(max_steps=4),
+    /// ... )
     /// >>> summary.dimension[2]
     /// 1
-    /// >>> summary.get_flat_chain().shape[1]
+    /// >>> summary.chain(flat=True).shape[1]
     /// 1
     ///
     /// Notes
     /// -----
-    /// ``settings`` is a typed configuration object rather than a dictionary. Use
-    /// ``AIESSettings`` with ``method="aies"`` and ``ESSSettings`` with ``method="ess"``.
-    ///
-    /// Sampler moves are also declared explicitly:
-    ///
-    /// - ``AIESSettings(moves=[AIESMoveConfig.stretch(...), AIESMoveConfig.walk(...)])``
-    /// - ``ESSSettings(moves=[ESSMoveConfig.differential(...), ESSMoveConfig.global_(...)])``
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -4279,33 +4244,33 @@ impl PyLikelihoodEvaluator {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
-    fn mcmc(
+    fn mcmc<'py>(
         &self,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        py: Python<'py>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'_, PyAny>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        validate_mcmc_parameter_len(&p0, self.0.n_free())?;
-        let result = self.0.mcmc(mcmc_settings_from_python(
-            &p0.into_iter().map(DVector::from_vec).collect(),
-            bounds,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
             method,
-            settings.as_ref(),
+            config.as_ref(),
+            options.as_ref(),
             observers,
             terminators,
-            max_steps,
-            debug,
             threads,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+        )?
+        .to_py_class(py)
     }
 }
 

@@ -165,13 +165,20 @@ Finally, let's run the fit. By default, we will be using the L-BFGS-B algorithm,
 
 .. code:: python
 
-   status = nll.minimize([100.0, 100.0, 100.0, 0.100, 0.100], bounds=[(None, None), (None, None), (None, None), (0.001, 0.4), (0.001, 0.4)])
+   import ganesh
 
-The ``status`` object contains a lot of information about the fit result, particularly we can check ``status.converged`` to see if the fit was successful, ``status.x`` to see the best position, ``status.err`` to get uncertainties, and ``status.fx`` to view the negative log-likelihood. We can also print it all out at once:
+   result = nll.minimize(
+       [100.0, 100.0, 100.0, 0.100, 0.100],
+       config=ganesh.LBFGSBConfig(
+           bounds=[(None, None), (None, None), (None, None), (0.001, 0.4), (0.001, 0.4)]
+       ),
+   )
+
+The ``result`` object is a Ganesh minimization summary. In particular, we can check ``result.success`` to see if the fit was successful, ``result.x`` to see the best position, ``result.std`` to get uncertainties when available, and ``result.fx`` to view the negative log-likelihood. We can also print it all out at once:
 
 .. code:: python
 
-   print(status)
+   print(result)
 
 .. code::
 
@@ -196,7 +203,7 @@ Now that we have the fitted free parameters, we can plot the result by calculati
 .. code:: python
 
    tot_weights, f0_weights, f2_weights = nll.project_weights(
-       status.x,
+       result.x,
        subsets=[
            None,
            ["[f_0(1500)]", "BW_0", "Z00+"],
@@ -274,7 +281,7 @@ To create an ``Evaluator`` object, we just need to load up the model and dataset
 
    gen_eval = model.load(genmc_ds)
    tot_weights_acc, f0_weights_acc, f2_weights_acc = nll.project_weights(
-       status.x,
+       result.x,
        subsets=[
            None,
            ["[f_0(1500)]", "BW_0", "Z00+"],
@@ -321,8 +328,8 @@ Finally, we might want to save this fit result and refer back to it in the futur
 
 .. code:: python
 
-   status.save_as("fit_result.pkl")
-   # This saves the status to a file called "fit_result.pkl"
+   result.save_as("fit_result.pkl")
+   # This saves the minimization summary to a file called "fit_result.pkl"
 
    saved_status = Status.load("fit_result.pkl")
    # Now we've loaded that fit result again

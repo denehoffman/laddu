@@ -38,7 +38,7 @@ serde-pickle = { workspace = true }
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-python = ["laddu-python", "pyo3", "numpy"]
+python = ["laddu-python", "pyo3", "numpy", "ganesh/python"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]

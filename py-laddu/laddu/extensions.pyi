@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Literal, overload
 
+import ganesh
 import numpy as np
 import numpy.typing as npt
 from typing_extensions import TypeAlias
@@ -18,6 +19,11 @@ def likelihood_product(
 ) -> LikelihoodExpression: ...
 def LikelihoodOne() -> LikelihoodExpression: ...
 def LikelihoodZero() -> LikelihoodExpression: ...
+def integrated_autocorrelation_times(
+    samples: Sequence[Sequence[Sequence[float]]] | npt.ArrayLike,
+    *,
+    c: float | None = None,
+) -> npt.NDArray[np.float64]: ...
 
 class LikelihoodExpression:
     parameters: list[str]
@@ -34,7 +40,7 @@ class LikelihoodExpression:
     def __mul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
     def __rmul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
 
-class MinimizationStatus:
+class GradientStatus:
     x: npt.NDArray[np.float64]
     fx: float
     message: str
@@ -44,41 +50,24 @@ class MinimizationStatus:
     cov: npt.NDArray[np.float64] | None
     hess: npt.NDArray[np.float64] | None
     converged: bool
-    swarm: Swarm | None
 
-class MinimizationSummary:
-    bounds: list[tuple[float, float]] | None
-    parameter_names: list[str] | None
-    message: str
-    x0: npt.NDArray[np.float64]
+class GradientFreeStatus:
     x: npt.NDArray[np.float64]
-    std: npt.NDArray[np.float64]
     fx: float
-    cost_evals: int
-    gradient_evals: int
-    converged: bool
-    covariance: npt.NDArray[np.float64]
-
-    def __getstate__(self) -> object: ...
-    def __setstate__(self, state: object) -> None: ...
-
-class MCMCSummary:
-    bounds: list[tuple[float, float]] | None
-    parameter_names: list[str] | None
     message: str
-    cost_evals: int
-    gradient_evals: int
+    err: npt.NDArray[np.float64] | None
+    n_f_evals: int
+    cov: npt.NDArray[np.float64] | None
+    hess: npt.NDArray[np.float64] | None
     converged: bool
-    dimension: tuple[int, int, int]
 
-    def get_chain(
-        self, *, burn: int | None = None, thin: int | None = None
-    ) -> npt.NDArray[np.float64]: ...
-    def get_flat_chain(
-        self, *, burn: int | None = None, thin: int | None = None
-    ) -> npt.NDArray[np.float64]: ...
-    def __getstate__(self) -> object: ...
-    def __setstate__(self, state: object) -> None: ...
+class SwarmStatus:
+    x: npt.NDArray[np.float64]
+    fx: float
+    message: str
+    n_f_evals: int
+    converged: bool
+    swarm: Swarm
 
 class EnsembleStatus:
     message: str
@@ -131,145 +120,34 @@ class MCMCTerminator(metaclass=ABCMeta):
     @abstractmethod
     def check_for_termination(self, step: int, status: EnsembleStatus) -> ControlFlow: ...
 
-class LineSearchConfig:
-    @staticmethod
-    def morethuente(
-        *,
-        max_iterations: int | None = None,
-        max_zoom: int | None = None,
-        c1: float | None = None,
-        c2: float | None = None,
-    ) -> LineSearchConfig: ...
-    @staticmethod
-    def hagerzhang(
-        *,
-        max_iterations: int | None = None,
-        max_bisects: int | None = None,
-        delta: float | None = None,
-        sigma: float | None = None,
-        epsilon: float | None = None,
-        theta: float | None = None,
-        gamma: float | None = None,
-    ) -> LineSearchConfig: ...
+MinimizationStatus: TypeAlias = GradientStatus | GradientFreeStatus | SwarmStatus
+MinimizationSummary: TypeAlias = ganesh.MinimizationSummary
+MCMCSummary: TypeAlias = ganesh.MCMCSummary
 
-class SimplexConfig:
-    @staticmethod
-    def scaled_orthogonal(
-        *, orthogonal_multiplier: float = 1.05, orthogonal_zero_step: float = 0.00025
-    ) -> SimplexConfig: ...
-    @staticmethod
-    def orthogonal(*, simplex_size: float = 1.0) -> SimplexConfig: ...
-    @staticmethod
-    def custom(simplex: list[list[float]] | npt.ArrayLike) -> SimplexConfig: ...
-
-class SwarmInitializerConfig:
-    @staticmethod
-    def random_in_limits(
-        bounds: Sequence[tuple[float, float]], n_particles: int
-    ) -> SwarmInitializerConfig: ...
-    @staticmethod
-    def latin_hypercube(
-        bounds: Sequence[tuple[float, float]], n_particles: int
-    ) -> SwarmInitializerConfig: ...
-    @staticmethod
-    def custom(swarm: list[list[float]] | npt.ArrayLike) -> SwarmInitializerConfig: ...
-
-class AIESMoveConfig:
-    @staticmethod
-    def stretch(weight: float, *, a: float = 2.0) -> AIESMoveConfig: ...
-    @staticmethod
-    def walk(weight: float) -> AIESMoveConfig: ...
-
-class ESSMoveConfig:
-    @staticmethod
-    def differential(weight: float) -> ESSMoveConfig: ...
-    @staticmethod
-    def gaussian(weight: float) -> ESSMoveConfig: ...
-    @staticmethod
-    def global_(
-        weight: float,
-        *,
-        scale: float | None = None,
-        rescale_cov: float | None = None,
-        n_components: int | None = None,
-    ) -> ESSMoveConfig: ...
-
-class LBFGSBSettings:
-    def __init__(
-        self,
-        *,
-        m: int | None = None,
-        skip_hessian: bool = False,
-        line_search: LineSearchConfig | None = None,
-        eps_f: float | None = None,
-        eps_g: float | None = None,
-        eps_norm_g: float | None = None,
-    ) -> None: ...
-
-class AdamSettings:
-    def __init__(
-        self,
-        *,
-        alpha: float | None = None,
-        beta_1: float | None = None,
-        beta_2: float | None = None,
-        epsilon: float | None = None,
-        beta_c: float | None = None,
-        eps_loss: float | None = None,
-        patience: int | None = None,
-    ) -> None: ...
-
-class NelderMeadSettings:
-    def __init__(
-        self,
-        *,
-        simplex: SimplexConfig | None = None,
-        alpha: float | None = None,
-        beta: float | None = None,
-        gamma: float | None = None,
-        delta: float | None = None,
-        adaptive: bool = False,
-        expansion_method: Literal['greedyminimization', 'greedyexpansion'] | None = None,
-        eps_f: float | None = None,
-        f_terminator: Literal['amoeba', 'absolute', 'stddev'] | None = None,
-        eps_x: float | None = None,
-        x_terminator: Literal['diameter', 'higham', 'rowan', 'singer'] | None = None,
-    ) -> None: ...
-
-class PSOSettings:
-    def __init__(
-        self,
-        initializer: SwarmInitializerConfig,
-        *,
-        swarm_topology: Literal['global', 'ring'] = 'global',
-        swarm_update_method: Literal[
-            'sync', 'synchronous', 'async', 'asynchronous'
-        ] = 'sync',
-        swarm_boundary_method: Literal['inf', 'shr'] = 'inf',
-        use_transform: bool = False,
-        swarm_velocity_bounds: Sequence[tuple[float, float]] | None = None,
-        omega: float | None = None,
-        c1: float | None = None,
-        c2: float | None = None,
-    ) -> None: ...
-
-class AIESSettings:
-    def __init__(self, *, moves: Sequence[AIESMoveConfig] | None = None) -> None: ...
-
-class ESSSettings:
-    def __init__(
-        self,
-        *,
-        moves: Sequence[ESSMoveConfig] | None = None,
-        n_adaptive: int | None = None,
-        mu: float | None = None,
-        max_steps: int | None = None,
-    ) -> None: ...
-
-MinimizerSettings: TypeAlias = (
-    LBFGSBSettings | AdamSettings | NelderMeadSettings | PSOSettings
+MinimizerConfig: TypeAlias = (
+    ganesh.LBFGSBConfig
+    | ganesh.AdamConfig
+    | ganesh.ConjugateGradientConfig
+    | ganesh.TrustRegionConfig
+    | ganesh.NelderMeadConfig
+    | ganesh.PSOConfig
 )
-SamplerSettings: TypeAlias = AIESSettings | ESSSettings
+MinimizerOptions: TypeAlias = (
+    ganesh.LBFGSBOptions
+    | ganesh.AdamOptions
+    | ganesh.ConjugateGradientOptions
+    | ganesh.TrustRegionOptions
+    | ganesh.NelderMeadOptions
+    | ganesh.PSOOptions
+)
+SamplerConfig: TypeAlias = ganesh.AIESConfig | ganesh.ESSConfig
+SamplerOptions: TypeAlias = ganesh.AIESOptions | ganesh.ESSOptions
+MinimizerInit: TypeAlias = (
+    list[float] | npt.ArrayLike | ganesh.NelderMeadInit | ganesh.PSOInit
+)
+SamplerInit: TypeAlias = (
+    list[list[float]] | npt.ArrayLike | ganesh.AIESInit | ganesh.ESSInit
+)
 
 class LikelihoodEvaluator:
     parameters: list[str]
@@ -291,70 +169,60 @@ class LikelihoodEvaluator:
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
         self,
-        p0: list[float] | npt.ArrayLike,
+        p0: MinimizerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
-        method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: MinimizerSettings | None = None,
+        method: Literal[
+            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+        ] = 'lbfgsb',
+        config: MinimizerConfig | None = None,
+        options: MinimizerOptions | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
         | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
         threads: int = 0,
-    ) -> MinimizationSummary: ...
+    ) -> ganesh.MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.ArrayLike,
+        p0: SamplerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: SamplerSettings | None = None,
+        config: SamplerConfig | None = None,
+        options: SamplerOptions | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
-        terminators: MCMCTerminator
-        | AutocorrelationTerminator
-        | Sequence[MCMCTerminator | AutocorrelationTerminator]
-        | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
+        terminators: MCMCTerminator | Sequence[MCMCTerminator] | None = None,
         threads: int = 0,
-    ) -> MCMCSummary: ...
+    ) -> ganesh.MCMCSummary: ...
 
 class StochasticNLL:
     nll: NLL
 
     def minimize(
         self,
-        p0: list[float] | npt.ArrayLike,
+        p0: MinimizerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
-        method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: MinimizerSettings | None = None,
+        method: Literal[
+            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+        ] = 'lbfgsb',
+        config: MinimizerConfig | None = None,
+        options: MinimizerOptions | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
         | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
         threads: int = 0,
-    ) -> MinimizationSummary: ...
+    ) -> ganesh.MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.ArrayLike,
+        p0: SamplerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: SamplerSettings | None = None,
+        config: SamplerConfig | None = None,
+        options: SamplerOptions | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
-        terminators: MCMCTerminator
-        | AutocorrelationTerminator
-        | Sequence[MCMCTerminator | AutocorrelationTerminator]
-        | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
+        terminators: MCMCTerminator | Sequence[MCMCTerminator] | None = None,
         threads: int = 0,
-    ) -> MCMCSummary: ...
+    ) -> ganesh.MCMCSummary: ...
 
 class NLL:
     parameters: list[str]
@@ -485,74 +353,44 @@ class NLL:
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
     def minimize(
         self,
-        p0: list[float] | npt.ArrayLike,
+        p0: MinimizerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
-        method: Literal['lbfgsb', 'nelder-mead', 'adam', 'pso'] = 'lbfgsb',
-        settings: MinimizerSettings | None = None,
+        method: Literal[
+            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+        ] = 'lbfgsb',
+        config: MinimizerConfig | None = None,
+        options: MinimizerOptions | None = None,
         observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
         terminators: MinimizationTerminator
         | Sequence[MinimizationTerminator]
         | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
         threads: int = 0,
-    ) -> MinimizationSummary: ...
+    ) -> ganesh.MinimizationSummary: ...
     def mcmc(
         self,
-        p0: list[list[float]] | npt.ArrayLike,
+        p0: SamplerInit,
         *,
-        bounds: Sequence[tuple[float | None, float | None]] | None = None,
         method: Literal['aies', 'ess'] = 'aies',
-        settings: SamplerSettings | None = None,
+        config: SamplerConfig | None = None,
+        options: SamplerOptions | None = None,
         observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
-        terminators: MCMCTerminator
-        | AutocorrelationTerminator
-        | Sequence[MCMCTerminator | AutocorrelationTerminator]
-        | None = None,
-        max_steps: int | None = None,
-        debug: bool = False,
+        terminators: MCMCTerminator | Sequence[MCMCTerminator] | None = None,
         threads: int = 0,
-    ) -> MCMCSummary: ...
+    ) -> ganesh.MCMCSummary: ...
 
 def LikelihoodScalar(name: str) -> LikelihoodExpression: ...
 
-class AutocorrelationTerminator:
-    taus: npt.NDArray[np.float64]
-
-    def __init__(
-        self,
-        *,
-        n_check: int = 50,
-        n_taus_threshold: int = 50,
-        dtau_threshold: float = 0.01,
-        discard: float = 0.5,
-        terminate: bool = True,
-        c: float = 7.0,
-        verbose: bool = False,
-    ) -> None: ...
-
-def integrated_autocorrelation_times(
-    samples: npt.ArrayLike, *, c: float | None = None
-) -> npt.NDArray[np.float64]: ...
-
 __all__ = [
     'NLL',
-    'AIESMoveConfig',
-    'AIESSettings',
-    'AdamSettings',
-    'AutocorrelationTerminator',
     'ControlFlow',
-    'ESSMoveConfig',
-    'ESSSettings',
     'EnsembleStatus',
-    'LBFGSBSettings',
+    'GradientFreeStatus',
+    'GradientStatus',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodZero',
-    'LineSearchConfig',
     'MCMCObserver',
     'MCMCSummary',
     'MCMCTerminator',
@@ -560,15 +398,11 @@ __all__ = [
     'MinimizationStatus',
     'MinimizationSummary',
     'MinimizationTerminator',
-    'NelderMeadSettings',
-    'PSOSettings',
-    'SimplexConfig',
     'StochasticNLL',
     'Swarm',
-    'SwarmInitializerConfig',
     'SwarmParticle',
+    'SwarmStatus',
     'Walker',
-    'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',
 ]
