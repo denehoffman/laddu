@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use criterion::{black_box, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use laddu::{
     amplitudes::{
         breit_wigner::BreitWigner,
@@ -836,12 +838,10 @@ fn io_open_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-fn main() {
-    let mut criterion = Criterion::default().sample_size(120).configure_from_args();
-    breit_wigner_partial_wave_benchmarks(&mut criterion);
-    moment_analysis_benchmarks(&mut criterion);
-    kmatrix_nll_thread_scaling_benchmarks(&mut criterion);
-    cached_evaluator_and_precompute_runtime_benchmarks(&mut criterion);
-    io_open_benchmarks(&mut criterion);
-    criterion.final_summary();
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(120).configure_from_args();
+    targets = breit_wigner_partial_wave_benchmarks, moment_analysis_benchmarks, kmatrix_nll_thread_scaling_benchmarks, cached_evaluator_and_precompute_runtime_benchmarks, io_open_benchmarks
 }
+
+criterion_main!(benches);

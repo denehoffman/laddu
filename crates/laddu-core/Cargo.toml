@@ -53,6 +53,7 @@ harness = false
 [[bench]]
 name = "execution_context_benchmark"
 harness = false
+required-features = ["execution-context-prototype"]
 
 [[bench]]
 name = "expression_ir_benchmarks"

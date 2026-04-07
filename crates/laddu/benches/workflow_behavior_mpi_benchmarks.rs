@@ -1,6 +1,3 @@
-#[cfg(not(feature = "mpi"))]
-fn main() {}
-
 #[cfg(feature = "mpi")]
 mod mpi_benches {
     use std::sync::Arc;

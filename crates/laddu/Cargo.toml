@@ -37,6 +37,7 @@ harness = false
 [[bench]]
 name = "workflow_behavior_mpi_benchmarks"
 harness = false
+required-features = ["mpi"]
 
 [features]
 default = ["rayon"]
