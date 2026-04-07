@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yamloom import (
+    Concurrency,
     Environment,
     Events,
     Job,
@@ -504,6 +505,10 @@ benchmark_workflow = Workflow(
             ],
             name='Run Benchmarks',
             runs_on='ubuntu-latest',
+            concurrency=Concurrency(
+                group=f'CodSpeed-Benchmarks-{context.github.ref}',
+                cancel_in_progress=False,
+            ),
         )
     },
 )

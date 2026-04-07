@@ -16,6 +16,9 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    concurrency:
+      group: CodSpeed-Benchmarks-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
