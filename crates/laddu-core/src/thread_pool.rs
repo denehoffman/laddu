@@ -156,7 +156,9 @@ impl ThreadPoolManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{ThreadExecutor, ThreadPoolManager};
+    #[cfg(feature = "rayon")]
+    use super::ThreadExecutor;
+    use super::ThreadPoolManager;
 
     use std::sync::{Mutex, MutexGuard};
 
