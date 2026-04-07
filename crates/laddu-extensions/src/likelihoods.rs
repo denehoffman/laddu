@@ -1,9 +1,11 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
+
+#[cfg(feature = "rayon")]
+use std::cell::RefCell;
 
 use crate::RngSubsetExtension;
 use accurate::{sum::Klein, traits::*};
@@ -1683,6 +1685,7 @@ impl NLL {
     fn evaluate_data_gradient_term_local(&self, parameters: &[f64]) -> DVector<f64> {
         let data_resources = self.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {
@@ -2036,6 +2039,7 @@ impl StochasticNLL {
     ) -> DVector<f64> {
         let data_resources = self.nll.data_evaluator.resources.read();
         let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
         let data_scratch_key = GradientScratchKey {

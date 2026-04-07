@@ -23,7 +23,9 @@ use num::complex::Complex64;
 use parking_lot::Mutex;
 
 use crate::thread_pool::ThreadExecutor;
-use crate::{LadduError, LadduResult};
+#[cfg(not(feature = "rayon"))]
+use crate::LadduError;
+use crate::LadduResult;
 
 /// Thread-policy options for [`ExecutionContext`].
 ///
@@ -167,6 +169,7 @@ impl ExecutionContext {
 
         let executor = match thread_policy {
             ThreadPolicy::Single | ThreadPolicy::GlobalPool => ThreadExecutor::default(),
+            #[allow(unused_variables)]
             ThreadPolicy::Dedicated(n_threads) => {
                 #[cfg(feature = "rayon")]
                 {

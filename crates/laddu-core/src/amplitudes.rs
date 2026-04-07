@@ -195,14 +195,16 @@ impl From<ExpressionDependence> for ir::DependenceClass {
     }
 }
 
+#[cfg(feature = "execution-context-prototype")]
+use crate::ExecutionContext;
+#[cfg(all(feature = "execution-context-prototype", feature = "rayon"))]
+use crate::ThreadPolicy;
 use crate::{
     data::{Dataset, DatasetMetadata, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
 };
-#[cfg(feature = "execution-context-prototype")]
-use crate::{ExecutionContext, ThreadPolicy};
 
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
@@ -2059,6 +2061,7 @@ impl Evaluator {
     }
 
     #[cfg(feature = "execution-context-prototype")]
+    #[allow(dead_code)]
     #[inline]
     fn evaluate_cache_value_gradient_with_scratch(
         &self,

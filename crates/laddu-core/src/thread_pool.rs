@@ -10,7 +10,9 @@ use std::sync::{
 #[cfg(feature = "rayon")]
 use parking_lot::RwLock;
 
-use crate::{LadduError, LadduResult};
+#[cfg(feature = "rayon")]
+use crate::LadduError;
+use crate::LadduResult;
 
 static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -53,6 +55,7 @@ impl ThreadExecutor {
     }
 
     /// Execute work using this executor.
+    #[allow(dead_code)]
     #[cfg(not(feature = "rayon"))]
     pub(crate) fn install<R>(&self, op: impl FnOnce() -> R) -> R {
         op()
