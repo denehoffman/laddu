@@ -2087,6 +2087,7 @@ impl Evaluator {
         )
     }
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn evaluate_cache_gradient_with_flat_scratch(
         &self,
         amplitude_values: &mut [Complex64],
@@ -2116,6 +2117,7 @@ impl Evaluator {
         )
     }
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn evaluate_cache_value_gradient_with_flat_scratch(
         &self,
         amplitude_values: &mut [Complex64],
@@ -2373,7 +2375,6 @@ impl Evaluator {
             return state
                 .values
                 .iter()
-                .cloned()
                 .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
                     mul_node_index: descriptor.mul_node_index,
                     parameter_node_index: descriptor.parameter_node_index,
@@ -2479,7 +2480,6 @@ impl Evaluator {
             state
                 .values
                 .iter()
-                .cloned()
                 .map(|descriptor| {
                     let parameter_gradient = gradient_slots
                         .get(descriptor.parameter_node_index)
@@ -2734,7 +2734,7 @@ impl Evaluator {
                 let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
                 self.fill_amplitude_values(
                     &mut amplitude_values,
-                    &cached_parameter_indices,
+                    cached_parameter_indices,
                     &parameters,
                     cache,
                 );
@@ -2771,7 +2771,7 @@ impl Evaluator {
                     |(amplitude_values, value_slots), (cache, event)| {
                         self.fill_amplitude_values(
                             amplitude_values,
-                            &residual_active_indices,
+                            residual_active_indices,
                             &parameters,
                             cache,
                         );
@@ -3709,7 +3709,7 @@ impl Evaluator {
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            return resources
+            resources
                 .caches
                 .par_iter()
                 .map_init(
@@ -3735,7 +3735,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect();
+                .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -3945,7 +3945,7 @@ impl Evaluator {
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            return indices
+            indices
                 .par_iter()
                 .map_init(
                     || {
@@ -3971,7 +3971,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect();
+                .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -4057,7 +4057,7 @@ impl Evaluator {
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            return resources
+            resources
                 .caches
                 .par_iter()
                 .map_init(
@@ -4083,7 +4083,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect();
+                .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -4217,7 +4217,7 @@ impl Evaluator {
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            return indices
+            indices
                 .par_iter()
                 .map_init(
                     || {
@@ -4243,7 +4243,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect();
+                .collect()
         }
         #[cfg(not(feature = "rayon"))]
         {

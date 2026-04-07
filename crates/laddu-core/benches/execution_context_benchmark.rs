@@ -1,20 +1,27 @@
-use std::{sync::Arc, time::Duration};
-
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+#[cfg(feature = "execution-context-prototype")]
+use criterion::{black_box, BatchSize, BenchmarkId};
+use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(feature = "execution-context-prototype")]
 use laddu_core::{
     amplitudes::TestAmplitude,
     data::{read_parquet, DatasetReadOptions},
-    parameter, Dataset, Evaluator,
+    parameter, Dataset, Evaluator, ExecutionContext, ThreadPolicy,
 };
 #[cfg(feature = "execution-context-prototype")]
-use laddu_core::{ExecutionContext, ThreadPolicy};
+use std::{sync::Arc, time::Duration};
 
+#[cfg(feature = "execution-context-prototype")]
 const BENCH_DATASET_PATH: &str = "benches/bench.parquet";
+#[cfg(feature = "execution-context-prototype")]
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
+#[cfg(feature = "execution-context-prototype")]
 const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
+#[cfg(feature = "execution-context-prototype")]
 const PARAMS: [f64; 2] = [1.25, -0.75];
+#[cfg(feature = "execution-context-prototype")]
 const TIERS: [(&str, usize); 2] = [("tiny", 256), ("full", usize::MAX)];
 
+#[cfg(feature = "execution-context-prototype")]
 fn load_bench_dataset() -> Arc<Dataset> {
     read_parquet(
         BENCH_DATASET_PATH,
@@ -25,6 +32,7 @@ fn load_bench_dataset() -> Arc<Dataset> {
     .expect("benchmark dataset should open")
 }
 
+#[cfg(feature = "execution-context-prototype")]
 fn dataset_tier(dataset: &Arc<Dataset>, max_events: usize) -> Arc<Dataset> {
     if max_events >= dataset.events_local().len() {
         return dataset.clone();
@@ -38,6 +46,7 @@ fn dataset_tier(dataset: &Arc<Dataset>, max_events: usize) -> Arc<Dataset> {
     Arc::new(Dataset::new_with_metadata(events, dataset.metadata_arc()))
 }
 
+#[cfg(feature = "execution-context-prototype")]
 fn build_test_evaluator(dataset: &Arc<Dataset>) -> Evaluator {
     let expression = TestAmplitude::new("ctx_probe", parameter("ctx_re"), parameter("ctx_im"))
         .expect("test amplitude should construct")

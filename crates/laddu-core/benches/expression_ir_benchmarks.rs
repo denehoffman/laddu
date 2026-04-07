@@ -279,12 +279,7 @@ fn build_real_unary_expression() -> Expression {
     let cache =
         CacheOnlyScalar::new("real_unary_cache").expect("real unary cache factor should construct");
 
-    let expression = &amp0.norm_sqr()
-        + &amp0.real()
-        + &amp0.imag()
-        + &amp1.norm_sqr()
-        + &(&cache * &amp1.real());
-    expression
+    &amp0.norm_sqr() + &amp0.real() + &amp0.imag() + &amp1.norm_sqr() + &(&cache * &amp1.real())
 }
 fn activation_churn_isolate_names(kind: ScenarioKind) -> &'static [&'static str] {
     match kind {

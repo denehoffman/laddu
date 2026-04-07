@@ -1539,6 +1539,7 @@ impl ControlledExpansionPass {
             }
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn rewrite_node(
             node_index: usize,
             old_nodes: &[IrNode],
@@ -1550,6 +1551,7 @@ impl ControlledExpansionPass {
             max_expansions: usize,
             max_nodes: usize,
         ) -> IrValueId {
+            #[allow(clippy::too_many_arguments)]
             fn rewrite_binary_mul(
                 left: usize,
                 right: usize,

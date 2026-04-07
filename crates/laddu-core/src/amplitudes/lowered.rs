@@ -298,9 +298,9 @@ fn optimize_instruction_sequence(
     let mut remap = vec![usize::MAX; kept.len()];
     let mut compact_instructions = Vec::new();
     for (old_dst, instruction) in kept.into_iter().enumerate() {
-        if instruction.is_some() {
+        if let Some(instruction) = instruction {
             remap[old_dst] = compact_instructions.len();
-            compact_instructions.push(instruction.expect("checked is_some above"));
+            compact_instructions.push(instruction);
         }
     }
     let compact_root = remap[root_dst];
