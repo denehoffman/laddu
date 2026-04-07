@@ -495,7 +495,7 @@ def test_nll_project_weights_subsets_matches_repeated_subset_projection() -> Non
 
     batched = nll.project_weights(params, subsets=subsets)
     repeated = [nll.project_weights(params, subset=subset).tolist() for subset in subsets]
-    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+    for batched_row, repeated_row in zip(batched.tolist(), repeated, strict=False):
         assert batched_row == pytest.approx(repeated_row)
 
 
@@ -520,7 +520,7 @@ def test_nll_project_weights_subsets_handles_empty_and_duplicate_subsets() -> No
     ]
     batched = nll.project_weights(params, subsets=subsets)
     repeated = [nll.project_weights(params, subset=subset).tolist() for subset in subsets]
-    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+    for batched_row, repeated_row in zip(batched.tolist(), repeated, strict=False):
         assert batched_row == pytest.approx(repeated_row)
 
 
@@ -542,7 +542,7 @@ def test_nll_project_weights_subsets_allow_none_for_total_projection() -> None:
         nll.project_weights(params, subset=['amp_a', 'amp_b']).tolist(),
     ]
     assert batched.shape == (len(subsets), 2)
-    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+    for batched_row, repeated_row in zip(batched.tolist(), repeated, strict=False):
         assert batched_row == pytest.approx(repeated_row)
 
 
@@ -571,7 +571,7 @@ def test_nll_project_weights_subsets_default_skips_missing_names() -> None:
     ]
 
     assert batched.shape == (len(subsets), 2)
-    for batched_row, repeated_row in zip(batched.tolist(), repeated):
+    for batched_row, repeated_row in zip(batched.tolist(), repeated, strict=False):
         assert batched_row == pytest.approx(repeated_row)
 
 

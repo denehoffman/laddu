@@ -1,9 +1,9 @@
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import TypeAlias
 
 from .data import Dataset
 

@@ -34,9 +34,10 @@ def main() -> None:
     metrics_path = run_dir / f'rank_{rank}.json'
 
     start = time.perf_counter()
-    with stdout_path.open('w', encoding='utf-8') as stdout_f, stderr_path.open(
-        'w', encoding='utf-8'
-    ) as stderr_f:
+    with (
+        stdout_path.open('w', encoding='utf-8') as stdout_f,
+        stderr_path.open('w', encoding='utf-8') as stderr_f,
+    ):
         proc = subprocess.run(
             args.command,
             shell=True,

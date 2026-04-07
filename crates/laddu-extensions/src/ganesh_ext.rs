@@ -177,11 +177,19 @@ pub mod py_ganesh {
     use super::*;
 
     use ganesh::{
-        algorithms::mcmc::integrated_autocorrelation_times,
+        algorithms::{
+            gradient_free::{
+                CMAESConfig, CMAESInit, DifferentialEvolution, DifferentialEvolutionConfig,
+                DifferentialEvolutionInit, CMAES,
+            },
+            mcmc::integrated_autocorrelation_times,
+        },
         core::CtrlCAbortSignal,
         python::{
             PyAIESOptions as GaneshPyAIESOptions, PyAdamOptions as GaneshPyAdamOptions,
+            PyCMAESOptions as GaneshPyCMAESOptions,
             PyConjugateGradientOptions as GaneshPyConjugateGradientOptions,
+            PyDifferentialEvolutionOptions as GaneshPyDifferentialEvolutionOptions,
             PyESSOptions as GaneshPyESSOptions, PyEnsembleStatus as GaneshPyEnsembleStatus,
             PyGradientFreeStatus as GaneshPyGradientFreeStatus,
             PyGradientStatus as GaneshPyGradientStatus, PyLBFGSBOptions as GaneshPyLBFGSBOptions,
@@ -473,6 +481,62 @@ pub mod py_ganesh {
                     DVector::from_vec(init),
                     config,
                     callbacks,
+                )
+                .map_err(PyErr::from)
+            }
+            "cmaes" => {
+                let init = p0.extract::<CMAESInit>()?;
+                let mut config = config
+                    .map(|c| c.extract::<CMAESConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyCMAESOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                let mut callbacks = parsed_options.build_callbacks();
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                run_minimizer::<CMAES, _, GradientFreeStatus>(
+                    problem, threads, init, config, callbacks,
+                )
+                .map_err(PyErr::from)
+            }
+            "differential-evolution" => {
+                let init = p0.extract::<DifferentialEvolutionInit>()?;
+                let mut config = config
+                    .map(|c| c.extract::<DifferentialEvolutionConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyDifferentialEvolutionOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                let mut callbacks = parsed_options.build_callbacks();
+                for observer in observers {
+                    callbacks = callbacks.with_observer(observer);
+                }
+                for terminator in terminators {
+                    callbacks = callbacks.with_terminator(terminator);
+                }
+                callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
+                run_minimizer::<DifferentialEvolution, _, GradientFreeStatus>(
+                    problem, threads, init, config, callbacks,
                 )
                 .map_err(PyErr::from)
             }

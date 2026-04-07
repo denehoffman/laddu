@@ -16,15 +16,12 @@ wheel-exclude = ["*.so", "*.pyd", "*.dll", "*.dylib", "*.lib"]
 
 [project]
 name = "laddu"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Rust",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
   "Development Status :: 4 - Beta",
-  "Programming Language :: Python :: 3.7",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -38,7 +35,7 @@ readme = "README.md"
 dependencies = [
   "laddu-cpu == 0.15.0", # x-release-please-version # WARNING: DO NOT EDIT
   "numpy",
-  "ganesh-rs == 0.26.3",
+  "ganesh-rs == 0.27.0",
 ]
 
 [project.urls]

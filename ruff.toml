@@ -1,4 +1,4 @@
-target-version = "py37"
+target-version = "py310"
 indent-width = 4
 line-length = 90
 fix = true

@@ -1,27 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Iterable as _Iterable
+from collections.abc import Iterator as _Iterator
+from collections.abc import Mapping as _Mapping
+from collections.abc import Sequence as _Sequence
 from dataclasses import dataclass as _dataclass
 from pathlib import Path as _Path
 from typing import (
     TYPE_CHECKING as _TYPE_CHECKING,
 )
 from typing import (
-    Iterable as _Iterable,
-)
-from typing import (
-    Iterator as _Iterator,
-)
-from typing import (
     Literal as _Literal,
 )
 from typing import (
-    Mapping as _Mapping,
-)
-from typing import (
     Protocol as _Protocol,
-)
-from typing import (
-    Sequence as _Sequence,
 )
 from typing import (
     TypeAlias as _TypeAlias,

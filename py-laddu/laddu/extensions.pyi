@@ -1,12 +1,11 @@
 from abc import ABCMeta, abstractmethod
 from collections.abc import Sequence
 from enum import Enum
-from typing import Literal, overload
+from typing import Literal, TypeAlias, overload
 
 import ganesh
 import numpy as np
 import numpy.typing as npt
-from typing_extensions import TypeAlias
 
 from laddu.amplitudes import Evaluator, Expression
 from laddu.data import Dataset
@@ -77,6 +76,8 @@ MinimizerConfig: TypeAlias = (
     | ganesh.ConjugateGradientConfig
     | ganesh.TrustRegionConfig
     | ganesh.NelderMeadConfig
+    | ganesh.CMAESConfig
+    | ganesh.DifferentialEvolutionConfig
     | ganesh.PSOConfig
 )
 MinimizerOptions: TypeAlias = (
@@ -85,12 +86,19 @@ MinimizerOptions: TypeAlias = (
     | ganesh.ConjugateGradientOptions
     | ganesh.TrustRegionOptions
     | ganesh.NelderMeadOptions
+    | ganesh.CMAESOptions
+    | ganesh.DifferentialEvolutionOptions
     | ganesh.PSOOptions
 )
 SamplerConfig: TypeAlias = ganesh.AIESConfig | ganesh.ESSConfig
 SamplerOptions: TypeAlias = ganesh.AIESOptions | ganesh.ESSOptions
 MinimizerInit: TypeAlias = (
-    list[float] | npt.ArrayLike | ganesh.NelderMeadInit | ganesh.PSOInit
+    list[float]
+    | npt.ArrayLike
+    | ganesh.NelderMeadInit
+    | ganesh.CMAESInit
+    | ganesh.DifferentialEvolutionInit
+    | ganesh.PSOInit
 )
 SamplerInit: TypeAlias = (
     list[list[float]] | npt.ArrayLike | ganesh.AIESInit | ganesh.ESSInit
@@ -119,7 +127,14 @@ class LikelihoodEvaluator:
         p0: MinimizerInit,
         *,
         method: Literal[
-            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+            'lbfgsb',
+            'adam',
+            'conjugate-gradient',
+            'trust-region',
+            'nelder-mead',
+            'cma-es',
+            'differential-evolution',
+            'pso',
         ] = 'lbfgsb',
         config: MinimizerConfig | None = None,
         options: MinimizerOptions | None = None,
@@ -149,7 +164,14 @@ class StochasticNLL:
         p0: MinimizerInit,
         *,
         method: Literal[
-            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+            'lbfgsb',
+            'adam',
+            'conjugate-gradient',
+            'trust-region',
+            'nelder-mead',
+            'cma-es',
+            'differential-evolution',
+            'pso',
         ] = 'lbfgsb',
         config: MinimizerConfig | None = None,
         options: MinimizerOptions | None = None,
@@ -303,7 +325,14 @@ class NLL:
         p0: MinimizerInit,
         *,
         method: Literal[
-            'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'
+            'lbfgsb',
+            'adam',
+            'conjugate-gradient',
+            'trust-region',
+            'nelder-mead',
+            'cma-es',
+            'differential-evolution',
+            'pso',
         ] = 'lbfgsb',
         config: MinimizerConfig | None = None,
         options: MinimizerOptions | None = None,

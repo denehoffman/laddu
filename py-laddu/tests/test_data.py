@@ -1048,7 +1048,7 @@ def test_dataset_from_amptools_matches_native_vectors() -> None:
         native_event = native[idx]
         amp_vectors = list(amp_event.p4s.values())
         native_vectors = list(native_event.p4s.values())
-        for amp_vec, native_vec in zip(amp_vectors, native_vectors):
+        for amp_vec, native_vec in zip(amp_vectors, native_vectors, strict=False):
             _assert_vec4_close(amp_vec, native_vec)
         assert pytest.approx(amp_event.weight) == native_event.weight
 

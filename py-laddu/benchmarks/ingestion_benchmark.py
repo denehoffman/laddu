@@ -8,9 +8,10 @@ import statistics
 import subprocess
 import sys
 import tracemalloc
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, TypedDict
+from typing import Any, TypedDict
 
 import laddu.io as ldio
 import numpy as np

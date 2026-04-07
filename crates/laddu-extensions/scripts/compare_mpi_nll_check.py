@@ -71,7 +71,7 @@ def compare(
         if not close(local.value, mpi.value, rel_tol, abs_tol):
             msg = f"value mismatch for case '{name}': local={local.value} mpi={mpi.value}"
             raise RuntimeError(msg)
-        for i, (lv, mv) in enumerate(zip(local.gradient, mpi.gradient)):
+        for i, (lv, mv) in enumerate(zip(local.gradient, mpi.gradient, strict=False)):
             if not close(lv, mv, rel_tol, abs_tol):
                 msg = f"gradient[{i}] mismatch for case '{name}': local={lv} mpi={mv}"
                 raise RuntimeError(msg)

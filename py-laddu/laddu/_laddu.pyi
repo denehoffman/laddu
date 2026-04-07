@@ -1,5 +1,6 @@
 import os
-from typing import Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt

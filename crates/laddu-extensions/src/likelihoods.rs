@@ -2786,12 +2786,13 @@ impl PyNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
     ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
     ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
-    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
-    ///     array or ``ganesh.PSOInit`` for ``pso``.
-    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
     /// config : ganesh config object, optional
     ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
@@ -2997,12 +2998,13 @@ impl PyStochasticNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
     ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
     ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
-    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
-    ///     array or ``ganesh.PSOInit`` for ``pso``.
-    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
     /// config : ganesh config object, optional
     ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
@@ -4085,12 +4087,13 @@ impl PyLikelihoodEvaluator {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
     ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
     ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
-    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; and either a 2D swarm
-    ///     array or ``ganesh.PSOInit`` for ``pso``.
-    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'pso'}
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
     /// config : ganesh config object, optional
     ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
