@@ -1,4 +1,4 @@
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager as AbstractContextManager
 
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from .amplitudes import (
@@ -37,10 +37,6 @@ from .extensions import (
     MinimizationSummary,
     MinimizationTerminator,
     StochasticNLL,
-    Swarm,
-    SwarmParticle,
-    SwarmStatus,
-    Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
@@ -105,13 +101,9 @@ __all__ = [
     'Polarization',
     'Scalar',
     'StochasticNLL',
-    'Swarm',
-    'SwarmParticle',
-    'SwarmStatus',
     'Topology',
     'Vec3',
     'Vec4',
-    'Walker',
     'Ylm',
     'Zero',
     'Zlm',

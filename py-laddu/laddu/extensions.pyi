@@ -40,21 +40,6 @@ class LikelihoodExpression:
     def __mul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
     def __rmul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
 
-class Swarm:
-    particles: list[SwarmParticle]
-
-class SwarmParticle:
-    x: npt.NDArray[np.float64]
-    fx: float
-    x_best: npt.NDArray[np.float64]
-    fx_best: float
-    velocity: npt.NDArray[np.float64]
-
-class Walker:
-    dimension: tuple[int, int]
-
-    def get_latest(self) -> tuple[npt.NDArray[np.float64], float]: ...
-
 class ControlFlow(Enum):
     Continue = 0
     Break = 1
@@ -361,10 +346,7 @@ __all__ = [
     'MinimizationSummary',
     'MinimizationTerminator',
     'StochasticNLL',
-    'Swarm',
-    'SwarmParticle',
     'SwarmStatus',
-    'Walker',
     'likelihood_product',
     'likelihood_sum',
 ]

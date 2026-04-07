@@ -1,8 +1,9 @@
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-from typing import Protocol, cast
+from collections.abc import Iterator as _Iterator
+from contextlib import contextmanager as _contextmanager
+from typing import Protocol as _Protocol
+from typing import cast as _cast
 
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
@@ -32,10 +33,6 @@ from .extensions import (
     MinimizationSummary,
     MinimizationTerminator,
     StochasticNLL,
-    Swarm,
-    SwarmParticle,
-    SwarmStatus,
-    Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
@@ -55,7 +52,7 @@ from .utils.variables import (
 from .utils.vectors import Vec3, Vec4
 
 
-class _BackendProtocol(Protocol):
+class _BackendProtocol(_Protocol):
     __doc__: str | None
 
     def version(self) -> str: ...
@@ -67,7 +64,7 @@ class _BackendProtocol(Protocol):
     def set_threads(self, n_threads: int) -> None: ...
 
 
-_laddu = cast('_BackendProtocol', _backend_module)
+_laddu = _cast('_BackendProtocol', _backend_module)
 
 __doc__: str | None = _laddu.__doc__
 __version__: str = _laddu.version()
@@ -76,8 +73,8 @@ get_threads = _laddu.get_threads
 set_threads = _laddu.set_threads
 
 
-@contextmanager
-def threads(n_threads: int) -> Iterator[None]:
+@_contextmanager
+def threads(n_threads: int) -> _Iterator[None]:
     """Temporarily override the global default thread count within a ``with`` block."""
     previous = get_threads()
     set_threads(n_threads)
@@ -127,13 +124,9 @@ __all__ = [
     'Polarization',
     'Scalar',
     'StochasticNLL',
-    'Swarm',
-    'SwarmParticle',
-    'SwarmStatus',
     'Topology',
     'Vec3',
     'Vec4',
-    'Walker',
     'Ylm',
     'Zero',
     'Zlm',

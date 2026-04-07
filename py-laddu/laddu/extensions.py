@@ -1,6 +1,7 @@
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta as _ABCMeta
+from abc import abstractmethod as _abstractmethod
 
 import ganesh
 
@@ -13,9 +14,6 @@ from laddu.laddu import (
     LikelihoodScalar,
     LikelihoodZero,
     StochasticNLL,
-    Swarm,
-    SwarmParticle,
-    Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
@@ -30,26 +28,26 @@ MinimizationSummary = ganesh.MinimizationSummary
 MCMCSummary = ganesh.MCMCSummary
 
 
-class MinimizationObserver(metaclass=ABCMeta):
-    @abstractmethod
+class MinimizationObserver(metaclass=_ABCMeta):
+    @_abstractmethod
     def observe(self, step: int, status: MinimizationStatus) -> None:
         pass
 
 
-class MinimizationTerminator(metaclass=ABCMeta):
-    @abstractmethod
+class MinimizationTerminator(metaclass=_ABCMeta):
+    @_abstractmethod
     def check_for_termination(self, step: int, status: MinimizationStatus) -> ControlFlow:
         pass
 
 
-class MCMCObserver(metaclass=ABCMeta):
-    @abstractmethod
+class MCMCObserver(metaclass=_ABCMeta):
+    @_abstractmethod
     def observe(self, step: int, status: EnsembleStatus) -> None:
         pass
 
 
-class MCMCTerminator(metaclass=ABCMeta):
-    @abstractmethod
+class MCMCTerminator(metaclass=_ABCMeta):
+    @_abstractmethod
     def check_for_termination(self, step: int, status: EnsembleStatus) -> ControlFlow:
         pass
 
@@ -73,10 +71,7 @@ __all__ = [
     'MinimizationSummary',
     'MinimizationTerminator',
     'StochasticNLL',
-    'Swarm',
-    'SwarmParticle',
     'SwarmStatus',
-    'Walker',
     'integrated_autocorrelation_times',
     'likelihood_product',
     'likelihood_sum',

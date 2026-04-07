@@ -14,7 +14,7 @@ use ganesh::{
             nelder_mead::NelderMeadInit, GradientFreeStatus, NelderMead, NelderMeadConfig,
         },
         mcmc::{aies::AIESInit, ess::ESSInit, AIESConfig, ESSConfig, EnsembleStatus, AIES, ESS},
-        particles::{PSOConfig, Swarm, SwarmStatus, PSO},
+        particles::{PSOConfig, SwarmStatus, PSO},
     },
     core::{Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, Observer, Status},
@@ -177,10 +177,7 @@ pub mod py_ganesh {
     use super::*;
 
     use ganesh::{
-        algorithms::{
-            mcmc::{integrated_autocorrelation_times, Walker},
-            particles::SwarmParticle,
-        },
+        algorithms::mcmc::integrated_autocorrelation_times,
         core::CtrlCAbortSignal,
         python::{
             PyAIESOptions as GaneshPyAIESOptions, PyAdamOptions as GaneshPyAdamOptions,
@@ -659,88 +656,6 @@ pub mod py_ganesh {
         }
     }
 
-    /// A swarm of particles used in particle swarm optimization.
-    ///
-    #[pyclass(name = "Swarm", module = "laddu")]
-    pub struct PySwarm(Swarm);
-
-    #[pymethods]
-    impl PySwarm {
-        /// The particles in the swarm.
-        ///
-        /// Returns
-        /// -------
-        /// list of SwarmParticle
-        ///
-        #[getter]
-        fn particles(&self) -> Vec<PySwarmParticle> {
-            self.0
-                .get_particles()
-                .into_iter()
-                .map(PySwarmParticle)
-                .collect()
-        }
-    }
-
-    /// A particle in a swarm used in particle swarm optimization.
-    ///
-    #[pyclass(name = "SwarmParticle", module = "laddu")]
-    pub struct PySwarmParticle(SwarmParticle);
-
-    #[pymethods]
-    impl PySwarmParticle {
-        /// The position of the particle.
-        ///
-        /// Returns
-        /// -------
-        /// array_like
-        ///
-        #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.position.x.as_slice().to_pyarray(py)
-        }
-        /// The evaluation of the objective function at the particle's position.
-        ///
-        /// Returns
-        /// -------
-        /// float
-        ///
-        #[getter]
-        fn fx(&self) -> f64 {
-            self.0.position.fx.unwrap_or(f64::NAN)
-        }
-        /// The best position found by the particle.
-        ///
-        /// Returns
-        /// -------
-        /// array_like
-        ///
-        #[getter]
-        fn x_best<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.best.x.as_slice().to_pyarray(py)
-        }
-        /// The evaluation of the objective function at the particle's best position.
-        ///
-        /// Returns
-        /// -------
-        /// float
-        ///
-        #[getter]
-        fn fx_best(&self) -> f64 {
-            self.0.best.fx.unwrap_or(f64::NAN)
-        }
-        /// The velocity vector of the particle.
-        ///
-        /// Returns
-        /// -------
-        /// array_like
-        ///
-        #[getter]
-        fn velocity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.velocity.as_slice().to_pyarray(py)
-        }
-    }
-
     /// An enum used by a terminator to continue or stop an algorithm.
     ///
     #[pyclass(eq, eq_int, name = "ControlFlow", module = "laddu", from_py_object)]
@@ -949,33 +864,6 @@ pub mod py_ganesh {
                 Ok(cf.into())
             })
             .expect("call to 'check_for_termination' has failed!")
-        }
-    }
-
-    /// A walker in an MCMC ensemble.
-    ///
-    #[pyclass(name = "Walker", module = "laddu")]
-    pub struct PyWalker(pub Walker);
-
-    #[pymethods]
-    impl PyWalker {
-        /// The dimension of the walker's space (n_steps, n_variables)
-        ///
-        /// Returns
-        /// -------
-        /// tuple of int
-        #[getter]
-        fn dimension(&self) -> (usize, usize) {
-            self.0.dimension()
-        }
-        /// Retrieve the latest point and the latest objective value of the Walker.
-        ///
-        fn get_latest<'py>(&self, py: Python<'py>) -> (Bound<'py, PyArray1<f64>>, f64) {
-            let point = self.0.get_latest();
-            (
-                point.x.clone().as_slice().to_pyarray(py),
-                point.fx_checked(),
-            )
         }
     }
 

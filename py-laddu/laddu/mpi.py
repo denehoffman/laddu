@@ -1,6 +1,6 @@
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 
 from .laddu import (
     finalize_mpi,
@@ -12,7 +12,7 @@ from .laddu import (
     using_mpi,
 )
 
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     from types import TracebackType
 
 

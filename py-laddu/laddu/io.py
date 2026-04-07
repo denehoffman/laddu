@@ -1,21 +1,37 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass as _dataclass
+from pathlib import Path as _Path
 from typing import (
-    TYPE_CHECKING,
-    Iterable,
-    Iterator,
-    Literal,
-    Mapping,
-    Protocol,
-    Sequence,
-    TypeAlias,
-    cast,
+    TYPE_CHECKING as _TYPE_CHECKING,
+)
+from typing import (
+    Iterable as _Iterable,
+)
+from typing import (
+    Iterator as _Iterator,
+)
+from typing import (
+    Literal as _Literal,
+)
+from typing import (
+    Mapping as _Mapping,
+)
+from typing import (
+    Protocol as _Protocol,
+)
+from typing import (
+    Sequence as _Sequence,
+)
+from typing import (
+    TypeAlias as _TypeAlias,
+)
+from typing import (
+    cast as _cast,
 )
 
-import numpy as np
-from numpy.typing import NDArray
+import numpy as _np  # noqa: ICN001
+from numpy.typing import NDArray as _NDArray
 
 from ._backend import backend as _backend_module
 from .data import Dataset
@@ -27,22 +43,22 @@ _backend_read_root = _backend_module.read_root
 _backend_write_parquet = _backend_module.write_parquet
 _backend_write_root = _backend_module.write_root
 
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     import pandas as pd
     import polars as pl
     import pyarrow as pa
 
-    PandasDataFrame: TypeAlias = pd.DataFrame
-    PolarsDataFrame: TypeAlias = pl.DataFrame
+    PandasDataFrame: _TypeAlias = pd.DataFrame
+    PolarsDataFrame: _TypeAlias = pl.DataFrame
 else:
-    PandasDataFrame: TypeAlias = object
-    PolarsDataFrame: TypeAlias = object
+    PandasDataFrame: _TypeAlias = object
+    PolarsDataFrame: _TypeAlias = object
 
-FloatArray: TypeAlias = NDArray[np.float32] | NDArray[np.float64]
-ColumnInput: TypeAlias = Sequence[float] | FloatArray
-NumpyColumns: TypeAlias = dict[str, np.ndarray]
-UprootKwargValue: TypeAlias = str | int | float | bool | Sequence[str] | None
-UprootKwargs: TypeAlias = dict[str, UprootKwargValue]
+FloatArray: _TypeAlias = _NDArray[_np.float32] | _NDArray[_np.float64]
+ColumnInput: _TypeAlias = _Sequence[float] | FloatArray
+NumpyColumns: _TypeAlias = dict[str, _np.ndarray]
+UprootKwargValue: _TypeAlias = str | int | float | bool | _Sequence[str] | None
+UprootKwargs: _TypeAlias = dict[str, UprootKwargValue]
 
 _OPTIONAL_DEPENDENCY_HINTS: dict[str, str] = {
     'uproot': 'Install it with `pip install laddu[uproot]` or `pip install laddu-mpi[uproot]`.',
@@ -50,68 +66,70 @@ _OPTIONAL_DEPENDENCY_HINTS: dict[str, str] = {
 }
 
 
-class _UprootBranch(Protocol):
+class _UprootBranch(_Protocol):
     def array(
         self,
         *,
-        library: Literal['np'],
+        library: _Literal['np'],
         entry_start: int | None = None,
         entry_stop: int | None = None,
-    ) -> np.ndarray | Sequence[float]: ...
+    ) -> _np.ndarray | _Sequence[float]: ...
 
 
-class _UprootTree(Protocol):
+class _UprootTree(_Protocol):
     num_entries: int
 
     def arrays(
         self,
         *,
-        library: Literal['np'],
+        library: _Literal['np'],
         **kwargs: object,
-    ) -> Mapping[str, np.ndarray | Sequence[float]]: ...
+    ) -> _Mapping[str, _np.ndarray | _Sequence[float]]: ...
 
-    def keys(self) -> Iterable[str]: ...
+    def keys(self) -> _Iterable[str]: ...
 
     def __getitem__(self, key: str) -> _UprootBranch: ...
 
     def __contains__(self, key: str) -> bool: ...
 
 
-class _UprootFile(Protocol):
+class _UprootFile(_Protocol):
     def __getitem__(self, key: str) -> _UprootTree: ...
 
-    def classnames(self) -> Mapping[str, str]: ...
+    def classnames(self) -> _Mapping[str, str]: ...
 
 
 def from_dict(
-    data: Mapping[str, ColumnInput],
+    data: _Mapping[str, ColumnInput],
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
     normalized = _normalize_ingestion_columns(data)
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
 
-def _normalize_ingestion_columns(data: Mapping[str, ColumnInput]) -> NumpyColumns:
+def _normalize_ingestion_columns(data: _Mapping[str, ColumnInput]) -> NumpyColumns:
     normalized: NumpyColumns = {}
     for name, values in data.items():
-        column = np.asarray(values)
+        column = _np.asarray(values)
         if column.ndim != 1:
             msg = f"Column '{name}' must be one-dimensional"
             raise ValueError(msg)
 
-        if column.dtype in (np.float32, np.float64):
-            normalized[name] = np.ascontiguousarray(column)
+        if column.dtype in (_np.float32, _np.float64):
+            normalized[name] = _np.ascontiguousarray(column)
             continue
 
         if column.dtype.kind in {'b', 'i', 'u', 'f'}:
-            normalized[name] = np.ascontiguousarray(column.astype(np.float64, copy=False))
+            normalized[name] = _np.ascontiguousarray(
+                column.astype(_np.float64, copy=False)
+            )
             continue
 
         try:
-            normalized[name] = np.ascontiguousarray(column.astype(np.float64))
+            normalized[name] = _np.ascontiguousarray(column.astype(_np.float64))
         except (TypeError, ValueError) as exc:
             msg = (
                 f"Column '{name}' is not a numeric one-dimensional array and cannot be "
@@ -127,7 +145,7 @@ def _dataset_from_arrow_table(
     *,
     p4s: list[str] | None,
     aux: list[str] | None,
-    aliases: Mapping[str, str | Sequence[str]] | None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None,
 ) -> Dataset:
     converted = _arrow_table_to_numpy_columns(table)
     return _backend_from_numpy_columns(converted, p4s=p4s, aux=aux, aliases=aliases)
@@ -138,7 +156,7 @@ def _backend_from_numpy_columns(
     *,
     p4s: list[str] | None,
     aux: list[str] | None,
-    aliases: Mapping[str, str | Sequence[str]] | None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None,
 ) -> Dataset:
     native_aliases = dict(aliases) if aliases is not None else None
     return _backend_from_columns(
@@ -151,24 +169,24 @@ def _backend_from_numpy_columns(
 
 def _arrow_table_to_numpy_columns(table: pa.Table) -> NumpyColumns:
     column_names = list(table.column_names)
-    converted: dict[str, np.ndarray] = {}
+    converted: dict[str, _np.ndarray] = {}
     for name in column_names:
         chunked = table[name]
         converted[name] = _chunked_array_to_numpy(chunked)
     return converted
 
 
-def _chunked_array_to_numpy(chunked: pa.ChunkedArray) -> np.ndarray:
+def _chunked_array_to_numpy(chunked: pa.ChunkedArray) -> _np.ndarray:
     if len(chunked.chunks) == 1:
         return _arrow_array_to_numpy(chunked.chunk(0))
-    return np.concatenate([_arrow_array_to_numpy(chunk) for chunk in chunked.chunks])
+    return _np.concatenate([_arrow_array_to_numpy(chunk) for chunk in chunked.chunks])
 
 
-def _arrow_array_to_numpy(array: pa.Array) -> np.ndarray:
+def _arrow_array_to_numpy(array: pa.Array) -> _np.ndarray:
     try:
-        return np.asarray(array.to_numpy(zero_copy_only=True))
+        return _np.asarray(array.to_numpy(zero_copy_only=True))
     except (TypeError, ValueError):
-        return np.asarray(array.to_numpy(zero_copy_only=False))
+        return _np.asarray(array.to_numpy(zero_copy_only=False))
 
 
 def _numpy_columns_to_arrow_table(columns: NumpyColumns) -> pa.Table:
@@ -180,13 +198,13 @@ def _numpy_columns_to_arrow_table(columns: NumpyColumns) -> pa.Table:
 
 
 def from_numpy(
-    data: Mapping[str, FloatArray],
+    data: _Mapping[str, FloatArray],
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
-    converted = {key: np.asarray(value) for key, value in data.items()}
+    converted = {key: _np.asarray(value) for key, value in data.items()}
     normalized = _normalize_ingestion_columns(converted)
     return _backend_from_numpy_columns(normalized, p4s=p4s, aux=aux, aliases=aliases)
 
@@ -196,7 +214,7 @@ def from_pandas(
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
     try:
         import pyarrow as pa
@@ -214,7 +232,7 @@ def from_arrow(
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
     return _dataset_from_arrow_table(data, p4s=p4s, aux=aux, aliases=aliases)
 
@@ -224,7 +242,7 @@ def from_polars(
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
     try:
         table = data.to_arrow()
@@ -236,11 +254,11 @@ def from_polars(
 
 
 def read_parquet(
-    path: str | Path,
+    path: str | _Path,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
 ) -> Dataset:
     native_aliases = dict(aliases) if aliases is not None else None
     return _backend_read_parquet(
@@ -252,13 +270,13 @@ def read_parquet(
 
 
 def read_parquet_chunked(
-    path: str | Path,
+    path: str | _Path,
     *,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
     chunk_size: int = 10_000,
-) -> Iterator[Dataset]:
+) -> _Iterator[Dataset]:
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
@@ -274,13 +292,13 @@ def read_parquet_chunked(
 
 
 def read_root(
-    path: str | Path,
+    path: str | _Path,
     *,
     tree: str | None = None,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
-    backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
+    backend: _Literal['oxyroot', 'uproot'] = 'oxyroot',
     uproot_kwargs: UprootKwargs | None = None,
 ) -> Dataset:
     backend_name = backend.lower() if backend else 'oxyroot'
@@ -302,7 +320,7 @@ def read_root(
     kwargs = dict(uproot_kwargs or {})
     backend_tree = tree or kwargs.pop('tree', None)
     return _open_with_uproot(
-        Path(path),
+        _Path(path),
         tree=backend_tree,
         p4s=p4s,
         aux=aux,
@@ -312,16 +330,16 @@ def read_root(
 
 
 def read_root_chunked(
-    path: str | Path,
+    path: str | _Path,
     *,
     tree: str | None = None,
     p4s: list[str] | None = None,
     aux: list[str] | None = None,
-    aliases: Mapping[str, str | Sequence[str]] | None = None,
-    backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+    aliases: _Mapping[str, str | _Sequence[str]] | None = None,
+    backend: _Literal['oxyroot', 'uproot'] = 'oxyroot',
     uproot_kwargs: UprootKwargs | None = None,
     chunk_size: int = 10_000,
-) -> Iterator[Dataset]:
+) -> _Iterator[Dataset]:
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
@@ -353,7 +371,7 @@ def read_root_chunked(
         raise ValueError(msg)
     backend_tree = tree or kwargs.pop('tree', None)
     yield from _open_with_uproot_chunked(
-        Path(path),
+        _Path(path),
         tree=backend_tree,
         p4s=p4s,
         aux=aux,
@@ -364,7 +382,7 @@ def read_root_chunked(
 
 
 def read_amptools(
-    path: str | Path,
+    path: str | _Path,
     *,
     tree: str | None = None,
     pol_in_beam: bool = False,
@@ -375,7 +393,7 @@ def read_amptools(
     num_entries: int | None = None,
 ) -> Dataset:
     return _open_amptools_format(
-        Path(path),
+        _Path(path),
         tree=tree,
         pol_in_beam=pol_in_beam,
         pol_angle=pol_angle,
@@ -388,7 +406,7 @@ def read_amptools(
 
 
 def read_amptools_chunked(
-    path: str | Path,
+    path: str | _Path,
     *,
     tree: str | None = None,
     pol_in_beam: bool = False,
@@ -398,17 +416,17 @@ def read_amptools_chunked(
     pol_angle_name: str = 'pol_angle',
     num_entries: int | None = None,
     chunk_size: int = 10_000,
-) -> Iterator[Dataset]:
+) -> _Iterator[Dataset]:
     if chunk_size < 1:
         msg = 'chunk_size must be >= 1'
         raise ValueError(msg)
     tree_name = tree or 'kin'
-    total_entries = _amptools_total_entries(Path(path), tree_name)
+    total_entries = _amptools_total_entries(_Path(path), tree_name)
     limit = min(total_entries, num_entries) if num_entries is not None else total_entries
     for start in range(0, limit, chunk_size):
         stop = min(start + chunk_size, limit)
         yield _open_amptools_format(
-            Path(path),
+            _Path(path),
             tree=tree,
             pol_in_beam=pol_in_beam,
             pol_angle=pol_angle,
@@ -423,8 +441,8 @@ def read_amptools_chunked(
 def to_numpy(
     dataset: Dataset,
     *,
-    precision: Literal['f64', 'f32'] = 'f64',
-) -> dict[str, np.ndarray]:
+    precision: _Literal['f64', 'f32'] = 'f64',
+) -> dict[str, _np.ndarray]:
     return _coalesce_numpy_batches(
         _iter_numpy_batches(dataset, chunk_size=len(dataset), precision=precision)
     )
@@ -433,7 +451,7 @@ def to_numpy(
 def to_arrow(
     dataset: Dataset,
     *,
-    precision: Literal['f64', 'f32'] = 'f64',
+    precision: _Literal['f64', 'f32'] = 'f64',
 ) -> pa.Table:
     try:
         columns = to_numpy(dataset, precision=precision)
@@ -448,10 +466,10 @@ def to_arrow(
 
 def write_parquet(
     dataset: Dataset,
-    path: str | Path,
+    path: str | _Path,
     *,
     chunk_size: int = 10_000,
-    precision: Literal['f64', 'f32'] = 'f64',
+    precision: _Literal['f64', 'f32'] = 'f64',
 ) -> None:
     validated_precision = _validate_precision(precision)
     _backend_write_parquet(
@@ -464,12 +482,12 @@ def write_parquet(
 
 def write_root(
     dataset: Dataset,
-    path: str | Path,
+    path: str | _Path,
     *,
     tree: str | None = None,
-    backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
+    backend: _Literal['oxyroot', 'uproot'] = 'oxyroot',
     chunk_size: int = 10_000,
-    precision: Literal['f64', 'f32'] = 'f64',
+    precision: _Literal['f64', 'f32'] = 'f64',
     uproot_kwargs: UprootKwargs | None = None,
 ) -> None:
     backend_name = backend.lower() if backend else 'oxyroot'
@@ -516,12 +534,12 @@ def write_root(
 
 
 def _open_with_uproot(
-    path: Path,
+    path: _Path,
     *,
     tree: str | None,
     p4s: list[str] | None,
     aux: list[str] | None,
-    aliases: Mapping[str, str | Sequence[str]] | None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None,
     uproot_kwargs: UprootKwargs,
 ) -> Dataset:
     try:
@@ -543,7 +561,7 @@ def _open_with_uproot(
         kwargs = _uproot_arrays_kwargs(uproot_kwargs, selected_columns)
         arrays = tree_obj.arrays(library='np', **kwargs)
 
-    columns = {name: np.asarray(values) for name, values in arrays.items()}
+    columns = {name: _np.asarray(values) for name, values in arrays.items()}
     if not columns:
         msg = 'ROOT tree does not contain any readable columns'
         raise ValueError(msg)
@@ -552,15 +570,15 @@ def _open_with_uproot(
 
 
 def _open_with_uproot_chunked(
-    path: Path,
+    path: _Path,
     *,
     tree: str | None,
     p4s: list[str] | None,
     aux: list[str] | None,
-    aliases: Mapping[str, str | Sequence[str]] | None,
+    aliases: _Mapping[str, str | _Sequence[str]] | None,
     uproot_kwargs: UprootKwargs,
     chunk_size: int,
-) -> Iterator[Dataset]:
+) -> _Iterator[Dataset]:
     try:
         import uproot as uproot_module
     except ModuleNotFoundError as exc:
@@ -593,7 +611,7 @@ def _open_with_uproot_chunked(
             kwargs['entry_start'] = start
             kwargs['entry_stop'] = stop
             arrays = tree_obj.arrays(library='np', **kwargs)
-            columns = {name: np.asarray(values) for name, values in arrays.items()}
+            columns = {name: _np.asarray(values) for name, values in arrays.items()}
             if not columns:
                 msg = 'ROOT tree does not contain any readable columns'
                 raise ValueError(msg)
@@ -633,7 +651,7 @@ def _build_uproot_selected_columns(
 
 
 def _uproot_arrays_kwargs(
-    uproot_kwargs: UprootKwargs, selected_columns: Sequence[str] | None
+    uproot_kwargs: UprootKwargs, selected_columns: _Sequence[str] | None
 ) -> UprootKwargs:
     kwargs = dict(uproot_kwargs)
     if (
@@ -645,7 +663,7 @@ def _uproot_arrays_kwargs(
     return kwargs
 
 
-def _canonicalize_uproot_column_names(raw_keys: Iterable[str]) -> list[str]:
+def _canonicalize_uproot_column_names(raw_keys: _Iterable[str]) -> list[str]:
     names: list[str] = []
     for key in raw_keys:
         base = key.split(';', 1)[0]
@@ -654,7 +672,7 @@ def _canonicalize_uproot_column_names(raw_keys: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _resolve_uproot_column_name(available: Sequence[str], logical_name: str) -> str:
+def _resolve_uproot_column_name(available: _Sequence[str], logical_name: str) -> str:
     resolved = _resolve_uproot_column_name_optional(available, logical_name)
     if resolved is None:
         msg = f"Missing required ROOT column '{logical_name}'"
@@ -663,7 +681,7 @@ def _resolve_uproot_column_name(available: Sequence[str], logical_name: str) -> 
 
 
 def _resolve_uproot_column_name_optional(
-    available: Sequence[str], logical_name: str
+    available: _Sequence[str], logical_name: str
 ) -> str | None:
     for name in available:
         if name == logical_name:
@@ -675,7 +693,7 @@ def _resolve_uproot_column_name_optional(
 
 
 def _open_amptools_format(
-    path: Path,
+    path: _Path,
     *,
     tree: str | None,
     pol_in_beam: bool,
@@ -686,7 +704,7 @@ def _open_amptools_format(
     entry_start: int | None,
     entry_stop: int | None,
 ) -> Dataset:
-    pol_angle_rad = pol_angle * np.pi / 180 if pol_angle is not None else None
+    pol_angle_rad = pol_angle * _np.pi / 180 if pol_angle is not None else None
     polarisation_requested = pol_in_beam or (
         pol_angle is not None and pol_magnitude is not None
     )
@@ -737,23 +755,23 @@ def _select_uproot_tree(file: _UprootFile, tree_name: str | None) -> _UprootTree
     return file[tree_candidates[0]]
 
 
-@dataclass
+@_dataclass
 class _AmpToolsData:
-    beam_px: np.ndarray
-    beam_py: np.ndarray
-    beam_pz: np.ndarray
-    beam_e: np.ndarray
-    finals_px: np.ndarray
-    finals_py: np.ndarray
-    finals_pz: np.ndarray
-    finals_e: np.ndarray
-    weights: np.ndarray
-    pol_magnitude: np.ndarray | None
-    pol_angle: np.ndarray | None
+    beam_px: _np.ndarray
+    beam_py: _np.ndarray
+    beam_pz: _np.ndarray
+    beam_e: _np.ndarray
+    finals_px: _np.ndarray
+    finals_py: _np.ndarray
+    finals_pz: _np.ndarray
+    finals_e: _np.ndarray
+    weights: _np.ndarray
+    pol_magnitude: _np.ndarray | None
+    pol_angle: _np.ndarray | None
 
 
 def _empty_numpy_buffers(
-    p4_names: Sequence[str], aux_names: Sequence[str]
+    p4_names: _Sequence[str], aux_names: _Sequence[str]
 ) -> dict[str, list[float]]:
     buffers: dict[str, list[float]] = (
         {f'{name}_px': [] for name in p4_names}
@@ -767,7 +785,7 @@ def _empty_numpy_buffers(
     return buffers
 
 
-def _validate_precision(value: str) -> Literal['f64', 'f32']:
+def _validate_precision(value: str) -> _Literal['f64', 'f32']:
     normalized = value.lower()
     if normalized == 'f64':
         return 'f64'
@@ -781,10 +799,10 @@ def _iter_numpy_batches(
     dataset: Dataset,
     *,
     chunk_size: int,
-    precision: Literal['f64', 'f32'],
-) -> Iterable[dict[str, np.ndarray]]:
+    precision: _Literal['f64', 'f32'],
+) -> _Iterable[dict[str, _np.ndarray]]:
     validated_precision = _validate_precision(precision)
-    dtype = np.float64 if validated_precision == 'f64' else np.float32
+    dtype = _np.float64 if validated_precision == 'f64' else _np.float32
     p4_names = list(dataset.p4_names)
     aux_names = list(dataset.aux_names)
 
@@ -809,25 +827,25 @@ def _iter_numpy_batches(
 
         if count >= chunk_size:
             yield {
-                key: np.asarray(values, dtype=dtype) for key, values in buffers.items()
+                key: _np.asarray(values, dtype=dtype) for key, values in buffers.items()
             }
             buffers = _empty_numpy_buffers(p4_names, aux_names)
             count = 0
 
     if count:
-        yield {key: np.asarray(values, dtype=dtype) for key, values in buffers.items()}
+        yield {key: _np.asarray(values, dtype=dtype) for key, values in buffers.items()}
 
 
 def _coalesce_numpy_batches(
-    batches: Iterable[dict[str, np.ndarray]],
-) -> dict[str, np.ndarray]:
-    merged: dict[str, list[np.ndarray]] = {}
+    batches: _Iterable[dict[str, _np.ndarray]],
+) -> dict[str, _np.ndarray]:
+    merged: dict[str, list[_np.ndarray]] = {}
     for batch in batches:
         for key, array in batch.items():
             merged.setdefault(key, []).append(array)
 
     return {
-        key: np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
+        key: _np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
         for key, arrays in merged.items()
     }
 
@@ -837,9 +855,9 @@ def _read_amptools_scalar(
     *,
     entry_start: int | None = None,
     entry_stop: int | None = None,
-) -> np.ndarray:
+) -> _np.ndarray:
     array = branch.array(library='np', entry_start=entry_start, entry_stop=entry_stop)
-    return np.asarray(array, dtype=np.float32)
+    return _np.asarray(array, dtype=_np.float32)
 
 
 def _read_amptools_matrix(
@@ -847,34 +865,34 @@ def _read_amptools_matrix(
     *,
     entry_start: int | None = None,
     entry_stop: int | None = None,
-) -> np.ndarray:
+) -> _np.ndarray:
     raw = branch.array(library='np', entry_start=entry_start, entry_stop=entry_stop)
-    array = np.asarray(raw)
+    array = _np.asarray(raw)
     if array.dtype == object:
-        return _amptools_object_rows_to_matrix(cast(Sequence[np.ndarray], array))
-    return np.asarray(array, dtype=np.float32)
+        return _amptools_object_rows_to_matrix(_cast(_Sequence[_np.ndarray], array))
+    return _np.asarray(array, dtype=_np.float32)
 
 
-def _amptools_object_rows_to_matrix(rows: Sequence[np.ndarray]) -> np.ndarray:
+def _amptools_object_rows_to_matrix(rows: _Sequence[_np.ndarray]) -> _np.ndarray:
     if len(rows) == 0:
-        return np.empty((0, 0), dtype=np.float32)
-    first = np.asarray(rows[0], dtype=np.float32)
+        return _np.empty((0, 0), dtype=_np.float32)
+    first = _np.asarray(rows[0], dtype=_np.float32)
     n_rows = len(rows)
     n_cols = int(first.shape[0])
-    out = np.empty((n_rows, n_cols), dtype=np.float32)
+    out = _np.empty((n_rows, n_cols), dtype=_np.float32)
     out[0, :] = first
     for row_index, row in enumerate(rows[1:], start=1):
-        out[row_index, :] = np.asarray(row, dtype=np.float32)
+        out[row_index, :] = _np.asarray(row, dtype=_np.float32)
     return out
 
 
 def _load_amptools_arrays(
-    path: Path,
+    path: _Path,
     tree_name: str,
     *,
     entry_start: int | None,
     entry_stop: int | None,
-) -> tuple[np.ndarray, ...]:
+) -> tuple[_np.ndarray, ...]:
     try:
         import uproot as uproot_module
     except ModuleNotFoundError as exc:
@@ -939,7 +957,7 @@ def _load_amptools_arrays(
                 entry_stop=entry_stop,
             )
         else:
-            weight = np.ones_like(e_beam, dtype=np.float32)
+            weight = _np.ones_like(e_beam, dtype=_np.float32)
 
     return (
         e_beam,
@@ -954,7 +972,7 @@ def _load_amptools_arrays(
     )
 
 
-def _amptools_total_entries(path: Path, tree_name: str) -> int:
+def _amptools_total_entries(path: _Path, tree_name: str) -> int:
     try:
         import uproot as uproot_module
     except ModuleNotFoundError as exc:
@@ -973,41 +991,41 @@ def _amptools_total_entries(path: Path, tree_name: str) -> int:
 
 
 def _derive_amptools_polarization(
-    px_beam: np.ndarray,
-    py_beam: np.ndarray,
+    px_beam: _np.ndarray,
+    py_beam: _np.ndarray,
     *,
     pol_in_beam: bool,
     pol_angle_rad: float | None,
     pol_magnitude: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+) -> tuple[_np.ndarray, _np.ndarray, _np.ndarray | None, _np.ndarray | None]:
     beam_px = px_beam
     beam_py = py_beam
-    pol_magnitude_arr: np.ndarray | None = None
-    pol_angle_arr: np.ndarray | None = None
+    pol_magnitude_arr: _np.ndarray | None = None
+    pol_angle_arr: _np.ndarray | None = None
 
     if pol_in_beam:
-        beam_px = np.zeros_like(px_beam, dtype=np.float32)
-        beam_py = np.zeros_like(py_beam, dtype=np.float32)
-        pol_magnitude_arr = np.hypot(px_beam, py_beam).astype(np.float32, copy=False)
-        pol_angle_arr = np.arctan2(py_beam, px_beam).astype(np.float32, copy=False)
+        beam_px = _np.zeros_like(px_beam, dtype=_np.float32)
+        beam_py = _np.zeros_like(py_beam, dtype=_np.float32)
+        pol_magnitude_arr = _np.hypot(px_beam, py_beam).astype(_np.float32, copy=False)
+        pol_angle_arr = _np.arctan2(py_beam, px_beam).astype(_np.float32, copy=False)
     elif pol_angle_rad is not None and pol_magnitude is not None:
         n_events = px_beam.shape[0]
-        pol_magnitude_arr = np.full(n_events, pol_magnitude, dtype=np.float32)
-        pol_angle_arr = np.full(n_events, pol_angle_rad, dtype=np.float32)
+        pol_magnitude_arr = _np.full(n_events, pol_magnitude, dtype=_np.float32)
+        pol_angle_arr = _np.full(n_events, pol_angle_rad, dtype=_np.float32)
 
     return beam_px, beam_py, pol_magnitude_arr, pol_angle_arr
 
 
 def _prepare_amptools_data(
-    e_beam: np.ndarray,
-    px_beam: np.ndarray,
-    py_beam: np.ndarray,
-    pz_beam: np.ndarray,
-    e_final: np.ndarray,
-    px_final: np.ndarray,
-    py_final: np.ndarray,
-    pz_final: np.ndarray,
-    weight: np.ndarray,
+    e_beam: _np.ndarray,
+    px_beam: _np.ndarray,
+    py_beam: _np.ndarray,
+    pz_beam: _np.ndarray,
+    e_final: _np.ndarray,
+    px_final: _np.ndarray,
+    py_final: _np.ndarray,
+    pz_final: _np.ndarray,
+    weight: _np.ndarray,
     *,
     pol_in_beam: bool,
     pol_angle_rad: float | None,
@@ -1035,7 +1053,7 @@ def _prepare_amptools_data(
         finals_py=py_final,
         finals_pz=pz_final,
         finals_e=e_final,
-        weights=weight.astype(np.float32, copy=False),
+        weights=weight.astype(_np.float32, copy=False),
         pol_magnitude=pol_magnitude_arr,
         pol_angle=pol_angle_arr,
     )

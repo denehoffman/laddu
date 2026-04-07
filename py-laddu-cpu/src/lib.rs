@@ -47,9 +47,7 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_extensions::{
-        ganesh_ext::py_ganesh::{
-            py_integrated_autocorrelation_times, PyControlFlow, PySwarm, PySwarmParticle, PyWalker,
-        },
+        ganesh_ext::py_ganesh::{py_integrated_autocorrelation_times, PyControlFlow},
         likelihoods::{
             py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,
             py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyNLL,
