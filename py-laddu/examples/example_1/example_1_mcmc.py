@@ -52,7 +52,7 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
     def check_for_termination(
         self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = status.get_chain()[:, -1, :]
+        latest_step = status.chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
