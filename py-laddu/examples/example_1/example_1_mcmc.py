@@ -52,7 +52,7 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
     def check_for_termination(
         self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = status.chain()[:, -1, :]
+        latest_step = status.get_chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
@@ -223,17 +223,26 @@ def main() -> None:
             p0 = best.x + np.random.normal(0, scale=0.01, size=(100, len(best.x)))
             nll_clone = nll
             caco = CustomAutocorrelationTerminator(nll_clone)
-            aco = ganesh.AutocorrelationTerminator(
-                n_check=10, terminate=False, verbose=True
-            )
             ensemble = nll.mcmc(
                 p0,
                 method='ess',
-                options=ganesh.ESSOptions(max_steps=30000),
-                terminators=[caco, aco],
+                options=ganesh.ESSOptions(
+                    max_steps=30000,
+                    autocorrelation=ganesh.AutocorrelationTerminator(
+                        n_check=10, terminate=False, verbose=True
+                    ),
+                ),
+                terminators=[caco],
             )
             tau = caco.latest_tau
-            taus = aco.taus
+            diagnostics = ensemble.diagnostics()
+            print(diagnostics)
+            taus = [
+                np.mean(
+                    ld.integrated_autocorrelation_times(ensemble.chain(burn=int(i * 0.5)))
+                )
+                for i in range(0, ensemble.dimension[1], 10)
+            ]
             bin_out = {'ensemble': ensemble, 'tau': tau, 'taus': taus}
             tot = np.array(caco.tot).reshape(-1)
             s0s = np.array(caco.s0s).reshape(-1)
