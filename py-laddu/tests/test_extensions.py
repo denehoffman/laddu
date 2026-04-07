@@ -29,8 +29,6 @@ _ERROR_EXPECTATIONS: dict[str, tuple[type[Exception], str]] = {
         ValueError,
         'No registered amplitude',
     ),
-    'minimize config wrong type': (TypeError, 'LBFGSBConfig-compatible'),
-    'mcmc config wrong type': (TypeError, 'AIESConfig-compatible'),
 }
 
 
@@ -89,14 +87,6 @@ def test_python_regression_table_driven_error_paths() -> None:
             'project_weights strict subset unknown amplitude',
             lambda: nll.project_weights([2.0], subset='missing_amplitude', strict=True),
         ),
-        (
-            'minimize config wrong type',
-            lambda: nll.minimize([2.0], config=cast(Any, [])),
-        ),
-        (
-            'mcmc config wrong type',
-            lambda: nll.mcmc([[2.0], [2.1]], config=cast(Any, [])),
-        ),
     ]
 
     for label, fn in cases:
@@ -110,12 +100,13 @@ def test_minimize_typed_config_requires_matching_method() -> None:
 
     with pytest.raises(
         TypeError,
-        match=r"config for method 'lbfgsb' must be LBFGSBConfig-compatible or None",
+        match=r'structural `LBFGSBConfig` extraction requires',
     ):
         nll.minimize(
             [2.0],
             method='lbfgsb',
             config=ganesh.AdamConfig(alpha=0.1),
+            options=ganesh.LBFGSBOptions(max_steps=1),
         )
 
 
@@ -124,19 +115,53 @@ def test_mcmc_typed_config_requires_matching_method() -> None:
 
     with pytest.raises(
         TypeError,
-        match=r"config for method 'ess' must be ESSConfig-compatible or None",
+        match=r'structural `ESSConfig` extraction requires',
     ):
         nll.mcmc(
             [[2.0], [2.1]],
             method='ess',
             config=ganesh.AIESConfig(moves=[ganesh.AIESStretchMove(1.0)]),
+            options=ganesh.ESSOptions(max_steps=1),
         )
 
 
-def test_minimize_accepts_duck_typed_ganesh_config() -> None:
+def test_minimize_wrong_type_config_fails_fast() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        TypeError,
+        match=r'structural `LBFGSBConfig` extraction requires',
+    ):
+        nll.minimize(
+            [2.0],
+            config=cast(Any, []),
+            options=ganesh.LBFGSBOptions(max_steps=1),
+        )
+
+
+def test_mcmc_wrong_type_config_fails_fast() -> None:
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(
+        TypeError,
+        match=r'structural `AIESConfig` extraction requires',
+    ):
+        nll.mcmc(
+            [[2.0], [2.1]],
+            config=cast(Any, []),
+            options=ganesh.AIESOptions(max_steps=1),
+        )
+
+
+def test_minimize_accepts_structural_ganesh_config() -> None:
     class ConfigLike:
-        def __ganesh_config__(self) -> ganesh.LBFGSBConfig:
-            return ganesh.LBFGSBConfig(memory_limit=4)
+        def __init__(self) -> None:
+            self.memory_limit = 4
+            self.bounds = None
+            self.parameter_names = None
+            self.bounds_handling = None
+            self.line_search = None
+            self.error_mode = None
 
     nll = _simple_scalar_nll()
     summary = nll.minimize(
@@ -150,10 +175,26 @@ def test_minimize_accepts_duck_typed_ganesh_config() -> None:
     assert summary.parameter_names == ['scale']
 
 
-def test_mcmc_accepts_duck_typed_ganesh_init() -> None:
+def test_minimize_rejects_duck_typed_wrong_ganesh_config() -> None:
+    class ConfigLike:
+        def __ganesh_config__(self) -> ganesh.AdamConfig:
+            return ganesh.AdamConfig(alpha=0.1)
+
+    nll = _simple_scalar_nll()
+
+    with pytest.raises(TypeError, match=r'structural `LBFGSBConfig` extraction requires'):
+        nll.minimize(
+            [2.0],
+            method='lbfgsb',
+            config=cast(Any, ConfigLike()),
+            options=ganesh.LBFGSBOptions(max_steps=1),
+        )
+
+
+def test_mcmc_accepts_structural_ganesh_init() -> None:
     class InitLike:
-        def __ganesh_init__(self) -> ganesh.AIESInit:
-            return ganesh.AIESInit([[2.0], [2.1]])
+        def __init__(self) -> None:
+            self.walkers = [[2.0], [2.1]]
 
     nll = _simple_scalar_nll()
     summary = nll.mcmc(

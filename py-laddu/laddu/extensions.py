@@ -7,9 +7,6 @@ import ganesh
 from laddu.laddu import (
     NLL,
     ControlFlow,
-    EnsembleStatus,
-    GradientFreeStatus,
-    GradientStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodOne,
@@ -18,13 +15,16 @@ from laddu.laddu import (
     StochasticNLL,
     Swarm,
     SwarmParticle,
-    SwarmStatus,
     Walker,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
 
+GradientStatus = ganesh.GradientStatus
+GradientFreeStatus = ganesh.GradientFreeStatus
+SwarmStatus = ganesh.SwarmStatus
+EnsembleStatus = ganesh.EnsembleStatus
 MinimizationStatus = GradientStatus | GradientFreeStatus | SwarmStatus
 MinimizationSummary = ganesh.MinimizationSummary
 MCMCSummary = ganesh.MCMCSummary

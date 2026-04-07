@@ -97,6 +97,12 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
+def test_top_level_package_exposes_io_module() -> None:
+    import laddu as ld
+
+    assert ld.io is ldio
+
+
 def test_event_creation() -> None:
     event = make_test_event()
     assert len(event.p4s) == 4

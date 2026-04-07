@@ -40,49 +40,6 @@ class LikelihoodExpression:
     def __mul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
     def __rmul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
 
-class GradientStatus:
-    x: npt.NDArray[np.float64]
-    fx: float
-    message: str
-    err: npt.NDArray[np.float64] | None
-    n_f_evals: int
-    n_g_evals: int
-    cov: npt.NDArray[np.float64] | None
-    hess: npt.NDArray[np.float64] | None
-    converged: bool
-
-class GradientFreeStatus:
-    x: npt.NDArray[np.float64]
-    fx: float
-    message: str
-    err: npt.NDArray[np.float64] | None
-    n_f_evals: int
-    cov: npt.NDArray[np.float64] | None
-    hess: npt.NDArray[np.float64] | None
-    converged: bool
-
-class SwarmStatus:
-    x: npt.NDArray[np.float64]
-    fx: float
-    message: str
-    n_f_evals: int
-    converged: bool
-    swarm: Swarm
-
-class EnsembleStatus:
-    message: str
-    n_f_evals: int
-    n_g_evals: int
-    walkers: list[Walker]
-    dimension: tuple[int, int, int]
-
-    def get_chain(
-        self, *, burn: int | None = None, thin: int | None = None
-    ) -> npt.NDArray[np.float64]: ...
-    def get_flat_chain(
-        self, *, burn: int | None = None, thin: int | None = None
-    ) -> npt.NDArray[np.float64]: ...
-
 class Swarm:
     particles: list[SwarmParticle]
 
@@ -101,6 +58,11 @@ class Walker:
 class ControlFlow(Enum):
     Continue = 0
     Break = 1
+
+GradientStatus: TypeAlias = ganesh.GradientStatus
+GradientFreeStatus: TypeAlias = ganesh.GradientFreeStatus
+SwarmStatus: TypeAlias = ganesh.SwarmStatus
+EnsembleStatus: TypeAlias = ganesh.EnsembleStatus
 
 class MinimizationObserver(metaclass=ABCMeta):
     @abstractmethod

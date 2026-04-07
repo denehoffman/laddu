@@ -16,7 +16,7 @@ use ganesh::{
         mcmc::{aies::AIESInit, ess::ESSInit, AIESConfig, ESSConfig, EnsembleStatus, AIES, ESS},
         particles::{PSOConfig, Swarm, SwarmStatus, PSO},
     },
-    core::{summary::HasParameterNames, Callbacks, MCMCSummary, MinimizationSummary},
+    core::{Callbacks, MCMCSummary, MinimizationSummary},
     traits::{Algorithm, Observer, Status},
 };
 use laddu_core::{LadduError, LadduResult, ThreadPoolManager};
@@ -67,7 +67,6 @@ where
 #[cfg(feature = "python")]
 fn run_minimizer<A, P, S>(
     problem: &P,
-    parameter_names: &[String],
     num_threads: usize,
     init: A::Init,
     config: A::Config,
@@ -79,21 +78,18 @@ where
     S: Status,
 {
     let mtp = MaybeThreadPool::new(num_threads);
-    Ok(A::default()
-        .process(
-            problem,
-            &mtp,
-            init,
-            config,
-            callbacks.with_observer(LikelihoodTermObserver),
-        )?
-        .with_parameter_names(parameter_names.to_vec()))
+    Ok(A::default().process(
+        problem,
+        &mtp,
+        init,
+        config,
+        callbacks.with_observer(LikelihoodTermObserver),
+    )?)
 }
 
 #[cfg(feature = "python")]
 fn run_mcmc_algorithm<A, P>(
     problem: &P,
-    parameter_names: &[String],
     num_threads: usize,
     init: A::Init,
     config: A::Config,
@@ -104,15 +100,13 @@ where
     P: LikelihoodTerm,
 {
     let mtp = MaybeThreadPool::new(num_threads);
-    Ok(A::default()
-        .process(
-            problem,
-            &mtp,
-            init,
-            config,
-            callbacks.with_observer(LikelihoodTermObserver),
-        )?
-        .with_parameter_names(parameter_names.to_vec()))
+    Ok(A::default().process(
+        problem,
+        &mtp,
+        init,
+        config,
+        callbacks.with_observer(LikelihoodTermObserver),
+    )?)
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
@@ -191,16 +185,17 @@ pub mod py_ganesh {
         python::{
             PyAIESOptions as GaneshPyAIESOptions, PyAdamOptions as GaneshPyAdamOptions,
             PyConjugateGradientOptions as GaneshPyConjugateGradientOptions,
-            PyESSOptions as GaneshPyESSOptions, PyLBFGSBOptions as GaneshPyLBFGSBOptions,
+            PyESSOptions as GaneshPyESSOptions, PyEnsembleStatus as GaneshPyEnsembleStatus,
+            PyGradientFreeStatus as GaneshPyGradientFreeStatus,
+            PyGradientStatus as GaneshPyGradientStatus, PyLBFGSBOptions as GaneshPyLBFGSBOptions,
             PyNelderMeadOptions as GaneshPyNelderMeadOptions, PyPSOOptions as GaneshPyPSOOptions,
+            PySwarmStatus as GaneshPySwarmStatus,
             PyTrustRegionOptions as GaneshPyTrustRegionOptions,
         },
-        traits::{Observer, Status, Terminator},
+        traits::{Observer, SupportsParameterNames, Terminator},
     };
     use laddu_core::{f64, validate_free_parameter_len, LadduError};
-    use nalgebra::DMatrix;
-    use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
-    use parking_lot::Mutex;
+    use numpy::{PyArray1, ToPyArray};
     use pyo3::{
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
@@ -328,28 +323,6 @@ pub mod py_ganesh {
         }
     }
 
-    fn extract_python_like<T>(value: &Bound<'_, PyAny>, error_message: &str) -> PyResult<T>
-    where
-        T: for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>,
-    {
-        value
-            .extract::<T>()
-            .map_err(|_| PyTypeError::new_err(error_message.to_string()))
-    }
-
-    fn extract_optional_python_like<T>(
-        value: Option<&Bound<'_, PyAny>>,
-        error_message: &str,
-    ) -> PyResult<T>
-    where
-        T: Default + for<'a, 'py> FromPyObject<'a, 'py, Error = PyErr>,
-    {
-        match value {
-            Some(value) => extract_python_like(value, error_message),
-            None => Ok(T::default()),
-        }
-    }
-
     pub(crate) fn minimize_from_python<P>(
         problem: &P,
         p0: &Bound<'_, PyAny>,
@@ -375,14 +348,19 @@ pub mod py_ganesh {
             "lbfgsb" => {
                 let init = p0.extract::<Vec<f64>>()?;
                 validate_free_parameter_len(init.len(), n_free)?;
-                let config = extract_optional_python_like::<LBFGSBConfig>(
-                    config,
-                    "config for method 'lbfgsb' must be LBFGSBConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyLBFGSBOptions>(
-                    options,
-                    "options for method 'lbfgsb' must be LBFGSBOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<LBFGSBConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyLBFGSBOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options
                     .build_callbacks()
                     .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -395,7 +373,6 @@ pub mod py_ganesh {
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
                 run_minimizer::<LBFGSB, _, GradientStatus>(
                     problem,
-                    parameter_names,
                     threads,
                     DVector::from_vec(init),
                     config,
@@ -406,14 +383,19 @@ pub mod py_ganesh {
             "adam" => {
                 let init = p0.extract::<Vec<f64>>()?;
                 validate_free_parameter_len(init.len(), n_free)?;
-                let config = extract_optional_python_like::<AdamConfig>(
-                    config,
-                    "config for method 'adam' must be AdamConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyAdamOptions>(
-                    options,
-                    "options for method 'adam' must be AdamOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<AdamConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyAdamOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options.build_callbacks();
                 for observer in observers {
                     callbacks = callbacks.with_observer(observer);
@@ -424,7 +406,6 @@ pub mod py_ganesh {
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
                 run_minimizer::<Adam, _, GradientStatus>(
                     problem,
-                    parameter_names,
                     threads,
                     DVector::from_vec(init),
                     config,
@@ -435,15 +416,19 @@ pub mod py_ganesh {
             "conjugategradient" => {
                 let init = p0.extract::<Vec<f64>>()?;
                 validate_free_parameter_len(init.len(), n_free)?;
-                let config = extract_optional_python_like::<ConjugateGradientConfig>(
-                    config,
-                    "config for method 'conjugate-gradient' must be ConjugateGradientConfig-compatible or None",
-                )?;
-                let parsed_options =
-                    extract_optional_python_like::<GaneshPyConjugateGradientOptions>(
-                        options,
-                        "options for method 'conjugate-gradient' must be ConjugateGradientOptions-compatible or None",
-                    )?;
+                let mut config = config
+                    .map(|c| c.extract::<ConjugateGradientConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyConjugateGradientOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options.build_callbacks()?;
                 for observer in observers {
                     callbacks = callbacks.with_observer(observer);
@@ -454,7 +439,6 @@ pub mod py_ganesh {
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
                 run_minimizer::<ConjugateGradient, _, GradientStatus>(
                     problem,
-                    parameter_names,
                     threads,
                     DVector::from_vec(init),
                     config,
@@ -465,14 +449,19 @@ pub mod py_ganesh {
             "trustregion" => {
                 let init = p0.extract::<Vec<f64>>()?;
                 validate_free_parameter_len(init.len(), n_free)?;
-                let config = extract_optional_python_like::<TrustRegionConfig>(
-                    config,
-                    "config for method 'trust-region' must be TrustRegionConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyTrustRegionOptions>(
-                    options,
-                    "options for method 'trust-region' must be TrustRegionOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<TrustRegionConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyTrustRegionOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options.build_callbacks()?;
                 for observer in observers {
                     callbacks = callbacks.with_observer(observer);
@@ -483,7 +472,6 @@ pub mod py_ganesh {
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
                 run_minimizer::<TrustRegion, _, GradientStatus>(
                     problem,
-                    parameter_names,
                     threads,
                     DVector::from_vec(init),
                     config,
@@ -502,14 +490,19 @@ pub mod py_ganesh {
                         "p0 for method 'nelder-mead' must be NelderMeadInit-compatible or a point",
                     ));
                 };
-                let config = extract_optional_python_like::<NelderMeadConfig>(
-                    config,
-                    "config for method 'nelder-mead' must be NelderMeadConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyNelderMeadOptions>(
-                    options,
-                    "options for method 'nelder-mead' must be NelderMeadOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<NelderMeadConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyNelderMeadOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options.build_callbacks();
                 for observer in observers {
                     callbacks = callbacks.with_observer(observer);
@@ -519,12 +512,7 @@ pub mod py_ganesh {
                 }
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
                 run_minimizer::<NelderMead, _, GradientFreeStatus>(
-                    problem,
-                    parameter_names,
-                    threads,
-                    init,
-                    config,
-                    callbacks,
+                    problem, threads, init, config, callbacks,
                 )
                 .map_err(PyErr::from)
             }
@@ -543,14 +531,19 @@ pub mod py_ganesh {
                         "p0 for method 'pso' must be PSOInit-compatible or a position matrix",
                     ));
                 };
-                let config = extract_optional_python_like::<PSOConfig>(
-                    config,
-                    "config for method 'pso' must be PSOConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyPSOOptions>(
-                    options,
-                    "options for method 'pso' must be PSOOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<PSOConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyPSOOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let mut callbacks = parsed_options.build_callbacks();
                 for observer in observers {
                     callbacks = callbacks.with_observer(observer);
@@ -559,15 +552,8 @@ pub mod py_ganesh {
                     callbacks = callbacks.with_terminator(terminator);
                 }
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
-                run_minimizer::<PSO, _, SwarmStatus>(
-                    problem,
-                    parameter_names,
-                    threads,
-                    init,
-                    config,
-                    callbacks,
-                )
-                .map_err(PyErr::from)
+                run_minimizer::<PSO, _, SwarmStatus>(problem, threads, init, config, callbacks)
+                    .map_err(PyErr::from)
             }
             _ => Err(PyValueError::new_err(format!(
                 "Invalid minimizer: {method}"
@@ -596,14 +582,19 @@ pub mod py_ganesh {
 
         match method.as_str() {
             "aies" => {
-                let config = extract_optional_python_like::<AIESConfig>(
-                    config,
-                    "config for method 'aies' must be AIESConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyAIESOptions>(
-                    options,
-                    "options for method 'aies' must be AIESOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<AIESConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyAIESOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let init = if let Ok(init) = p0.extract::<AIESInit>() {
                     init
                 } else if let Ok(walkers) = p0.extract::<Vec<Vec<f64>>>() {
@@ -623,25 +614,23 @@ pub mod py_ganesh {
                     callbacks = callbacks.with_terminator(terminator);
                 }
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
-                run_mcmc_algorithm::<AIES, _>(
-                    problem,
-                    parameter_names,
-                    threads,
-                    init,
-                    config,
-                    callbacks,
-                )
-                .map_err(PyErr::from)
+                run_mcmc_algorithm::<AIES, _>(problem, threads, init, config, callbacks)
+                    .map_err(PyErr::from)
             }
             "ess" => {
-                let config = extract_optional_python_like::<ESSConfig>(
-                    config,
-                    "config for method 'ess' must be ESSConfig-compatible or None",
-                )?;
-                let parsed_options = extract_optional_python_like::<GaneshPyESSOptions>(
-                    options,
-                    "options for method 'ess' must be ESSOptions-compatible or None",
-                )?;
+                let mut config = config
+                    .map(|c| c.extract::<ESSConfig>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
+                if config.get_parameter_names_mut().is_none() {
+                    config = config.with_parameter_names(parameter_names);
+                }
+                let parsed_options = options
+                    .map(|opt| opt.extract::<GaneshPyESSOptions>())
+                    .transpose()
+                    .map_err(|err| PyTypeError::new_err(err.to_string()))?
+                    .unwrap_or_default();
                 let init = if let Ok(init) = p0.extract::<ESSInit>() {
                     init
                 } else if let Ok(walkers) = p0.extract::<Vec<Vec<f64>>>() {
@@ -661,15 +650,8 @@ pub mod py_ganesh {
                     callbacks = callbacks.with_terminator(terminator);
                 }
                 callbacks = callbacks.with_terminator(CtrlCAbortSignal::new());
-                run_mcmc_algorithm::<ESS, _>(
-                    problem,
-                    parameter_names,
-                    threads,
-                    init,
-                    config,
-                    callbacks,
-                )
-                .map_err(PyErr::from)
+                run_mcmc_algorithm::<ESS, _>(problem, threads, init, config, callbacks)
+                    .map_err(PyErr::from)
             }
             _ => Err(PyValueError::new_err(format!(
                 "Invalid MCMC algorithm: {method}"
@@ -759,130 +741,6 @@ pub mod py_ganesh {
         }
     }
 
-    /// Gradient-based minimization status passed to Python observers and terminators.
-    #[pyclass(name = "GradientStatus", module = "laddu")]
-    pub struct PyGradientStatus(Arc<Mutex<GradientStatus>>);
-
-    #[pymethods]
-    impl PyGradientStatus {
-        #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.lock().x.as_slice().to_pyarray(py)
-        }
-        #[getter]
-        fn fx(&self) -> f64 {
-            self.0.lock().fx
-        }
-        #[getter]
-        fn message(&self) -> String {
-            self.0.lock().message().to_string()
-        }
-        #[getter]
-        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-            self.0
-                .lock()
-                .err
-                .clone()
-                .map(|err| err.as_slice().to_pyarray(py))
-        }
-        #[getter]
-        fn n_f_evals(&self) -> usize {
-            self.0.lock().n_f_evals
-        }
-        #[getter]
-        fn n_g_evals(&self) -> usize {
-            self.0.lock().n_g_evals
-        }
-        #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-            self.0.lock().cov.clone().map(|cov| cov.to_pyarray(py))
-        }
-        #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-            self.0.lock().hess.clone().map(|hess| hess.to_pyarray(py))
-        }
-        #[getter]
-        fn converged(&self) -> bool {
-            self.0.lock().success()
-        }
-    }
-
-    /// Gradient-free minimization status passed to Python observers and terminators.
-    #[pyclass(name = "GradientFreeStatus", module = "laddu")]
-    pub struct PyGradientFreeStatus(Arc<Mutex<GradientFreeStatus>>);
-
-    #[pymethods]
-    impl PyGradientFreeStatus {
-        #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.lock().x.as_slice().to_pyarray(py)
-        }
-        #[getter]
-        fn fx(&self) -> f64 {
-            self.0.lock().fx
-        }
-        #[getter]
-        fn message(&self) -> String {
-            self.0.lock().message().to_string()
-        }
-        #[getter]
-        fn err<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray1<f64>>> {
-            self.0
-                .lock()
-                .err
-                .clone()
-                .map(|err| err.as_slice().to_pyarray(py))
-        }
-        #[getter]
-        fn n_f_evals(&self) -> usize {
-            self.0.lock().n_f_evals
-        }
-        #[getter]
-        fn cov<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-            self.0.lock().cov.clone().map(|cov| cov.to_pyarray(py))
-        }
-        #[getter]
-        fn hess<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
-            self.0.lock().hess.clone().map(|hess| hess.to_pyarray(py))
-        }
-        #[getter]
-        fn converged(&self) -> bool {
-            self.0.lock().success()
-        }
-    }
-
-    /// Particle-swarm minimization status passed to Python observers and terminators.
-    #[pyclass(name = "SwarmStatus", module = "laddu")]
-    pub struct PySwarmStatus(Arc<Mutex<SwarmStatus>>);
-
-    #[pymethods]
-    impl PySwarmStatus {
-        #[getter]
-        fn x<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-            self.0.lock().gbest.x.as_slice().to_pyarray(py)
-        }
-        #[getter]
-        fn fx(&self) -> f64 {
-            self.0.lock().gbest.fx.unwrap_or(f64::NAN)
-        }
-        #[getter]
-        fn message(&self) -> String {
-            self.0.lock().message().to_string()
-        }
-        #[getter]
-        fn n_f_evals(&self) -> usize {
-            self.0.lock().n_f_evals
-        }
-        #[getter]
-        fn converged(&self) -> bool {
-            self.0.lock().success()
-        }
-        #[getter]
-        fn swarm(&self) -> PySwarm {
-            PySwarm(self.0.lock().swarm.clone())
-        }
-    }
-
     /// An enum used by a terminator to continue or stop an algorithm.
     ///
     #[pyclass(eq, eq_int, name = "ControlFlow", module = "laddu", from_py_object)]
@@ -934,7 +792,8 @@ pub mod py_ganesh {
                     "observe",
                     (
                         current_step,
-                        PyGradientStatus(Arc::new(Mutex::new(status.clone()))),
+                        Py::new(py, GaneshPyGradientStatus::from(status.clone()))
+                            .expect("ganesh gradient status should construct"),
                     ),
                 ) {
                     err.print(py);
@@ -961,7 +820,8 @@ pub mod py_ganesh {
                     "observe",
                     (
                         current_step,
-                        PyGradientFreeStatus(Arc::new(Mutex::new(status.clone()))),
+                        Py::new(py, GaneshPyGradientFreeStatus::from(status.clone()))
+                            .expect("ganesh gradient-free status should construct"),
                     ),
                 ) {
                     err.print(py);
@@ -982,17 +842,19 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) {
-            Python::attach(|py| {
+            Python::attach(|py| -> PyResult<()> {
                 if let Err(err) = self.0.bind(py).call_method1(
                     "observe",
                     (
                         current_step,
-                        PySwarmStatus(Arc::new(Mutex::new(status.clone()))),
+                        Py::new(py, GaneshPySwarmStatus::from(status.clone()))?,
                     ),
                 ) {
                     err.print(py);
                 }
+                Ok(())
             })
+            .expect("call to 'observe' has failed!")
         }
     }
 
@@ -1026,21 +888,15 @@ pub mod py_ganesh {
             _config: &C,
         ) -> ControlFlow<()> {
             Python::attach(|py| -> PyResult<ControlFlow<()>> {
-                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
-                let py_status = Py::new(py, PyGradientStatus(wrapped_status.clone()))?;
-                let call_result = self
+                let py_status = Py::new(py, GaneshPyGradientStatus::from(status.clone()))?;
+                let ret = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status));
-                {
-                    let mut guard = wrapped_status.lock();
-                    std::mem::swap(status, &mut *guard);
-                }
-                let ret = call_result?;
+                    .call_method1("check_for_termination", (current_step, py_status))?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
-            .unwrap_or(ControlFlow::Continue(()))
+            .expect("call to 'check_for_termination' has failed!")
         }
     }
     impl<A, P, C> Terminator<A, P, GradientFreeStatus, MaybeThreadPool, LadduError, C>
@@ -1058,21 +914,15 @@ pub mod py_ganesh {
             _config: &C,
         ) -> ControlFlow<()> {
             Python::attach(|py| -> PyResult<ControlFlow<()>> {
-                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
-                let py_status = Py::new(py, PyGradientFreeStatus(wrapped_status.clone()))?;
-                let call_result = self
+                let py_status = Py::new(py, GaneshPyGradientFreeStatus::from(status.clone()))?;
+                let ret = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status));
-                {
-                    let mut guard = wrapped_status.lock();
-                    std::mem::swap(status, &mut *guard);
-                }
-                let ret = call_result?;
+                    .call_method1("check_for_termination", (current_step, py_status))?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
-            .unwrap_or(ControlFlow::Continue(()))
+            .expect("call to 'check_for_termination' has failed!")
         }
     }
     impl<A, P, C> Terminator<A, P, SwarmStatus, MaybeThreadPool, LadduError, C>
@@ -1090,21 +940,15 @@ pub mod py_ganesh {
             _config: &C,
         ) -> ControlFlow<()> {
             Python::attach(|py| -> PyResult<ControlFlow<()>> {
-                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
-                let py_status = Py::new(py, PySwarmStatus(wrapped_status.clone()))?;
-                let call_result = self
+                let py_status = Py::new(py, GaneshPySwarmStatus::from(status.clone()))?;
+                let ret = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status));
-                {
-                    let mut guard = wrapped_status.lock();
-                    std::mem::swap(status, &mut *guard);
-                }
-                let ret = call_result?;
+                    .call_method1("check_for_termination", (current_step, py_status))?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
-            .unwrap_or(ControlFlow::Continue(()))
+            .expect("call to 'check_for_termination' has failed!")
         }
     }
 
@@ -1135,129 +979,10 @@ pub mod py_ganesh {
         }
     }
 
-    /// The intermediate status used to inform the user of the current state of an MCMC algorithm.
-    ///
-    #[pyclass(name = "EnsembleStatus", module = "laddu")]
-    pub struct PyEnsembleStatus(Arc<Mutex<EnsembleStatus>>);
-
-    #[pymethods]
-    impl PyEnsembleStatus {
-        /// A message indicating the current state of the minimization.
-        ///
-        /// Returns
-        /// -------
-        /// str
-        ///
-        #[getter]
-        fn message(&self) -> String {
-            self.0.lock().message().to_string()
-        }
-        /// The number of objective function evaluations performed.
-        ///
-        /// Returns
-        /// -------
-        /// int
-        ///
-        #[getter]
-        fn n_f_evals(&self) -> usize {
-            self.0.lock().n_f_evals
-        }
-        /// The number of gradient function evaluations performed.
-        ///
-        /// Returns
-        /// -------
-        /// int
-        ///
-        #[getter]
-        fn n_g_evals(&self) -> usize {
-            self.0.lock().n_g_evals
-        }
-        /// The walkers in the ensemble.
-        ///
-        /// Returns
-        /// -------
-        /// list of Walker
-        ///
-        #[getter]
-        fn walkers(&self) -> Vec<PyWalker> {
-            self.0
-                .lock()
-                .walkers
-                .iter()
-                .map(|w| PyWalker(w.clone()))
-                .collect()
-        }
-        /// The dimension of the ensemble `(n_walkers, n_steps, n_variables)`.
-        ///
-        /// Returns
-        /// -------
-        /// tuple of int
-        ///
-        #[getter]
-        fn dimension(&self) -> (usize, usize, usize) {
-            self.0.lock().dimension()
-        }
-
-        /// Retrieve the chain of the MCMC sampling.
-        ///
-        /// Parameters
-        /// ----------
-        /// burn : int, optional
-        ///     The number of steps to discard from the beginning of the chain.
-        /// thin : int, optional
-        ///     The number of steps to skip between samples.
-        ///
-        /// Returns
-        /// -------
-        /// chain : array of shape (n_steps, n_variables, n_walkers)
-        ///
-        #[pyo3(signature = (*, burn = None, thin = None))]
-        fn get_chain<'py>(
-            &self,
-            py: Python<'py>,
-            burn: Option<usize>,
-            thin: Option<usize>,
-        ) -> PyResult<Bound<'py, PyArray3<f64>>> {
-            let vec_chain: Vec<Vec<Vec<f64>>> = self
-                .0
-                .lock()
-                .get_chain(burn, thin)
-                .iter()
-                .map(|steps| steps.iter().map(|p| p.as_slice().to_vec()).collect())
-                .collect();
-            Ok(PyArray3::from_vec3(py, &vec_chain)?)
-        }
-
-        /// Retrieve the chain of the MCMC sampling, flattened over walkers.
-        ///
-        /// Parameters
-        /// ----------
-        /// burn : int, optional
-        ///     The number of steps to discard from the beginning of the chain.
-        /// thin : int, optional
-        ///     The number of steps to skip between samples.
-        ///
-        /// Returns
-        /// -------
-        /// flat_chain : array of shape (n_steps * n_walkers, n_variables)
-        ///
-        #[pyo3(signature = (*, burn = None, thin = None))]
-        fn get_flat_chain<'py>(
-            &self,
-            py: Python<'py>,
-            burn: Option<usize>,
-            thin: Option<usize>,
-        ) -> Bound<'py, PyArray2<f64>> {
-            DMatrix::from_columns(&self.0.lock().get_flat_chain(burn, thin))
-                .transpose()
-                .to_pyarray(py)
-        }
-    }
-
     /// An [`Observer`] which can be used to monitor the progress of an MCMC algorithm.
     ///
     /// This should be paired with a Python object which has an `observe` method
-    /// that takes the current step and a [`PyEnsembleStatus`] as arguments.
+    /// that takes the current step and a `ganesh.EnsembleStatus` object.
     #[derive(Clone)]
     pub struct MCMCObserver(Arc<Py<PyAny>>);
 
@@ -1281,24 +1006,26 @@ pub mod py_ganesh {
             _args: &MaybeThreadPool,
             _config: &C,
         ) {
-            Python::attach(|py| {
+            Python::attach(|py| -> PyResult<()> {
                 if let Err(err) = self.0.bind(py).call_method1(
                     "observe",
                     (
                         current_step,
-                        PyEnsembleStatus(Arc::new(Mutex::new(status.clone()))),
+                        Py::new(py, GaneshPyEnsembleStatus::from(status.clone()))?,
                     ),
                 ) {
                     err.print(py);
                 }
+                Ok(())
             })
+            .expect("call to 'observe' has failed!")
         }
     }
 
     /// A [`Terminator`] which can be used to monitor the progress of an MCMC algorithm.
     ///
     /// This should be paired with a Python object which has an `check_for_termination` method
-    /// that takes the current step and a [`PyEnsembleStatus`] as arguments and returns a
+    /// that takes the current step and a `ganesh.EnsembleStatus` object and returns a
     /// [`PyControlFlow`].
     #[derive(Clone)]
     pub struct MCMCTerminator(Arc<Py<PyAny>>);
@@ -1324,21 +1051,15 @@ pub mod py_ganesh {
             _config: &C,
         ) -> ControlFlow<()> {
             Python::attach(|py| -> PyResult<ControlFlow<()>> {
-                let wrapped_status = Arc::new(Mutex::new(std::mem::take(status)));
-                let py_status = Py::new(py, PyEnsembleStatus(wrapped_status.clone()))?;
-                let call_result = self
+                let py_status = Py::new(py, GaneshPyEnsembleStatus::from(status.clone()))?;
+                let ret = self
                     .0
                     .bind(py)
-                    .call_method1("check_for_termination", (current_step, py_status));
-                {
-                    let mut guard = wrapped_status.lock();
-                    std::mem::swap(status, &mut *guard);
-                }
-                let ret = call_result?;
+                    .call_method1("check_for_termination", (current_step, py_status))?;
                 let cf: PyControlFlow = ret.extract()?;
                 Ok(cf.into())
             })
-            .unwrap_or(ControlFlow::Continue(()))
+            .expect("call to 'check_for_termination' has failed!")
         }
     }
 

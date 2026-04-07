@@ -21,6 +21,7 @@ from .data import BinnedDataset, Dataset, Event
 from .extensions import (
     NLL,
     ControlFlow,
+    EnsembleStatus,
     GradientFreeStatus,
     GradientStatus,
     LikelihoodEvaluator,
@@ -73,6 +74,7 @@ __all__ = [
     'ControlFlow',
     'CosTheta',
     'Dataset',
+    'EnsembleStatus',
     'Evaluator',
     'Event',
     'Expression',

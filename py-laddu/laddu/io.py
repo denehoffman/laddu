@@ -17,14 +17,15 @@ from typing import (
 import numpy as np
 from numpy.typing import NDArray
 
-from laddu.laddu import from_columns as _backend_from_columns
-from laddu.laddu import read_parquet as _backend_read_parquet
-from laddu.laddu import read_parquet_chunked as _backend_read_parquet_chunked
-from laddu.laddu import read_root as _backend_read_root
-from laddu.laddu import write_parquet as _backend_write_parquet
-from laddu.laddu import write_root as _backend_write_root
-
+from ._backend import backend as _backend_module
 from .data import Dataset
+
+_backend_from_columns = _backend_module.from_columns
+_backend_read_parquet = _backend_module.read_parquet
+_backend_read_parquet_chunked = _backend_module.read_parquet_chunked
+_backend_read_root = _backend_module.read_root
+_backend_write_parquet = _backend_module.write_parquet
+_backend_write_root = _backend_module.write_root
 
 if TYPE_CHECKING:
     import pandas as pd
