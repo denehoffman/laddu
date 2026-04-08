@@ -472,8 +472,8 @@ benchmark_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(),
-                InstallRustTool(tool=['cargo-codspeed', 'cargo-criterion']),
-                script('cargo codspeed build'),
+                InstallRustTool(tool=['cargo-codspeed']),
+                script('cargo codspeed build --bench workflow_behavior_cpu_benchmarks'),
                 action(
                     'CodSpeed Action',
                     'CodSpeedHQ/action',
@@ -538,9 +538,9 @@ coverage_workflow = Workflow(
                 SetupMPI(),
                 InstallRustTool(tool=['cargo-llvm-cov']),
                 script(
-                    'cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu'
+                    'cargo llvm-cov --workspace --codecov --output-path coverage-rust.json'
                 ),
-                UploadArtifact(path='coverage-rust.lcov', artifact_name='coverage-rust'),
+                UploadArtifact(path='coverage-rust.json', artifact_name='coverage-rust'),
             ],
             runs_on='ubuntu-latest',
             env={'CARGO_TERM_COLOR': 'always'},
@@ -572,7 +572,7 @@ coverage_workflow = Workflow(
                 DownloadArtifact(merge_multiple=True),
                 Codecov(
                     token=context.secrets.CODECOV_TOKEN,
-                    files='coverage-rust.lcov,coverage-python.xml',
+                    files='coverage-rust.json,coverage-python.xml',
                     fail_ci_if_error=True,
                     verbose=True,
                     root_dir=context.github.workspace,
