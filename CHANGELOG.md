@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.0](https://github.com/denehoffman/laddu/compare/v0.15.0...v0.16.0) (2026-04-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* Renames NLL projection APIs in Rust and Python to weights-focused names and removes old method names.
+
+### Features
+
+* Large updates to main APIs and backend performance/memory ([a9049ba](https://github.com/denehoffman/laddu/commit/a9049ba51c324a9ca7abaec2395d03c2722c4e9d))
+
 ## [0.15.0](https://github.com/denehoffman/laddu/compare/v0.14.1...v0.15.0) (2026-02-10)
 
 
