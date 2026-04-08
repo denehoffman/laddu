@@ -37,9 +37,6 @@ class Target:
 
 
 DEFAULT_PYTHON_VERSIONS = [
-    '3.7',
-    '3.8',
-    '3.9',
     '3.10',
     '3.11',
     '3.12',
@@ -102,7 +99,7 @@ TARGET_JOBS_CPU = [
             Target(
                 'windows-11-arm',
                 'aarch64',
-                ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
+                ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
             ),
         ],
     ),
@@ -114,11 +111,12 @@ TARGET_JOBS_CPU = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target('macos-latest', 'aarch64', ['3.7']),
+            Target('macos-latest', 'aarch64'),
         ],
     ),
 ]
 
+# In case we ever decide to build MPI wheels again
 TARGET_JOBS_MPI = [
     TargetJob(
         'Build Linux Wheels',
@@ -163,7 +161,7 @@ TARGET_JOBS_MPI = [
             # Target(
             #     'windows-11-arm',
             #     'aarch64',
-            #     ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
+            #     ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
             # ),
         ],
     ),
@@ -175,7 +173,7 @@ TARGET_JOBS_MPI = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target('macos-latest', 'aarch64', ['3.7']),
+            Target('macos-latest', 'aarch64'),
         ],
     ),
 ]
@@ -197,7 +195,7 @@ def create_build_job(
     needs: list[str] | None = None,
     upload: bool = True,
 ) -> Job:
-    def platform_entry(target: Target) -> dict[str, object]:
+    def platform_entry(target: Target) -> dict[str, str | list[str]]:
         entry = {
             'runner': target.runner,
             'target': target.target,
@@ -283,12 +281,37 @@ test_build_workflow = Workflow(
             )
             for tj in TARGET_JOBS_CPU
         },
-        **{
-            f'{tj.short_name}-mpi': create_build_job(
-                tj.job_name, tj.short_name, tj.targets, mpi=True, upload=False
-            )
-            for tj in TARGET_JOBS_MPI
-        },
+        'sdist-cpu': Job(
+            steps=[
+                Checkout(),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-cpu/Cargo.toml',
+                ),
+                UploadArtifact(path='dist', artifact_name='cpu-sdist'),
+            ],
+            name='Build Source Distribution',
+            runs_on='ubuntu-22.04',
+            needs=['build-check-test'],
+            condition=context.github.ref.startswith('refs/tags/')
+            | (context.github.event_name == 'workflow_dispatch'),
+        ),
+        'sdist-mpi': Job(
+            steps=[
+                Checkout(),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-mpi/Cargo.toml',
+                ),
+                UploadArtifact(path='dist', artifact_name='mpi-sdist'),
+            ],
+            name='Build MPI Source Distribution',
+            runs_on='ubuntu-22.04',
+            condition=context.github.ref.startswith('refs/tags/')
+            | (context.github.event_name == 'workflow_dispatch'),
+        ),
     },
 )
 
@@ -312,7 +335,7 @@ python_release_workflow = Workflow(
                 script(
                     'cargo hack check --rust-version --feature-powerset --no-dev-deps'
                 ),
-                script('cargo hack test --feature-powerset'),
+                script('cargo hack test --each-feature'),
                 script(
                     'uv venv',
                     '. .venv/bin/activate',
@@ -320,10 +343,14 @@ python_release_workflow = Workflow(
                     'uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist',
                     'uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu',
                     'uv pip install --no-cache-dir -e "py-laddu[tests]"',
+                    'uvx --with "maturin[patchelf]>=1.7,<2" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release',
                 ),
                 script('uvx ruff check . --extend-exclude=.yamloom.py'),
                 script('uvx ty check . --exclude=.yamloom.py'),
                 script('uv run pytest'),
+                script(
+                    'LADDU_BACKEND=MPI mpirun -n 2 .venv/bin/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py'
+                ),
             ],
             runs_on='ubuntu-latest',
         ),
@@ -336,16 +363,6 @@ python_release_workflow = Workflow(
                 mpi=False,
             )
             for tj in TARGET_JOBS_CPU
-        },
-        **{
-            f'{tj.short_name}-mpi': create_build_job(
-                tj.job_name,
-                tj.short_name,
-                tj.targets,
-                needs=['build-check-test'],
-                mpi=True,
-            )
-            for tj in TARGET_JOBS_MPI
         },
         'sdist-cpu': Job(
             steps=[
@@ -373,7 +390,7 @@ python_release_workflow = Workflow(
                 ),
                 UploadArtifact(path='dist', artifact_name='mpi-sdist'),
             ],
-            name='Build Source Distribution',
+            name='Build MPI Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
             condition=context.github.ref.startswith('refs/tags/')
@@ -385,11 +402,7 @@ python_release_workflow = Workflow(
                 DownloadArtifact(),
                 SetupUV(),
                 script(
-                    'uv publish --trusted-publishing always cpu-*/*',
-                    permissions=Permissions(id_token='write', contents='write'),
-                ),
-                script(
-                    'uv publish --trusted-publishing always mpi-*/*',
+                    'uv publish --trusted-publishing always cpu-*/* cpu-sdist/* mpi-sdist/*',
                     permissions=Permissions(id_token='write', contents='write'),
                 ),
                 script(
@@ -404,7 +417,6 @@ python_release_workflow = Workflow(
             | (context.github.event_name == 'workflow_dispatch'),
             needs=[
                 *[f'{tj.short_name}-cpu' for tj in TARGET_JOBS_CPU],
-                *[f'{tj.short_name}-mpi' for tj in TARGET_JOBS_MPI],
                 'sdist-cpu',
                 'sdist-mpi',
             ],
@@ -474,7 +486,10 @@ benchmark_workflow = Workflow(
                 Checkout(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-codspeed']),
-                script('cargo codspeed build'),
+                script(
+                    'cargo codspeed build --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark',
+                    env={'CARGO_BUILD_JOBS': '1'},
+                ),
                 action(
                     'CodSpeed Action',
                     'CodSpeedHQ/action',
@@ -517,9 +532,9 @@ coverage_workflow = Workflow(
                 SetupMPI(),
                 InstallRustTool(tool=['cargo-llvm-cov']),
                 script(
-                    'cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu'
+                    'cargo llvm-cov --workspace --codecov --output-path coverage-rust.json'
                 ),
-                UploadArtifact(path='coverage-rust.lcov', artifact_name='coverage-rust'),
+                UploadArtifact(path='coverage-rust.json', artifact_name='coverage-rust'),
             ],
             runs_on='ubuntu-latest',
             env={'CARGO_TERM_COLOR': 'always'},
@@ -551,7 +566,7 @@ coverage_workflow = Workflow(
                 DownloadArtifact(merge_multiple=True),
                 Codecov(
                     token=context.secrets.CODECOV_TOKEN,
-                    files='coverage-rust.lcov,coverage-python.xml',
+                    files='coverage-rust.json,coverage-python.xml',
                     fail_ci_if_error=True,
                     verbose=True,
                     root_dir=context.github.workspace,

@@ -3,6 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "docopt-ng",
+#     "ganesh-rs",
 #     "laddu",
 #     "loguru",
 #     "matplotlib",
@@ -27,6 +28,7 @@ import pickle
 from pathlib import Path
 from time import perf_counter
 
+import ganesh
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
@@ -386,16 +388,23 @@ def fit_binned(
             msg = f'All fits for bin #{ibin} failed!'
             raise RuntimeError(msg)
 
-        tot_res.append(nll.project(best_fit.x).sum())
-        tot_res_acc.append(nll.project(best_fit.x, mc_evaluator=gen_eval).sum())
-        s0p_res.append(nll.project_with(best_fit.x, ['Z00+', 'S0+']).sum())
-        s0p_res_acc.append(
-            nll.project_with(best_fit.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval).sum()
+        fit_weights = nll.project_weights(
+            best_fit.x,
+            subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
         )
-        d2p_res.append(nll.project_with(best_fit.x, ['Z22+', 'D2+']).sum())
-        d2p_res_acc.append(
-            nll.project_with(best_fit.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval).sum()
+        tot_count, s0p_count, d2p_count = fit_weights.sum(axis=1)
+        tot_res.append(tot_count)
+        s0p_res.append(s0p_count)
+        d2p_res.append(d2p_count)
+        fit_weights_acc = nll.project_weights(
+            best_fit.x,
+            subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+            mc_evaluator=gen_eval,
         )
+        tot_count_acc, s0p_count_acc, d2p_count_acc = fit_weights_acc.sum(axis=1)
+        tot_res_acc.append(tot_count_acc)
+        s0p_res_acc.append(s0p_count_acc)
+        d2p_res_acc.append(d2p_count_acc)
         nll.activate_all()
         gen_eval.activate_all()
 
@@ -416,20 +425,23 @@ def fit_binned(
             boot_fit = boot_nll.minimize(best_fit.x)
             bootstrap_fites.append(boot_fit)
 
-            tot_boot.append(boot_nll.project(boot_fit.x).sum())
-            tot_boot_acc.append(boot_nll.project(boot_fit.x, mc_evaluator=gen_eval).sum())
-            s0p_boot.append(boot_nll.project_with(boot_fit.x, ['Z00+', 'S0+']).sum())
-            s0p_boot_acc.append(
-                boot_nll.project_with(
-                    boot_fit.x, ['Z00+', 'S0+'], mc_evaluator=gen_eval
-                ).sum()
+            boot_weights = boot_nll.project_weights(
+                boot_fit.x,
+                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
             )
-            d2p_boot.append(boot_nll.project_with(boot_fit.x, ['Z22+', 'D2+']).sum())
-            d2p_boot_acc.append(
-                boot_nll.project_with(
-                    boot_fit.x, ['Z22+', 'D2+'], mc_evaluator=gen_eval
-                ).sum()
+            tot_count, s0p_count, d2p_count = boot_weights.sum(axis=1)
+            tot_boot.append(tot_count)
+            s0p_boot.append(s0p_count)
+            d2p_boot.append(d2p_count)
+            boot_weights_acc = boot_nll.project_weights(
+                boot_fit.x,
+                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+                mc_evaluator=gen_eval,
             )
+            tot_count_acc, s0p_count_acc, d2p_count_acc = boot_weights_acc.sum(axis=1)
+            tot_boot_acc.append(tot_count_acc)
+            s0p_boot_acc.append(s0p_count_acc)
+            d2p_boot_acc.append(d2p_count_acc)
             boot_nll.activate_all()
             gen_eval.activate_all()
         tot_res_err.append(np.std(tot_boot))
@@ -477,8 +489,8 @@ def fit_unbinned(
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray],
-    ld.MinimizationSummary,
-    list[ld.MinimizationSummary],
+    ganesh.MinimizationSummary,
+    list[ganesh.MinimizationSummary],
     list[str],
 ]:
     logger.info('Starting Unbinned Fit')
@@ -533,7 +545,7 @@ def fit_unbinned(
         logger.info(f'Fitting Iteration #{iiter}')
         p0 = rng.uniform(-1000.0, 1000.0, 3)
         p0 = [p0[0], 0.8, p0[1], p0[2], 0.5]
-        fit = nll.minimize(p0, bounds=bounds)
+        fit = nll.minimize(p0, config=ganesh.LBFGSBConfig(bounds=bounds))
         if fit.fx < best_nll:
             best_nll = fit.fx
             best_fit = fit
@@ -542,15 +554,14 @@ def fit_unbinned(
         msg = 'All unbinned fits failed!'
         raise RuntimeError(msg)
 
-    tot_weights = nll.project(best_fit.x)
-    tot_weights_acc = nll.project(best_fit.x, mc_evaluator=gen_eval)
-    s0p_weights = nll.project_with(best_fit.x, ['S0+', 'Z00+', 'f0(1500)'])
-    s0p_weights_acc = nll.project_with(
-        best_fit.x, ['S0+', 'Z00+', 'f0(1500)'], mc_evaluator=gen_eval
+    tot_weights, s0p_weights, d2p_weights = nll.project_weights(
+        best_fit.x,
+        subsets=[None, ['S0+', 'Z00+', 'f0(1500)'], ['D2+', 'Z22+', 'f2(1525)']],
     )
-    d2p_weights = nll.project_with(best_fit.x, ['D2+', 'Z22+', 'f2(1525)'])
-    d2p_weights_acc = nll.project_with(
-        best_fit.x, ['D2+', 'Z22+', 'f2(1525)'], mc_evaluator=gen_eval
+    tot_weights_acc, s0p_weights_acc, d2p_weights_acc = nll.project_weights(
+        best_fit.x,
+        subsets=[None, ['S0+', 'Z00+', 'f0(1500)'], ['D2+', 'Z22+', 'f2(1525)']],
+        mc_evaluator=gen_eval,
     )
     nll.activate_all()
 

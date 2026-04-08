@@ -88,9 +88,29 @@ Finally, let's visualize the results. We could get the weights in each bin and a
    import numpy as np
    sorted_accmc_ds = sum([ds for ds in binned_accmc_ds])
    assert sorted_accmc_ds != 0 # this line is for type-checkers only!
-   tot_weights = np.concatenate([np.array(nlls[ibin].project(binned_statuses[ibin].x)) for ibin in range(bins)])
-   s0p_weights = np.concatenate([np.array(nlls[ibin].project_with(binned_statuses[ibin].x, ["S0+", "Z00+"])) for ibin in range(bins)])
-   d2p_weights = np.concatenate([np.array(nlls[ibin].project_with(binned_statuses[ibin].x, ["D2+", "Z22+"])) for ibin in range(bins)])
+   tot_weights = np.concatenate(
+       [np.array(nlls[ibin].project_weights(binned_statuses[ibin].x)) for ibin in range(bins)]
+   )
+   s0p_weights = np.concatenate(
+       [
+           np.array(
+               nlls[ibin].project_weights(
+                   binned_statuses[ibin].x, subset=["S0+", "Z00+"]
+               )
+           )
+           for ibin in range(bins)
+       ]
+   )
+   d2p_weights = np.concatenate(
+       [
+           np.array(
+               nlls[ibin].project_weights(
+                   binned_statuses[ibin].x, subset=["D2+", "Z22+"]
+               )
+           )
+           for ibin in range(bins)
+       ]
+   )
 
 Then, plotting would just involve something like ``plt.hist(res_mass.value_on(sorted_accmc_ds), bins, range=mass_range, weights=tot_weights)``. We could also do the following:
 
@@ -104,9 +124,14 @@ Then, plotting would just involve something like ``plt.hist(res_mass.value_on(so
    d2p_counts = []
 
    for ibin in range(bins):
-       tot_counts.append(sum(nlls[ibin].project(binned_statuses[ibin].x)))
-       s0p_counts.append(sum(nlls[ibin].project_with(binned_statuses[ibin].x, ["S0+", "Z00+"])))
-       d2p_counts.append(sum(nlls[ibin].project_with(binned_statuses[ibin].x, ["D2+", "Z22+"])))
+       weights = nlls[ibin].project_weights(
+           binned_statuses[ibin].x,
+           subsets=[None, ["S0+", "Z00+"], ["D2+", "Z22+"]],
+       )
+       tot_count, s0p_count, d2p_count = weights.sum(axis=1)
+       tot_counts.append(tot_count)
+       s0p_counts.append(s0p_count)
+       d2p_counts.append(d2p_count)
 
 We now have some stuff that looks like the *output* of ``np.histogram``, but we need to turn this into a plot. We can either use ``plt.stairs(counts, edges)`` or ``plt.hist(edges[:-1], edges, weights=counts)`` to do this, although the first option will be used here for simplicity.
 

@@ -22,6 +22,14 @@ DATA_AMPTOOLS_ROOT = TEST_DATA_DIR / 'data_amptools.root'
 DATA_AMPTOOLS_POL_ROOT = TEST_DATA_DIR / 'data_amptools_pol.root'
 
 
+class _FakeTreeKeys:
+    def __init__(self, names: list[str]) -> None:
+        self._names = names
+
+    def keys(self) -> list[str]:
+        return self._names
+
+
 def _assert_vec4_close(vec_left: Vec4 | None, vec_right: Vec4 | None) -> None:
     assert vec_left is not None
     assert vec_right is not None
@@ -63,6 +71,13 @@ def _assert_datasets_close(dataset_left: Dataset, dataset_right: Dataset) -> Non
         _assert_events_close(dataset_left[idx], dataset_right[idx], shared_p4, shared_aux)
 
 
+def _materialize_chunked(chunks: list[Dataset], reference: Dataset) -> Dataset:
+    events: list[Event] = []
+    for chunk in chunks:
+        events.extend(list(chunk))
+    return Dataset(events, p4_names=reference.p4_names, aux_names=reference.aux_names)
+
+
 def make_test_event() -> Event:
     return Event(
         [
@@ -80,6 +95,12 @@ def make_test_event() -> Event:
 
 def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
+
+
+def test_top_level_package_exposes_io_module() -> None:
+    import laddu as ld
+
+    assert ld.io is ldio
 
 
 def test_event_creation() -> None:
@@ -115,15 +136,16 @@ def test_event_name_lookup() -> None:
     proton_vec = event.p4s['proton']
     assert isinstance(proton_vec, Vec4)
     assert pytest.approx(proton_vec.e) == event.p4s['proton'].e
-    proton_optional = event.p4('proton')
-    assert proton_optional is not None
-    assert pytest.approx(proton_optional.e) == event.p4s['proton'].e
+    proton = event.p4('proton')
+    assert pytest.approx(proton.e) == event.p4s['proton'].e
     aux_value = event.aux['pol_angle']
     assert pytest.approx(aux_value) == event.aux['pol_angle']
     assert isinstance(event.aux.get('pol_magnitude'), float)
     assert event.aux.get('unknown') is None
     with pytest.raises(KeyError):
         _ = event.p4s['unknown']
+    with pytest.raises(KeyError, match="Unknown particle name 'unknown'"):
+        event.p4('unknown')
 
 
 def test_event_alias_lookup() -> None:
@@ -172,8 +194,8 @@ def test_dataset_constructor_metadata_precedence() -> None:
         [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.2, 0.1, 1.5).with_mass(0.3)],
         [],
         1.0,
-        p4_names=['legacy_beam', 'legacy_kshort'],
-        aliases={'pair': 'legacy_beam'},
+        p4_names=['event_beam', 'event_kshort'],
+        aliases={'pair': 'event_beam'},
     )
 
     dataset = Dataset(
@@ -186,7 +208,7 @@ def test_dataset_constructor_metadata_precedence() -> None:
     expected = dataset[0].get_p4_sum(['beam', 'kshort'])
     _assert_vec4_close(alias_vec, expected)
     with pytest.raises(KeyError):
-        _ = dataset[0].p4s['legacy_beam']
+        _ = dataset[0].p4s['event_beam']
 
 
 def test_dataset_alias_requires_metadata() -> None:
@@ -216,8 +238,36 @@ def test_event_evaluate_without_metadata() -> None:
         1.0,
     )
     mass = Mass(['particle'])
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
         event.evaluate(mass)
+
+
+def test_event_name_based_operations_require_metadata() -> None:
+    event = Event([Vec3(0, 0, 1).with_mass(1.0)], [], 1.0)
+
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.p4('beam')
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.get_p4_sum(['beam'])
+    with pytest.raises(
+        ValueError, match='Event has no associated metadata for name-based operations'
+    ):
+        event.boost_to_rest_frame_of(['beam'])
+
+
+def test_dataset_name_lookup_errors_are_specific() -> None:
+    dataset = make_test_dataset()
+
+    with pytest.raises(KeyError, match="Unknown particle name 'missing'"):
+        dataset.p4_by_name(0, 'missing')
+    with pytest.raises(KeyError, match="Unknown auxiliary name 'missing'"):
+        dataset.aux_by_name(0, 'missing')
 
 
 def test_dataset_conversion() -> None:
@@ -244,6 +294,185 @@ def test_dataset_conversion() -> None:
     assert pytest.approx(ds_from_numpy[0].aux['pol_angle']) == 0.1
     assert ds_from_pandas[2].weight == 2.0
     assert ds_from_polars[2].p4s['proton'].e == 100.0
+
+
+def test_table_entrypoints_io_compatibility(tmp_path: Path) -> None:
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+    constructors = {
+        'numpy': ldio.from_numpy({k: np.array(v) for k, v in data.items()}),
+        'pandas': ldio.from_pandas(pd.DataFrame(data)),
+        'polars': ldio.from_polars(pl.DataFrame(data)),
+    }
+    baseline = ldio.from_dict(data)
+
+    for name, dataset in constructors.items():
+        _assert_datasets_close(dataset, baseline)
+
+        parquet_path = tmp_path / f'{name}.parquet'
+        ldio.write_parquet(dataset, parquet_path)
+        reopened_parquet = ldio.read_parquet(parquet_path)
+        _assert_datasets_close(reopened_parquet, baseline)
+
+        root_path = tmp_path / f'{name}.root'
+        ldio.write_root(dataset, root_path)
+        reopened_root = ldio.read_root(root_path)
+        _assert_datasets_close(reopened_root, baseline)
+
+
+def test_arrow_entrypoints_io_compatibility() -> None:
+    pa = pytest.importorskip('pyarrow')
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+
+    baseline = ldio.from_dict(data)
+    table = pa.table(data)
+    dataset = ldio.from_arrow(table)
+    _assert_datasets_close(dataset, baseline)
+
+    roundtrip = ldio.from_arrow(ldio.to_arrow(dataset))
+    _assert_datasets_close(roundtrip, baseline)
+
+
+def test_pandas_and_polars_arrow_interop_matches_direct_arrow_ingestion() -> None:
+    pa = pytest.importorskip('pyarrow')
+    data = {
+        'beam_px': [1.0, 2.0, 3.0, 4.0],
+        'beam_py': [2.0, 3.0, 4.0, 5.0],
+        'beam_pz': [3.0, 4.0, 5.0, 6.0],
+        'beam_e': [4.0, 5.0, 6.0, 7.0],
+        'proton_px': [5.0, 6.0, 7.0, 8.0],
+        'proton_py': [6.0, 7.0, 8.0, 9.0],
+        'proton_pz': [7.0, 8.0, 9.0, 10.0],
+        'proton_e': [80.0, 90.0, 100.0, 110.0],
+        'pol_magnitude': [0.4, 0.5, 0.6, 0.7],
+        'pol_angle': [0.1, 0.2, 0.3, 0.4],
+        'weight': [1.0, 1.0, 2.0, 6.6],
+    }
+
+    baseline = ldio.from_arrow(pa.table(data))
+    from_pandas = ldio.from_pandas(pd.DataFrame(data))
+    from_polars = ldio.from_polars(pl.DataFrame(data))
+
+    _assert_datasets_close(from_pandas, baseline)
+    _assert_datasets_close(from_polars, baseline)
+
+
+def test_dataset_to_arrow_roundtrip_method_matches_io_helper() -> None:
+    pa = pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table_from_method = dataset.to_arrow()
+    table_from_helper = ldio.to_arrow(dataset)
+
+    assert isinstance(table_from_method, pa.Table)
+    assert table_from_method.schema == table_from_helper.schema
+
+    roundtrip = ldio.from_arrow(table_from_method, p4s=P4_NAMES, aux=AUX_NAMES)
+    _assert_datasets_close(roundtrip, dataset)
+
+
+def test_dataset_arrow_table_converts_to_pandas_and_polars() -> None:
+    pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table = dataset.to_arrow()
+    pandas_frame = table.to_pandas()
+    polars_frame = pl.from_arrow(table)
+
+    _assert_datasets_close(
+        ldio.from_pandas(pandas_frame, p4s=P4_NAMES, aux=AUX_NAMES),
+        dataset,
+    )
+    _assert_datasets_close(
+        ldio.from_polars(polars_frame, p4s=P4_NAMES, aux=AUX_NAMES),
+        dataset,
+    )
+
+
+def test_to_arrow_exports_single_chunk_columns() -> None:
+    pytest.importorskip('pyarrow')
+    dataset = make_test_dataset()
+
+    table = ldio.to_arrow(dataset)
+
+    assert all(table[name].num_chunks == 1 for name in table.column_names)
+
+
+def test_table_entrypoints_dtype_and_null_handling() -> None:
+    data = {
+        'beam_px': [1, 2, 3],
+        'beam_py': [0.0, 0.1, 0.2],
+        'beam_pz': [3, 4, 5],
+        'beam_e': [4.0, 5.0, 6.0],
+        'pol_magnitude': [True, False, True],
+        'pol_angle': [0.1, None, 0.3],
+        'weight': [1.0, 2.0, None],
+    }
+    datasets = {
+        'dict': ldio.from_dict(data),
+        'pandas': ldio.from_pandas(pd.DataFrame(data)),
+        'polars': ldio.from_polars(pl.DataFrame(data)),
+    }
+
+    for name, dataset in datasets.items():
+        assert dataset.n_events == 3, name
+        assert pytest.approx(dataset[0].aux['pol_magnitude']) == 1.0, name
+        assert pytest.approx(dataset[1].aux['pol_magnitude']) == 0.0, name
+        assert np.isnan(dataset[1].aux['pol_angle']), name
+        assert np.isnan(dataset[2].weight), name
+
+
+def test_table_entrypoints_accept_column_major_views() -> None:
+    # Build a strided column-major payload and pass column views directly.
+    matrix = np.arange(36.0).reshape((3, 12))
+    columns = {
+        'beam_px': matrix[:, 0],
+        'beam_py': matrix[:, 1],
+        'beam_pz': matrix[:, 2],
+        'beam_e': matrix[:, 3],
+        'proton_px': matrix[:, 4],
+        'proton_py': matrix[:, 5],
+        'proton_pz': matrix[:, 6],
+        'proton_e': matrix[:, 7],
+        'pol_magnitude': matrix[:, 8],
+        'pol_angle': matrix[:, 9],
+        'weight': matrix[:, 10],
+    }
+    for array in columns.values():
+        assert not np.asarray(array).flags.c_contiguous
+
+    datasets = {
+        'numpy': ldio.from_numpy({k: np.asarray(v) for k, v in columns.items()}),
+        'pandas': ldio.from_pandas(pd.DataFrame(columns)),
+        'polars': ldio.from_polars(pl.DataFrame(columns)),
+    }
+    baseline = ldio.from_dict(columns)
+    for name, dataset in datasets.items():
+        _assert_datasets_close(dataset, baseline)
+        assert dataset.n_events == 3, name
 
 
 def test_dataset_rejects_duplicate_p4_names() -> None:
@@ -317,6 +546,21 @@ def test_from_dict_accepts_names_and_aliases() -> None:
     beam = dataset[0].p4('beam')
     alias = dataset[0].p4('primary')
     _assert_vec4_close(alias, beam)
+
+
+def test_from_dict_accepts_non_contiguous_columns() -> None:
+    base = np.arange(12.0)
+    data = {
+        'beam_px': base[0:8:2],
+        'beam_py': base[1:9:2],
+        'beam_pz': base[2:10:2],
+        'beam_e': base[3:11:2],
+    }
+    assert not np.asarray(data['beam_px']).flags.c_contiguous
+
+    dataset = ldio.from_dict(data, p4s=['beam'], aux=[])
+    assert dataset.n_events == 4
+    assert pytest.approx(dataset[1].p4s['beam'].px) == float(data['beam_px'][1])
 
 
 def test_from_numpy_propagates_aliases_and_names() -> None:
@@ -515,6 +759,54 @@ def test_dataset_iteration() -> None:
     assert pytest.approx(proton_vec_from_events.e) == proton_vec_from_dataset.e
 
 
+def test_dataset_iteration_modes() -> None:
+    dataset = Dataset(
+        [
+            make_test_event(),
+            Event(
+                list(make_test_event().p4s.values()),
+                list(make_test_event().aux.values()),
+                1.25,
+                p4_names=P4_NAMES,
+                aux_names=AUX_NAMES,
+            ),
+        ],
+        p4_names=P4_NAMES,
+        aux_names=AUX_NAMES,
+    )
+
+    default_events = list(dataset)
+    local_events = list(dataset.iter_local())
+    global_events = list(dataset.iter_global())
+    stored_events = dataset.events
+    stored_local_events = dataset.events_local
+
+    assert len(default_events) == dataset.n_events
+    assert dataset.n_events_local == dataset.n_events
+    assert dataset.n_events_weighted_local == dataset.n_events_weighted
+    assert len(local_events) == dataset.n_events
+    assert len(global_events) == dataset.n_events
+    assert len(stored_events) == dataset.n_events
+    assert len(stored_local_events) == dataset.n_events_local
+    assert np.allclose(dataset.weights_local, dataset.weights)
+
+    global_alias_event = dataset.event_global(0)
+    assert isinstance(global_alias_event, Event)
+    assert isinstance(dataset.events_global, list)
+    assert isinstance(dataset.weights_global, np.ndarray)
+    assert isinstance(dataset.n_events_global, int)
+    assert isinstance(dataset.n_events_weighted_global, float)
+
+    for actual in (
+        local_events,
+        global_events,
+        stored_events,
+        stored_local_events,
+    ):
+        for expected_event, actual_event in zip(default_events, actual, strict=True):
+            _assert_events_close(expected_event, actual_event, P4_NAMES, AUX_NAMES)
+
+
 def test_dataset_boost() -> None:
     dataset = make_test_dataset()
     rest_frame = ['proton', 'kshort1', 'kshort2']
@@ -564,6 +856,84 @@ def test_dataset_from_root_matches_parquet() -> None:
     _assert_datasets_close(root_auto, root_named)
 
 
+def test_read_parquet_chunked_parity_and_chunk_sizes() -> None:
+    full = ldio.read_parquet(DATA_F32_PARQUET)
+    for chunk_size in (1, 2, 128):
+        chunks = list(ldio.read_parquet_chunked(DATA_F32_PARQUET, chunk_size=chunk_size))
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
+
+
+def test_read_root_chunked_uproot_parity_and_chunk_sizes() -> None:
+    pytest.importorskip('uproot')
+    full = ldio.read_root(DATA_F32_ROOT, backend='uproot')
+    for chunk_size in (1, 2, 128):
+        chunks = list(
+            ldio.read_root_chunked(
+                DATA_F32_ROOT,
+                backend='uproot',
+                chunk_size=chunk_size,
+            )
+        )
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
+
+
+def test_read_root_chunked_oxyroot_is_single_chunk_fallback() -> None:
+    full = ldio.read_root(DATA_F32_ROOT, backend='oxyroot')
+    chunks = list(ldio.read_root_chunked(DATA_F32_ROOT, backend='oxyroot', chunk_size=1))
+    assert len(chunks) == 1
+    _assert_datasets_close(chunks[0], full)
+
+
+def test_read_root_chunked_rejects_entry_window_kwargs() -> None:
+    with pytest.raises(ValueError, match='entry_start'):
+        list(
+            ldio.read_root_chunked(
+                DATA_F32_ROOT,
+                backend='uproot',
+                chunk_size=2,
+                uproot_kwargs={'entry_start': 0},
+            )
+        )
+
+
+def test_read_amptools_chunked_parity_and_chunk_sizes() -> None:
+    full = ldio.read_amptools(DATA_AMPTOOLS_ROOT)
+    for chunk_size in (1, 2, 128):
+        chunks = list(
+            ldio.read_amptools_chunked(DATA_AMPTOOLS_ROOT, chunk_size=chunk_size)
+        )
+        assert sum(chunk.n_events for chunk in chunks) == full.n_events
+        assert all(chunk.n_events <= chunk_size for chunk in chunks)
+        rebuilt = _materialize_chunked(chunks, full)
+        _assert_datasets_close(rebuilt, full)
+
+
+def test_read_root_uproot_missing_required_p4_branch_reports_name() -> None:
+    with pytest.raises(KeyError, match="Missing required ROOT column 'missing_px'"):
+        ldio.read_root(
+            DATA_F32_ROOT,
+            backend='uproot',
+            p4s=['missing'],
+            aux=AUX_NAMES,
+        )
+
+
+def test_read_root_uproot_missing_required_aux_branch_reports_name() -> None:
+    with pytest.raises(KeyError, match="Missing required ROOT column 'missing_aux'"):
+        ldio.read_root(
+            DATA_F32_ROOT,
+            backend='uproot',
+            p4s=P4_NAMES,
+            aux=['missing_aux'],
+        )
+
+
 def test_dataset_from_parquet_with_aliases() -> None:
     dataset = ldio.read_parquet(
         DATA_F32_PARQUET,
@@ -572,6 +942,82 @@ def test_dataset_from_parquet_with_aliases() -> None:
     alias_vec = dataset[0].p4('resonance')
     expected = dataset[0].get_p4_sum(['kshort1', 'kshort2'])
     _assert_vec4_close(alias_vec, expected)
+
+
+def test_arrow_chunked_columns_convert_to_numpy_columns() -> None:
+    pa = pytest.importorskip('pyarrow')
+    table = pa.table(
+        {
+            'beam_px': pa.chunked_array([[0.0, 1.0], [2.0, 3.0]]),
+            'beam_py': pa.chunked_array([[0.1, 1.1], [2.1, 3.1]]),
+            'beam_pz': pa.chunked_array([[0.2, 1.2], [2.2, 3.2]]),
+            'beam_e': pa.chunked_array([[1.0, 2.0], [3.0, 4.0]]),
+            'weight': pa.chunked_array([[1.0, 1.0], [2.0, 2.0]]),
+        }
+    )
+    convert = ldio._arrow_table_to_numpy_columns  # ty: ignore[unresolved-attribute]
+    converted = convert(table)
+    np.testing.assert_allclose(converted['beam_px'], [0.0, 1.0, 2.0, 3.0])
+    np.testing.assert_allclose(converted['beam_py'], [0.1, 1.1, 2.1, 3.1])
+    np.testing.assert_allclose(converted['weight'], [1.0, 1.0, 2.0, 2.0])
+
+
+def test_uproot_selected_columns_include_requested_p4_aux_and_weight() -> None:
+    build_selected = ldio._build_uproot_selected_columns  # ty: ignore[unresolved-attribute]
+    tree = _FakeTreeKeys(
+        [
+            'Beam_PX;1',
+            'Beam_py;1',
+            'beam_pz;1',
+            'beam_E;1',
+            'Pol_Magnitude;1',
+            'Weight;1',
+        ]
+    )
+    selected = build_selected(
+        tree,
+        p4s=['beam'],
+        aux=['pol_magnitude'],
+        include_weight=True,
+    )
+    assert selected == [
+        'Beam_PX',
+        'Beam_py',
+        'beam_pz',
+        'beam_E',
+        'Pol_Magnitude',
+        'Weight',
+    ]
+
+
+def test_uproot_selected_columns_missing_component_raises_key_error() -> None:
+    build_selected = ldio._build_uproot_selected_columns  # ty: ignore[unresolved-attribute]
+    tree = _FakeTreeKeys(['beam_px;1', 'beam_py;1', 'beam_pz;1'])
+    with pytest.raises(KeyError, match="Missing required ROOT column 'beam_e'"):
+        build_selected(
+            tree,
+            p4s=['beam'],
+            aux=[],
+            include_weight=True,
+        )
+
+
+def test_uproot_arrays_kwargs_sets_filter_name_when_unset() -> None:
+    build_kwargs = ldio._uproot_arrays_kwargs  # ty: ignore[unresolved-attribute]
+    kwargs = build_kwargs({}, ['beam_px', 'beam_py'])
+    assert kwargs['filter_name'] == ['beam_px', 'beam_py']
+
+
+def test_uproot_arrays_kwargs_preserves_user_filter_and_expressions() -> None:
+    build_kwargs = ldio._uproot_arrays_kwargs  # ty: ignore[unresolved-attribute]
+    original_filter = {'filter_name': ['existing']}
+    updated_filter = build_kwargs(original_filter, ['beam_px'])
+    assert updated_filter['filter_name'] == ['existing']
+
+    original_expr = {'expressions': ['existing_expr']}
+    updated_expr = build_kwargs(original_expr, ['beam_px'])
+    assert updated_expr['expressions'] == ['existing_expr']
+    assert 'filter_name' not in updated_expr
 
 
 def test_mass_uses_alias_string() -> None:
@@ -602,7 +1048,7 @@ def test_dataset_from_amptools_matches_native_vectors() -> None:
         native_event = native[idx]
         amp_vectors = list(amp_event.p4s.values())
         native_vectors = list(native_event.p4s.values())
-        for amp_vec, native_vec in zip(amp_vectors, native_vectors):
+        for amp_vec, native_vec in zip(amp_vectors, native_vectors, strict=False):
             _assert_vec4_close(amp_vec, native_vec)
         assert pytest.approx(amp_event.weight) == native_event.weight
 
@@ -643,7 +1089,7 @@ def test_dataset_from_amptools_custom_polarization_names() -> None:
 
 def test_dataset_from_amptools_rejects_unknown_option() -> None:
     with pytest.raises(TypeError):
-        ldio.read_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # type: ignore[arg-type]
+        ldio.read_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # ty:ignore[unknown-argument]
 
 
 def test_dataset_from_parquet_f64_matches_f32() -> None:

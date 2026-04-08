@@ -4,15 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "laddu-mpi"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Rust",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
   "Development Status :: 4 - Beta",
-  "Programming Language :: Python :: 3.7",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -22,6 +19,7 @@ classifiers = [
 dynamic = ["version", "license", "description", "readme"]
 dependencies = [
   "numpy",
+  "ganesh-rs == 0.27.0",
 ]
 
 [project.urls]
@@ -36,7 +34,6 @@ uproot = ["uproot"]
 
 [tool.maturin]
 bindings = "pyo3"
-strip = true
 profile = "release"
 sdist-include = ['../Cargo.lock']
 features = ["mpi"]

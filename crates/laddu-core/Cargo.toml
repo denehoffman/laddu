@@ -15,7 +15,7 @@ accurate = { workspace = true }
 approx = { workspace = true }
 arrow = { workspace = true }
 auto_ops = { workspace = true }
-bincode = { workspace = true }
+bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 factorial = { workspace = true }
 fastrand = { workspace = true }
@@ -43,15 +43,26 @@ typetag = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+mpi_test = { workspace = true }
 sysinfo = { workspace = true }
 
 [[bench]]
 name = "open_benchmark"
 harness = false
 
+[[bench]]
+name = "execution_context_benchmark"
+harness = false
+required-features = ["execution-context-prototype"]
+
+[[bench]]
+name = "expression_ir_benchmarks"
+harness = false
+
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
+execution-context-prototype = []
 python = ["pyo3", "numpy"]
 pyo3 = ["dep:pyo3"]
 numpy = ["dep:numpy"]

@@ -264,22 +264,22 @@ fn build_kmatrix_nll(dataset_path: &str) -> Box<NLL> {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let expr = pos_re + pos_im + neg_re + neg_im;
-    NLL::new(&expr, &ds_data, &ds_mc).unwrap()
+    NLL::new(&expr, &ds_data, &ds_mc, None).unwrap()
 }
 
 fn run_iteration(nll: &NLL, iteration: usize, mode: Mode) {
     let params = generate_parameters(iteration, nll.n_free());
     match mode {
         Mode::Value => {
-            black_box(nll.evaluate(&params));
+            let _ = black_box(nll.evaluate(&params));
         }
         Mode::Gradient => {
-            black_box(nll.evaluate_gradient(&params));
+            let _ = black_box(nll.evaluate_gradient(&params));
         }
         Mode::ValueAndGradient => {
             let value = nll.evaluate(&params);
             let gradient = nll.evaluate_gradient(&params);
-            black_box((value, gradient));
+            let _ = black_box((value, gradient));
         }
     }
 }

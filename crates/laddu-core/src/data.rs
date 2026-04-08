@@ -1,28 +1,15 @@
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
-#[cfg(feature = "rayon")]
 use accurate::{sum::Klein, traits::*};
-use arrow::{
-    array::{Float32Array, Float64Array},
-    datatypes::{DataType, Field, Schema},
-    record_batch::RecordBatch,
-};
 use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
-use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
-use parking_lot::Mutex;
-use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
-#[cfg(feature = "mpi")]
-use parquet::file::metadata::ParquetMetaData;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::Display,
-    fs::File,
     ops::{Deref, DerefMut, Index, IndexMut},
-    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -30,6 +17,13 @@ use std::{
 type WorldHandle = SimpleCommunicator;
 #[cfg(not(feature = "mpi"))]
 type WorldHandle = ();
+
+#[cfg(feature = "mpi")]
+// Chosen from local two-rank probes: 512 matched or beat smaller chunks
+// while keeping the fetched-event cache modest.
+const DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE: usize = 512;
+#[cfg(feature = "mpi")]
+const MPI_EVENT_FETCH_CHUNK_SIZE_ENV: &str = "LADDU_MPI_EVENT_FETCH_CHUNK_SIZE";
 
 use crate::utils::get_bin_edges;
 use crate::{
@@ -40,6 +34,9 @@ use crate::{
     LadduError, LadduResult,
 };
 use indexmap::{IndexMap, IndexSet};
+
+/// Dataset I/O implementations and shared ingestion helpers.
+pub mod io;
 
 /// An event that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular event contains the reaction
@@ -130,7 +127,248 @@ impl EventData {
             weight: self.weight,
         }
     }
-    /// Evaluate a [`Variable`] on an [`EventData`].
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+struct ColumnarP4Column {
+    px: Vec<f64>,
+    py: Vec<f64>,
+    pz: Vec<f64>,
+    e: Vec<f64>,
+}
+
+#[allow(dead_code)]
+impl ColumnarP4Column {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            px: Vec::with_capacity(capacity),
+            py: Vec::with_capacity(capacity),
+            pz: Vec::with_capacity(capacity),
+            e: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn push(&mut self, p4: Vec4) {
+        self.px.push(p4.x);
+        self.py.push(p4.y);
+        self.pz.push(p4.z);
+        self.e.push(p4.t);
+    }
+
+    fn get(&self, event_index: usize) -> Vec4 {
+        Vec4::new(
+            self.px[event_index],
+            self.py[event_index],
+            self.pz[event_index],
+            self.e[event_index],
+        )
+    }
+}
+
+/// Columnar dataset storage used by [`Dataset`].
+#[derive(Debug, Default)]
+pub(crate) struct DatasetStorage {
+    metadata: Arc<DatasetMetadata>,
+    p4: Vec<ColumnarP4Column>,
+    aux: Vec<Vec<f64>>,
+    weights: Vec<f64>,
+}
+
+impl Clone for DatasetStorage {
+    fn clone(&self) -> Self {
+        Self {
+            metadata: self.metadata.clone(),
+            p4: self.p4.clone(),
+            aux: self.aux.clone(),
+            weights: self.weights.clone(),
+        }
+    }
+}
+
+impl DatasetStorage {
+    /// Convert this columnar dataset back to a row-event dataset.
+    pub(crate) fn to_dataset(&self) -> Dataset {
+        let events = (0..self.n_events())
+            .map(|event_index| Arc::new(self.event_data(event_index)))
+            .collect::<Vec<_>>();
+        #[cfg(not(feature = "mpi"))]
+        let dataset = Dataset::new_local(events, self.metadata.clone());
+        #[cfg(feature = "mpi")]
+        let mut dataset = Dataset::new_local(events, self.metadata.clone());
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                dataset.set_cached_global_event_count_from_world(&world);
+                dataset.set_cached_global_weighted_sum_from_world(&world);
+            }
+        }
+        dataset
+    }
+
+    /// Access metadata.
+    pub(crate) fn metadata(&self) -> &DatasetMetadata {
+        &self.metadata
+    }
+
+    /// Number of local events.
+    pub(crate) fn n_events(&self) -> usize {
+        self.weights.len()
+    }
+
+    /// Retrieve a p4 value by row and p4 index.
+    pub(crate) fn p4(&self, event_index: usize, p4_index: usize) -> Vec4 {
+        self.p4[p4_index].get(event_index)
+    }
+
+    /// Retrieve an aux value by row and aux index.
+    pub(crate) fn aux(&self, event_index: usize, aux_index: usize) -> f64 {
+        self.aux[aux_index][event_index]
+    }
+
+    /// Retrieve event weight by row index.
+    pub(crate) fn weight(&self, event_index: usize) -> f64 {
+        self.weights[event_index]
+    }
+
+    pub(crate) fn event_data(&self, event_index: usize) -> EventData {
+        let mut p4s = Vec::with_capacity(self.p4.len());
+        for p4_index in 0..self.p4.len() {
+            p4s.push(self.p4(event_index, p4_index));
+        }
+        let mut aux = Vec::with_capacity(self.aux.len());
+        for aux_index in 0..self.aux.len() {
+            aux.push(self.aux(event_index, aux_index));
+        }
+        EventData {
+            p4s,
+            aux,
+            weight: self.weight(event_index),
+        }
+    }
+
+    fn row_view(&self, event_index: usize) -> ColumnarEventView<'_> {
+        ColumnarEventView {
+            storage: self,
+            event_index,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn for_each_named_event_local<F>(&self, mut op: F)
+    where
+        F: FnMut(usize, NamedEventView<'_>),
+    {
+        for event_index in 0..self.n_events() {
+            let row = self.row_view(event_index);
+            let view = NamedEventView {
+                row,
+                metadata: &self.metadata,
+            };
+            op(event_index, view);
+        }
+    }
+
+    pub(crate) fn event_view(&self, event_index: usize) -> NamedEventView<'_> {
+        let row = self.row_view(event_index);
+        NamedEventView {
+            row,
+            metadata: self.metadata(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct ColumnarEventView<'a> {
+    storage: &'a DatasetStorage,
+    event_index: usize,
+}
+
+#[allow(dead_code)]
+impl ColumnarEventView<'_> {
+    fn p4(&self, p4_index: usize) -> Vec4 {
+        self.storage.p4(self.event_index, p4_index)
+    }
+
+    fn aux(&self, aux_index: usize) -> f64 {
+        self.storage.aux(self.event_index, aux_index)
+    }
+
+    fn weight(&self) -> f64 {
+        self.storage.weight(self.event_index)
+    }
+
+    fn get_p4_sum<T: AsRef<[usize]>>(&self, indices: T) -> Vec4 {
+        indices.as_ref().iter().map(|index| self.p4(*index)).sum()
+    }
+}
+
+/// A name-aware columnar event view over a single row in a dataset.
+#[derive(Debug)]
+pub struct NamedEventView<'a> {
+    row: ColumnarEventView<'a>,
+    metadata: &'a DatasetMetadata,
+}
+
+impl NamedEventView<'_> {
+    /// Retrieve a four-momentum by positional index.
+    pub fn p4_at(&self, p4_index: usize) -> Vec4 {
+        self.row.p4(p4_index)
+    }
+
+    /// Retrieve an auxiliary scalar by positional index.
+    pub fn aux_at(&self, aux_index: usize) -> f64 {
+        self.row.aux(aux_index)
+    }
+
+    /// Number of four-momenta in this event.
+    pub fn n_p4(&self) -> usize {
+        self.row.storage.p4.len()
+    }
+
+    /// Number of auxiliary values in this event.
+    pub fn n_aux(&self) -> usize {
+        self.row.storage.aux.len()
+    }
+
+    /// Retrieve a four-momentum by metadata name.
+    pub fn p4(&self, name: &str) -> Option<Vec4> {
+        let selection = self.metadata.p4_selection(name)?;
+        Some(
+            selection
+                .indices()
+                .iter()
+                .map(|index| self.row.p4(*index))
+                .sum(),
+        )
+    }
+
+    /// Retrieve an auxiliary scalar by metadata name.
+    pub fn aux(&self, name: &str) -> Option<f64> {
+        let index = self.metadata.aux_index(name)?;
+        Some(self.row.aux(index))
+    }
+
+    /// Retrieve event weight.
+    pub fn weight(&self) -> f64 {
+        self.row.weight()
+    }
+
+    /// Retrieve the sum of multiple four-momenta selected by name.
+    pub fn get_p4_sum<N>(&self, names: N) -> Option<Vec4>
+    where
+        N: IntoIterator,
+        N::Item: AsRef<str>,
+    {
+        names
+            .into_iter()
+            .map(|name| self.p4(name.as_ref()))
+            .collect::<Option<Vec<_>>>()
+            .map(|momenta| momenta.into_iter().sum())
+    }
+
+    /// Evaluate a [`Variable`] against this event.
     pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
         variable.value(self)
     }
@@ -285,12 +523,18 @@ impl Default for DatasetMetadata {
     }
 }
 
-/// A collection of [`EventData`] with optional metadata for name-based lookups.
+/// A collection of events with optional metadata for name-based lookups.
 #[derive(Debug, Clone)]
 pub struct Dataset {
     /// The [`EventData`] contained in the [`Dataset`]
-    pub events: Vec<Event>,
+    events: Vec<Event>,
+    pub(crate) columnar: DatasetStorage,
     pub(crate) metadata: Arc<DatasetMetadata>,
+    pub(crate) cached_local_weighted_sum: f64,
+    #[cfg(feature = "mpi")]
+    pub(crate) cached_global_event_count: usize,
+    #[cfg(feature = "mpi")]
+    pub(crate) cached_global_weighted_sum: f64,
 }
 
 /// Metadata-aware view of an [`EventData`] with name-based helpers.
@@ -396,11 +640,6 @@ impl Event {
         let indices = self.resolve_p4_indices(names);
         self.event.boost_to_rest_frame_of(&indices)
     }
-
-    /// Evaluate a [`Variable`] over this event.
-    pub fn evaluate<V: Variable>(&self, variable: &V) -> f64 {
-        self.event.evaluate(variable)
-    }
 }
 
 impl Deref for Event {
@@ -434,6 +673,7 @@ impl IntoIterator for Dataset {
                     world,
                     index: 0,
                     total,
+                    cursor: MpiEventChunkCursor::for_iteration(total),
                 });
             }
         }
@@ -441,22 +681,87 @@ impl IntoIterator for Dataset {
     }
 }
 
+fn shared_dataset_iter(dataset: Arc<Dataset>) -> DatasetArcIter {
+    #[cfg(feature = "mpi")]
+    {
+        if let Some(world) = crate::mpi::get_world() {
+            let total = dataset.n_events();
+            return DatasetArcIter::Mpi(DatasetArcMpiIter {
+                dataset,
+                world,
+                index: 0,
+                total,
+                cursor: MpiEventChunkCursor::for_iteration(total),
+            });
+        }
+    }
+    DatasetArcIter::Local { dataset, index: 0 }
+}
+
+/// Extension methods for shared [`Arc<Dataset>`] handles.
+pub trait SharedDatasetIterExt {
+    /// Build an iterator over a shared [`Arc<Dataset>`] without cloning the dataset contents.
+    fn shared_iter(&self) -> DatasetArcIter;
+
+    /// Alias for [`SharedDatasetIterExt::shared_iter`].
+    fn shared_iter_global(&self) -> DatasetArcIter;
+}
+
+impl SharedDatasetIterExt for Arc<Dataset> {
+    fn shared_iter(&self) -> DatasetArcIter {
+        shared_dataset_iter(self.clone())
+    }
+
+    fn shared_iter_global(&self) -> DatasetArcIter {
+        self.shared_iter()
+    }
+}
+
 impl Dataset {
+    /// Borrow locally stored events.
+    ///
+    /// When MPI is enabled, this slice contains only the current rank's event ownership.
+    pub fn events_local(&self) -> &[Event] {
+        &self.events
+    }
+
+    /// Collect all events into a [`Vec`] using the default global iteration semantics.
+    ///
+    /// When MPI is enabled, the returned vector is ordered like [`Dataset::iter`] and
+    /// may include remotely owned events fetched on demand.
+    pub fn events_global(&self) -> Vec<Event> {
+        self.iter_global().collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_events_local(&mut self) {
+        self.events.clear();
+    }
+
     /// Iterate over all events in the dataset. When MPI is enabled, this will visit
     /// every event across all ranks, fetching remote events on demand.
     pub fn iter(&self) -> DatasetIter<'_> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
+                let total = self.n_events();
                 return DatasetIter::Mpi(DatasetMpiIter {
                     dataset: self,
                     world,
                     index: 0,
-                    total: self.n_events(),
+                    total,
+                    cursor: MpiEventChunkCursor::for_iteration(total),
                 });
             }
         }
         DatasetIter::Local(self.events.iter())
+    }
+
+    /// Alias for [`Dataset::iter`].
+    ///
+    /// This preserves dataset-wide ordering under MPI.
+    pub fn iter_global(&self) -> DatasetIter<'_> {
+        self.iter()
     }
 
     /// Borrow the dataset metadata used for name lookups.
@@ -490,24 +795,78 @@ impl Dataset {
     }
 
     /// Borrow event data together with metadata-based helpers as an [`Event`] view.
-    pub fn named_event(&self, index: usize) -> Event {
-        self.events[index].clone()
+    pub fn named_event(&self, index: usize) -> LadduResult<Event> {
+        self.event(index)
+    }
+
+    /// Alias for [`Dataset::named_event`].
+    pub fn named_event_global(&self, index: usize) -> LadduResult<Event> {
+        self.named_event(index)
+    }
+
+    /// Retrieve a single event by index, returning `None` when out of range.
+    pub fn get_event(&self, index: usize) -> Option<Event> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                let total = self.n_events();
+                if index >= total {
+                    return None;
+                }
+                return Some(fetch_event_mpi(self, index, &world, total));
+            }
+        }
+
+        self.events.get(index).cloned()
+    }
+
+    /// Alias for [`Dataset::get_event`].
+    ///
+    /// This preserves the default global indexing semantics under MPI.
+    pub fn get_event_global(&self, index: usize) -> Option<Event> {
+        self.get_event(index)
+    }
+
+    /// Retrieve a single event by index.
+    pub fn event(&self, index: usize) -> LadduResult<Event> {
+        self.get_event(index).ok_or_else(|| {
+            LadduError::Custom(format!(
+                "Dataset index out of bounds: index {index}, length {}",
+                self.n_events()
+            ))
+        })
+    }
+
+    /// Alias for [`Dataset::event`].
+    ///
+    /// This preserves the default global indexing semantics under MPI.
+    pub fn event_global(&self, index: usize) -> LadduResult<Event> {
+        self.event(index)
     }
 
     /// Retrieve a four-momentum by name for the event at `event_index`.
     pub fn p4_by_name(&self, event_index: usize, name: &str) -> Option<Vec4> {
-        self.events
-            .get(event_index)
-            .and_then(|event| event.p4(name))
+        self.get_event(event_index).and_then(|event| event.p4(name))
     }
 
     /// Retrieve an auxiliary scalar by name for the event at `event_index`.
     pub fn aux_by_name(&self, event_index: usize, name: &str) -> Option<f64> {
         let idx = self.aux_index(name)?;
-        self.events
-            .get(event_index)
-            .and_then(|event| event.aux.get(idx))
-            .copied()
+        self.get_event(event_index)
+            .and_then(|event| event.aux.get(idx).copied())
+    }
+
+    /// Iterate over all local events as metadata-aware columnar views.
+    pub fn for_each_named_event_local<F>(&self, op: F)
+    where
+        F: FnMut(usize, NamedEventView<'_>),
+    {
+        self.columnar.for_each_named_event_local(op);
+    }
+
+    /// Retrieve a metadata-aware columnar event view by local index.
+    pub fn event_view(&self, event_index: usize) -> NamedEventView<'_> {
+        self.columnar.event_view(event_index)
     }
 
     /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
@@ -516,12 +875,11 @@ impl Dataset {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
-    /// as if it were any other [`Vec`]:
+    /// that have `mpi`-feature-gated versions. Most users should use [`Dataset::event`] instead:
     ///
     /// ```ignore
     /// let ds: Dataset = Dataset::new(events);
-    /// let event_0 = ds[0];
+    /// let event_0 = ds.event(0)?;
     /// ```
     pub fn index_local(&self, index: usize) -> &Event {
         &self.events[index]
@@ -536,43 +894,9 @@ impl Dataset {
         (0..partition.n_ranks())
             .map(|rank| {
                 let range = partition.range_for_rank(rank);
-                events[range.clone()].iter().cloned().collect()
+                events[range.clone()].to_vec()
             })
             .collect()
-    }
-
-    /// Get a reference to the [`EventData`] at the given index in the [`Dataset`]
-    /// (MPI-compatible version).
-    ///
-    /// # Notes
-    ///
-    /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users should just index into a [`Dataset`]
-    /// as if it were any other [`Vec`]:
-    ///
-    /// ```ignore
-    /// let ds: Dataset = Dataset::new(events);
-    /// let event_0 = ds[0];
-    /// ```
-    #[cfg(feature = "mpi")]
-    pub fn index_mpi(&self, index: usize, world: &SimpleCommunicator) -> &Event {
-        let total = self.n_events();
-        let event = fetch_event_mpi(self, index, world, total);
-        Box::leak(Box::new(event))
-    }
-}
-
-impl Index<usize> for Dataset {
-    type Output = Event;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = crate::mpi::get_world() {
-                return self.index_mpi(index, &world);
-            }
-        }
-        self.index_local(index)
     }
 }
 
@@ -618,6 +942,36 @@ impl Iterator for DatasetIntoIter {
     }
 }
 
+/// Iterator over a shared [`Arc<Dataset>`].
+pub enum DatasetArcIter {
+    /// Iterator over locally available events from a shared dataset handle.
+    Local {
+        /// Shared dataset handle.
+        dataset: Arc<Dataset>,
+        /// Next local event index to read.
+        index: usize,
+    },
+    #[cfg(feature = "mpi")]
+    /// Iterator that fetches events across MPI ranks from a shared dataset handle.
+    Mpi(DatasetArcMpiIter),
+}
+
+impl Iterator for DatasetArcIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            DatasetArcIter::Local { dataset, index } => {
+                let event = dataset.events.get(*index).cloned();
+                *index += 1;
+                event
+            }
+            #[cfg(feature = "mpi")]
+            DatasetArcIter::Mpi(iter) => iter.next(),
+        }
+    }
+}
+
 #[cfg(feature = "mpi")]
 /// Iterator over a [`Dataset`] that fetches events across MPI ranks.
 pub struct DatasetMpiIter<'a> {
@@ -625,6 +979,95 @@ pub struct DatasetMpiIter<'a> {
     world: SimpleCommunicator,
     index: usize,
     total: usize,
+    cursor: MpiEventChunkCursor,
+}
+
+#[cfg(feature = "mpi")]
+#[derive(Debug, Clone)]
+pub(crate) struct MpiEventChunkCursor {
+    chunk_start: usize,
+    chunk_size: usize,
+    events: Vec<Event>,
+}
+
+#[cfg(feature = "mpi")]
+fn resolve_mpi_event_fetch_chunk_size(total: usize) -> usize {
+    let clamped_total = total.max(1);
+    if let Some(raw) = std::env::var_os(MPI_EVENT_FETCH_CHUNK_SIZE_ENV) {
+        if let Some(parsed) = raw.to_str().and_then(|value| value.parse::<usize>().ok()) {
+            return parsed.max(1).min(clamped_total);
+        }
+    }
+    DEFAULT_MPI_EVENT_FETCH_CHUNK_SIZE.min(clamped_total)
+}
+
+#[cfg(feature = "mpi")]
+impl MpiEventChunkCursor {
+    pub(crate) fn for_iteration(total: usize) -> Self {
+        Self::new(resolve_mpi_event_fetch_chunk_size(total))
+    }
+}
+
+#[cfg(feature = "mpi")]
+impl MpiEventChunkCursor {
+    pub(crate) fn new(chunk_size: usize) -> Self {
+        Self {
+            chunk_start: 0,
+            chunk_size: chunk_size.max(1),
+            events: Vec::new(),
+        }
+    }
+
+    fn chunk_end(&self) -> usize {
+        self.chunk_start + self.events.len()
+    }
+
+    fn contains(&self, global_index: usize) -> bool {
+        global_index >= self.chunk_start && global_index < self.chunk_end()
+    }
+
+    pub(crate) fn event_for_dataset(
+        &mut self,
+        dataset: &Dataset,
+        global_index: usize,
+        world: &SimpleCommunicator,
+        total: usize,
+    ) -> Option<Event> {
+        if global_index >= total {
+            return None;
+        }
+        if !self.contains(global_index) {
+            self.chunk_start = global_index;
+            self.events =
+                fetch_event_chunk_mpi(dataset, global_index, self.chunk_size, world, total);
+        }
+        self.events.get(global_index - self.chunk_start).cloned()
+    }
+
+    pub(crate) fn event_for_events(
+        &mut self,
+        events: &[Event],
+        metadata: &Arc<DatasetMetadata>,
+        global_index: usize,
+        world: &SimpleCommunicator,
+        total: usize,
+    ) -> Option<Event> {
+        if global_index >= total {
+            return None;
+        }
+        if !self.contains(global_index) {
+            self.chunk_start = global_index;
+            self.events = fetch_event_chunk_mpi_from_events(
+                events,
+                metadata,
+                global_index,
+                self.chunk_size,
+                world,
+                total,
+            );
+        }
+        self.events.get(global_index - self.chunk_start).cloned()
+    }
 }
 
 #[cfg(feature = "mpi")]
@@ -632,12 +1075,34 @@ impl<'a> Iterator for DatasetMpiIter<'a> {
     type Item = Event;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = fetch_event_mpi(self.dataset, self.index, &self.world, self.total);
+        let event =
+            self.cursor
+                .event_for_dataset(self.dataset, self.index, &self.world, self.total);
         self.index += 1;
-        Some(event)
+        event
+    }
+}
+
+#[cfg(feature = "mpi")]
+/// Iterator over a shared [`Arc<Dataset>`] that fetches events across MPI ranks.
+pub struct DatasetArcMpiIter {
+    dataset: Arc<Dataset>,
+    world: SimpleCommunicator,
+    index: usize,
+    total: usize,
+    cursor: MpiEventChunkCursor,
+}
+
+#[cfg(feature = "mpi")]
+impl Iterator for DatasetArcMpiIter {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event =
+            self.cursor
+                .event_for_dataset(&self.dataset, self.index, &self.world, self.total);
+        self.index += 1;
+        event
     }
 }
 
@@ -649,6 +1114,7 @@ pub struct DatasetMpiIntoIter {
     world: SimpleCommunicator,
     index: usize,
     total: usize,
+    cursor: MpiEventChunkCursor,
 }
 
 #[cfg(feature = "mpi")]
@@ -656,10 +1122,7 @@ impl Iterator for DatasetMpiIntoIter {
     type Item = Event;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = fetch_event_mpi_from_events(
+        let event = self.cursor.event_for_events(
             &self.events,
             &self.metadata,
             self.index,
@@ -667,7 +1130,7 @@ impl Iterator for DatasetMpiIntoIter {
             self.total,
         );
         self.index += 1;
-        Some(event)
+        event
     }
 }
 
@@ -688,14 +1151,28 @@ fn fetch_event_mpi(
 }
 
 #[cfg(feature = "mpi")]
-fn fetch_event_mpi_from_events(
-    events: &[Event],
-    metadata: &Arc<DatasetMetadata>,
-    global_index: usize,
+fn fetch_event_chunk_mpi(
+    dataset: &Dataset,
+    start: usize,
+    len: usize,
     world: &SimpleCommunicator,
     total: usize,
-) -> Event {
-    fetch_event_mpi_generic(global_index, total, world, metadata, |local_index| {
+) -> Vec<Event> {
+    fetch_event_chunk_mpi_generic(start, len, total, world, &dataset.metadata, |local_index| {
+        dataset.index_local(local_index)
+    })
+}
+
+#[cfg(feature = "mpi")]
+fn fetch_event_chunk_mpi_from_events(
+    events: &[Event],
+    metadata: &Arc<DatasetMetadata>,
+    start: usize,
+    len: usize,
+    world: &SimpleCommunicator,
+    total: usize,
+) -> Vec<Event> {
+    fetch_event_chunk_mpi_generic(start, len, total, world, metadata, |local_index| {
         &events[local_index]
     })
 }
@@ -714,10 +1191,9 @@ where
     let (owning_rank, local_index) = world.owner_of_global_index(global_index, total);
     let mut serialized_event_buffer_len: usize = 0;
     let mut serialized_event_buffer: Vec<u8> = Vec::default();
-    let config = bincode::config::standard();
     if world.rank() == owning_rank {
         let event = local_event(local_index);
-        serialized_event_buffer = bincode::serde::encode_to_vec(event.data(), config).unwrap();
+        serialized_event_buffer = bitcode::serialize(event.data()).unwrap();
         serialized_event_buffer_len = serialized_event_buffer.len();
     }
     world
@@ -733,13 +1209,158 @@ where
     if world.rank() == owning_rank {
         local_event(local_index).clone()
     } else {
-        let (event, _): (EventData, usize) =
-            bincode::serde::decode_from_slice(&serialized_event_buffer[..], config).unwrap();
+        let event: EventData = bitcode::deserialize(&serialized_event_buffer[..]).unwrap();
         Event::new(Arc::new(event), metadata.clone())
     }
 }
 
+#[cfg(feature = "mpi")]
+#[allow(dead_code)]
+fn fetch_event_chunk_mpi_generic<'a, F>(
+    start: usize,
+    len: usize,
+    total: usize,
+    world: &SimpleCommunicator,
+    metadata: &Arc<DatasetMetadata>,
+    local_event: F,
+) -> Vec<Event>
+where
+    F: Fn(usize) -> &'a Event,
+{
+    if len == 0 || start >= total {
+        return Vec::new();
+    }
+
+    let end = (start + len).min(total);
+    let partition = world.partition(total);
+    let local_range = partition.range_for_rank(world.rank() as usize);
+    let owned_start = start.max(local_range.start);
+    let owned_end = end.min(local_range.end);
+    let local_indices = if owned_start < owned_end {
+        (owned_start - local_range.start)..(owned_end - local_range.start)
+    } else {
+        0..0
+    };
+
+    let local_events: Vec<EventData> = local_indices
+        .map(|local_index| local_event(local_index).data().clone())
+        .collect();
+    let local_event_count = local_events.len() as i32;
+
+    let serialized_local = if local_events.is_empty() {
+        Vec::new()
+    } else {
+        bitcode::serialize(&local_events).unwrap()
+    };
+    let local_byte_count = serialized_local.len() as i32;
+
+    let mut gathered_event_counts = vec![0_i32; world.size() as usize];
+    let mut gathered_byte_counts = vec![0_i32; world.size() as usize];
+    world.all_gather_into(&local_event_count, &mut gathered_event_counts);
+    world.all_gather_into(&local_byte_count, &mut gathered_byte_counts);
+
+    let mut gathered_byte_displs = vec![0_i32; gathered_byte_counts.len()];
+    for index in 1..gathered_byte_displs.len() {
+        gathered_byte_displs[index] =
+            gathered_byte_displs[index - 1] + gathered_byte_counts[index - 1];
+    }
+    let gathered_bytes = world.all_gather_with_counts(
+        &serialized_local,
+        &gathered_byte_counts,
+        &gathered_byte_displs,
+    );
+
+    let mut events = Vec::with_capacity(end - start);
+    for rank in 0..world.size() as usize {
+        if gathered_event_counts[rank] == 0 {
+            continue;
+        }
+        let byte_start = gathered_byte_displs[rank] as usize;
+        let byte_end = byte_start + gathered_byte_counts[rank] as usize;
+        let decoded: Vec<EventData> =
+            bitcode::deserialize(&gathered_bytes[byte_start..byte_end]).unwrap();
+        debug_assert_eq!(decoded.len(), gathered_event_counts[rank] as usize);
+        events.extend(
+            decoded
+                .into_iter()
+                .map(|event| Event::new(Arc::new(event), metadata.clone())),
+        );
+    }
+
+    events
+}
+
 impl Dataset {
+    #[cfg(feature = "mpi")]
+    pub(crate) fn set_cached_global_event_count_from_world(&mut self, world: &SimpleCommunicator) {
+        let local_count = self.n_events_local();
+        let mut global_count = 0usize;
+        world.all_reduce_into(
+            &local_count,
+            &mut global_count,
+            mpi::collective::SystemOperation::sum(),
+        );
+        self.cached_global_event_count = global_count;
+    }
+
+    #[cfg(feature = "mpi")]
+    pub(crate) fn set_cached_global_weighted_sum_from_world(&mut self, world: &SimpleCommunicator) {
+        let mut weighted_sums = vec![0.0_f64; world.size() as usize];
+        world.all_gather_into(&self.cached_local_weighted_sum, &mut weighted_sums);
+        #[cfg(feature = "rayon")]
+        {
+            self.cached_global_weighted_sum = weighted_sums
+                .into_par_iter()
+                .parallel_sum_with_accumulator::<Klein<f64>>();
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            self.cached_global_weighted_sum = weighted_sums
+                .into_iter()
+                .sum_with_accumulator::<Klein<f64>>();
+        }
+    }
+
+    fn columnar_from_wrapped_events(
+        events: &[Event],
+        metadata: Arc<DatasetMetadata>,
+    ) -> LadduResult<DatasetStorage> {
+        let n_events = events.len();
+        let (n_p4, n_aux) = match events.first() {
+            Some(first) => (first.p4s.len(), first.aux.len()),
+            None => (metadata.p4_names.len(), metadata.aux_names.len()),
+        };
+        let mut p4 = (0..n_p4)
+            .map(|_| ColumnarP4Column::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut aux = (0..n_aux)
+            .map(|_| Vec::with_capacity(n_events))
+            .collect::<Vec<_>>();
+        let mut weights = Vec::with_capacity(n_events);
+        for (event_index, event) in events.iter().enumerate() {
+            if event.p4s.len() != n_p4 || event.aux.len() != n_aux {
+                return Err(LadduError::Custom(format!(
+                    "Ragged dataset shape at event {event_index}: expected ({n_p4} p4, {n_aux} aux), got ({} p4, {} aux)",
+                    event.p4s.len(),
+                    event.aux.len()
+                )));
+            }
+            for (column, value) in p4.iter_mut().zip(event.p4s.iter()) {
+                column.push(*value);
+            }
+            for (column, value) in aux.iter_mut().zip(event.aux.iter()) {
+                column.push(*value);
+            }
+            weights.push(event.weight);
+        }
+        Ok(DatasetStorage {
+            metadata,
+            p4,
+            aux,
+            weights,
+        })
+    }
+
     /// Create a new [`Dataset`] from a list of [`EventData`] (non-MPI version).
     ///
     /// # Notes
@@ -750,10 +1371,32 @@ impl Dataset {
         let wrapped_events = events
             .into_iter()
             .map(|event| Event::new(event, metadata.clone()))
-            .collect();
+            .collect::<Vec<_>>();
+        #[cfg(feature = "mpi")]
+        let local_count = wrapped_events.len();
+        let columnar = Self::columnar_from_wrapped_events(&wrapped_events, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
+        #[cfg(feature = "rayon")]
+        let local_weighted_sum = columnar
+            .weights
+            .par_iter()
+            .copied()
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let local_weighted_sum = columnar
+            .weights
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Klein<f64>>();
         Dataset {
             events: wrapped_events,
+            columnar,
             metadata,
+            cached_local_weighted_sum: local_weighted_sum,
+            #[cfg(feature = "mpi")]
+            cached_global_event_count: local_count,
+            #[cfg(feature = "mpi")]
+            cached_global_weighted_sum: local_weighted_sum,
         }
     }
 
@@ -770,15 +1413,36 @@ impl Dataset {
         world: &SimpleCommunicator,
     ) -> Self {
         let partitions = Dataset::partition(events, world);
-        let local = partitions[world.rank() as usize]
+        let local: Vec<Event> = partitions[world.rank() as usize]
             .iter()
             .cloned()
             .map(|event| Event::new(event, metadata.clone()))
             .collect();
-        Dataset {
+        let columnar = Self::columnar_from_wrapped_events(&local, metadata.clone())
+            .expect("Dataset requires rectangular p4/aux columns for canonical columnar storage");
+        #[cfg(feature = "rayon")]
+        let local_weighted_sum = columnar
+            .weights
+            .par_iter()
+            .copied()
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let local_weighted_sum = columnar
+            .weights
+            .iter()
+            .copied()
+            .sum_with_accumulator::<Klein<f64>>();
+        let mut dataset = Dataset {
             events: local,
+            columnar,
             metadata,
-        }
+            cached_local_weighted_sum: local_weighted_sum,
+            cached_global_event_count: 0,
+            cached_global_weighted_sum: local_weighted_sum,
+        };
+        dataset.set_cached_global_event_count_from_world(world);
+        dataset.set_cached_global_weighted_sum_from_world(world);
+        dataset
     }
 
     /// Create a new [`Dataset`] from a list of [`EventData`].
@@ -809,7 +1473,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     pub fn n_events_local(&self) -> usize {
-        self.events.len()
+        self.columnar.n_events()
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (MPI-compatible version).
@@ -819,11 +1483,8 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_mpi(&self, world: &SimpleCommunicator) -> usize {
-        let mut n_events_partitioned: Vec<usize> = vec![0; world.size() as usize];
-        let n_events_local = self.n_events_local();
-        world.all_gather_into(&n_events_local, &mut n_events_partitioned);
-        n_events_partitioned.iter().sum()
+    pub fn n_events_mpi(&self, _world: &SimpleCommunicator) -> usize {
+        self.cached_global_event_count
     }
 
     /// The number of [`EventData`]s in the [`Dataset`].
@@ -836,6 +1497,13 @@ impl Dataset {
         }
         self.n_events_local()
     }
+
+    /// Alias for [`Dataset::n_events`].
+    ///
+    /// This returns the global event count under MPI.
+    pub fn n_events_global(&self) -> usize {
+        self.n_events()
+    }
 }
 
 impl Dataset {
@@ -846,10 +1514,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::weights`] instead.
     pub fn weights_local(&self) -> Vec<f64> {
-        #[cfg(feature = "rayon")]
-        return self.events.par_iter().map(|e| e.weight).collect();
-        #[cfg(not(feature = "rayon"))]
-        return self.events.iter().map(|e| e.weight).collect();
+        self.columnar.weights.clone()
     }
 
     /// Extract a list of weights over each [`EventData`] in the [`Dataset`] (MPI-compatible version).
@@ -865,6 +1530,8 @@ impl Dataset {
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because this API returns full global event weights.
+            // Use all-reduce only for scalar/vector aggregate values.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_weights, &mut partitioned_buffer);
         }
@@ -882,6 +1549,13 @@ impl Dataset {
         self.weights_local()
     }
 
+    /// Alias for [`Dataset::weights`].
+    ///
+    /// This returns the global weight vector in dataset order under MPI.
+    pub fn weights_global(&self) -> Vec<f64> {
+        self.weights()
+    }
+
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (non-MPI version).
     ///
     /// # Notes
@@ -889,14 +1563,7 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     pub fn n_events_weighted_local(&self) -> f64 {
-        #[cfg(feature = "rayon")]
-        return self
-            .events
-            .par_iter()
-            .map(|e| e.weight)
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        return self.events.iter().map(|e| e.weight).sum();
+        self.cached_local_weighted_sum
     }
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`] (MPI-compatible version).
     ///
@@ -905,16 +1572,8 @@ impl Dataset {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users should just call [`Dataset::n_events_weighted`] instead.
     #[cfg(feature = "mpi")]
-    pub fn n_events_weighted_mpi(&self, world: &SimpleCommunicator) -> f64 {
-        let mut n_events_weighted_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
-        let n_events_weighted_local = self.n_events_weighted_local();
-        world.all_gather_into(&n_events_weighted_local, &mut n_events_weighted_partitioned);
-        #[cfg(feature = "rayon")]
-        return n_events_weighted_partitioned
-            .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        return n_events_weighted_partitioned.iter().sum();
+    pub fn n_events_weighted_mpi(&self, _world: &SimpleCommunicator) -> f64 {
+        self.cached_global_weighted_sum
     }
 
     /// Returns the sum of the weights for each [`EventData`] in the [`Dataset`].
@@ -926,6 +1585,13 @@ impl Dataset {
             }
         }
         self.n_events_weighted_local()
+    }
+
+    /// Alias for [`Dataset::n_events_weighted`].
+    ///
+    /// This returns the global weighted event count under MPI.
+    pub fn n_events_weighted_global(&self) -> f64 {
+        self.n_events_weighted()
     }
 
     /// Generate a new dataset with the same length by resampling the events in the original datset
@@ -1022,18 +1688,24 @@ impl Dataset {
     pub fn filter(&self, expression: &VariableExpression) -> LadduResult<Arc<Dataset>> {
         let compiled = expression.compile(&self.metadata)?;
         #[cfg(feature = "rayon")]
-        let filtered_events: Vec<Arc<EventData>> = self
-            .events
-            .par_iter()
-            .filter(|event| compiled.evaluate(event.as_ref()))
-            .map(|event| event.data_arc())
+        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+            .into_par_iter()
+            .filter_map(|event_index| {
+                let event = self.event_view(event_index);
+                compiled
+                    .evaluate(&event)
+                    .then(|| self.events[event_index].data_arc())
+            })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let filtered_events: Vec<Arc<EventData>> = self
-            .events
-            .iter()
-            .filter(|event| compiled.evaluate(event.as_ref()))
-            .map(|event| event.data_arc())
+        let filtered_events: Vec<Arc<EventData>> = (0..self.n_events_local())
+            .into_iter()
+            .filter_map(|event_index| {
+                let event = self.event_view(event_index);
+                compiled
+                    .evaluate(&event)
+                    .then(|| self.events[event_index].data_arc())
+            })
             .collect();
         Ok(Arc::new(Dataset::new_with_metadata(
             filtered_events,
@@ -1057,30 +1729,28 @@ impl Dataset {
         let bin_edges = get_bin_edges(bins, range);
         let variable = variable;
         #[cfg(feature = "rayon")]
-        let evaluated: Vec<(usize, Arc<EventData>)> = self
-            .events
-            .par_iter()
+        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+            .into_par_iter()
             .filter_map(|event| {
-                let value = variable.value(event.as_ref());
+                let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event.data_arc()))
+                    Some((bin_index, self.events[event].data_arc()))
                 } else {
                     None
                 }
             })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let evaluated: Vec<(usize, Arc<EventData>)> = self
-            .events
-            .iter()
+        let evaluated: Vec<(usize, Arc<EventData>)> = (0..self.n_events_local())
+            .into_iter()
             .filter_map(|event| {
-                let value = variable.value(event.as_ref());
+                let value = variable.value(&self.event_view(event));
                 if value >= range.0 && value < range.1 {
                     let bin_index = ((value - range.0) / bin_width) as usize;
                     let bin_index = bin_index.min(bins - 1);
-                    Some((bin_index, event.data_arc()))
+                    Some((bin_index, self.events[event].data_arc()))
                 } else {
                     None
                 }
@@ -1142,436 +1812,82 @@ impl Dataset {
     pub fn evaluate<V: Variable>(&self, variable: &V) -> LadduResult<Vec<f64>> {
         variable.value_on(self)
     }
-
-    fn write_parquet_impl(
-        &self,
-        file_path: PathBuf,
-        options: &DatasetWriteOptions,
-    ) -> LadduResult<()> {
-        let batch_size = options.batch_size.max(1);
-        let precision = options.precision;
-        let schema = Arc::new(build_parquet_schema(&self.metadata, precision));
-
-        #[cfg(feature = "mpi")]
-        let is_root = crate::mpi::get_world()
-            .as_ref()
-            .map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        let mut writer: Option<ArrowWriter<File>> = None;
-        if is_root {
-            let file = File::create(&file_path)?;
-            writer = Some(
-                ArrowWriter::try_new(file, schema.clone(), None).map_err(|err| {
-                    LadduError::Custom(format!("Failed to create Parquet writer: {err}"))
-                })?,
-            );
-        }
-
-        let mut iter = self.iter();
-        loop {
-            let mut buffers =
-                ColumnBuffers::new(self.metadata.p4_names.len(), self.metadata.aux_names.len());
-            let mut rows = 0usize;
-
-            while rows < batch_size {
-                match iter.next() {
-                    Some(event) => {
-                        if is_root {
-                            buffers.push_event(&event);
-                        }
-                        rows += 1;
-                    }
-                    None => break,
-                }
-            }
-
-            if rows == 0 {
-                break;
-            }
-
-            if let Some(writer) = writer.as_mut() {
-                let batch = buffers
-                    .into_record_batch(schema.clone(), precision)
-                    .map_err(|err| {
-                        LadduError::Custom(format!("Failed to build Parquet batch: {err}"))
-                    })?;
-                writer.write(&batch).map_err(|err| {
-                    LadduError::Custom(format!("Failed to write Parquet batch: {err}"))
-                })?;
-            }
-        }
-
-        if let Some(writer) = writer {
-            writer.close().map_err(|err| {
-                LadduError::Custom(format!("Failed to finalise Parquet file: {err}"))
-            })?;
-        }
-
-        Ok(())
-    }
-
-    fn write_root_impl(
-        &self,
-        file_path: PathBuf,
-        options: &DatasetWriteOptions,
-    ) -> LadduResult<()> {
-        let tree_name = options.tree.clone().unwrap_or_else(|| "events".to_string());
-        let branch_count = self.metadata.p4_names.len() * 4 + self.metadata.aux_names.len() + 1; // +weight
-
-        #[cfg(feature = "mpi")]
-        let mut world_opt = crate::mpi::get_world();
-        #[cfg(feature = "mpi")]
-        let is_root = world_opt.as_ref().map_or(true, |world| world.rank() == 0);
-        #[cfg(not(feature = "mpi"))]
-        let is_root = true;
-
-        #[cfg(feature = "mpi")]
-        let world: Option<WorldHandle> = world_opt.take();
-        #[cfg(not(feature = "mpi"))]
-        let world: Option<WorldHandle> = None;
-
-        let total_events = self.n_events();
-        let dataset_arc = Arc::new(self.clone());
-
-        match options.precision {
-            FloatPrecision::F64 => self.write_root_with_type::<f64>(
-                dataset_arc,
-                world,
-                is_root,
-                &file_path,
-                &tree_name,
-                branch_count,
-                total_events,
-            ),
-            FloatPrecision::F32 => self.write_root_with_type::<f32>(
-                dataset_arc,
-                world,
-                is_root,
-                &file_path,
-                &tree_name,
-                branch_count,
-                total_events,
-            ),
-        }
-    }
 }
 
-fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
-    Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)
-}
-
-fn expand_output_path(file_path: &str) -> LadduResult<PathBuf> {
-    Ok(PathBuf::from(&*shellexpand::full(file_path)?))
-}
-
-/// Load a [`Dataset`] from a Parquet file.
-pub fn read_parquet(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-    let path = canonicalize_dataset_path(file_path)?;
-    let (detected_p4_names, detected_aux_names) = detect_columns(&path)?;
-    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-
-    #[cfg(feature = "mpi")]
-    {
-        if let Some(world) = crate::mpi::get_world() {
-            return read_parquet_mpi(builder, metadata, &world);
-        }
-    }
-
-    read_parquet_local(builder, metadata)
-}
-
-fn read_parquet_local(
-    builder: ParquetRecordBatchReaderBuilder<File>,
-    metadata: Arc<DatasetMetadata>,
-) -> LadduResult<Arc<Dataset>> {
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let events = batches_to_events(batches, metadata.as_ref())?;
-    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
-}
-
-#[cfg(feature = "mpi")]
-fn read_parquet_mpi(
-    mut builder: ParquetRecordBatchReaderBuilder<File>,
-    metadata: Arc<DatasetMetadata>,
-    world: &SimpleCommunicator,
-) -> LadduResult<Arc<Dataset>> {
-    let parquet_metadata = builder.metadata().clone();
-    let total_rows = parquet_metadata.file_metadata().num_rows() as usize;
-    if total_rows == 0 {
-        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
-    }
-
-    let partition = world.partition(total_rows);
-    let rank = world.rank() as usize;
-    let local_range = partition.range_for_rank(rank);
-    let local_start = local_range.start;
-    let local_end = local_range.end;
-    if local_start == local_end {
-        return Ok(Arc::new(Dataset::new_local(Vec::new(), metadata)));
-    }
-
-    let (row_groups, first_row_start) =
-        row_groups_for_range(&parquet_metadata, local_start, local_end);
-    if !row_groups.is_empty() {
-        builder = builder.with_row_groups(row_groups);
-    }
-
-    let reader = builder.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    let mut events = batches_to_events(batches, metadata.as_ref())?;
-
-    let drop_front = local_start.saturating_sub(first_row_start);
-    if drop_front > 0 {
-        events.drain(0..drop_front);
-    }
-    let expected_local = local_end - local_start;
-    if events.len() > expected_local {
-        events.truncate(expected_local);
-    }
-    if events.len() != expected_local {
-        return Err(LadduError::Custom(format!(
-            "Loaded {} rows on rank {} but expected {}",
-            events.len(),
-            rank,
-            expected_local
-        )));
-    }
-
-    Ok(Arc::new(Dataset::new_local(events, metadata)))
-}
-
-#[cfg(feature = "mpi")]
-fn row_groups_for_range(
-    metadata: &Arc<ParquetMetaData>,
-    start: usize,
-    end: usize,
-) -> (Vec<usize>, usize) {
-    let mut selected = Vec::new();
-    let mut first_row_start = start;
-    let mut offset = 0usize;
-
-    for (idx, row_group) in metadata.row_groups().iter().enumerate() {
-        let group_start = offset;
-        let rows = row_group.num_rows() as usize;
-        let group_end = group_start + rows;
-        offset = group_end;
-
-        if group_end <= start {
-            continue;
-        }
-        if group_start >= end {
-            break;
-        }
-        if selected.is_empty() {
-            first_row_start = group_start;
-        }
-        selected.push(idx);
-        if group_end >= end {
-            break;
-        }
-    }
-
-    (selected, first_row_start)
-}
-
-fn batches_to_events(
-    batches: Vec<RecordBatch>,
-    metadata: &DatasetMetadata,
-) -> LadduResult<Vec<Arc<EventData>>> {
-    #[cfg(feature = "rayon")]
-    {
-        let batch_events: Vec<LadduResult<Vec<Arc<EventData>>>> = batches
-            .into_par_iter()
-            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-            .collect();
-        let mut events = Vec::new();
-        for batch in batch_events {
-            let mut batch = batch?;
-            events.append(&mut batch);
-        }
-        Ok(events)
-    }
-
-    #[cfg(not(feature = "rayon"))]
-    {
-        Ok(batches
-            .into_iter()
-            .map(|batch| record_batch_to_events(batch, &metadata.p4_names, &metadata.aux_names))
-            .collect::<LadduResult<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect())
-    }
-}
-
-/// Load a [`Dataset`] from a ROOT TTree using the oxyroot backend.
-pub fn read_root(file_path: &str, options: &DatasetReadOptions) -> LadduResult<Arc<Dataset>> {
-    let path = canonicalize_dataset_path(file_path)?;
-    let mut file = RootFile::open(&path).map_err(|err| {
-        LadduError::Custom(format!(
-            "Failed to open ROOT file '{}': {err}",
-            path.display()
-        ))
-    })?;
-
-    let (tree, tree_name) = resolve_root_tree(&mut file, options.tree.as_deref())?;
-
-    let branches: Vec<&Branch> = tree.branches().collect();
-    let mut lookup: BranchLookup<'_> = IndexMap::new();
-    for &branch in &branches {
-        if let Some(kind) = branch_scalar_kind(branch) {
-            lookup.insert(branch.name(), (kind, branch));
-        }
-    }
-
-    if lookup.is_empty() {
-        return Err(LadduError::Custom(format!(
-            "No float or double branches found in ROOT tree '{tree_name}'"
-        )));
-    }
-
-    let column_names: Vec<&str> = lookup.keys().copied().collect();
-    let (detected_p4_names, detected_aux_names) = infer_p4_and_aux_names(&column_names);
-    let metadata = options.resolve_metadata(detected_p4_names, detected_aux_names)?;
-
-    struct RootP4Columns {
-        px: Vec<f64>,
-        py: Vec<f64>,
-        pz: Vec<f64>,
-        e: Vec<f64>,
-    }
-
-    // TODO: do all reads in parallel if possible to match parquet impl
-    let mut p4_columns = Vec::with_capacity(metadata.p4_names.len());
-    for name in &metadata.p4_names {
-        let logical = format!("{name}_px");
-        let px = read_branch_values_from_candidates(
-            &lookup,
-            &component_candidates(name, "px"),
-            &logical,
-        )?;
-
-        let logical = format!("{name}_py");
-        let py = read_branch_values_from_candidates(
-            &lookup,
-            &component_candidates(name, "py"),
-            &logical,
-        )?;
-
-        let logical = format!("{name}_pz");
-        let pz = read_branch_values_from_candidates(
-            &lookup,
-            &component_candidates(name, "pz"),
-            &logical,
-        )?;
-
-        let logical = format!("{name}_e");
-        let e = read_branch_values_from_candidates(
-            &lookup,
-            &component_candidates(name, "e"),
-            &logical,
-        )?;
-
-        p4_columns.push(RootP4Columns { px, py, pz, e });
-    }
-
-    let mut aux_columns = Vec::with_capacity(metadata.aux_names.len());
-    for name in &metadata.aux_names {
-        let values = read_branch_values(&lookup, name)?;
-        aux_columns.push(values);
-    }
-
-    let n_events = if let Some(first) = p4_columns.first() {
-        first.px.len()
-    } else if let Some(first) = aux_columns.first() {
-        first.len()
-    } else {
-        return Err(LadduError::Custom(
-            "Unable to determine event count; dataset has no four-momentum or auxiliary columns"
-                .to_string(),
-        ));
-    };
-
-    let weight_values = match read_branch_values_optional(&lookup, "weight")? {
-        Some(values) => {
-            if values.len() != n_events {
-                return Err(LadduError::Custom(format!(
-                    "Column 'weight' has {} entries but expected {}",
-                    values.len(),
-                    n_events
-                )));
-            }
-            values
-        }
-        None => vec![1.0; n_events],
-    };
-
-    let mut events = Vec::with_capacity(n_events);
-    for row in 0..n_events {
-        let mut p4s = Vec::with_capacity(p4_columns.len());
-        for columns in &p4_columns {
-            p4s.push(Vec4::new(
-                columns.px[row],
-                columns.py[row],
-                columns.pz[row],
-                columns.e[row],
-            ));
-        }
-
-        let mut aux = Vec::with_capacity(aux_columns.len());
-        for column in &aux_columns {
-            aux.push(column[row]);
-        }
-
-        let event = EventData {
-            p4s,
-            aux,
-            weight: weight_values[row],
-        };
-        events.push(Arc::new(event));
-    }
-
-    Ok(Arc::new(Dataset::new_with_metadata(events, metadata)))
-}
-
-/// Persist a [`Dataset`] to a Parquet file.
-pub fn write_parquet(
-    dataset: &Dataset,
-    file_path: &str,
-    options: &DatasetWriteOptions,
-) -> LadduResult<()> {
-    let path = expand_output_path(file_path)?;
-    dataset.write_parquet_impl(path, options)
-}
-
-/// Persist a [`Dataset`] to a ROOT file using the oxyroot backend.
-pub fn write_root(
-    dataset: &Dataset,
-    file_path: &str,
-    options: &DatasetWriteOptions,
-) -> LadduResult<()> {
-    let path = expand_output_path(file_path)?;
-    dataset.write_root_impl(path, options)
-}
+#[cfg(test)]
+pub(crate) use io::write_parquet_storage;
+pub use io::{
+    read_parquet, read_parquet_chunks, read_parquet_chunks_with_options, read_root, write_parquet,
+    write_root,
+};
+#[cfg(test)]
+pub(crate) use io::{read_parquet_storage, read_root_storage};
 
 impl_op_ex!(+ |a: &Dataset, b: &Dataset| -> Dataset {
     debug_assert_eq!(a.metadata.p4_names, b.metadata.p4_names);
     debug_assert_eq!(a.metadata.aux_names, b.metadata.aux_names);
-    Dataset {
-        events: a
-            .events
-            .iter()
-            .chain(b.events.iter())
-            .cloned()
-            .collect(),
-        metadata: a.metadata.clone(),
-    }
+    let events = a
+        .events
+        .iter()
+        .chain(b.events.iter())
+        .map(Event::data_arc)
+        .collect::<Vec<_>>();
+    Dataset::new_with_metadata(events, a.metadata.clone())
 });
+
+/// Incrementally builds a [`Dataset`] from chunked dataset reads.
+#[derive(Default)]
+pub struct DatasetChunkBuilder {
+    metadata: Option<Arc<DatasetMetadata>>,
+    events: Vec<Arc<EventData>>,
+}
+
+impl DatasetChunkBuilder {
+    /// Create an empty chunk builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append a dataset chunk.
+    pub fn push_chunk(&mut self, chunk: &Dataset) -> LadduResult<()> {
+        if let Some(existing) = &self.metadata {
+            if existing.p4_names != chunk.metadata.p4_names
+                || existing.aux_names != chunk.metadata.aux_names
+            {
+                return Err(LadduError::Custom(
+                    "Dataset chunk metadata does not match previous chunks".to_string(),
+                ));
+            }
+        } else {
+            self.metadata = Some(chunk.metadata.clone());
+        }
+        self.events
+            .extend(chunk.events_local().iter().map(Event::data_arc));
+        Ok(())
+    }
+
+    /// Finish building a dataset from all received chunks.
+    pub fn finish(self) -> Arc<Dataset> {
+        let metadata = self
+            .metadata
+            .unwrap_or_else(|| Arc::new(DatasetMetadata::empty()));
+        Arc::new(Dataset::new_with_metadata(self.events, metadata))
+    }
+}
+
+/// Fold over chunked datasets without materializing a full dataset.
+pub fn try_fold_dataset_chunks<I, T, F>(chunks: I, init: T, mut op: F) -> LadduResult<T>
+where
+    I: IntoIterator<Item = LadduResult<Arc<Dataset>>>,
+    F: FnMut(T, &Dataset) -> LadduResult<T>,
+{
+    let mut acc = init;
+    for chunk in chunks {
+        let chunk = chunk?;
+        acc = op(acc, &chunk)?;
+    }
+    Ok(acc)
+}
 
 /// Options for reading a [`Dataset`] from a file.
 ///
@@ -1588,6 +1904,8 @@ pub struct DatasetReadOptions {
     pub tree: Option<String>,
     /// Optional aliases mapping logical names to selections of four-momenta.
     pub aliases: IndexMap<String, P4Selection>,
+    /// Preferred chunk size for chunked read APIs.
+    pub chunk_size: Option<usize>,
 }
 
 /// Precision for writing floating-point columns.
@@ -1701,6 +2019,12 @@ impl DatasetReadOptions {
         self
     }
 
+    /// Set the chunk size used by chunked read APIs; values below 1 are clamped to 1.
+    pub fn chunk_size(mut self, chunk_size: usize) -> Self {
+        self.chunk_size = Some(chunk_size.max(1));
+        self
+    }
+
     fn resolve_metadata(
         &self,
         detected_p4_names: Vec<String>,
@@ -1717,705 +2041,8 @@ impl DatasetReadOptions {
     }
 }
 
-const P4_COMPONENT_SUFFIXES: [&str; 4] = ["_px", "_py", "_pz", "_e"];
 const DEFAULT_WRITE_BATCH_SIZE: usize = 10_000;
-
-fn detect_columns(file_path: &PathBuf) -> LadduResult<(Vec<String>, Vec<String>)> {
-    let file = File::open(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let schema = builder.schema();
-    let float_cols: Vec<&str> = schema
-        .fields()
-        .iter()
-        .filter(|f| matches!(f.data_type(), DataType::Float32 | DataType::Float64))
-        .map(|f| f.name().as_str())
-        .collect();
-    Ok(infer_p4_and_aux_names(&float_cols))
-}
-
-fn infer_p4_and_aux_names(float_cols: &[&str]) -> (Vec<String>, Vec<String>) {
-    let suffix_set: IndexSet<&str> = P4_COMPONENT_SUFFIXES.iter().copied().collect();
-    let mut groups: IndexMap<&str, IndexSet<&str>> = IndexMap::new();
-    for col in float_cols {
-        for suffix in &suffix_set {
-            if let Some(prefix) = col.strip_suffix(suffix) {
-                groups.entry(prefix).or_default().insert(*suffix);
-            }
-        }
-    }
-
-    let mut p4_names: Vec<String> = Vec::new();
-    let mut p4_columns: IndexSet<String> = IndexSet::new();
-    for (prefix, suffixes) in &groups {
-        if suffixes.len() == suffix_set.len() {
-            p4_names.push((*prefix).to_string());
-            for suffix in &suffix_set {
-                p4_columns.insert(format!("{prefix}{suffix}"));
-            }
-        }
-    }
-
-    let mut aux_names: Vec<String> = Vec::new();
-    for col in float_cols {
-        if p4_columns.contains(*col) {
-            continue;
-        }
-        if col.eq_ignore_ascii_case("weight") {
-            continue;
-        }
-        aux_names.push((*col).to_string());
-    }
-
-    (p4_names, aux_names)
-}
-
-type BranchLookup<'a> = IndexMap<&'a str, (RootScalarKind, &'a Branch)>;
-
-#[derive(Clone, Copy)]
-enum RootScalarKind {
-    F32,
-    F64,
-}
-
-fn branch_scalar_kind(branch: &Branch) -> Option<RootScalarKind> {
-    let type_name = branch.item_type_name();
-    let lower = type_name.to_ascii_lowercase();
-    if lower.contains("vector") {
-        return None;
-    }
-    match lower.as_str() {
-        "float" | "float_t" | "float32_t" => Some(RootScalarKind::F32),
-        "double" | "double_t" | "double32_t" => Some(RootScalarKind::F64),
-        _ => None,
-    }
-}
-
-fn read_branch_values<'a>(lookup: &BranchLookup<'a>, column_name: &str) -> LadduResult<Vec<f64>> {
-    let (kind, branch) =
-        lookup
-            .get(column_name)
-            .copied()
-            .ok_or_else(|| LadduError::MissingColumn {
-                name: column_name.to_string(),
-            })?;
-
-    let values = match kind {
-        RootScalarKind::F32 => branch
-            .as_iter::<f32>()
-            .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
-            .map(|value| value as f64)
-            .collect(),
-        RootScalarKind::F64 => branch
-            .as_iter::<f64>()
-            .map_err(|err| map_root_error(&format!("Failed to read branch '{column_name}'"), err))?
-            .collect(),
-    };
-    Ok(values)
-}
-
-fn read_branch_values_optional<'a>(
-    lookup: &BranchLookup<'a>,
-    column_name: &str,
-) -> LadduResult<Option<Vec<f64>>> {
-    if lookup.contains_key(column_name) {
-        read_branch_values(lookup, column_name).map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
-fn read_branch_values_from_candidates<'a>(
-    lookup: &BranchLookup<'a>,
-    candidates: &[String],
-    logical_name: &str,
-) -> LadduResult<Vec<f64>> {
-    for candidate in candidates {
-        if lookup.contains_key(candidate.as_str()) {
-            return read_branch_values(lookup, candidate);
-        }
-    }
-    Err(LadduError::MissingColumn {
-        name: logical_name.to_string(),
-    })
-}
-
-fn resolve_root_tree(
-    file: &mut RootFile,
-    requested: Option<&str>,
-) -> LadduResult<(ReaderTree, String)> {
-    if let Some(name) = requested {
-        let tree = file
-            .get_tree(name)
-            .map_err(|err| map_root_error(&format!("Failed to open ROOT tree '{name}'"), err))?;
-        return Ok((tree, name.to_string()));
-    }
-
-    let tree_names: Vec<String> = file
-        .keys()
-        .into_iter()
-        .filter(|key| key.class_name() == "TTree")
-        .map(|key| key.name().to_string())
-        .collect();
-
-    if tree_names.is_empty() {
-        return Err(LadduError::Custom(
-            "ROOT file does not contain any TTrees".to_string(),
-        ));
-    }
-
-    if tree_names.len() > 1 {
-        return Err(LadduError::Custom(format!(
-            "Multiple TTrees found ({:?}); specify DatasetReadOptions::tree to disambiguate",
-            tree_names
-        )));
-    }
-
-    let selected = &tree_names[0];
-    let tree = file
-        .get_tree(selected)
-        .map_err(|err| map_root_error(&format!("Failed to open ROOT tree '{selected}'"), err))?;
-    Ok((tree, selected.clone()))
-}
-
-fn map_root_error<E: std::fmt::Display>(context: &str, err: E) -> LadduError {
-    LadduError::Custom(format!("{context}: {err}")) // NOTE: the oxyroot error type is not public
-}
-
-#[derive(Clone, Copy)]
-enum FloatColumn<'a> {
-    F32(&'a Float32Array),
-    F64(&'a Float64Array),
-}
-
-impl<'a> FloatColumn<'a> {
-    fn value(&self, row: usize) -> f64 {
-        match self {
-            Self::F32(array) => array.value(row) as f64,
-            Self::F64(array) => array.value(row),
-        }
-    }
-}
-
-struct P4Columns<'a> {
-    px: FloatColumn<'a>,
-    py: FloatColumn<'a>,
-    pz: FloatColumn<'a>,
-    e: FloatColumn<'a>,
-}
-
-fn prepare_float_column<'a>(batch: &'a RecordBatch, name: &str) -> LadduResult<FloatColumn<'a>> {
-    prepare_float_column_from_candidates(batch, &[name.to_string()], name)
-}
-
-fn prepare_p4_columns<'a>(batch: &'a RecordBatch, name: &str) -> LadduResult<P4Columns<'a>> {
-    Ok(P4Columns {
-        px: prepare_float_column_from_candidates(
-            batch,
-            &component_candidates(name, "px"),
-            &format!("{name}_px"),
-        )?,
-        py: prepare_float_column_from_candidates(
-            batch,
-            &component_candidates(name, "py"),
-            &format!("{name}_py"),
-        )?,
-        pz: prepare_float_column_from_candidates(
-            batch,
-            &component_candidates(name, "pz"),
-            &format!("{name}_pz"),
-        )?,
-        e: prepare_float_column_from_candidates(
-            batch,
-            &component_candidates(name, "e"),
-            &format!("{name}_e"),
-        )?,
-    })
-}
-
-fn component_candidates(name: &str, suffix: &str) -> Vec<String> {
-    let mut candidates = Vec::with_capacity(3);
-    let base = format!("{name}_{suffix}");
-    candidates.push(base.clone());
-
-    let mut capitalized = suffix.to_string();
-    if let Some(first) = capitalized.get_mut(0..1) {
-        first.make_ascii_uppercase();
-    }
-    if capitalized != suffix {
-        candidates.push(format!("{name}_{capitalized}"));
-    }
-
-    let upper = suffix.to_ascii_uppercase();
-    if upper != suffix && upper != capitalized {
-        candidates.push(format!("{name}_{upper}"));
-    }
-
-    candidates
-}
-
-fn find_float_column_from_candidates<'a>(
-    batch: &'a RecordBatch,
-    candidates: &[String],
-) -> LadduResult<Option<FloatColumn<'a>>> {
-    use arrow::datatypes::DataType;
-
-    for candidate in candidates {
-        if let Some(column) = batch.column_by_name(candidate) {
-            return match column.data_type() {
-                DataType::Float32 => Ok(Some(FloatColumn::F32(
-                    column
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .expect("Column advertised as Float32 but could not be downcast"),
-                ))),
-                DataType::Float64 => Ok(Some(FloatColumn::F64(
-                    column
-                        .as_any()
-                        .downcast_ref::<Float64Array>()
-                        .expect("Column advertised as Float64 but could not be downcast"),
-                ))),
-                other => {
-                    return Err(LadduError::InvalidColumnType {
-                        name: candidate.clone(),
-                        datatype: other.to_string(),
-                    });
-                }
-            };
-        }
-    }
-    Ok(None)
-}
-
-fn prepare_float_column_from_candidates<'a>(
-    batch: &'a RecordBatch,
-    candidates: &[String],
-    logical_name: &str,
-) -> LadduResult<FloatColumn<'a>> {
-    find_float_column_from_candidates(batch, candidates)?.ok_or_else(|| LadduError::MissingColumn {
-        name: logical_name.to_string(),
-    })
-}
-
-fn record_batch_to_events(
-    batch: RecordBatch,
-    p4_names: &[String],
-    aux_names: &[String],
-) -> LadduResult<Vec<Arc<EventData>>> {
-    let batch_ref = &batch;
-    let p4_columns: Vec<P4Columns<'_>> = p4_names
-        .iter()
-        .map(|name| prepare_p4_columns(batch_ref, name))
-        .collect::<Result<_, _>>()?;
-
-    let aux_columns: Vec<FloatColumn<'_>> = aux_names
-        .iter()
-        .map(|name| prepare_float_column(batch_ref, name))
-        .collect::<Result<_, _>>()?;
-
-    let weight_column = find_float_column_from_candidates(batch_ref, &["weight".to_string()])?;
-
-    let mut events = Vec::with_capacity(batch_ref.num_rows());
-    for row in 0..batch_ref.num_rows() {
-        let mut p4s = Vec::with_capacity(p4_columns.len());
-        for columns in &p4_columns {
-            let px = columns.px.value(row);
-            let py = columns.py.value(row);
-            let pz = columns.pz.value(row);
-            let e = columns.e.value(row);
-            p4s.push(Vec4::new(px, py, pz, e));
-        }
-
-        let mut aux = Vec::with_capacity(aux_columns.len());
-        for column in &aux_columns {
-            aux.push(column.value(row));
-        }
-
-        let event = EventData {
-            p4s,
-            aux,
-            weight: weight_column
-                .as_ref()
-                .map(|column| column.value(row))
-                .unwrap_or(1.0),
-        };
-        events.push(Arc::new(event));
-    }
-    Ok(events)
-}
-
-struct ColumnBuffers {
-    p4: Vec<P4Buffer>,
-    aux: Vec<Vec<f64>>,
-    weight: Vec<f64>,
-}
-
-impl ColumnBuffers {
-    fn new(n_p4: usize, n_aux: usize) -> Self {
-        let p4 = (0..n_p4).map(|_| P4Buffer::default()).collect();
-        let aux = vec![Vec::new(); n_aux];
-        Self {
-            p4,
-            aux,
-            weight: Vec::new(),
-        }
-    }
-
-    fn push_event(&mut self, event: &Event) {
-        for (buffer, p4) in self.p4.iter_mut().zip(event.p4s.iter()) {
-            buffer.px.push(p4.x);
-            buffer.py.push(p4.y);
-            buffer.pz.push(p4.z);
-            buffer.e.push(p4.t);
-        }
-
-        for (buffer, value) in self.aux.iter_mut().zip(event.aux.iter()) {
-            buffer.push(*value);
-        }
-
-        self.weight.push(event.weight);
-    }
-
-    fn into_record_batch(
-        self,
-        schema: Arc<Schema>,
-        precision: FloatPrecision,
-    ) -> arrow::error::Result<RecordBatch> {
-        let mut columns: Vec<arrow::array::ArrayRef> = Vec::new();
-
-        match precision {
-            FloatPrecision::F64 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float64Array::from(buffer.px.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.py.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.pz.clone())));
-                    columns.push(Arc::new(Float64Array::from(buffer.e.clone())));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float64Array::from(buffer.clone())));
-                }
-
-                columns.push(Arc::new(Float64Array::from(self.weight)));
-            }
-            FloatPrecision::F32 => {
-                for buffer in &self.p4 {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.px.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.py.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.pz.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.e.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                for buffer in &self.aux {
-                    columns.push(Arc::new(Float32Array::from(
-                        buffer.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                    )));
-                }
-
-                columns.push(Arc::new(Float32Array::from(
-                    self.weight.iter().map(|v| *v as f32).collect::<Vec<_>>(),
-                )));
-            }
-        }
-
-        RecordBatch::try_new(schema, columns)
-    }
-}
-
-#[derive(Default)]
-struct P4Buffer {
-    px: Vec<f64>,
-    py: Vec<f64>,
-    pz: Vec<f64>,
-    e: Vec<f64>,
-}
-
-fn build_parquet_schema(metadata: &DatasetMetadata, precision: FloatPrecision) -> Schema {
-    let dtype = match precision {
-        FloatPrecision::F64 => DataType::Float64,
-        FloatPrecision::F32 => DataType::Float32,
-    };
-
-    let mut fields = Vec::new();
-    for name in &metadata.p4_names {
-        for suffix in P4_COMPONENT_SUFFIXES {
-            fields.push(Field::new(format!("{name}{suffix}"), dtype.clone(), false));
-        }
-    }
-
-    for name in &metadata.aux_names {
-        fields.push(Field::new(name.clone(), dtype.clone(), false));
-    }
-
-    fields.push(Field::new("weight", dtype, false));
-    Schema::new(fields)
-}
-
-trait FromF64 {
-    fn from_f64(value: f64) -> Self;
-}
-
-impl FromF64 for f64 {
-    fn from_f64(value: f64) -> Self {
-        value
-    }
-}
-
-impl FromF64 for f32 {
-    fn from_f64(value: f64) -> Self {
-        value as f32
-    }
-}
-
-struct SharedEventFetcher {
-    dataset: Arc<Dataset>,
-    world: Option<WorldHandle>,
-    total: usize,
-    branch_count: usize,
-    current_index: Option<usize>,
-    current_event: Option<Event>,
-    remaining: usize,
-}
-
-impl SharedEventFetcher {
-    fn new(
-        dataset: Arc<Dataset>,
-        world: Option<WorldHandle>,
-        total: usize,
-        branch_count: usize,
-    ) -> Self {
-        Self {
-            dataset,
-            world,
-            total,
-            branch_count,
-            current_index: None,
-            current_event: None,
-            remaining: 0,
-        }
-    }
-
-    fn event_for_index(&mut self, index: usize) -> Option<Event> {
-        if index >= self.total {
-            return None;
-        }
-
-        let refresh_needed = match self.current_index {
-            None => true,
-            Some(current) => current != index || self.remaining == 0,
-        };
-
-        if refresh_needed {
-            let event =
-                fetch_event_for_index(&self.dataset, index, self.total, self.world.as_ref());
-            self.current_index = Some(index);
-            self.remaining = self.branch_count;
-            self.current_event = Some(event);
-        }
-
-        let event = self.current_event.as_ref().cloned();
-        if self.remaining > 0 {
-            self.remaining -= 1;
-        }
-        if self.remaining == 0 {
-            // Drop the cached event so the next request fetches the next index.
-            self.current_event = None;
-        }
-        event
-    }
-}
-
-enum ColumnKind {
-    Px(usize),
-    Py(usize),
-    Pz(usize),
-    E(usize),
-    Aux(usize),
-    Weight,
-}
-
-struct ColumnIterator<T> {
-    fetcher: Arc<Mutex<SharedEventFetcher>>,
-    index: usize,
-    kind: ColumnKind,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<T> ColumnIterator<T> {
-    fn new(fetcher: Arc<Mutex<SharedEventFetcher>>, kind: ColumnKind) -> Self {
-        Self {
-            fetcher,
-            index: 0,
-            kind,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T> Iterator for ColumnIterator<T>
-where
-    T: FromF64,
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut fetcher = self.fetcher.lock();
-        let event = fetcher.event_for_index(self.index)?;
-        self.index += 1;
-
-        match self.kind {
-            ColumnKind::Px(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.x)),
-            ColumnKind::Py(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.y)),
-            ColumnKind::Pz(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.z)),
-            ColumnKind::E(idx) => event.p4s.get(idx).map(|p4| T::from_f64(p4.t)),
-            ColumnKind::Aux(idx) => event.aux.get(idx).map(|value| T::from_f64(*value)),
-            ColumnKind::Weight => Some(T::from_f64(event.weight)),
-        }
-    }
-}
-
-fn build_root_column_iterators<T>(
-    dataset: Arc<Dataset>,
-    world: Option<WorldHandle>,
-    branch_count: usize,
-    total: usize,
-) -> Vec<(String, ColumnIterator<T>)>
-where
-    T: FromF64,
-{
-    let fetcher = Arc::new(Mutex::new(SharedEventFetcher::new(
-        dataset,
-        world,
-        total,
-        branch_count,
-    )));
-
-    let p4_names: Vec<String> = fetcher.lock().dataset.metadata.p4_names.clone();
-    let aux_names: Vec<String> = fetcher.lock().dataset.metadata.aux_names.clone();
-
-    let mut iterators = Vec::new();
-
-    for (idx, name) in p4_names.iter().enumerate() {
-        iterators.push((
-            format!("{name}_px"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Px(idx)),
-        ));
-        iterators.push((
-            format!("{name}_py"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Py(idx)),
-        ));
-        iterators.push((
-            format!("{name}_pz"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Pz(idx)),
-        ));
-        iterators.push((
-            format!("{name}_e"),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::E(idx)),
-        ));
-    }
-
-    for (idx, name) in aux_names.iter().enumerate() {
-        iterators.push((
-            name.clone(),
-            ColumnIterator::new(fetcher.clone(), ColumnKind::Aux(idx)),
-        ));
-    }
-
-    iterators.push((
-        "weight".to_string(),
-        ColumnIterator::new(fetcher, ColumnKind::Weight),
-    ));
-
-    iterators
-}
-
-fn drain_column_iterators<T>(iterators: &mut [(String, ColumnIterator<T>)], n_events: usize)
-where
-    T: FromF64,
-{
-    for _ in 0..n_events {
-        for (_name, iterator) in iterators.iter_mut() {
-            let _ = iterator.next();
-        }
-    }
-}
-
-fn fetch_event_for_index(
-    dataset: &Dataset,
-    index: usize,
-    total: usize,
-    world: Option<&WorldHandle>,
-) -> Event {
-    let _ = total;
-    let _ = world;
-    #[cfg(feature = "mpi")]
-    {
-        if let Some(world) = world {
-            return fetch_event_mpi(dataset, index, world, total);
-        }
-    }
-
-    dataset.index_local(index).clone()
-}
-
-impl Dataset {
-    #[allow(clippy::too_many_arguments)]
-    fn write_root_with_type<T>(
-        &self,
-        dataset: Arc<Dataset>,
-        world: Option<WorldHandle>,
-        is_root: bool,
-        file_path: &Path,
-        tree_name: &str,
-        branch_count: usize,
-        total_events: usize,
-    ) -> LadduResult<()>
-    where
-        T: FromF64 + oxyroot::Marshaler + 'static,
-    {
-        let mut iterators =
-            build_root_column_iterators::<T>(dataset, world, branch_count, total_events);
-
-        if is_root {
-            let mut file = RootFile::create(file_path).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to create ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            let mut tree = WriterTree::new(tree_name);
-            for (name, iterator) in iterators {
-                tree.new_branch(name, iterator);
-            }
-
-            tree.write(&mut file).map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to write ROOT tree '{tree_name}' to '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-
-            file.close().map_err(|err| {
-                LadduError::Custom(format!(
-                    "Failed to close ROOT file '{}': {err}",
-                    file_path.display()
-                ))
-            })?;
-        } else {
-            drain_column_iterators(&mut iterators, total_events);
-        }
-
-        Ok(())
-    }
-}
+pub(crate) const DEFAULT_READ_CHUNK_SIZE: usize = 10_000;
 
 /// A list of [`Dataset`]s formed by binning [`EventData`] by some [`Variable`].
 pub struct BinnedDataset {
@@ -2473,9 +2100,13 @@ mod tests {
     use crate::Mass;
 
     use super::*;
+    #[cfg(feature = "mpi")]
+    use crate::mpi::{finalize_mpi, get_world, use_mpi};
     use crate::utils::vectors::Vec3;
     use approx::{assert_relative_eq, assert_relative_ne};
     use fastrand;
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use serde::{Deserialize, Serialize};
     use std::{
         env, fs,
@@ -2508,6 +2139,24 @@ mod tests {
         let dir = env::temp_dir().join(format!("laddu_test_{}", fastrand::u64(..)));
         fs::create_dir(&dir).expect("temp dir should be created");
         dir
+    }
+
+    #[cfg(feature = "mpi")]
+    fn mpi_chunk_test_dataset(n_events: usize) -> Dataset {
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let events = (0..n_events)
+            .map(|index| {
+                let mut event = base.clone();
+                event.p4s[0] =
+                    Vec3::new(index as f64 * 0.1, 0.0, 8.747 + index as f64 * 0.01).with_mass(0.0);
+                event.aux[0] += index as f64;
+                event.aux[1] += index as f64 * 0.5;
+                event.weight = 1.0 + index as f64;
+                Arc::new(event)
+            })
+            .collect();
+        Dataset::new_with_metadata(events, metadata)
     }
 
     fn assert_events_close(left: &Event, right: &Event, p4_names: &[&str], aux_names: &[&str]) {
@@ -2547,9 +2196,37 @@ mod tests {
     ) {
         assert_eq!(left.n_events(), right.n_events());
         for idx in 0..left.n_events() {
-            let levent = &left[idx];
-            let revent = &right[idx];
-            assert_events_close(levent, revent, p4_names, aux_names);
+            let Ok(levent) = left.event(idx) else {
+                panic!("left dataset missing event at index {idx}");
+            };
+            let Ok(revent) = right.event(idx) else {
+                panic!("right dataset missing event at index {idx}");
+            };
+            assert_events_close(&levent, &revent, p4_names, aux_names);
+        }
+    }
+
+    fn assert_dataset_columnar_close(left: &DatasetStorage, right: &DatasetStorage) {
+        assert_eq!(left.n_events(), right.n_events());
+        assert_eq!(left.metadata().p4_names(), right.metadata().p4_names());
+        assert_eq!(left.metadata().aux_names(), right.metadata().aux_names());
+        for event_index in 0..left.n_events() {
+            for p4_index in 0..left.metadata().p4_names().len() {
+                let lp4 = left.p4(event_index, p4_index);
+                let rp4 = right.p4(event_index, p4_index);
+                assert_relative_eq!(lp4.px(), rp4.px(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.py(), rp4.py(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.pz(), rp4.pz(), epsilon = 1e-12);
+                assert_relative_eq!(lp4.e(), rp4.e(), epsilon = 1e-12);
+            }
+            for aux_index in 0..left.metadata().aux_names().len() {
+                let l = left.aux(event_index, aux_index);
+                let r = right.aux(event_index, aux_index);
+                assert_relative_eq!(l, r, epsilon = 1e-12);
+            }
+            let lw = left.weight(event_index);
+            let rw = right.weight(event_index);
+            assert_relative_eq!(lw, rw, epsilon = 1e-12);
         }
     }
 
@@ -2580,13 +2257,57 @@ mod tests {
             "data_f32.parquet",
             DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
         );
-        let event = dataset.named_event(0);
+        let event = dataset.named_event(0).expect("event should exist");
         let alias_vec = event.p4("resonance").expect("alias vector");
         let expected = event.get_p4_sum(["kshort1", "kshort2"]);
         assert_relative_eq!(alias_vec.px(), expected.px(), epsilon = 1e-9);
         assert_relative_eq!(alias_vec.py(), expected.py(), epsilon = 1e-9);
         assert_relative_eq!(alias_vec.pz(), expected.pz(), epsilon = 1e-9);
         assert_relative_eq!(alias_vec.e(), expected.e(), epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_from_parquet_alias_resolution_parity_auto_vs_explicit() {
+        let auto = open_test_dataset(
+            "data_f32.parquet",
+            DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]),
+        );
+        let explicit = open_test_dataset(
+            "data_f32.parquet",
+            DatasetReadOptions::new()
+                .p4_names(TEST_P4_NAMES)
+                .aux_names(TEST_AUX_NAMES)
+                .alias("resonance", ["kshort1", "kshort2"]),
+        );
+
+        assert_datasets_close(&auto, &explicit, TEST_P4_NAMES, TEST_AUX_NAMES);
+        for event_index in 0..auto.n_events() {
+            let auto_event = auto
+                .named_event(event_index)
+                .expect("auto parquet event should exist");
+            let explicit_event = explicit
+                .named_event(event_index)
+                .expect("explicit parquet event should exist");
+
+            let auto_alias = auto_event
+                .p4("resonance")
+                .expect("auto alias should resolve");
+            let explicit_alias = explicit_event
+                .p4("resonance")
+                .expect("explicit alias should resolve");
+            let auto_expected = auto_event.get_p4_sum(["kshort1", "kshort2"]);
+            let explicit_expected = explicit_event.get_p4_sum(["kshort1", "kshort2"]);
+
+            assert_relative_eq!(auto_alias.px(), auto_expected.px(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.py(), auto_expected.py(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.pz(), auto_expected.pz(), epsilon = 1e-9);
+            assert_relative_eq!(auto_alias.e(), auto_expected.e(), epsilon = 1e-9);
+
+            assert_relative_eq!(explicit_alias.px(), explicit_expected.px(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.py(), explicit_expected.py(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.pz(), explicit_expected.pz(), epsilon = 1e-9);
+            assert_relative_eq!(explicit_alias.e(), explicit_expected.e(), epsilon = 1e-9);
+        }
     }
 
     #[test]
@@ -2619,12 +2340,166 @@ mod tests {
         assert_datasets_close(&root_auto, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
 
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_from_root_metadata_matches_non_mpi_under_mpi() {
+        let reference_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
+        let explicit_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES);
+        let reference_explicit = open_test_dataset("data_f32.root", explicit_options.clone());
+
+        use_mpi(true);
+        let local_auto = open_test_dataset("data_f32.root", DatasetReadOptions::new());
+        let local_explicit = open_test_dataset("data_f32.root", explicit_options);
+
+        assert_eq!(local_auto.p4_names(), reference_auto.p4_names());
+        assert_eq!(local_auto.aux_names(), reference_auto.aux_names());
+        assert_eq!(local_explicit.p4_names(), reference_explicit.p4_names());
+        assert_eq!(local_explicit.aux_names(), reference_explicit.aux_names());
+        assert_eq!(local_auto.p4_names(), local_explicit.p4_names());
+        assert_eq!(local_auto.aux_names(), local_explicit.aux_names());
+
+        for name in local_auto.p4_names() {
+            let local_auto_selection = local_auto
+                .metadata()
+                .p4_selection(name)
+                .expect("local auto canonical p4 selection should exist");
+            let reference_auto_selection = reference_auto
+                .metadata()
+                .p4_selection(name)
+                .expect("reference auto canonical p4 selection should exist");
+            let local_explicit_selection = local_explicit
+                .metadata()
+                .p4_selection(name)
+                .expect("local explicit canonical p4 selection should exist");
+            assert_eq!(
+                local_auto_selection.names(),
+                reference_auto_selection.names()
+            );
+            assert_eq!(
+                local_auto_selection.indices(),
+                reference_auto_selection.indices()
+            );
+            assert_eq!(
+                local_explicit_selection.names(),
+                reference_auto_selection.names()
+            );
+            assert_eq!(
+                local_explicit_selection.indices(),
+                reference_auto_selection.indices()
+            );
+        }
+
+        finalize_mpi();
+    }
+
     #[test]
     fn test_from_root_f64_matches_parquet() {
         let parquet = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let root_f64 = open_test_dataset("data_f64.root", DatasetReadOptions::new());
         assert_datasets_close(&root_f64, &parquet, TEST_P4_NAMES, TEST_AUX_NAMES);
     }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_from_root_alias_resolution_matches_non_mpi_under_mpi() {
+        let alias_options = DatasetReadOptions::new().alias("resonance", ["kshort1", "kshort2"]);
+        let explicit_alias_options = DatasetReadOptions::new()
+            .p4_names(TEST_P4_NAMES)
+            .aux_names(TEST_AUX_NAMES)
+            .alias("resonance", ["kshort1", "kshort2"]);
+        let reference_auto = open_test_dataset("data_f32.root", alias_options.clone());
+        let reference_explicit = open_test_dataset("data_f32.root", explicit_alias_options.clone());
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let local_auto = open_test_dataset("data_f32.root", alias_options);
+        let local_explicit = open_test_dataset("data_f32.root", explicit_alias_options);
+
+        let local_auto_alias = local_auto
+            .metadata()
+            .p4_selection("resonance")
+            .expect("local auto alias should exist");
+        let local_explicit_alias = local_explicit
+            .metadata()
+            .p4_selection("resonance")
+            .expect("local explicit alias should exist");
+        let reference_alias = reference_auto
+            .metadata()
+            .p4_selection("resonance")
+            .expect("reference alias should exist");
+        let reference_explicit_alias = reference_explicit
+            .metadata()
+            .p4_selection("resonance")
+            .expect("reference explicit alias should exist");
+        assert_eq!(local_auto_alias.names(), reference_alias.names());
+        assert_eq!(local_auto_alias.indices(), reference_alias.indices());
+        assert_eq!(
+            local_explicit_alias.names(),
+            reference_explicit_alias.names()
+        );
+        assert_eq!(
+            local_explicit_alias.indices(),
+            reference_explicit_alias.indices()
+        );
+        assert_eq!(local_auto_alias.names(), local_explicit_alias.names());
+        assert_eq!(local_auto_alias.indices(), local_explicit_alias.indices());
+
+        let partition = world.partition(reference_auto.n_events());
+        let local_range = partition.range_for_rank(world.rank() as usize);
+        assert_eq!(local_auto.n_events_local(), local_range.len());
+        assert_eq!(local_explicit.n_events_local(), local_range.len());
+
+        for (local_index, global_index) in local_range.enumerate() {
+            let local_auto_event = local_auto.event_view(local_index);
+            let local_explicit_event = local_explicit.event_view(local_index);
+            let reference_event = reference_auto.event_view(global_index);
+            let reference_explicit_event = reference_explicit.event_view(global_index);
+
+            let local_auto_value = local_auto_event
+                .p4("resonance")
+                .expect("local auto alias should resolve");
+            let local_explicit_value = local_explicit_event
+                .p4("resonance")
+                .expect("local explicit alias should resolve");
+            let reference_value = reference_event
+                .p4("resonance")
+                .expect("reference alias should resolve");
+            let reference_explicit_value = reference_explicit_event
+                .p4("resonance")
+                .expect("reference explicit alias should resolve");
+
+            assert_relative_eq!(local_auto_value.px(), reference_value.px(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.py(), reference_value.py(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.pz(), reference_value.pz(), epsilon = 1e-9);
+            assert_relative_eq!(local_auto_value.e(), reference_value.e(), epsilon = 1e-9);
+
+            assert_relative_eq!(
+                local_explicit_value.px(),
+                reference_explicit_value.px(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.py(),
+                reference_explicit_value.py(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.pz(),
+                reference_explicit_value.pz(),
+                epsilon = 1e-9
+            );
+            assert_relative_eq!(
+                local_explicit_value.e(),
+                reference_explicit_value.e(),
+                epsilon = 1e-9
+            );
+        }
+
+        finalize_mpi();
+    }
+
     #[test]
     fn test_event_creation() {
         let event = test_event();
@@ -2654,17 +2529,11 @@ mod tests {
     }
 
     #[test]
-    fn test_event_evaluate() {
-        let event = test_event();
+    fn test_named_event_view_evaluate() {
+        let dataset = test_dataset();
+        let event = dataset.event_view(0);
         let mut mass = Mass::new(["proton"]);
-        mass.bind(
-            &DatasetMetadata::new(
-                TEST_P4_NAMES.iter().map(|s| (*s).to_string()).collect(),
-                TEST_AUX_NAMES.iter().map(|s| (*s).to_string()).collect(),
-            )
-            .expect("metadata"),
-        )
-        .unwrap();
+        mass.bind(dataset.metadata()).unwrap();
         assert_relative_eq!(event.evaluate(&mass), 1.007);
     }
 
@@ -2689,8 +2558,14 @@ mod tests {
             metadata.clone(),
         );
         let dataset_sum = &dataset + &dataset2;
-        assert_eq!(dataset_sum[0].weight, dataset[0].weight);
-        assert_eq!(dataset_sum[1].weight, dataset2[0].weight);
+        assert_eq!(
+            dataset_sum.event(0).expect("event should exist").weight,
+            dataset.event(0).expect("event should exist").weight
+        );
+        assert_eq!(
+            dataset_sum.event(1).expect("event should exist").weight,
+            dataset2.event(0).expect("event should exist").weight
+        );
     }
 
     #[test]
@@ -2708,6 +2583,25 @@ mod tests {
         assert_relative_eq!(weights[0], 0.48);
         assert_relative_eq!(weights[1], 0.52);
         assert_relative_eq!(dataset.n_events_weighted(), 1.0);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Dataset requires rectangular p4/aux columns for canonical columnar storage"
+    )]
+    fn test_dataset_rejects_ragged_rows_at_construction() {
+        let _ = Dataset::new(vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 1.0, 1.0)],
+                aux: vec![0.1],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![],
+                aux: vec![0.2, 0.3],
+                weight: 2.0,
+            }),
+        ]);
     }
 
     #[test]
@@ -2744,14 +2638,17 @@ mod tests {
 
         let filtered = dataset.filter(&expression).unwrap();
         assert_eq!(filtered.n_events(), 1);
-        assert_relative_eq!(mass.value(&filtered[0]), 0.5);
+        assert_relative_eq!(mass.value(&filtered.event_view(0)), 0.5);
     }
 
     #[test]
     fn test_dataset_boost() {
         let dataset = test_dataset();
         let dataset_boosted = dataset.boost_to_rest_frame_of(&["proton", "kshort1", "kshort2"]);
-        let p4_sum = dataset_boosted[0].get_p4_sum(["proton", "kshort1", "kshort2"]);
+        let p4_sum = dataset_boosted
+            .event(0)
+            .expect("event should exist")
+            .get_p4_sum(["proton", "kshort1", "kshort2"]);
         assert_relative_eq!(p4_sum.px(), 0.0);
         assert_relative_eq!(p4_sum.py(), 0.0);
         assert_relative_eq!(p4_sum.pz(), 0.0, epsilon = f64::EPSILON.sqrt());
@@ -2760,18 +2657,21 @@ mod tests {
     #[test]
     fn test_named_event_view() {
         let dataset = test_dataset();
-        let view = dataset.named_event(0);
-
-        assert_relative_eq!(view.weight(), dataset[0].weight);
+        let view = dataset.named_event(0).expect("event should exist");
+        let dataset_event = dataset.event(0).expect("event should exist");
+        assert_relative_eq!(view.weight(), dataset_event.weight);
         let beam = view.p4("beam").expect("beam p4");
-        assert_relative_eq!(beam.px(), dataset[0].p4s[0].px());
-        assert_relative_eq!(beam.e(), dataset[0].p4s[0].e());
+        assert_relative_eq!(beam.px(), dataset_event.p4s[0].px());
+        assert_relative_eq!(beam.e(), dataset_event.p4s[0].e());
 
         let summed = view.get_p4_sum(["kshort1", "kshort2"]);
-        assert_relative_eq!(summed.e(), dataset[0].p4s[2].e() + dataset[0].p4s[3].e());
+        assert_relative_eq!(
+            summed.e(),
+            dataset_event.p4s[2].e() + dataset_event.p4s[3].e()
+        );
 
         let aux_angle = view.aux().get("pol_angle").copied().expect("pol angle");
-        assert_relative_eq!(aux_angle, dataset[0].aux[1]);
+        assert_relative_eq!(aux_angle, dataset_event.aux[1]);
 
         let metadata = dataset.metadata_arc();
         let boosted = view.boost_to_rest_frame_of(["proton", "kshort1", "kshort2"]);
@@ -2809,10 +2709,13 @@ mod tests {
         let dataset = test_dataset();
         let proton = dataset.p4_by_name(0, "proton").expect("proton p4");
         let proton_idx = dataset.metadata().p4_index("proton").unwrap();
-        assert_relative_eq!(proton.e(), dataset[0].p4s[proton_idx].e());
+        assert_relative_eq!(
+            proton.e(),
+            dataset.event(0).expect("event should exist").p4s[proton_idx].e()
+        );
         assert!(dataset.p4_by_name(0, "unknown").is_none());
         let angle = dataset.aux_by_name(0, "pol_angle").expect("pol_angle");
-        assert_relative_eq!(angle, dataset[0].aux[1]);
+        assert_relative_eq!(angle, dataset.event(0).expect("event should exist").aux[1]);
         assert!(dataset.aux_by_name(0, "missing").is_none());
     }
 
@@ -2840,8 +2743,8 @@ mod tests {
         }
         #[typetag::serde]
         impl Variable for BeamEnergy {
-            fn value(&self, event: &EventData) -> f64 {
-                event.p4s[0].e()
+            fn value(&self, event: &NamedEventView<'_>) -> f64 {
+                event.p4_at(0).e()
             }
         }
         assert_eq!(BeamEnergy.to_string(), "BeamEnergy");
@@ -2873,16 +2776,80 @@ mod tests {
             ],
             metadata,
         );
-        assert_relative_ne!(dataset[0].weight, dataset[1].weight);
+        assert_relative_ne!(
+            dataset.event(0).expect("event should exist").weight,
+            dataset.event(1).expect("event should exist").weight
+        );
 
         let bootstrapped = dataset.bootstrap(43);
         assert_eq!(bootstrapped.n_events(), dataset.n_events());
-        assert_relative_eq!(bootstrapped[0].weight, bootstrapped[1].weight);
+        assert_relative_eq!(
+            bootstrapped.event(0).expect("event should exist").weight,
+            bootstrapped.event(1).expect("event should exist").weight
+        );
 
         // Test empty dataset bootstrap
         let empty_dataset = Dataset::new(Vec::new());
         let empty_bootstrap = empty_dataset.bootstrap(43);
         assert_eq!(empty_bootstrap.n_events(), 0);
+    }
+
+    fn assert_weight_cache_matches_local_events(dataset: &Dataset) {
+        #[cfg(feature = "rayon")]
+        let expected = dataset
+            .events_local()
+            .par_iter()
+            .map(|event| event.weight)
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        let expected = dataset
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum_with_accumulator::<Klein<f64>>();
+        assert_relative_eq!(dataset.cached_local_weighted_sum, expected);
+        assert_relative_eq!(dataset.n_events_weighted_local(), expected);
+    }
+
+    #[test]
+    fn test_weight_cache_recomputed_for_dataset_transforms() {
+        let metadata = Arc::new(
+            DatasetMetadata::new(vec!["beam"], Vec::<String>::new())
+                .expect("metadata should be valid"),
+        );
+        let dataset = Dataset::new_with_metadata(
+            vec![
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 1.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 1.0,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 2.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 2.0,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec3::new(0.0, 0.0, 3.0).with_mass(0.0)],
+                    aux: vec![],
+                    weight: 3.0,
+                }),
+            ],
+            metadata,
+        );
+        assert_weight_cache_matches_local_events(&dataset);
+
+        let filtered = dataset.filter(&Mass::new(["beam"]).gt(0.0)).unwrap();
+        assert_weight_cache_matches_local_events(&filtered);
+
+        let bootstrapped = dataset.bootstrap(7);
+        assert_weight_cache_matches_local_events(&bootstrapped);
+
+        let boosted = dataset.boost_to_rest_frame_of(&["beam"]);
+        assert_weight_cache_matches_local_events(&boosted);
+
+        let combined = &dataset + &dataset;
+        assert_weight_cache_matches_local_events(&combined);
     }
 
     #[test]
@@ -2893,7 +2860,10 @@ mod tests {
             weights.push(event.weight());
         }
         assert_eq!(weights.len(), dataset.n_events());
-        assert_relative_eq!(weights[0], dataset[0].weight);
+        assert_relative_eq!(
+            weights[0],
+            dataset.event(0).expect("event should exist").weight
+        );
     }
 
     #[test]
@@ -2903,6 +2873,423 @@ mod tests {
         assert_eq!(weights.len(), 1);
         assert_relative_eq!(weights[0], test_event().weight);
     }
+
+    #[test]
+    fn test_dataset_arc_into_iter_returns_events() {
+        let dataset = Arc::new(test_dataset());
+        let weights: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
+        assert_eq!(weights.len(), 1);
+        assert_relative_eq!(weights[0], test_event().weight);
+    }
+
+    #[test]
+    fn test_dataset_get_event_local_reuses_underlying_data() {
+        let dataset = test_dataset();
+        let first = dataset.get_event(0).expect("event should exist");
+        let second = dataset.get_event(0).expect("event should exist");
+        assert!(Arc::ptr_eq(&first.data_arc(), &second.data_arc()));
+    }
+
+    #[test]
+    fn test_dataset_event_out_of_bounds_is_error() {
+        let dataset = test_dataset();
+        assert!(dataset.event(99).is_err());
+        assert!(dataset.get_event(99).is_none());
+    }
+
+    #[cfg(feature = "mpi")]
+    fn event_iteration_signature<I>(iter: I) -> (usize, f64, f64, f64)
+    where
+        I: IntoIterator<Item = Event>,
+    {
+        let mut count = 0usize;
+        let mut weight_signature = 0.0;
+        let mut beam_signature = 0.0;
+        let mut aux_signature = 0.0;
+
+        for (index, event) in iter.into_iter().enumerate() {
+            let position = (index + 1) as f64;
+            count += 1;
+            weight_signature += position * event.weight();
+            beam_signature += position * event.p4("beam").expect("beam should exist").e();
+            aux_signature += position
+                * event
+                    .aux()
+                    .get("pol_angle")
+                    .copied()
+                    .expect("pol_angle should exist");
+        }
+
+        (count, weight_signature, beam_signature, aux_signature)
+    }
+
+    #[cfg(feature = "mpi")]
+    fn read_resident_rss_kb() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let status = fs::read_to_string("/proc/self/status").ok()?;
+            let vm_rss = status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))?
+                .split_whitespace()
+                .nth(1)?;
+            vm_rss.parse::<u64>().ok()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[test]
+    fn test_dataset_event_stress_local_repeated_access() {
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+        let baseline: Vec<f64> = (0..dataset.n_events())
+            .map(|index| dataset.event(index).expect("event should exist").weight())
+            .collect();
+
+        for _ in 0..250 {
+            for (index, expected_weight) in baseline.iter().enumerate() {
+                let event = dataset.event(index).expect("event should exist");
+                assert_relative_eq!(event.weight(), *expected_weight);
+            }
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_event_mpi_repeated_access_is_stable() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let dataset = test_dataset();
+        for _ in 0..32 {
+            let first = dataset.event(0).expect("event should exist");
+            let second = dataset.event(0).expect("event should exist");
+            assert_relative_eq!(first.weight(), second.weight());
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_event_stress_mpi_repeated_access() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+
+        let baseline: Vec<f64> = (0..dataset.n_events())
+            .map(|index| dataset.event(index).expect("event should exist").weight())
+            .collect();
+
+        for _ in 0..120 {
+            for (index, expected_weight) in baseline.iter().enumerate() {
+                let event = dataset.event(index).expect("event should exist");
+                assert_relative_eq!(event.weight(), *expected_weight);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_iter_stress_mpi_repeated_passes() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Dataset::new_with_metadata(events, metadata);
+        let baseline: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+
+        for _ in 0..80 {
+            let current: Vec<f64> = dataset.iter().map(|event| event.weight()).collect();
+            assert_eq!(current.len(), baseline.len());
+            for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
+                assert_relative_eq!(*current_weight, *expected_weight);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_arc_into_iter_stress_mpi_repeated_passes() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let metadata = test_dataset().metadata_arc();
+        let base = test_event();
+        let mut events = Vec::new();
+        for idx in 0..8 {
+            events.push(Arc::new(EventData {
+                p4s: base.p4s.clone(),
+                aux: base.aux.clone(),
+                weight: 1.0 + idx as f64,
+            }));
+        }
+        let dataset = Arc::new(Dataset::new_with_metadata(events, metadata));
+        let baseline: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
+
+        for _ in 0..80 {
+            let current: Vec<f64> = dataset.shared_iter().map(|event| event.weight()).collect();
+            assert_eq!(current.len(), baseline.len());
+            for (current_weight, expected_weight) in current.iter().zip(baseline.iter()) {
+                assert_relative_eq!(*current_weight, *expected_weight);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_dataset_iteration_long_running_mpi_repeated_passes() {
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let dataset = Arc::new(mpi_chunk_test_dataset(8_192));
+        let baseline_iter = event_iteration_signature(dataset.iter());
+        let baseline_shared = event_iteration_signature(dataset.shared_iter());
+        assert_eq!(baseline_iter, baseline_shared);
+        let mut post_warmup_rss_kb = Vec::new();
+
+        for pass_index in 0..48 {
+            let current_iter = event_iteration_signature(dataset.iter());
+            let current_shared = event_iteration_signature(dataset.shared_iter());
+            assert_eq!(current_iter, baseline_iter);
+            assert_eq!(current_shared, baseline_shared);
+            if pass_index >= 7 {
+                if let Some(rss_kb) = read_resident_rss_kb() {
+                    post_warmup_rss_kb.push(rss_kb);
+                }
+            }
+        }
+
+        if let Some((&first_rss_kb, rest_rss_kb)) = post_warmup_rss_kb.split_first() {
+            let last_rss_kb = *rest_rss_kb.last().unwrap_or(&first_rss_kb);
+            let min_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .min()
+                .expect("post-warmup RSS sample should exist");
+            let max_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .max()
+                .expect("post-warmup RSS sample should exist");
+            const MAX_POST_WARMUP_RSS_GROWTH_KB: u64 = 32 * 1024;
+            const MAX_POST_WARMUP_RSS_SPREAD_KB: u64 = 32 * 1024;
+            assert!(
+                last_rss_kb.saturating_sub(first_rss_kb) <= MAX_POST_WARMUP_RSS_GROWTH_KB,
+                "post-warmup RSS grew by {} KiB (first={} KiB, last={} KiB)",
+                last_rss_kb.saturating_sub(first_rss_kb),
+                first_rss_kb,
+                last_rss_kb
+            );
+            assert!(
+                max_rss_kb.saturating_sub(min_rss_kb) <= MAX_POST_WARMUP_RSS_SPREAD_KB,
+                "post-warmup RSS spread was {} KiB (min={} KiB, max={} KiB)",
+                max_rss_kb.saturating_sub(min_rss_kb),
+                min_rss_kb,
+                max_rss_kb
+            );
+        }
+
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_fetch_event_chunk_mpi_matches_single_event_fetches() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let dataset = mpi_chunk_test_dataset(8);
+        let chunk = fetch_event_chunk_mpi(&dataset, 1, 5, &world, dataset.n_events());
+
+        assert_eq!(chunk.len(), 5);
+        for (offset, event) in chunk.iter().enumerate() {
+            let baseline = dataset
+                .event(1 + offset)
+                .expect("chunk baseline event should exist");
+            assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+
+        assert!(
+            fetch_event_chunk_mpi(&dataset, dataset.n_events(), 4, &world, dataset.n_events())
+                .is_empty()
+        );
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_fetch_event_chunk_mpi_truncates_at_dataset_end() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let dataset = mpi_chunk_test_dataset(8);
+        let chunk = fetch_event_chunk_mpi(&dataset, 6, 10, &world, dataset.n_events());
+
+        assert_eq!(chunk.len(), 2);
+        for (offset, event) in chunk.iter().enumerate() {
+            let baseline = dataset
+                .event(6 + offset)
+                .expect("truncated chunk baseline event should exist");
+            assert_events_close(event, &baseline, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_mpi_event_chunk_cursor_reuses_cached_chunk_for_dataset_and_events() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let dataset = mpi_chunk_test_dataset(9);
+        let total = dataset.n_events();
+        let metadata = dataset.metadata_arc();
+
+        let mut dataset_cursor = MpiEventChunkCursor::new(3);
+        for index in 0..total {
+            let actual = dataset_cursor
+                .event_for_dataset(&dataset, index, &world, total)
+                .expect("dataset cursor event should exist");
+            let expected = dataset.event(index).expect("baseline event should exist");
+            assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        assert!(dataset_cursor
+            .event_for_dataset(&dataset, total, &world, total)
+            .is_none());
+
+        let mut events_cursor = MpiEventChunkCursor::new(4);
+        for index in 0..total {
+            let actual = events_cursor
+                .event_for_events(dataset.events_local(), &metadata, index, &world, total)
+                .expect("events cursor event should exist");
+            let expected = dataset.event(index).expect("baseline event should exist");
+            assert_events_close(&actual, &expected, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    #[ignore = "developer probe for MPI iteration chunk-size tuning"]
+    fn probe_mpi_iteration_chunk_size() {
+        use std::time::Instant;
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = mpi_chunk_test_dataset(32_768);
+        let total = dataset.n_events();
+        let chunk_sizes = [64_usize, 128, 256, 512, 1024];
+        if world.rank() == 0 {
+            println!("probe=iteration");
+        }
+        for chunk_size in chunk_sizes {
+            let started = Instant::now();
+            let mut checksum = 0.0;
+            for _ in 0..8 {
+                let mut cursor = MpiEventChunkCursor::new(chunk_size);
+                for index in 0..total {
+                    let event = cursor
+                        .event_for_dataset(&dataset, index, &world, total)
+                        .expect("cursor event should exist");
+                    checksum += event.weight() + event.p4("beam").expect("beam should exist").e();
+                }
+            }
+            if world.rank() == 0 {
+                println!(
+                    "probe=iteration chunk_size={} elapsed_sec={:.6} checksum={:.6}",
+                    chunk_size,
+                    started.elapsed().as_secs_f64(),
+                    checksum,
+                );
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[test]
+    #[ignore = "developer probe for MPI ROOT write chunk-size tuning"]
+    fn probe_mpi_root_write_chunk_size() {
+        use std::time::Instant;
+
+        use_mpi(true);
+        let Some(world) = get_world() else {
+            finalize_mpi();
+            return;
+        };
+
+        let dataset = Arc::new(mpi_chunk_test_dataset(32_768));
+        let chunk_sizes = [64_usize, 128, 256, 512, 1024];
+        if world.rank() == 0 {
+            println!("probe=root_write");
+        }
+        for chunk_size in chunk_sizes {
+            let dir = make_temp_dir();
+            let path = dir.join(format!("mpi_chunk_probe_{chunk_size}.root"));
+            let path_str = path.to_str().expect("probe path should be valid UTF-8");
+            let started = Instant::now();
+            for _ in 0..4 {
+                io::write_root_with_chunk_size_for_test(
+                    &dataset,
+                    path_str,
+                    &DatasetWriteOptions::default(),
+                    chunk_size,
+                )
+                .expect("probe root write should succeed");
+            }
+
+            if world.rank() == 0 {
+                println!(
+                    "probe=root_write chunk_size={} elapsed_sec={:.6}",
+                    chunk_size,
+                    started.elapsed().as_secs_f64(),
+                );
+                fs::remove_dir_all(&dir).expect("probe temp dir cleanup should succeed");
+            }
+        }
+        finalize_mpi();
+    }
+
     #[test]
     fn test_event_display() {
         let event = test_event();
@@ -2952,6 +3339,150 @@ mod tests {
     }
 
     #[test]
+    fn test_parquet_roundtrip_incremental_small_batches() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let dir = make_temp_dir();
+        let path = dir.join("roundtrip_small_batches.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        let write_options = DatasetWriteOptions::default().batch_size(1);
+        write_parquet(&dataset, path_str, &write_options)
+            .expect("writing parquet in small batches should succeed");
+        let reopened = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("parquet roundtrip should reopen");
+
+        assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_parquet_read_order_is_deterministic_across_repeated_reads() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let dir = make_temp_dir();
+        let path = dir.join("deterministic_order.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        // Force many parquet batches so order stability is verified under incremental reads.
+        let write_options = DatasetWriteOptions::default().batch_size(1);
+        write_parquet(&dataset, path_str, &write_options)
+            .expect("writing parquet in small batches should succeed");
+
+        let first = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("first parquet read should succeed");
+        let second = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("second parquet read should succeed");
+
+        assert_eq!(first.n_events(), second.n_events());
+        assert_eq!(first.n_events(), dataset.n_events());
+        for event_index in 0..dataset.n_events() {
+            let source = dataset
+                .event(event_index)
+                .expect("source event should exist");
+            let first_event = first
+                .event(event_index)
+                .expect("first read event should exist");
+            let second_event = second
+                .event(event_index)
+                .expect("second read event should exist");
+            assert_events_close(&source, &first_event, TEST_P4_NAMES, TEST_AUX_NAMES);
+            assert_events_close(&source, &second_event, TEST_P4_NAMES, TEST_AUX_NAMES);
+        }
+
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_parquet_storage_roundtrip_to_tempfile() {
+        let source_path = test_data_path("data_f32.parquet");
+        let source_path_str = source_path.to_str().expect("path should be valid UTF-8");
+        let dataset_columnar = read_parquet_storage(source_path_str, &DatasetReadOptions::new())
+            .expect("columnar load");
+        let dir = make_temp_dir();
+        let path = dir.join("roundtrip_columnar.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        write_parquet_storage(&dataset_columnar, path_str, &DatasetWriteOptions::default())
+            .expect("writing columnar parquet should succeed");
+        let reopened = read_parquet_storage(path_str, &DatasetReadOptions::new())
+            .expect("columnar roundtrip reopen");
+
+        assert_dataset_columnar_close(&dataset_columnar, &reopened);
+        fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[test]
+    fn test_root_storage_matches_parquet_storage() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let parquet_path = test_data_path("data_f32.parquet");
+        let parquet_path_str = parquet_path.to_str().expect("path should be valid UTF-8");
+
+        let from_root = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("root columnar load should work");
+        let from_parquet = read_parquet_storage(parquet_path_str, &DatasetReadOptions::new())
+            .expect("parquet columnar load should work");
+        assert_dataset_columnar_close(&from_root, &from_parquet);
+    }
+
+    #[test]
+    fn test_root_storage_repeated_reads_are_stable() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let first = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("first root columnar load should work");
+        let second = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("second root columnar load should work");
+        assert_dataset_columnar_close(&first, &second);
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_root_storage_reads_rank_local_entry_ranges_under_mpi() {
+        let root_path = test_data_path("data_f32.root");
+        let root_path_str = root_path.to_str().expect("path should be valid UTF-8");
+        let full = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("full root columnar load should work");
+        let total = full.n_events();
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let partition = world.partition(total);
+        let local_range = partition.range_for_rank(world.rank() as usize);
+
+        let local = read_root_storage(root_path_str, &DatasetReadOptions::new())
+            .expect("rank-local root columnar load should work");
+        assert_eq!(local.n_events(), local_range.len());
+
+        for (local_index, global_index) in local_range.clone().enumerate() {
+            for p4_index in 0..full.metadata().p4_names().len() {
+                let expected = full.p4(global_index, p4_index);
+                let actual = local.p4(local_index, p4_index);
+                assert_relative_eq!(actual.px(), expected.px(), epsilon = 1e-12);
+                assert_relative_eq!(actual.py(), expected.py(), epsilon = 1e-12);
+                assert_relative_eq!(actual.pz(), expected.pz(), epsilon = 1e-12);
+                assert_relative_eq!(actual.e(), expected.e(), epsilon = 1e-12);
+            }
+            for aux_index in 0..full.metadata().aux_names().len() {
+                assert_relative_eq!(
+                    local.aux(local_index, aux_index),
+                    full.aux(global_index, aux_index),
+                    epsilon = 1e-12
+                );
+            }
+            assert_relative_eq!(
+                local.weight(local_index),
+                full.weight(global_index),
+                epsilon = 1e-12
+            );
+        }
+
+        let local_dataset = local.to_dataset();
+        assert_eq!(local_dataset.n_events_local(), local_range.len());
+        assert_eq!(local_dataset.n_events(), total);
+        finalize_mpi();
+    }
+
+    #[test]
     fn test_root_roundtrip_to_tempfile() {
         let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
         let dir = make_temp_dir();
@@ -2965,5 +3496,350 @@ mod tests {
 
         assert_datasets_close(&dataset, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
         fs::remove_dir_all(&dir).expect("temp dir cleanup should succeed");
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_root_roundtrip_to_tempfile_mpi() {
+        let reference = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let is_root = world.is_root();
+
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let path = env::temp_dir().join("laddu_mpi_root_roundtrip.root");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+
+        if world.is_root() && path.exists() {
+            fs::remove_file(&path).expect("stale mpi root file cleanup should succeed");
+        }
+        world.barrier();
+
+        write_root(&dataset, path_str, &DatasetWriteOptions::default())
+            .expect("writing root with mpi should succeed");
+        world.barrier();
+        world.barrier();
+        finalize_mpi();
+
+        if is_root {
+            let reopened = read_root(path_str, &DatasetReadOptions::new())
+                .expect("root roundtrip should reopen");
+            assert_datasets_close(&reference, &reopened, TEST_P4_NAMES, TEST_AUX_NAMES);
+            if path.exists() {
+                fs::remove_file(&path).expect("mpi root roundtrip cleanup should succeed");
+            }
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_root_output_is_deterministic_under_mpi() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let first_path = env::temp_dir().join("laddu_mpi_root_determinism_first.root");
+        let second_path = env::temp_dir().join("laddu_mpi_root_determinism_second.root");
+        let first_path_str = first_path.to_str().expect("path should be valid UTF-8");
+        let second_path_str = second_path.to_str().expect("path should be valid UTF-8");
+
+        if world.is_root() {
+            for path in [&first_path, &second_path] {
+                if path.exists() {
+                    fs::remove_file(path).expect("stale mpi root file cleanup should succeed");
+                }
+            }
+        }
+        world.barrier();
+
+        write_root(&dataset, first_path_str, &DatasetWriteOptions::default())
+            .expect("first mpi root write should succeed");
+        world.barrier();
+        write_root(&dataset, second_path_str, &DatasetWriteOptions::default())
+            .expect("second mpi root write should succeed");
+        world.barrier();
+
+        let first = read_root_storage(first_path_str, &DatasetReadOptions::new())
+            .expect("first mpi root output should reopen");
+        let second = read_root_storage(second_path_str, &DatasetReadOptions::new())
+            .expect("second mpi root output should reopen");
+        assert_dataset_columnar_close(&first, &second);
+
+        world.barrier();
+        if world.is_root() {
+            for path in [&first_path, &second_path] {
+                if path.exists() {
+                    fs::remove_file(path).expect("mpi root determinism cleanup should succeed");
+                }
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_root_output_matches_between_mpi_and_non_mpi_writes() {
+        let cpu_dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let mpi_path = env::temp_dir().join("laddu_root_mpi_reference.root");
+        let mpi_path_str = mpi_path.to_str().expect("path should be valid UTF-8");
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let is_root = world.is_root();
+        let mpi_dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+
+        if is_root && mpi_path.exists() {
+            fs::remove_file(&mpi_path).expect("stale root file cleanup should succeed");
+        }
+        world.barrier();
+        write_root(&mpi_dataset, mpi_path_str, &DatasetWriteOptions::default())
+            .expect("mpi root write should succeed");
+        world.barrier();
+        world.barrier();
+        finalize_mpi();
+
+        if is_root {
+            let cpu_dir = make_temp_dir();
+            let cpu_path = cpu_dir.join("laddu_root_cpu_reference.root");
+            let cpu_path_str = cpu_path.to_str().expect("path should be valid UTF-8");
+            write_root(&cpu_dataset, cpu_path_str, &DatasetWriteOptions::default())
+                .expect("non-mpi root write should succeed");
+
+            let cpu_output = read_root_storage(cpu_path_str, &DatasetReadOptions::new())
+                .expect("non-mpi root output should reopen");
+            let mpi_output = read_root_storage(mpi_path_str, &DatasetReadOptions::new())
+                .expect("mpi root output should reopen");
+            assert_dataset_columnar_close(&cpu_output, &mpi_output);
+
+            fs::remove_dir_all(&cpu_dir).expect("root comparison temp dir cleanup should succeed");
+            if mpi_path.exists() {
+                fs::remove_file(&mpi_path).expect("root comparison cleanup should succeed");
+            }
+        }
+    }
+
+    #[test]
+    fn test_root_local_column_buffers_match_columnar_storage() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let buffers = io::build_root_local_column_buffers::<f64>(&dataset.columnar);
+        let expected_names = dataset
+            .p4_names()
+            .iter()
+            .flat_map(|name| {
+                io::P4_COMPONENT_SUFFIXES
+                    .iter()
+                    .map(move |suffix| format!("{name}{suffix}"))
+            })
+            .chain(dataset.aux_names().iter().cloned())
+            .chain(std::iter::once("weight".to_string()))
+            .collect::<Vec<_>>();
+        let expected_values = dataset
+            .columnar
+            .p4
+            .iter()
+            .flat_map(|p4| [p4.px.clone(), p4.py.clone(), p4.pz.clone(), p4.e.clone()])
+            .chain(dataset.columnar.aux.clone())
+            .chain(std::iter::once(dataset.columnar.weights.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            buffers
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            expected_names
+        );
+        assert_eq!(
+            buffers
+                .into_iter()
+                .map(|(_, values)| values)
+                .collect::<Vec<_>>(),
+            expected_values
+        );
+    }
+
+    #[test]
+    fn test_root_local_column_buffers_convert_precision() {
+        let dataset = open_test_dataset("data_f32.parquet", DatasetReadOptions::new());
+        let buffers = io::build_root_local_column_buffers::<f32>(&dataset.columnar);
+        let expected_values = dataset
+            .columnar
+            .p4
+            .iter()
+            .flat_map(|p4| {
+                [
+                    p4.px.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.py.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.pz.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                    p4.e.iter().map(|value| *value as f32).collect::<Vec<_>>(),
+                ]
+            })
+            .chain(
+                dataset
+                    .columnar
+                    .aux
+                    .iter()
+                    .map(|aux| aux.iter().map(|value| *value as f32).collect::<Vec<_>>()),
+            )
+            .chain(std::iter::once(
+                dataset
+                    .columnar
+                    .weights
+                    .iter()
+                    .map(|value| *value as f32)
+                    .collect::<Vec<_>>(),
+            ))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            buffers
+                .into_iter()
+                .map(|(_, values)| values)
+                .collect::<Vec<_>>(),
+            expected_values
+        );
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_matches_full_read() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new();
+        let full = read_parquet(path_str, &options).expect("full parquet read should work");
+        let chunks =
+            read_parquet_chunks(path_str, &options, 17).expect("chunk iterator should open");
+
+        let mut global_idx = 0usize;
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            for local_idx in 0..chunk.n_events_local() {
+                let left = full
+                    .event(global_idx)
+                    .expect("full dataset event should exist");
+                let right = chunk
+                    .event(local_idx)
+                    .expect("chunk dataset event should exist");
+                assert_events_close(&left, &right, TEST_P4_NAMES, TEST_AUX_NAMES);
+                global_idx += 1;
+            }
+        }
+
+        assert_eq!(global_idx, full.n_events());
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_parquet_chunk_iterator_respects_mpi_partition() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new();
+        let reference =
+            read_parquet(path_str, &options).expect("reference parquet read should work");
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let partition = world.partition(reference.n_events());
+        let local_range = partition.range_for_rank(world.rank() as usize);
+        let chunks =
+            read_parquet_chunks(path_str, &options, 17).expect("chunk iterator should open");
+
+        let mut local_idx = 0usize;
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            assert!(chunk.n_events_local() <= 17);
+            for chunk_idx in 0..chunk.n_events_local() {
+                let expected = reference
+                    .event(local_range.start + local_idx)
+                    .expect("reference event should exist");
+                let actual = chunk.event(chunk_idx).expect("chunk event should exist");
+                assert_events_close(&expected, &actual, TEST_P4_NAMES, TEST_AUX_NAMES);
+                local_idx += 1;
+            }
+        }
+
+        assert_eq!(local_idx, local_range.len());
+        let mut gathered_counts = vec![0usize; world.size() as usize];
+        world.all_gather_into(&local_idx, &mut gathered_counts);
+        assert_eq!(
+            gathered_counts.into_iter().sum::<usize>(),
+            reference.n_events()
+        );
+        finalize_mpi();
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_with_options_chunk_size_one() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new().chunk_size(1);
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+        let mut event_count = 0usize;
+        let mut chunk_count = 0usize;
+
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            chunk_count += 1;
+            assert_eq!(chunk.n_events_local(), 1);
+            event_count += chunk.n_events_local();
+        }
+
+        assert_eq!(event_count, full.n_events());
+        assert_eq!(chunk_count, full.n_events());
+    }
+
+    #[test]
+    fn test_parquet_chunk_iterator_with_options_large_chunk_size() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let options = DatasetReadOptions::new().chunk_size(full.n_events() + 100);
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+        let chunk_vec = chunks
+            .collect::<LadduResult<Vec<_>>>()
+            .expect("all chunk reads should succeed");
+
+        assert_eq!(chunk_vec.len(), 1);
+        assert_eq!(chunk_vec[0].n_events_local(), full.n_events());
+    }
+
+    #[test]
+    fn test_dataset_chunk_builder_matches_full_parquet_read() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let options = DatasetReadOptions::new().chunk_size(13);
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks_with_options(path_str, &options)
+            .expect("chunk iterator should open");
+
+        let mut builder = DatasetChunkBuilder::new();
+        for chunk in chunks {
+            let chunk = chunk.expect("chunk read should succeed");
+            builder.push_chunk(&chunk).expect("chunk should append");
+        }
+        let rebuilt = builder.finish();
+
+        assert_datasets_close(&full, &rebuilt, TEST_P4_NAMES, TEST_AUX_NAMES);
+    }
+
+    #[test]
+    fn test_try_fold_dataset_chunks_matches_full_weight_sum() {
+        let path = test_data_path("data_f32.parquet");
+        let path_str = path.to_str().expect("path should be valid UTF-8");
+        let full = read_parquet(path_str, &DatasetReadOptions::new())
+            .expect("full parquet read should work");
+        let chunks = read_parquet_chunks(path_str, &DatasetReadOptions::new(), 11)
+            .expect("chunk iterator should open");
+
+        let folded = try_fold_dataset_chunks(chunks, 0.0_f64, |acc, chunk| {
+            Ok(acc + chunk.n_events_weighted_local())
+        })
+        .expect("chunk fold should succeed");
+
+        assert_relative_eq!(folded, full.n_events_weighted_local(), epsilon = 1e-9);
     }
 }

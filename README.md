@@ -254,10 +254,10 @@ def main():
     nll = ld.NLL(expr, ds_data, ds_mc)
     status = nll.minimize([1.0] * len(nll.parameters))
     print(status)
-    fit_weights = nll.project(status.x)
-    s0p_weights = nll.project_with(status.x, ["z00p", "s0p"])
-    s0n_weights = nll.project_with(status.x, ["z00n", "s0n"])
-    d2p_weights = nll.project_with(status.x, ["z22p", "d2p"])
+    fit_weights = nll.project_weights(status.x)
+    s0p_weights = nll.project_weights_subset(status.x, ["z00p", "s0p"])
+    s0n_weights = nll.project_weights_subset(status.x, ["z00n", "s0n"])
+    d2p_weights = nll.project_weights_subset(status.x, ["z22p", "d2p"])
     masses_mc = res_mass.value_on(ds_mc)
     masses_data = res_mass.value_on(ds_data)
     weights_data = ds_data.weights
@@ -368,9 +368,19 @@ This loads the ROOT tree, infers the particle names, and exposes the result thro
 
 # MPI Support
 
-The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`.
+The latest version of `laddu` supports the Message Passing Interface (MPI) protocol for distributed computing. MPI-compatible versions of the core `laddu` methods have been written behind the `mpi` feature gate. To build `laddu` with MPI compatibility, it can be added with the `mpi` feature via `cargo add laddu --features mpi`. Note that this requires a working MPI installation, and [OpenMPI](https://www.open-mpi.org/) or [MPICH](https://www.mpich.org/) are recommended, as well as [LLVM](https://llvm.org/)/[Clang](https://clang.llvm.org/). The installation of these packages differs by system, but are generally available via each system's package manager. The Python implementation of `laddu` contains a library `laddu-cpu` and may be optionally installed with a dependency `laddu-mpi`. If the latter is available, it will be used at runtime unless otherwise specified. Note that this just selects the backend, and doesn't actually use MPI at all, it just gives the option to use it. You can install the optional dependency automatically with `pip install 'laddu[mpi]'`, which builds `laddu-mpi` against the local system MPI installation.
 
 To use MPI in Rust, one must simply surround their main analysis code with a call to `laddu::mpi::use_mpi(true)` and `laddu::mpi::finalize_mpi()`. The first method has a boolean flag which allows for runtime switching of MPI use (for example, disabling MPI with an environment variable). These same methods exist in Python as `laddu.mpi.use_mpi(trigger=true)` and `laddu.mpi.finalize_mpi()`, and an additional context manager, `laddu.mpi.MPI(trigger=true)`, can be used to quickly wrap a `main()` function. See the [documentation](https://laddu.readthedocs.io/en/latest/) for more details.
+
+In Python, the default `Dataset` interface keeps its usual global sequence semantics when MPI is enabled. That means `len(dataset)`, `dataset[i]`, `for event in dataset`, `list(dataset)`, `dataset.events`, `dataset.weights`, and `dataset.n_events_weighted` all behave as if the full dataset were present locally. Use `dataset.iter_local()`, `dataset.events_local`, `dataset.weights_local`, `dataset.n_events_local`, and `dataset.n_events_weighted_local` only when code explicitly wants rank-local ownership semantics. In non-MPI runs, local and global access behave the same way.
+
+The intended guarantees are:
+
+- Default/global access preserves the same dataset-wide ordering and indexing semantics in MPI and non-MPI runs.
+- `*_local` access is always limited to the current rank's ownership and should only be used for explicitly rank-local code paths.
+- `iter_global()` and the default iterator may fetch remote events under MPI; `iter_local()` never does.
+- Global counts and weighted sums (`n_events`, `n_events_weighted`, `weights`) remain valid for whole-dataset reporting under MPI.
+- Local/global results are identical in non-MPI runs because there is only one rank.
 
 # Future Plans
 

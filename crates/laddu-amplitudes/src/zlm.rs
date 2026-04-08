@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
@@ -19,7 +19,7 @@ use num::complex::Complex64;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// An [`Amplitude`] representing an extension of the [`Ylm`](crate::ylm::Ylm)
+/// An [`Amplitude`] representing an extension of the [`Ylm`]
 /// [`Amplitude`] assuming a linearly polarized beam as described in Equation (D13)
 /// [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
@@ -74,15 +74,15 @@ impl Amplitude for Zlm {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let ylm = spherical_harmonic(
             self.l,
             self.m,
-            self.angles.costheta.value(event),
-            self.angles.phi.value(event),
+            event.evaluate(&self.angles.costheta),
+            event.evaluate(&self.angles.phi),
         );
-        let pol_angle = self.polarization.pol_angle.value(event);
-        let pgamma = self.polarization.pol_magnitude.value(event);
+        let pol_angle = event.evaluate(&self.polarization.pol_angle);
+        let pgamma = event.evaluate(&self.polarization.pol_magnitude);
         let phase = Complex64::new(f64::cos(-pol_angle), f64::sin(-pol_angle));
         let zlm = ylm * phase;
         cache.store_complex_scalar(
@@ -99,19 +99,16 @@ impl Amplitude for Zlm {
             },
         );
     }
-
-    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         _gradient: &mut DVector<Complex64>,
     ) {
-        // This amplitude is independent of free parameters
     }
 }
 
@@ -209,25 +206,22 @@ impl Amplitude for PolPhase {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
-        let pol_angle = self.polarization.pol_angle.value(event);
-        let pgamma = self.polarization.pol_magnitude.value(event);
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let pol_angle = event.evaluate(&self.polarization.pol_angle);
+        let pgamma = event.evaluate(&self.polarization.pol_magnitude);
         let phase = Complex64::new(f64::cos(2.0 * pol_angle), f64::sin(2.0 * pol_angle));
         cache.store_complex_scalar(self.csid, pgamma * phase);
     }
-
-    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         _gradient: &mut DVector<Complex64>,
     ) {
-        // This amplitude is independent of free parameters
     }
 }
 

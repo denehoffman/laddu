@@ -16,8 +16,10 @@ mod laddu {
             py_test_amplitude, PyEvaluator, PyExpression, PyParameterLike,
         },
         available_parallelism,
-        data::{PyBinnedDataset, PyDataset, PyEvent},
+        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
+        get_threads,
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
+        set_threads,
         utils::{
             variables::{
                 PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
@@ -45,11 +47,7 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_extensions::{
-        ganesh_ext::py_ganesh::{
-            py_integrated_autocorrelation_times, PyAutocorrelationTerminator, PyControlFlow,
-            PyEnsembleStatus, PyMCMCSummary, PyMinimizationStatus, PyMinimizationSummary, PySwarm,
-            PySwarmParticle, PyWalker,
-        },
+        ganesh_ext::py_ganesh::{py_integrated_autocorrelation_times, PyControlFlow},
         likelihoods::{
             py_likelihood_one, py_likelihood_product, py_likelihood_scalar, py_likelihood_sum,
             py_likelihood_zero, PyLikelihoodEvaluator, PyLikelihoodExpression, PyNLL,
@@ -61,5 +59,7 @@ mod laddu {
     use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
 
     #[pymodule_export]
-    use laddu_python::data::{read_parquet, read_root, write_parquet, write_root};
+    use laddu_python::data::{
+        from_columns, read_parquet, read_parquet_chunked, read_root, write_parquet, write_root,
+    };
 }

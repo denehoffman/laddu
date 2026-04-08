@@ -42,11 +42,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - run: cargo llvm-cov --workspace --lcov --output-path coverage-rust.lcov --summary-only --exclude-from-report py-laddu
+      - run: cargo llvm-cov --workspace --codecov --output-path coverage-rust.json
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          path: coverage-rust.lcov
+          path: coverage-rust.json
           name: coverage-rust
   coverage-python:
     permissions:
@@ -92,7 +92,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true
-          files: "coverage-rust.lcov,coverage-python.xml"
+          files: "coverage-rust.json,coverage-python.xml"
           root_dir: ${{ github.workspace }}
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true

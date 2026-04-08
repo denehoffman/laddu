@@ -1,6 +1,5 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::EventData,
     resources::{Cache, ParameterID, Parameters, Resources},
     LadduResult,
 };
@@ -38,15 +37,15 @@ impl Amplitude for Scalar {
         self.pid = resources.register_parameter(&self.value)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid), 0.0)
     }
-
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -108,15 +107,12 @@ impl Amplitude for ComplexScalar {
         self.pid_im = resources.register_parameter(&self.im)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
     }
-
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -187,15 +183,12 @@ impl Amplitude for PolarComplexScalar {
         self.pid_theta = resources.register_parameter(&self.theta)?;
         resources.register_amplitude(&self.name)
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, _cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
     }
-
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -271,6 +264,25 @@ mod tests {
         // For |f(x)|^2 where f(x) = x, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
+    }
+
+    #[test]
+    fn test_scalar_reports_real_valued_hint() {
+        let scalar = Scalar {
+            name: "test_scalar".to_string(),
+            value: parameter("test_param"),
+            pid: Default::default(),
+        };
+        let complex = ComplexScalar {
+            name: "test_complex".to_string(),
+            re: parameter("re_param"),
+            pid_re: Default::default(),
+            im: parameter("im_param"),
+            pid_im: Default::default(),
+        };
+
+        assert!(Amplitude::real_valued_hint(&scalar));
+        assert!(!Amplitude::real_valued_hint(&complex));
     }
 
     #[test]

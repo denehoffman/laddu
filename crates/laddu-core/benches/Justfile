@@ -1,0 +1,12 @@
+# Run the generic runtime microbench group.
+runtime-microbench-generic:
+    cd {{justfile_directory()}} && cargo bench -p laddu-core --bench expression_ir_benchmarks -- expression_runtime_paths --noplot
+
+# Run the normalization-focused runtime microbench group.
+runtime-microbench-normalization:
+    cd {{justfile_directory()}} && cargo bench -p laddu-core --bench expression_ir_benchmarks -- expression_ir_instruction_mix_real_unary_normalization --noplot
+
+# Run the full runtime microbench surface used for executor benchmarking.
+runtime-microbench-full:
+    just --justfile {{justfile()}} runtime-microbench-generic
+    just --justfile {{justfile()}} runtime-microbench-normalization

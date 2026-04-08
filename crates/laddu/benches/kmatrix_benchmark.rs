@@ -117,7 +117,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let neg_re = (&s0n * z00n.real()).norm_sqr();
     let neg_im = (&s0n * z00n.imag()).norm_sqr();
     let expr = pos_re + pos_im + neg_re + neg_im;
-    let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
+    let nll = NLL::new(&expr, &ds_data, &ds_mc, None).unwrap();
     let mut group = c.benchmark_group("K-Matrix NLL Performance");
     let n_threads: Vec<usize> = (0..)
         .map(|x| 1 << x)

@@ -1,18 +1,24 @@
 use crate::utils::variables::{PyVariable, PyVariableExpression};
 use laddu_core::{
     data::{
-        read_parquet as core_read_parquet, read_root as core_read_root,
-        write_parquet as core_write_parquet, write_root as core_write_root, BinnedDataset, Dataset,
-        DatasetMetadata, DatasetWriteOptions, Event, EventData, FloatPrecision,
+        io::{
+            infer_p4_and_aux_names_from_columns, resolve_columns_case_insensitive,
+            resolve_optional_weight_column, resolve_p4_component_columns, P4_COMPONENT_SUFFIXES,
+        },
+        read_parquet as core_read_parquet,
+        read_parquet_chunks_with_options as core_read_parquet_chunks_with_options,
+        read_root as core_read_root, write_parquet as core_write_parquet,
+        write_root as core_write_root, BinnedDataset, Dataset, DatasetArcIter, DatasetMetadata,
+        DatasetWriteOptions, Event, EventData, FloatPrecision, SharedDatasetIterExt,
     },
     utils::variables::IntoP4Selection,
     DatasetReadOptions,
 };
-use numpy::PyArray1;
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
     exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError},
     prelude::*,
-    types::PyDict,
+    types::{PyDict, PyList},
     IntoPyObjectExt,
 };
 use std::{path::PathBuf, sync::Arc};
@@ -71,6 +77,35 @@ fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
     }
 }
 
+fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f64>> {
+    if let Ok(array) = value.extract::<PyReadonlyArray1<'_, f64>>() {
+        return Ok(array.as_slice()?.to_vec());
+    }
+    if let Ok(array) = value.extract::<PyReadonlyArray1<'_, f32>>() {
+        return Ok(array.as_slice()?.iter().map(|v| *v as f64).collect());
+    }
+    if let Ok(values) = value.extract::<Vec<f64>>() {
+        return Ok(values);
+    }
+    if let Ok(values) = value.extract::<Vec<f32>>() {
+        return Ok(values.into_iter().map(|v| v as f64).collect());
+    }
+    if let Ok(list) = value.cast::<PyList>() {
+        let mut converted = Vec::with_capacity(list.len());
+        for item in list.iter() {
+            converted.push(item.extract::<f64>().map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "Column '{name}' must be numeric (float32/float64/list of floats)"
+                ))
+            })?);
+        }
+        return Ok(converted);
+    }
+    Err(PyTypeError::new_err(format!(
+        "Column '{name}' must be numeric (float32/float64/list of floats)"
+    )))
+}
+
 /// A single event
 ///
 /// Events are composed of a set of 4-momenta of particles in the overall
@@ -105,8 +140,10 @@ fn parse_precision_arg(value: Option<&str>) -> PyResult<FloatPrecision> {
 /// ... )
 /// >>> event.p4('pair')  # doctest: +SKIP
 /// Vec4(px=0.0, py=0.0, pz=2.0, e=2.0)
+/// >>> event.aux['pol_angle']  # doctest: +SKIP
+/// 0.3
 ///
-#[pyclass(name = "Event", module = "laddu")]
+#[pyclass(name = "Event", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyEvent {
     pub event: Event,
@@ -252,22 +289,33 @@ impl PyEvent {
     /// ``p4_names``/``aux_names`` when constructing the event or evaluate variables through a
     /// ``laddu.Dataset`` to ensure the metadata is available.
     ///
+    /// Examples
+    /// --------
+    /// >>> from laddu import Event, Vec3  # doctest: +SKIP
+    /// >>> from laddu.utils.variables import Mass  # doctest: +SKIP
+    /// >>> event = Event(  # doctest: +SKIP
+    /// ...     [Vec3(0.0, 0.0, 1.0).with_mass(0.938)],
+    /// ...     [],
+    /// ...     1.0,
+    /// ...     p4_names=['proton'],
+    /// ... )
+    /// >>> event.evaluate(Mass(['proton']))  # doctest: +SKIP
+    /// 0.938
+    ///
     fn evaluate(&self, variable: Bound<'_, PyAny>) -> PyResult<f64> {
         let mut variable = variable.extract::<PyVariable>()?;
-        if !self.has_metadata {
-            return Err(PyValueError::new_err(
-                "Cannot evaluate variable on an Event without associated metadata. Construct the Event with `p4_names`/`aux_names` or evaluate through a Dataset.",
-            ));
-        }
-        variable.bind_in_place(self.event.metadata())?;
-        let event_arc = self.event.data_arc();
-        variable.evaluate_event(&event_arc)
+        let metadata = self.ensure_metadata()?;
+        variable.bind_in_place(metadata)?;
+        variable.evaluate_event(&self.event)
     }
 
-    /// Retrieve a four-momentum by name (if present).
-    fn p4(&self, name: &str) -> PyResult<Option<PyVec4>> {
+    /// Retrieve a four-momentum by name.
+    fn p4(&self, name: &str) -> PyResult<PyVec4> {
         self.ensure_metadata()?;
-        Ok(self.event.p4(name).map(PyVec4))
+        self.event
+            .p4(name)
+            .map(PyVec4)
+            .ok_or_else(|| PyKeyError::new_err(format!("Unknown particle name '{name}'")))
     }
 }
 
@@ -322,15 +370,65 @@ impl PyEvent {
 /// Explicit metadata provided here takes precedence over metadata embedded in the
 /// input Events.
 ///
-#[pyclass(name = "Dataset", module = "laddu", subclass)]
+/// Examples
+/// --------
+/// >>> from laddu import Dataset, Event, Vec3  # doctest: +SKIP
+/// >>> event = Event(  # doctest: +SKIP
+/// ...     [Vec3(0.0, 0.0, 1.0).with_mass(0.0), Vec3(0.0, 0.0, -1.0).with_mass(0.938)],
+/// ...     [0.4, 0.3],
+/// ...     1.0,
+/// ... )
+/// >>> dataset = Dataset(  # doctest: +SKIP
+/// ...     [event],
+/// ...     p4_names=['beam', 'proton'],
+/// ...     aux_names=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset[0].p4('target')  # doctest: +SKIP
+/// Vec4(px=0.0, py=0.0, pz=-1.0, e=1.371073...)
+///
+#[pyclass(name = "Dataset", module = "laddu", subclass, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyDataset(pub Arc<Dataset>);
 
-#[pyclass(name = "DatasetIter", module = "laddu")]
+#[pyclass(
+    name = "ParquetChunkIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
+pub struct PyParquetChunkIter {
+    chunks: Box<dyn Iterator<Item = laddu_core::LadduResult<Arc<Dataset>>> + Send>,
+}
+
+#[pymethods]
+impl PyParquetChunkIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyParquetChunkIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyDataset>> {
+        match self.chunks.next() {
+            Some(Ok(dataset)) => Ok(Some(PyDataset(dataset))),
+            Some(Err(err)) => Err(PyErr::from(err)),
+            None => Ok(None),
+        }
+    }
+}
+
+#[pyclass(
+    name = "DatasetIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
 struct PyDatasetIter {
-    dataset: Arc<Dataset>,
-    index: usize,
-    total: usize,
+    kind: PyDatasetIterKind,
+}
+
+enum PyDatasetIterKind {
+    Local { dataset: Arc<Dataset>, index: usize },
+    Global(DatasetArcIter),
 }
 
 #[pymethods]
@@ -340,11 +438,14 @@ impl PyDatasetIter {
     }
 
     fn __next__(&mut self) -> Option<PyEvent> {
-        if self.index >= self.total {
-            return None;
-        }
-        let event = self.dataset[self.index].clone();
-        self.index += 1;
+        let event = match &mut self.kind {
+            PyDatasetIterKind::Local { dataset, index } => {
+                let event = dataset.events_local().get(*index)?.clone();
+                *index += 1;
+                event
+            }
+            PyDatasetIterKind::Global(iterator) => iterator.next()?,
+        };
         Some(PyEvent {
             event,
             has_metadata: true,
@@ -418,11 +519,46 @@ impl PyDataset {
     fn __len__(&self) -> usize {
         self.0.n_events()
     }
+    /// Iterate over all events in dataset order.
+    ///
+    /// Notes
+    /// -----
+    /// This is the default iterator used by ``for event in dataset``.
+    /// When MPI is enabled, it preserves global indexing semantics and may fetch
+    /// remote events as needed.
     fn __iter__(&self) -> PyDatasetIter {
+        self.iter_global()
+    }
+    /// Get the number of events owned by the current rank.
+    #[getter]
+    fn n_events_local(&self) -> usize {
+        self.0.n_events_local()
+    }
+    /// Iterate over the events owned by the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is disabled, this iterates over the full Dataset.
+    /// When MPI is enabled, this iterates only over events stored on the current rank.
+    /// The yielded order matches the current rank's local storage order.
+    fn iter_local(&self) -> PyDatasetIter {
         PyDatasetIter {
-            dataset: self.0.clone(),
-            index: 0,
-            total: self.0.n_events(),
+            kind: PyDatasetIterKind::Local {
+                dataset: self.0.clone(),
+                index: 0,
+            },
+        }
+    }
+    /// Iterate over all events in the Dataset.
+    ///
+    /// Notes
+    /// -----
+    /// This is the default iterator used by ``for event in dataset``.
+    /// When MPI is enabled, this preserves global dataset order and performs
+    /// explicit cross-rank event fetches as needed.
+    fn iter_global(&self) -> PyDatasetIter {
+        PyDatasetIter {
+            kind: PyDatasetIterKind::Global(self.0.shared_iter_global()),
         }
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyDataset> {
@@ -457,6 +593,11 @@ impl PyDataset {
     }
     /// Get the number of Events in the Dataset
     ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global event count.
+    /// It therefore matches ``len(dataset)`` and the valid range for ``dataset[i]``.
+    ///
     /// Returns
     /// -------
     /// n_events : int
@@ -465,6 +606,11 @@ impl PyDataset {
     #[getter]
     fn n_events(&self) -> usize {
         self.0.n_events()
+    }
+    /// Alias for ``n_events``.
+    #[getter]
+    fn n_events_global(&self) -> usize {
+        self.0.n_events_global()
     }
     /// Particle names used to construct four-momenta when loading from a Parquet file.
     #[getter]
@@ -479,6 +625,10 @@ impl PyDataset {
 
     /// Get the weighted number of Events in the Dataset
     ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global weighted event count.
+    ///
     /// Returns
     /// -------
     /// n_events : float
@@ -488,24 +638,70 @@ impl PyDataset {
     fn n_events_weighted(&self) -> f64 {
         self.0.n_events_weighted()
     }
+    /// Alias for ``n_events_weighted``.
+    #[getter]
+    fn n_events_weighted_global(&self) -> f64 {
+        self.0.n_events_weighted_global()
+    }
+    /// Get the weighted number of local Events in the Dataset
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the sum of the current rank's Event
+    /// weights.
+    ///
+    /// Returns
+    /// -------
+    /// n_events : float
+    ///     The sum of the current rank's Event weights
+    ///
+    #[getter]
+    fn n_events_weighted_local(&self) -> f64 {
+        self.0.n_events_weighted_local()
+    }
     /// The weights associated with the Dataset
+    ///
+    /// Notes
+    /// -----
+    /// When MPI is enabled, this returns the global weight vector in dataset order.
     ///
     /// Returns
     /// -------
     /// weights : array_like
-    ///     A ``numpy`` array of Event weights
+    ///     A ``numpy`` array of global Event weights
     ///
     #[getter]
     fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.0.weights())
     }
+    /// Alias for ``weights``.
+    #[getter]
+    fn weights_global<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.0.weights_global())
+    }
+    /// The weights associated with the Dataset on the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// This is the explicit rank-local counterpart to ``weights``.
+    ///
+    /// Returns
+    /// -------
+    /// weights : array_like
+    ///     A ``numpy`` array of rank-local Event weights
+    ///
+    #[getter]
+    fn weights_local<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.0.weights_local())
+    }
     /// The internal list of Events stored in the Dataset
     ///
     /// Notes
     /// -----
-    /// When MPI is enabled, this returns only the events local to the current rank.
-    /// Use Python iteration (`for event in dataset`, `list(dataset)`, etc.) to
-    /// traverse all events across ranks.
+    /// When MPI is enabled, this returns the full global event list.
+    /// Use ``events_local`` or ``iter_local()`` to access only the current rank's
+    /// event ownership.
+    /// The returned list matches the order produced by ``for event in dataset``.
     ///
     /// Returns
     /// -------
@@ -515,7 +711,28 @@ impl PyDataset {
     #[getter]
     fn events(&self) -> Vec<PyEvent> {
         self.0
-            .events
+            .shared_iter()
+            .map(|rust_event| PyEvent {
+                event: rust_event,
+                has_metadata: true,
+            })
+            .collect()
+    }
+    /// Alias for ``events``.
+    #[getter]
+    fn events_global(&self) -> Vec<PyEvent> {
+        self.events()
+    }
+    /// The list of Events stored on the current rank.
+    ///
+    /// Notes
+    /// -----
+    /// This is the explicit rank-local counterpart to ``events``.
+    /// The returned list matches the order produced by ``iter_local()``.
+    #[getter]
+    fn events_local(&self) -> Vec<PyEvent> {
+        self.0
+            .events_local()
             .iter()
             .map(|rust_event| PyEvent {
                 event: rust_event.clone(),
@@ -536,6 +753,21 @@ impl PyDataset {
             .aux_by_name(index, name)
             .ok_or_else(|| PyKeyError::new_err(format!("Unknown auxiliary name '{name}'")))
     }
+    /// Alias for ``dataset[index]``.
+    ///
+    /// Notes
+    /// -----
+    /// This preserves the default global indexing semantics under MPI.
+    fn event_global(&self, index: usize) -> PyResult<PyEvent> {
+        let event = self
+            .0
+            .get_event_global(index)
+            .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
+        Ok(PyEvent {
+            event,
+            has_metadata: true,
+        })
+    }
     fn __getitem__<'py>(
         &self,
         py: Python<'py>,
@@ -544,8 +776,12 @@ impl PyDataset {
         if let Ok(value) = self.evaluate(py, index.clone()) {
             value.into_bound_py_any(py)
         } else if let Ok(index) = index.extract::<usize>() {
+            let event = self
+                .0
+                .get_event(index)
+                .ok_or_else(|| PyIndexError::new_err("index out of range"))?;
             PyEvent {
-                event: self.0[index].clone(),
+                event,
                 has_metadata: true,
             }
             .into_bound_py_any(py)
@@ -569,7 +805,7 @@ impl PyDataset {
     /// Returns
     /// -------
     /// datasets : BinnedDataset
-    ///     A pub structure that holds a list of Datasets binned by the given `variable`
+    ///     A structure containing Datasets binned by the given `variable`
     ///
     /// See Also
     /// --------
@@ -702,6 +938,18 @@ impl PyDataset {
 }
 
 /// Read a Dataset from a Parquet file.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.read_parquet(  # doctest: +SKIP
+/// ...     'events.parquet',
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset.p4_names  # doctest: +SKIP
+/// ['beam', 'proton']
 #[pyfunction]
 #[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None))]
 pub fn read_parquet(
@@ -725,7 +973,50 @@ pub fn read_parquet(
     Ok(PyDataset(dataset))
 }
 
+/// Read a Dataset from a Parquet file in chunks.
+#[pyfunction]
+#[pyo3(signature = (path, *, p4s=None, aux=None, aliases=None, chunk_size=None))]
+pub fn read_parquet_chunked(
+    path: Bound<PyAny>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<PyDict>>,
+    chunk_size: Option<usize>,
+) -> PyResult<PyParquetChunkIter> {
+    let path_str = parse_dataset_path(path)?;
+    let mut read_options = DatasetReadOptions::default();
+    if let Some(p4s) = p4s {
+        read_options = read_options.p4_names(p4s);
+    }
+    if let Some(aux) = aux {
+        read_options = read_options.aux_names(aux);
+    }
+    if let Some(chunk_size) = chunk_size {
+        read_options = read_options.chunk_size(chunk_size);
+    }
+    for (alias_name, selection) in parse_aliases(aliases)?.into_iter() {
+        read_options = read_options.alias(alias_name, selection);
+    }
+
+    let chunks = core_read_parquet_chunks_with_options(&path_str, &read_options)?;
+    Ok(PyParquetChunkIter {
+        chunks: Box::new(chunks),
+    })
+}
+
 /// Read a Dataset from a ROOT file using the oxyroot backend.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.read_root(  # doctest: +SKIP
+/// ...     'events.root',
+/// ...     tree='kin',
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ... )
+/// >>> dataset.aux_names  # doctest: +SKIP
+/// ['pol_magnitude', 'pol_angle']
 #[pyfunction]
 #[pyo3(signature = (path, *, tree=None, p4s=None, aux=None, aliases=None))]
 pub fn read_root(
@@ -793,6 +1084,213 @@ pub fn write_root(
     core_write_root(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
 }
 
+/// Build a Dataset from columnar arrays.
+///
+/// This is the canonical high-throughput ingestion path used by Python reader helpers.
+///
+/// Examples
+/// --------
+/// >>> import laddu.io as ldio  # doctest: +SKIP
+/// >>> dataset = ldio.from_columns(  # doctest: +SKIP
+/// ...     {
+/// ...         'beam_px': [0.0],
+/// ...         'beam_py': [0.0],
+/// ...         'beam_pz': [8.5],
+/// ...         'beam_e': [8.5],
+/// ...         'proton_px': [0.0],
+/// ...         'proton_py': [0.0],
+/// ...         'proton_pz': [-0.2],
+/// ...         'proton_e': [0.959],
+/// ...         'pol_magnitude': [0.4],
+/// ...         'pol_angle': [0.3],
+/// ...         'weight': [1.0],
+/// ...     },
+/// ...     p4s=['beam', 'proton'],
+/// ...     aux=['pol_magnitude', 'pol_angle'],
+/// ...     aliases={'target': 'proton'},
+/// ... )
+/// >>> dataset[0].p4('target')  # doctest: +SKIP
+/// Vec4(px=0.0, py=0.0, pz=-0.2, e=0.959)
+#[pyfunction]
+#[pyo3(signature = (columns, *, p4s=None, aux=None, aliases=None))]
+pub fn from_columns(
+    columns: Bound<'_, PyDict>,
+    p4s: Option<Vec<String>>,
+    aux: Option<Vec<String>>,
+    aliases: Option<Bound<'_, PyDict>>,
+) -> PyResult<PyDataset> {
+    let column_names = columns
+        .iter()
+        .map(|(key, _)| key.extract::<String>())
+        .collect::<PyResult<Vec<_>>>()?;
+
+    let (detected_p4_names, detected_aux_names) =
+        infer_p4_and_aux_names_from_columns(&column_names);
+    let p4_names = p4s.unwrap_or(detected_p4_names);
+    if p4_names.is_empty() {
+        let mut partial_components: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeSet<&str>,
+        > = std::collections::BTreeMap::new();
+        for column_name in &column_names {
+            let lowered = column_name.to_ascii_lowercase();
+            for suffix in P4_COMPONENT_SUFFIXES {
+                if lowered.ends_with(suffix) && column_name.len() > suffix.len() {
+                    let prefix = column_name[..column_name.len() - suffix.len()].to_string();
+                    partial_components.entry(prefix).or_default().insert(suffix);
+                }
+            }
+        }
+        if let Some((prefix, present)) = partial_components.iter().next() {
+            if present.len() < P4_COMPONENT_SUFFIXES.len() {
+                let missing = P4_COMPONENT_SUFFIXES
+                    .iter()
+                    .filter(|suffix| !present.contains(**suffix))
+                    .map(|suffix| format!("{prefix}{suffix}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(PyKeyError::new_err(format!(
+                    "Missing components [{missing}] for four-momentum '{prefix}'"
+                )));
+            }
+        }
+        return Err(PyValueError::new_err(
+            "No four-momentum columns found (expected *_px, *_py, *_pz, *_e)",
+        ));
+    }
+
+    let aux_names = aux.unwrap_or(detected_aux_names);
+    let p4_component_columns =
+        resolve_p4_component_columns(&column_names, &p4_names).map_err(PyErr::from)?;
+    let resolved_aux_columns =
+        resolve_columns_case_insensitive(&column_names, &aux_names).map_err(PyErr::from)?;
+
+    let n_events = {
+        let first_name = p4_component_columns
+            .first()
+            .map(|components| components[0].clone())
+            .ok_or_else(|| PyKeyError::new_err("Missing required p4 column"))?;
+        let values = extract_numeric_column(
+            columns
+                .get_item(first_name.as_str())?
+                .ok_or_else(|| PyKeyError::new_err("Missing required p4 column"))?,
+            &first_name,
+        )?;
+        values.len()
+    };
+
+    let mut p4_columns: Vec<[Vec<f64>; 4]> = Vec::with_capacity(p4_names.len());
+    for component_names in &p4_component_columns {
+        let px = extract_numeric_column(
+            columns
+                .get_item(component_names[0].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[0])))?,
+            component_names[0].as_str(),
+        )?;
+        let py = extract_numeric_column(
+            columns
+                .get_item(component_names[1].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[1])))?,
+            component_names[1].as_str(),
+        )?;
+        let pz = extract_numeric_column(
+            columns
+                .get_item(component_names[2].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[2])))?,
+            component_names[2].as_str(),
+        )?;
+        let e = extract_numeric_column(
+            columns
+                .get_item(component_names[3].as_str())?
+                .ok_or_else(|| PyKeyError::new_err(format!("Missing {}", component_names[3])))?,
+            component_names[3].as_str(),
+        )?;
+        if px.len() != n_events
+            || py.len() != n_events
+            || pz.len() != n_events
+            || e.len() != n_events
+        {
+            return Err(PyValueError::new_err(
+                "All p4 components must have the same length",
+            ));
+        }
+        p4_columns.push([px, py, pz, e]);
+    }
+
+    let mut aux_columns: Vec<Vec<f64>> = Vec::with_capacity(resolved_aux_columns.len());
+    for (aux_name, aux_column_name) in aux_names.iter().zip(&resolved_aux_columns) {
+        let values = extract_numeric_column(
+            columns.get_item(aux_column_name.as_str())?.ok_or_else(|| {
+                PyKeyError::new_err(format!("Missing auxiliary column '{aux_name}'"))
+            })?,
+            aux_name,
+        )?;
+        if values.len() != n_events {
+            return Err(PyValueError::new_err(format!(
+                "Auxiliary column '{aux_name}' length does not match p4 columns"
+            )));
+        }
+        aux_columns.push(values);
+    }
+
+    let weights = if let Some(weight_column_name) = resolve_optional_weight_column(&column_names) {
+        let weight_values = columns
+            .get_item(weight_column_name.as_str())?
+            .ok_or_else(|| PyKeyError::new_err("Missing weight column"))?;
+        let values = extract_numeric_column(weight_values, "weight")?;
+        if values.len() != n_events {
+            return Err(PyValueError::new_err(
+                "Column 'weight' length does not match p4 columns",
+            ));
+        }
+        values
+    } else {
+        vec![1.0; n_events]
+    };
+
+    let parsed_aliases = parse_aliases(aliases)?;
+    let mut metadata =
+        DatasetMetadata::new(p4_names.clone(), aux_names.clone()).map_err(PyErr::from)?;
+    if !parsed_aliases.is_empty() {
+        metadata
+            .add_p4_aliases(
+                parsed_aliases
+                    .into_iter()
+                    .map(|(alias_name, selection)| (alias_name, selection.into_selection())),
+            )
+            .map_err(PyErr::from)?;
+    }
+
+    let mut events = Vec::with_capacity(n_events);
+    for event_idx in 0..n_events {
+        let p4s = p4_columns
+            .iter()
+            .map(|components| {
+                laddu_core::utils::vectors::Vec4::new(
+                    components[0][event_idx],
+                    components[1][event_idx],
+                    components[2][event_idx],
+                    components[3][event_idx],
+                )
+            })
+            .collect::<Vec<_>>();
+        let aux = aux_columns
+            .iter()
+            .map(|values| values[event_idx])
+            .collect::<Vec<_>>();
+        events.push(Arc::new(EventData {
+            p4s,
+            aux,
+            weight: weights[event_idx],
+        }));
+    }
+
+    Ok(PyDataset(Arc::new(Dataset::new_with_metadata(
+        events,
+        Arc::new(metadata),
+    ))))
+}
+
 /// A collection of Datasets binned by a Variable
 ///
 /// BinnedDatasets can be indexed directly to access the underlying Datasets by bin
@@ -801,7 +1299,7 @@ pub fn write_root(
 /// --------
 /// laddu.Dataset.bin_by
 ///
-#[pyclass(name = "BinnedDataset", module = "laddu")]
+#[pyclass(name = "BinnedDataset", module = "laddu", skip_from_py_object)]
 pub struct PyBinnedDataset(BinnedDataset);
 
 #[pymethods]

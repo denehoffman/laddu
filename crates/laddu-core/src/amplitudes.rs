@@ -1,3 +1,4 @@
+use std::time::Instant;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
@@ -22,9 +23,184 @@ static AMPLITUDE_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn next_amplitude_id() -> u64 {
     AMPLITUDE_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
+#[allow(dead_code)]
+mod ir;
+#[allow(dead_code)]
+mod lowered;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Dependence classification used by expression-IR diagnostics.
+pub enum ExpressionDependence {
+    /// Depends only on fixed/free parameter values.
+    ParameterOnly,
+    /// Depends only on event-local cached values.
+    CacheOnly,
+    /// Depends on both parameter values and cached event values.
+    Mixed,
+}
+impl From<ir::DependenceClass> for ExpressionDependence {
+    fn from(value: ir::DependenceClass) -> Self {
+        match value {
+            ir::DependenceClass::ParameterOnly => Self::ParameterOnly,
+            ir::DependenceClass::CacheOnly => Self::CacheOnly,
+            ir::DependenceClass::Mixed => Self::Mixed,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Explain/debug view of the IR normalization planning decomposition.
+pub struct NormalizationPlanExplain {
+    /// Dependence classification at the expression root.
+    pub root_dependence: ExpressionDependence,
+    /// Warning-level diagnostics collected during planning.
+    pub warnings: Vec<String>,
+    /// Candidate multiply node indices identified as separable.
+    pub separable_mul_candidate_nodes: Vec<usize>,
+    /// Candidate separable node indices selected for caching.
+    pub cached_separable_nodes: Vec<usize>,
+    /// Node indices planned for residual per-event evaluation.
+    pub residual_terms: Vec<usize>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Explain/debug view of amplitude execution sets used by normalization evaluation.
+pub struct NormalizationExecutionSetsExplain {
+    /// Amplitudes required to evaluate parameter factors for cached separable terms.
+    pub cached_parameter_amplitudes: Vec<usize>,
+    /// Amplitudes required to evaluate cache factors for cached separable terms.
+    pub cached_cache_amplitudes: Vec<usize>,
+    /// Amplitudes required for residual (non-cached) normalization evaluation.
+    pub residual_amplitudes: Vec<usize>,
+}
+#[derive(Clone, Debug, PartialEq)]
+/// Load-time precomputed integral metadata for a separable cached term.
+pub struct PrecomputedCachedIntegral {
+    /// Node index of the separable multiplication term.
+    pub mul_node_index: usize,
+    /// Node index of the parameter-dependent factor.
+    pub parameter_node_index: usize,
+    /// Node index of the cache-dependent factor.
+    pub cache_node_index: usize,
+    /// Signed extraction coefficient induced by Add/Sub/Neg ancestry to the root.
+    pub coefficient: i32,
+    /// Weighted sum over local events of the cache-dependent factor.
+    pub weighted_cache_sum: Complex64,
+}
+#[derive(Clone, Debug, PartialEq)]
+/// Parameter-gradient contribution for a load-time precomputed cached integral term.
+pub struct PrecomputedCachedIntegralGradientTerm {
+    /// Node index of the separable multiplication term.
+    pub mul_node_index: usize,
+    /// Node index of the parameter-dependent factor.
+    pub parameter_node_index: usize,
+    /// Node index of the cache-dependent factor.
+    pub cache_node_index: usize,
+    /// Signed extraction coefficient induced by Add/Sub/Neg ancestry to the root.
+    pub coefficient: i32,
+    /// Gradient contribution `(d/dp parameter_factor) * weighted_cache_sum`.
+    pub weighted_gradient: DVector<Complex64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct CachedIntegralCacheKey {
+    active_mask: Vec<bool>,
+    n_events_local: usize,
+    events_local_len: usize,
+    weighted_sum_bits: u64,
+    events_ptr: usize,
+}
+#[derive(Clone, Debug)]
+struct CachedIntegralCacheState {
+    key: CachedIntegralCacheKey,
+    expression_ir: ir::ExpressionIR,
+    values: Vec<PrecomputedCachedIntegral>,
+    execution_sets: ir::NormalizationExecutionSets,
+}
+#[derive(Clone, Debug)]
+struct LoweredArtifactCacheState {
+    parameter_node_indices: Vec<usize>,
+    mul_node_indices: Vec<usize>,
+    lowered_parameter_factors: Vec<Option<lowered::LoweredFactorRuntime>>,
+    residual_runtime: Option<lowered::LoweredExpressionRuntime>,
+    lowered_runtime: lowered::LoweredExpressionRuntime,
+}
+#[derive(Clone)]
+struct ExpressionSpecializationState {
+    cached_integrals: Arc<CachedIntegralCacheState>,
+    lowered_artifacts: Arc<LoweredArtifactCacheState>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Debug/benchmark counters for active-mask specialization reuse under `expression-ir`.
+pub struct ExpressionSpecializationMetrics {
+    /// Number of specialization cache hits served without recompilation.
+    pub cache_hits: usize,
+    /// Number of specialization cache misses that required a fresh compile/lower pass.
+    pub cache_misses: usize,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Staged compile/lowering metrics for expression-IR construction and specialization refreshes.
+pub struct ExpressionCompileMetrics {
+    /// Nanoseconds spent compiling the semantic expression tree into IR during initial load.
+    pub initial_ir_compile_nanos: u64,
+    /// Nanoseconds spent precomputing cached-integral planning artifacts during initial load.
+    pub initial_cached_integrals_nanos: u64,
+    /// Nanoseconds spent lowering IR-derived runtimes during initial load.
+    pub initial_lowering_nanos: u64,
+    /// Number of specialization cache hits restored without recompilation.
+    pub specialization_cache_hits: usize,
+    /// Number of specialization cache misses that required recompilation.
+    pub specialization_cache_misses: usize,
+    /// Accumulated nanoseconds spent compiling active-mask-specialized IR after initial load.
+    pub specialization_ir_compile_nanos: u64,
+    /// Accumulated nanoseconds spent recomputing cached-integral planning artifacts after load.
+    pub specialization_cached_integrals_nanos: u64,
+    /// Accumulated nanoseconds spent lowering specialized runtimes after load.
+    pub specialization_lowering_nanos: u64,
+    /// Number of specialization rebuilds that reused cached lowered artifacts.
+    pub specialization_lowering_cache_hits: usize,
+    /// Number of specialization rebuilds that had to lower fresh artifacts.
+    pub specialization_lowering_cache_misses: usize,
+    /// Accumulated nanoseconds spent restoring specializations from cache.
+    pub specialization_cache_restore_nanos: u64,
+}
+impl From<ir::NormalizationPlanExplain> for NormalizationPlanExplain {
+    fn from(value: ir::NormalizationPlanExplain) -> Self {
+        Self {
+            root_dependence: value.root_dependence.into(),
+            warnings: value.warnings,
+            separable_mul_candidate_nodes: value
+                .separable_mul_candidates
+                .into_iter()
+                .map(|candidate| candidate.node_index)
+                .collect(),
+            cached_separable_nodes: value.cached_separable_nodes,
+            residual_terms: value.residual_terms,
+        }
+    }
+}
+impl From<ir::NormalizationExecutionSets> for NormalizationExecutionSetsExplain {
+    fn from(value: ir::NormalizationExecutionSets) -> Self {
+        Self {
+            cached_parameter_amplitudes: value.cached_parameter_amplitudes,
+            cached_cache_amplitudes: value.cached_cache_amplitudes,
+            residual_amplitudes: value.residual_amplitudes,
+        }
+    }
+}
+impl From<ExpressionDependence> for ir::DependenceClass {
+    fn from(value: ExpressionDependence) -> Self {
+        match value {
+            ExpressionDependence::ParameterOnly => Self::ParameterOnly,
+            ExpressionDependence::CacheOnly => Self::CacheOnly,
+            ExpressionDependence::Mixed => Self::Mixed,
+        }
+    }
+}
+
+#[cfg(feature = "execution-context-prototype")]
+use crate::ExecutionContext;
+#[cfg(all(feature = "execution-context-prototype", feature = "rayon"))]
+use crate::ThreadPolicy;
 use crate::{
-    data::{Dataset, DatasetMetadata, EventData},
+    data::{Dataset, DatasetMetadata, NamedEventView},
     parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
@@ -137,48 +313,57 @@ pub trait Amplitude: DynClone + Send + Sync {
     fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
         Ok(())
     }
+    /// Optional dependence hint used by expression-IR diagnostics/planning.
+    ///
+    /// The default returns [`ExpressionDependence::Mixed`] for backward compatibility.
+    fn dependence_hint(&self) -> ExpressionDependence {
+        ExpressionDependence::Mixed
+    }
+    /// Optional hint that this amplitude always evaluates to a purely real complex value.
+    ///
+    /// This must be conservative. Returning `true` allows `expression-ir` to erase
+    /// redundant `imag`, `real`, and `conj` work under the assumption that the
+    /// amplitude output always has zero imaginary component.
+    fn real_valued_hint(&self) -> bool {
+        false
+    }
     /// This method can be used to do some critical calculations ahead of time and
-    /// store them in a [`Cache`]. These values can only depend on the data in an [`EventData`],
-    /// not on any free parameters in the fit. This method is opt-in since it is not required
-    /// to make a functioning [`Amplitude`].
+    /// store them in a [`Cache`]. These values can only depend on event data,
+    /// not on any free parameters in the fit. This method is opt-in since it is
+    /// not required to make a functioning [`Amplitude`].
     #[allow(unused_variables)]
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {}
-    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {}
+
+    /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(feature = "rayon")]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events
-            .par_iter()
-            .zip(resources.caches.par_iter_mut())
-            .for_each(|(event, cache)| {
-                self.precompute(event, cache);
-            })
+        resources
+            .caches
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(event_index, cache)| {
+                let event = dataset.event_view(event_index);
+                self.precompute(&event, cache);
+            });
     }
-    /// Evaluates [`Amplitude::precompute`] over ever [`EventData`] in a [`Dataset`].
+
+    /// Evaluate [`Amplitude::precompute`] over columnar event views in a [`Dataset`].
     #[cfg(not(feature = "rayon"))]
     fn precompute_all(&self, dataset: &Dataset, resources: &mut Resources) {
-        dataset
-            .events
-            .iter()
-            .zip(resources.caches.iter_mut())
-            .for_each(|(event, cache)| self.precompute(event, cache))
+        dataset.for_each_named_event_local(|event_index, event| {
+            let cache = &mut resources.caches[event_index];
+            self.precompute(&event, cache);
+        });
     }
     /// This method constitutes the main machinery of an [`Amplitude`], returning the actual
-    /// calculated value for a particular [`EventData`] and set of [`Parameters`]. See those
-    /// structs, as well as [`Cache`], for documentation on their available methods. For the
-    /// most part, [`EventData`]s can be interacted with via
-    /// [`Variable`](crate::utils::variables::Variable)s, while [`Parameters`] and the
-    /// [`Cache`] are more like key-value storage accessed by
-    /// [`ParameterID`]s and several different types of cache
-    /// IDs.
-    fn compute(&self, parameters: &Parameters, event: &EventData, cache: &Cache) -> Complex64;
+    /// calculated value for a particular set of [`Parameters`] and event [`Cache`].
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64;
 
     /// This method yields the gradient of a particular [`Amplitude`] at a point specified
-    /// by a particular [`EventData`] and set of [`Parameters`]. See those structs, as well as
+    /// by a set of [`Parameters`]. See those structs, as well as
     /// [`Cache`], for documentation on their available methods. For the most part,
-    /// [`EventData`]s can be interacted with via [`Variable`](crate::utils::variables::Variable)s,
-    /// while [`Parameters`] and the [`Cache`] are more like key-value storage accessed by
-    /// [`ParameterID`]s and several different types of cache
+    /// [`Parameters`] and the [`Cache`] are key-value storage accessed by [`ParameterID`]s and
+    /// several different types of cache
     /// IDs. If the analytic version of the gradient is known, this method can be overwritten to
     /// improve performance for some derivative-using methods of minimization. The default
     /// implementation calculates a central finite difference across all parameters, regardless of
@@ -191,14 +376,12 @@ pub trait Amplitude: DynClone + Send + Sync {
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
         self.central_difference_with_indices(
             &Vec::from_iter(0..parameters.len()),
             parameters,
-            event,
             cache,
             gradient,
         )
@@ -213,7 +396,6 @@ pub trait Amplitude: DynClone + Send + Sync {
         &self,
         indices: &[usize],
         parameters: &Parameters,
-        event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -229,8 +411,8 @@ pub trait Amplitude: DynClone + Send + Sync {
             let mut x_minus = x.clone();
             x_plus[*i] += h[*i];
             x_minus[*i] -= h[*i];
-            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), event, cache);
-            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), event, cache);
+            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), cache);
+            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), cache);
             gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
         }
     }
@@ -454,6 +636,12 @@ pub enum ExpressionNode {
 }
 
 #[derive(Clone, Debug)]
+/// Standalone bytecode executor compiled directly from the semantic expression tree.
+///
+/// This is retained for direct tree-level helpers on [`ExpressionNode`] and debugging of the
+/// unfactored semantic expression shape. It is intentionally distinct from the lowered runtime:
+/// current lowering carries slot reuse, peephole rewrites, root-specific lowering, and
+/// specialized normalization helpers that would be awkward to force back into this form.
 struct ExpressionProgram {
     ops: Vec<ExpressionOp>,
     slot_count: usize,
@@ -623,10 +811,6 @@ impl ExpressionProgram {
         let mut builder = ExpressionProgramBuilder::default();
         let root = builder.compile(node);
         builder.build(root)
-    }
-
-    fn slot_count(&self) -> usize {
-        self.slot_count
     }
 
     fn fill_values(&self, amplitude_values: &[Complex64], slots: &mut [Complex64]) {
@@ -1052,7 +1236,7 @@ impl Expression {
     pub fn load(&self, dataset: &Arc<Dataset>) -> LadduResult<Evaluator> {
         let mut resources = self.registry.resources.clone();
         let metadata = dataset.metadata();
-        resources.reserve_cache(dataset.n_events());
+        resources.reserve_cache(dataset.n_events_local());
         resources.refresh_active_indices();
         let parameter_manager = ParameterManager::with_fixed_values(
             &resources.parameter_names(),
@@ -1070,12 +1254,86 @@ impl Expression {
                 amplitude.precompute_all(dataset, &mut resources);
             }
         }
+        let ir_compile_start = Instant::now();
+        let expression_ir = {
+            let mut active_amplitudes = vec![false; amplitudes.len()];
+            for &index in resources.active_indices() {
+                active_amplitudes[index] = true;
+            }
+            let amplitude_dependencies = amplitudes
+                .iter()
+                .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+                .collect::<Vec<_>>();
+            let amplitude_realness = amplitudes
+                .iter()
+                .map(|amp| amp.real_valued_hint())
+                .collect::<Vec<_>>();
+            ir::compile_expression_ir_with_real_hints(
+                &self.tree,
+                &active_amplitudes,
+                &amplitude_dependencies,
+                &amplitude_realness,
+            )
+        };
+        let initial_ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
+        let cached_integrals_start = Instant::now();
+        let cached_integrals = Evaluator::precompute_cached_integrals_at_load(
+            &expression_ir,
+            &amplitudes,
+            &resources,
+            dataset,
+            parameter_manager.n_free_parameters(),
+        );
+        let initial_cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
+        let lowering_start = Instant::now();
+        let lowered_artifacts = Arc::new(Evaluator::lower_expression_runtime_artifacts(
+            &expression_ir,
+            &cached_integrals,
+        )?);
+        let initial_lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
+        let execution_sets = expression_ir.normalization_execution_sets().clone();
+        let cached_integral_key =
+            Evaluator::cached_integral_cache_key(resources.active.clone(), dataset);
+        let cached_integral_state = Arc::new(CachedIntegralCacheState {
+            key: cached_integral_key.clone(),
+            expression_ir,
+            values: cached_integrals,
+            execution_sets,
+        });
+        let specialization_state = ExpressionSpecializationState {
+            cached_integrals: cached_integral_state.clone(),
+            lowered_artifacts: lowered_artifacts.clone(),
+        };
+        let specialization_cache = HashMap::from([(cached_integral_key, specialization_state)]);
+        let lowered_artifact_cache =
+            HashMap::from([(resources.active.clone(), lowered_artifacts.clone())]);
         Ok(Evaluator {
             amplitudes,
             resources: Arc::new(RwLock::new(resources)),
             dataset: dataset.clone(),
             expression: self.tree.clone(),
-            expression_program: ExpressionProgram::from_node(&self.tree),
+            ir_planning: ExpressionIrPlanningState {
+                cached_integrals: Arc::new(RwLock::new(Some(cached_integral_state))),
+                specialization_cache: Arc::new(RwLock::new(specialization_cache)),
+                specialization_metrics: Arc::new(RwLock::new(ExpressionSpecializationMetrics {
+                    cache_hits: 0,
+                    cache_misses: 1,
+                })),
+                lowered_artifact_cache: Arc::new(RwLock::new(lowered_artifact_cache)),
+                active_lowered_artifacts: Arc::new(RwLock::new(Some(lowered_artifacts.clone()))),
+                specialization_status: Arc::new(RwLock::new(Some(
+                    ExpressionSpecializationStatus {
+                        origin: ExpressionSpecializationOrigin::InitialLoad,
+                    },
+                ))),
+                compile_metrics: Arc::new(RwLock::new(ExpressionCompileMetrics {
+                    initial_ir_compile_nanos,
+                    initial_cached_integrals_nanos,
+                    initial_lowering_nanos,
+                    specialization_lowering_cache_misses: 1,
+                    ..Default::default()
+                })),
+            },
             registry: self.registry.clone(),
             parameter_manager,
         })
@@ -1192,6 +1450,68 @@ impl_op_ex!(- |a: &Expression| -> Expression {
     Expression::unary_op(a, ExpressionNode::Neg)
 });
 
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct ExpressionValueProgramSnapshot {
+    lowered_program: lowered::LoweredProgram,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Origin of the currently installed expression specialization.
+pub enum ExpressionSpecializationOrigin {
+    /// The specialization installed during evaluator construction.
+    InitialLoad,
+    /// The specialization was rebuilt because no cached entry matched the current state.
+    CacheMissRebuild,
+    /// The specialization was restored from an existing cache entry.
+    CacheHitRestore,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Current specialization status for the evaluator runtime.
+pub struct ExpressionSpecializationStatus {
+    /// How the active specialization was obtained most recently.
+    pub origin: ExpressionSpecializationOrigin,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// Diagnostic snapshot of the active runtime specialization state.
+pub struct ExpressionRuntimeDiagnostics {
+    /// Whether IR planning state is present for the evaluator.
+    pub ir_planning_enabled: bool,
+    /// Whether a lowered value-only program is available for the active specialization.
+    pub lowered_value_program_present: bool,
+    /// Whether a lowered gradient-only program is available for the active specialization.
+    pub lowered_gradient_program_present: bool,
+    /// Whether a lowered fused value+gradient program is available for the active specialization.
+    pub lowered_value_gradient_program_present: bool,
+    /// Number of cached parameter-factor descriptors in the active specialization.
+    pub cached_parameter_factor_count: usize,
+    /// Number of cached parameter factors with lowered runtimes available.
+    pub lowered_cached_parameter_factor_count: usize,
+    /// Whether a lowered residual normalization runtime is available.
+    pub residual_runtime_present: bool,
+    /// Number of cached specialization entries currently retained.
+    pub specialization_cache_entries: usize,
+    /// Number of cached lowered-artifact entries currently retained.
+    pub lowered_artifact_cache_entries: usize,
+    /// Origin of the currently installed specialization, when available.
+    pub specialization_status: Option<ExpressionSpecializationStatus>,
+}
+#[derive(Clone)]
+/// IR-planning state derived from the semantic expression tree plus the current active mask.
+///
+/// Invariants:
+/// - `expression_ir` is never a source of truth; it is always derived from `Evaluator::expression`.
+/// - `cached_integrals` are specialization-dependent and must be treated as invalid once the
+///   active mask or dataset identity changes.
+struct ExpressionIrPlanningState {
+    cached_integrals: Arc<RwLock<Option<Arc<CachedIntegralCacheState>>>>,
+    specialization_cache:
+        Arc<RwLock<HashMap<CachedIntegralCacheKey, ExpressionSpecializationState>>>,
+    specialization_metrics: Arc<RwLock<ExpressionSpecializationMetrics>>,
+    lowered_artifact_cache: Arc<RwLock<HashMap<Vec<bool>, Arc<LoweredArtifactCacheState>>>>,
+    active_lowered_artifacts: Arc<RwLock<Option<Arc<LoweredArtifactCacheState>>>>,
+    specialization_status: Arc<RwLock<Option<ExpressionSpecializationStatus>>>,
+    compile_metrics: Arc<RwLock<ExpressionCompileMetrics>>,
+}
 /// Evaluator for [`Expression`] that mirrors the existing evaluator behavior.
 #[allow(missing_docs)]
 #[derive(Clone)]
@@ -1200,48 +1520,1572 @@ pub struct Evaluator {
     pub resources: Arc<RwLock<Resources>>,
     pub dataset: Arc<Dataset>,
     pub expression: ExpressionNode,
-    expression_program: ExpressionProgram,
+    ir_planning: ExpressionIrPlanningState,
     registry: ExpressionRegistry,
     parameter_manager: ParameterManager,
 }
 
 #[allow(missing_docs)]
 impl Evaluator {
+    /// Internal benchmarking/debug counters for specialization cache reuse.
+    pub fn expression_specialization_metrics(&self) -> ExpressionSpecializationMetrics {
+        *self.ir_planning.specialization_metrics.read()
+    }
+    /// Reset specialization cache counters while leaving cached specializations intact.
+    pub fn reset_expression_specialization_metrics(&self) {
+        *self.ir_planning.specialization_metrics.write() =
+            ExpressionSpecializationMetrics::default();
+    }
+    /// Internal benchmarking/debug metrics for staged IR compile and lowering costs.
+    pub fn expression_compile_metrics(&self) -> ExpressionCompileMetrics {
+        *self.ir_planning.compile_metrics.read()
+    }
+    /// Internal diagnostics surface for active runtime specialization state.
+    pub fn expression_runtime_diagnostics(&self) -> ExpressionRuntimeDiagnostics {
+        let active_artifacts = self.active_lowered_artifacts();
+        let cached_parameter_factor_count = self
+            .ir_planning
+            .cached_integrals
+            .read()
+            .as_ref()
+            .map(|state| state.values.len())
+            .unwrap_or(0);
+        let lowered_cached_parameter_factor_count = active_artifacts
+            .as_ref()
+            .map(|artifacts| {
+                artifacts
+                    .lowered_parameter_factors
+                    .iter()
+                    .filter(|factor| factor.is_some())
+                    .count()
+            })
+            .unwrap_or(0);
+        let residual_runtime_present = active_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .is_some();
+        ExpressionRuntimeDiagnostics {
+            ir_planning_enabled: true,
+            lowered_value_program_present: true,
+            lowered_gradient_program_present: true,
+            lowered_value_gradient_program_present: true,
+            cached_parameter_factor_count,
+            lowered_cached_parameter_factor_count,
+            residual_runtime_present,
+            specialization_cache_entries: self.ir_planning.specialization_cache.read().len(),
+            lowered_artifact_cache_entries: self.ir_planning.lowered_artifact_cache.read().len(),
+            specialization_status: *self.ir_planning.specialization_status.read(),
+        }
+    }
+    /// Reset post-load compile/lowering counters while preserving initial-load metrics.
+    pub fn reset_expression_compile_metrics(&self) {
+        let mut metrics = self.ir_planning.compile_metrics.write();
+        metrics.specialization_cache_hits = 0;
+        metrics.specialization_cache_misses = 0;
+        metrics.specialization_ir_compile_nanos = 0;
+        metrics.specialization_cached_integrals_nanos = 0;
+        metrics.specialization_lowering_nanos = 0;
+        metrics.specialization_lowering_cache_hits = 0;
+        metrics.specialization_lowering_cache_misses = 0;
+        metrics.specialization_cache_restore_nanos = 0;
+    }
+    #[cfg(test)]
+    fn expression_ir(&self) -> ir::ExpressionIR {
+        self.ir_planning
+            .cached_integrals
+            .read()
+            .as_ref()
+            .map(|state| state.expression_ir.clone())
+            .expect("cached integral state should exist for evaluator IR access")
+    }
+    fn lowered_runtime(&self) -> lowered::LoweredExpressionRuntime {
+        self.active_lowered_artifacts()
+            .expect("active lowered artifacts should exist for the current specialization")
+            .lowered_runtime
+            .clone()
+    }
+    fn active_lowered_artifacts(&self) -> Option<Arc<LoweredArtifactCacheState>> {
+        self.ir_planning.active_lowered_artifacts.read().clone()
+    }
+    fn lowered_runtime_slot_count(&self) -> usize {
+        let runtime = self.lowered_runtime();
+        [
+            runtime.value_program().scratch_slots(),
+            runtime.gradient_program().scratch_slots(),
+            runtime.value_gradient_program().scratch_slots(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+    }
+    fn lowered_value_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime().value_program().scratch_slots()
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_program_snapshot(&self) -> ExpressionValueProgramSnapshot {
+        ExpressionValueProgramSnapshot {
+            lowered_program: self.lowered_runtime().value_program().clone(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_program_snapshot_for_active_mask(
+        &self,
+        active_mask: &[bool],
+    ) -> LadduResult<ExpressionValueProgramSnapshot> {
+        let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
+        let lowered_program =
+            lowered::LoweredProgram::from_ir_value_only(&expression_ir).map_err(|error| {
+                LadduError::Custom(format!(
+                    "Failed to lower value-only active-mask runtime: {error:?}"
+                ))
+            })?;
+        Ok(ExpressionValueProgramSnapshot { lowered_program })
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_program_snapshot_slot_count(
+        &self,
+        snapshot: &ExpressionValueProgramSnapshot,
+    ) -> usize {
+        let _ = self;
+        snapshot.lowered_program.scratch_slots()
+    }
+    fn lowered_gradient_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime().gradient_program().scratch_slots()
+    }
+    fn lowered_value_gradient_runtime_slot_count(&self) -> usize {
+        self.lowered_runtime()
+            .value_gradient_program()
+            .scratch_slots()
+    }
+
+    fn expression_value_slot_count(&self) -> usize {
+        self.lowered_value_runtime_slot_count()
+    }
+    fn expression_gradient_slot_count(&self) -> usize {
+        self.lowered_gradient_runtime_slot_count()
+    }
+    fn expression_value_gradient_slot_count(&self) -> usize {
+        self.lowered_value_gradient_runtime_slot_count()
+    }
+
+    #[doc(hidden)]
+    pub fn expression_value_gradient_slot_count_public(&self) -> usize {
+        self.expression_value_gradient_slot_count()
+    }
+    #[cfg(test)]
+    fn specialization_cache_len(&self) -> usize {
+        self.ir_planning.specialization_cache.read().len()
+    }
+    #[cfg(test)]
+    fn lowered_artifact_cache_len(&self) -> usize {
+        self.ir_planning.lowered_artifact_cache.read().len()
+    }
+    fn install_expression_specialization(&self, specialization: &ExpressionSpecializationState) {
+        debug_assert!(Self::lowered_artifact_signature_matches(
+            &specialization.lowered_artifacts,
+            &specialization.cached_integrals.values,
+        ));
+        *self.ir_planning.cached_integrals.write() = Some(specialization.cached_integrals.clone());
+        *self.ir_planning.active_lowered_artifacts.write() =
+            Some(specialization.lowered_artifacts.clone());
+        debug_assert_eq!(
+            self.active_lowered_artifacts()
+                .as_ref()
+                .map(|artifacts| Arc::ptr_eq(artifacts, &specialization.lowered_artifacts)),
+            Some(true)
+        );
+        debug_assert_eq!(
+            self.lowered_runtime().value_program().scratch_slots(),
+            specialization
+                .lowered_artifacts
+                .lowered_runtime
+                .value_program()
+                .scratch_slots()
+        );
+    }
+    fn lower_expression_runtime_artifacts(
+        expression_ir: &ir::ExpressionIR,
+        values: &[PrecomputedCachedIntegral],
+    ) -> LadduResult<LoweredArtifactCacheState> {
+        let parameter_node_indices = values
+            .iter()
+            .map(|value| value.parameter_node_index)
+            .collect();
+        let mul_node_indices = values.iter().map(|value| value.mul_node_index).collect();
+        let lowered_parameter_factors = Self::lower_cached_parameter_factors(expression_ir);
+        let residual_runtime = Self::lower_residual_runtime(expression_ir, values);
+        let lowered_runtime = lowered::LoweredExpressionRuntime::from_ir_value_gradient(
+            expression_ir,
+        )
+        .map_err(|error| {
+            LadduError::Custom(format!(
+                "Failed to lower expression runtime for specialized IR: {error:?}"
+            ))
+        })?;
+        Ok(LoweredArtifactCacheState {
+            parameter_node_indices,
+            mul_node_indices,
+            lowered_parameter_factors,
+            residual_runtime,
+            lowered_runtime,
+        })
+    }
+    fn lowered_artifact_signature_matches(
+        artifacts: &LoweredArtifactCacheState,
+        values: &[PrecomputedCachedIntegral],
+    ) -> bool {
+        artifacts.parameter_node_indices.len() == values.len()
+            && artifacts.mul_node_indices.len() == values.len()
+            && artifacts
+                .parameter_node_indices
+                .iter()
+                .copied()
+                .eq(values.iter().map(|value| value.parameter_node_index))
+            && artifacts
+                .mul_node_indices
+                .iter()
+                .copied()
+                .eq(values.iter().map(|value| value.mul_node_index))
+    }
+    fn build_expression_specialization(
+        &self,
+        resources: &Resources,
+        key: CachedIntegralCacheKey,
+    ) -> ExpressionSpecializationState {
+        let ir_compile_start = Instant::now();
+        let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
+        let ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
+        let cached_integrals_start = Instant::now();
+        let values = Self::precompute_cached_integrals_at_load(
+            &expression_ir,
+            &self.amplitudes,
+            resources,
+            &self.dataset,
+            self.parameter_manager.n_free_parameters(),
+        );
+        let cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
+        let execution_sets = expression_ir.normalization_execution_sets().clone();
+        let active_mask_key = resources.active.clone();
+        let cached_lowered_artifacts = {
+            let lowered_artifact_cache = self.ir_planning.lowered_artifact_cache.read();
+            lowered_artifact_cache
+                .get(&active_mask_key)
+                .cloned()
+                .filter(|artifacts| Self::lowered_artifact_signature_matches(artifacts, &values))
+        };
+        let lowered_artifacts = if let Some(artifacts) = cached_lowered_artifacts {
+            self.ir_planning
+                .compile_metrics
+                .write()
+                .specialization_lowering_cache_hits += 1;
+            artifacts
+        } else {
+            let lowering_start = Instant::now();
+            let artifacts = Arc::new(
+                Self::lower_expression_runtime_artifacts(&expression_ir, &values)
+                    .expect("specialized lowered runtime should build"),
+            );
+            let lowering_nanos = lowering_start.elapsed().as_nanos() as u64;
+            self.ir_planning
+                .lowered_artifact_cache
+                .write()
+                .insert(active_mask_key, artifacts.clone());
+            let mut compile_metrics = self.ir_planning.compile_metrics.write();
+            compile_metrics.specialization_lowering_cache_misses += 1;
+            compile_metrics.specialization_lowering_nanos += lowering_nanos;
+            artifacts
+        };
+        let mut compile_metrics = self.ir_planning.compile_metrics.write();
+        compile_metrics.specialization_cache_misses += 1;
+        compile_metrics.specialization_ir_compile_nanos += ir_compile_nanos;
+        compile_metrics.specialization_cached_integrals_nanos += cached_integrals_nanos;
+        ExpressionSpecializationState {
+            cached_integrals: Arc::new(CachedIntegralCacheState {
+                key,
+                expression_ir,
+                values,
+                execution_sets,
+            }),
+            lowered_artifacts,
+        }
+    }
+    fn ensure_expression_specialization(
+        &self,
+        resources: &Resources,
+    ) -> ExpressionSpecializationState {
+        let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
+        if let Some(state) = self.ir_planning.cached_integrals.read().as_ref() {
+            if state.key == key {
+                return ExpressionSpecializationState {
+                    cached_integrals: state.clone(),
+                    lowered_artifacts: self
+                        .active_lowered_artifacts()
+                        .expect("active lowered artifacts should exist for cached specialization"),
+                };
+            }
+        }
+        let cached_specialization = {
+            let specialization_cache = self.ir_planning.specialization_cache.read();
+            specialization_cache.get(&key).cloned()
+        };
+        if let Some(specialization) = cached_specialization {
+            let restore_start = Instant::now();
+            self.ir_planning.specialization_metrics.write().cache_hits += 1;
+            self.install_expression_specialization(&specialization);
+            *self.ir_planning.specialization_status.write() =
+                Some(ExpressionSpecializationStatus {
+                    origin: ExpressionSpecializationOrigin::CacheHitRestore,
+                });
+            let restore_nanos = restore_start.elapsed().as_nanos() as u64;
+            let mut compile_metrics = self.ir_planning.compile_metrics.write();
+            compile_metrics.specialization_cache_hits += 1;
+            compile_metrics.specialization_cache_restore_nanos += restore_nanos;
+            return specialization;
+        }
+        let specialization = self.build_expression_specialization(resources, key.clone());
+        self.ir_planning.specialization_metrics.write().cache_misses += 1;
+        self.ir_planning
+            .specialization_cache
+            .write()
+            .insert(key, specialization.clone());
+        self.install_expression_specialization(&specialization);
+        let origin = if self.ir_planning.specialization_cache.read().len() == 1 {
+            ExpressionSpecializationOrigin::InitialLoad
+        } else {
+            ExpressionSpecializationOrigin::CacheMissRebuild
+        };
+        *self.ir_planning.specialization_status.write() =
+            Some(ExpressionSpecializationStatus { origin });
+        specialization
+    }
+    fn rebuild_runtime_specializations(&self, resources: &Resources) {
+        let _ = self.ensure_expression_specialization(resources);
+    }
+    fn refresh_runtime_specializations(&self) {
+        let resources = self.resources.read();
+        self.rebuild_runtime_specializations(&resources);
+    }
+    fn cached_integral_cache_key(
+        active_mask: Vec<bool>,
+        dataset: &Dataset,
+    ) -> CachedIntegralCacheKey {
+        CachedIntegralCacheKey {
+            active_mask,
+            n_events_local: dataset.n_events_local(),
+            events_local_len: dataset.events_local().len(),
+            weighted_sum_bits: dataset.n_events_weighted_local().to_bits(),
+            events_ptr: dataset.events_local().as_ptr() as usize,
+        }
+    }
+    fn precompute_cached_integrals_at_load(
+        expression_ir: &ir::ExpressionIR,
+        amplitudes: &[Box<dyn Amplitude>],
+        resources: &Resources,
+        dataset: &Dataset,
+        n_free_parameters: usize,
+    ) -> Vec<PrecomputedCachedIntegral> {
+        let descriptors = expression_ir.cached_integral_descriptors();
+        if descriptors.is_empty() {
+            return Vec::new();
+        }
+        let execution_sets = expression_ir.normalization_execution_sets();
+        let seed_parameters = vec![0.0; n_free_parameters];
+        let parameters = Parameters::new(&seed_parameters, &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
+        let mut value_slots = vec![Complex64::ZERO; expression_ir.node_count()];
+        let active_set = resources.active_indices();
+        let cache_active_indices = execution_sets
+            .cached_cache_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        let mut weighted_cache_sums = vec![Complex64::ZERO; descriptors.len()];
+        for (cache, event) in resources.caches.iter().zip(dataset.events_local().iter()) {
+            amplitude_values.fill(Complex64::ZERO);
+            for &amp_idx in &cache_active_indices {
+                amplitude_values[amp_idx] = amplitudes[amp_idx].compute(&parameters, cache);
+            }
+            expression_ir.evaluate_into(&amplitude_values, &mut value_slots);
+            let weight = event.weight();
+            for (descriptor_index, descriptor) in descriptors.iter().enumerate() {
+                weighted_cache_sums[descriptor_index] +=
+                    value_slots[descriptor.cache_node_index] * weight;
+            }
+        }
+        descriptors
+            .iter()
+            .zip(weighted_cache_sums)
+            .map(
+                |(descriptor, weighted_cache_sum)| PrecomputedCachedIntegral {
+                    mul_node_index: descriptor.mul_node_index,
+                    parameter_node_index: descriptor.parameter_node_index,
+                    cache_node_index: descriptor.cache_node_index,
+                    coefficient: descriptor.coefficient,
+                    weighted_cache_sum,
+                },
+            )
+            .collect()
+    }
+    fn lower_cached_parameter_factors(
+        expression_ir: &ir::ExpressionIR,
+    ) -> Vec<Option<lowered::LoweredFactorRuntime>> {
+        expression_ir
+            .cached_integral_descriptors()
+            .iter()
+            .map(|descriptor| {
+                lowered::LoweredFactorRuntime::from_ir_root_value_gradient(
+                    expression_ir,
+                    descriptor.parameter_node_index,
+                )
+                .ok()
+            })
+            .collect()
+    }
+    fn lower_residual_runtime(
+        expression_ir: &ir::ExpressionIR,
+        descriptors: &[PrecomputedCachedIntegral],
+    ) -> Option<lowered::LoweredExpressionRuntime> {
+        let mut zeroed_nodes = vec![false; expression_ir.node_count()];
+        for descriptor in descriptors {
+            if descriptor.mul_node_index < zeroed_nodes.len() {
+                zeroed_nodes[descriptor.mul_node_index] = true;
+            }
+        }
+        lowered::LoweredExpressionRuntime::from_ir_zeroed_value_gradient(
+            expression_ir,
+            &zeroed_nodes,
+        )
+        .ok()
+    }
+
+    #[inline]
     fn fill_amplitude_values(
         &self,
         amplitude_values: &mut [Complex64],
         active_indices: &[usize],
         parameters: &Parameters,
-        event: &EventData,
         cache: &Cache,
     ) {
+        amplitude_values.fill(Complex64::ZERO);
         for &amp_idx in active_indices {
-            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, event, cache);
+            amplitude_values[amp_idx] = self.amplitudes[amp_idx].compute(parameters, cache);
         }
     }
 
+    #[inline]
     fn fill_amplitude_gradients(
         &self,
         gradient_values: &mut [DVector<Complex64>],
         active_mask: &[bool],
         parameters: &Parameters,
-        event: &EventData,
         cache: &Cache,
     ) {
-        self.amplitudes
+        for ((amp, active), grad) in self
+            .amplitudes
             .iter()
             .zip(active_mask.iter())
             .zip(gradient_values.iter_mut())
-            .for_each(|((amp, active), grad)| {
-                grad.iter_mut().for_each(|entry| *entry = Complex64::ZERO);
-                if *active {
-                    amp.compute_gradient(parameters, event, cache, grad);
-                }
-            });
+        {
+            grad.fill(Complex64::ZERO);
+            if *active {
+                amp.compute_gradient(parameters, cache, grad);
+            }
+        }
+    }
+
+    #[inline]
+    fn fill_amplitude_values_and_gradients(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) {
+        self.fill_amplitude_values(amplitude_values, active_indices, parameters, cache);
+        self.fill_amplitude_gradients(gradient_values, active_mask, parameters, cache);
+    }
+
+    #[doc(hidden)]
+    pub fn fill_amplitude_values_and_gradients_public(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+    }
+
+    #[cfg(feature = "execution-context-prototype")]
+    #[inline]
+    fn evaluate_cache_gradient_with_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> DVector<Complex64> {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_gradient_with_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+        )
+    }
+
+    #[cfg(feature = "execution-context-prototype")]
+    #[allow(dead_code)]
+    #[inline]
+    fn evaluate_cache_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [DVector<Complex64>],
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> (Complex64, DVector<Complex64>) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_value_gradient_with_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+        )
+    }
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_cache_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [Complex64],
+        grad_dim: usize,
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> DVector<Complex64> {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_runtime_gradient_with_flat_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+            grad_dim,
+        )
+    }
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_cache_value_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &mut [Complex64],
+        gradient_values: &mut [DVector<Complex64>],
+        value_slots: &mut [Complex64],
+        gradient_slots: &mut [Complex64],
+        grad_dim: usize,
+        active_indices: &[usize],
+        active_mask: &[bool],
+        parameters: &Parameters,
+        cache: &Cache,
+    ) -> (Complex64, DVector<Complex64>) {
+        self.fill_amplitude_values_and_gradients(
+            amplitude_values,
+            gradient_values,
+            active_indices,
+            active_mask,
+            parameters,
+            cache,
+        );
+        self.evaluate_expression_runtime_value_gradient_with_flat_scratch(
+            amplitude_values,
+            gradient_values,
+            value_slots,
+            gradient_slots,
+            grad_dim,
+        )
     }
 
     pub fn expression_slot_count(&self) -> usize {
-        self.expression_program.slot_count()
+        self.lowered_runtime_slot_count()
+    }
+    fn compile_expression_ir_for_active_mask(&self, active_mask: &[bool]) -> ir::ExpressionIR {
+        let amplitude_dependencies = self
+            .amplitudes
+            .iter()
+            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .collect::<Vec<_>>();
+        let amplitude_realness = self
+            .amplitudes
+            .iter()
+            .map(|amp| amp.real_valued_hint())
+            .collect::<Vec<_>>();
+        ir::compile_expression_ir_with_real_hints(
+            &self.expression,
+            active_mask,
+            &amplitude_dependencies,
+            &amplitude_realness,
+        )
+    }
+    fn lower_expression_runtime_for_active_mask(
+        &self,
+        active_mask: &[bool],
+    ) -> LadduResult<lowered::LoweredExpressionRuntime> {
+        let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
+        lowered::LoweredExpressionRuntime::from_ir_value_gradient(&expression_ir).map_err(|error| {
+            LadduError::Custom(format!(
+                "Failed to lower active-mask runtime specialization: {error:?}"
+            ))
+        })
+    }
+    fn ensure_cached_integral_cache_state(
+        &self,
+        resources: &Resources,
+    ) -> Arc<CachedIntegralCacheState> {
+        self.ensure_expression_specialization(resources)
+            .cached_integrals
+    }
+
+    fn evaluate_expression_runtime_value_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        let lowered_runtime = self.lowered_runtime();
+        lowered_runtime
+            .value_program()
+            .evaluate_into(amplitude_values, scratch)
+    }
+
+    #[doc(hidden)]
+    pub fn evaluate_expression_value_with_program_snapshot(
+        &self,
+        program_snapshot: &ExpressionValueProgramSnapshot,
+        amplitude_values: &[Complex64],
+        scratch: &mut [Complex64],
+    ) -> Complex64 {
+        program_snapshot
+            .lowered_program
+            .evaluate_into(amplitude_values, scratch)
+    }
+
+    fn evaluate_expression_runtime_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        let lowered_runtime = self.lowered_runtime();
+        lowered_runtime.gradient_program().evaluate_gradient_into(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+        )
+    }
+
+    fn evaluate_expression_runtime_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        let lowered_runtime = self.lowered_runtime();
+        lowered_runtime
+            .value_gradient_program()
+            .evaluate_value_gradient_into(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+            )
+    }
+    fn evaluate_expression_runtime_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> DVector<Complex64> {
+        let lowered_runtime = self.lowered_runtime();
+        lowered_runtime
+            .gradient_program()
+            .evaluate_gradient_into_flat(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+                grad_dim,
+            )
+    }
+    fn evaluate_expression_runtime_value_gradient_with_flat_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [Complex64],
+        grad_dim: usize,
+    ) -> (Complex64, DVector<Complex64>) {
+        let lowered_runtime = self.lowered_runtime();
+        lowered_runtime
+            .value_gradient_program()
+            .evaluate_value_gradient_into_flat(
+                amplitude_values,
+                gradient_values,
+                value_scratch,
+                gradient_scratch,
+                grad_dim,
+            )
+    }
+
+    fn evaluate_expression_runtime_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
+        let lowered_runtime = self.lowered_runtime();
+        let program = lowered_runtime.value_program();
+        let mut scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        program.evaluate_into(amplitude_values, &mut scratch)
+    }
+
+    fn evaluate_expression_runtime_gradient(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+    ) -> DVector<Complex64> {
+        let lowered_runtime = self.lowered_runtime();
+        let program = lowered_runtime.gradient_program();
+        let mut value_scratch = vec![Complex64::ZERO; program.scratch_slots()];
+        let grad_dim = gradient_values.first().map(|g| g.len()).unwrap_or(0);
+        let mut gradient_scratch = vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
+        program.evaluate_gradient_into_flat(
+            amplitude_values,
+            gradient_values,
+            &mut value_scratch,
+            &mut gradient_scratch,
+            grad_dim,
+        )
+    }
+    /// Dependence classification for the compiled expression root.
+    pub fn expression_root_dependence(&self) -> ExpressionDependence {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
+            .root_dependence()
+            .into()
+    }
+    /// Dependence classification for each compiled expression node.
+    pub fn expression_node_dependence_annotations(&self) -> Vec<ExpressionDependence> {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
+            .node_dependence_annotations()
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect()
+    }
+    /// Warning-level diagnostics for potentially inconsistent dependence hints.
+    pub fn expression_dependence_warnings(&self) -> Vec<String> {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
+            .dependence_warnings()
+            .to_vec()
+    }
+    /// Explain/debug view of IR normalization planning decomposition.
+    pub fn expression_normalization_plan_explain(&self) -> NormalizationPlanExplain {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .expression_ir
+            .normalization_plan_explain()
+            .into()
+    }
+    /// Explain/debug view of amplitude execution sets used by normalization evaluation.
+    pub fn expression_normalization_execution_sets(&self) -> NormalizationExecutionSetsExplain {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .execution_sets
+            .clone()
+            .into()
+    }
+    /// Cached integral terms precomputed at evaluator load.
+    pub fn expression_precomputed_cached_integrals(&self) -> Vec<PrecomputedCachedIntegral> {
+        let resources = self.resources.read();
+        self.ensure_cached_integral_cache_state(&resources)
+            .values
+            .clone()
+    }
+    /// Derivative rules for cached separable terms evaluated at the given parameter point.
+    ///
+    /// Each returned term corresponds to a cached separable descriptor and contributes
+    /// `weighted_gradient` to `d(normalization)/dp` prior to residual-term combination.
+    pub fn expression_precomputed_cached_integral_gradient_terms(
+        &self,
+        parameters: &[f64],
+    ) -> Vec<PrecomputedCachedIntegralGradientTerm> {
+        let resources = self.resources.read();
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        if state.values.is_empty() {
+            return Vec::new();
+        }
+
+        let Some(cache) = resources.caches.first() else {
+            return state
+                .values
+                .iter()
+                .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
+                    mul_node_index: descriptor.mul_node_index,
+                    parameter_node_index: descriptor.parameter_node_index,
+                    cache_node_index: descriptor.cache_node_index,
+                    coefficient: descriptor.coefficient,
+                    weighted_gradient: DVector::zeros(parameters.len()),
+                })
+                .collect();
+        };
+
+        let parameter_values = Parameters::new(parameters, &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; self.amplitudes.len()];
+        self.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameter_values,
+            cache,
+        );
+        let mut amplitude_gradients = (0..self.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        self.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &resources.active,
+            &parameter_values,
+            cache,
+        );
+        let lowered_artifacts = self.active_lowered_artifacts();
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let mut gradient_slots = (0..state.expression_ir.node_count())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        let max_lowered_slots = lowered_artifacts
+            .as_ref()
+            .map(|artifacts| {
+                artifacts
+                    .lowered_parameter_factors
+                    .iter()
+                    .filter_map(|runtime| {
+                        runtime
+                            .as_ref()
+                            .and_then(|runtime| runtime.gradient_program())
+                            .map(|program| program.scratch_slots())
+                    })
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let mut lowered_value_slots = vec![Complex64::ZERO; max_lowered_slots];
+        let mut lowered_gradient_slots = vec![DVector::zeros(parameters.len()); max_lowered_slots];
+        let use_lowered = lowered_artifacts.as_ref().is_some_and(|artifacts| {
+            artifacts.lowered_parameter_factors.len() == state.values.len()
+                && artifacts.lowered_parameter_factors.iter().all(|runtime| {
+                    runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.gradient_program())
+                        .is_some()
+                })
+        });
+
+        if !use_lowered {
+            let _ = state.expression_ir.evaluate_gradient_into(
+                &amplitude_values,
+                &amplitude_gradients,
+                &mut value_slots,
+                &mut gradient_slots,
+            );
+        }
+
+        if use_lowered {
+            let lowered_artifacts = lowered_artifacts.expect("lowered artifacts should exist");
+            state
+                .values
+                .iter()
+                .cloned()
+                .zip(lowered_artifacts.lowered_parameter_factors.iter())
+                .map(|(descriptor, runtime)| {
+                    let parameter_gradient = runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.gradient_program())
+                        .map(|program| {
+                            program.evaluate_gradient_into(
+                                &amplitude_values,
+                                &amplitude_gradients,
+                                &mut lowered_value_slots[..program.scratch_slots()],
+                                &mut lowered_gradient_slots[..program.scratch_slots()],
+                            )
+                        })
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()));
+                    let weighted_gradient = parameter_gradient.map(|value| {
+                        value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
+                    });
+                    PrecomputedCachedIntegralGradientTerm {
+                        mul_node_index: descriptor.mul_node_index,
+                        parameter_node_index: descriptor.parameter_node_index,
+                        cache_node_index: descriptor.cache_node_index,
+                        coefficient: descriptor.coefficient,
+                        weighted_gradient,
+                    }
+                })
+                .collect()
+        } else {
+            state
+                .values
+                .iter()
+                .map(|descriptor| {
+                    let parameter_gradient = gradient_slots
+                        .get(descriptor.parameter_node_index)
+                        .cloned()
+                        .unwrap_or_else(|| DVector::zeros(parameters.len()));
+                    let weighted_gradient = parameter_gradient.map(|value| {
+                        value * descriptor.weighted_cache_sum * descriptor.coefficient as f64
+                    });
+                    PrecomputedCachedIntegralGradientTerm {
+                        mul_node_index: descriptor.mul_node_index,
+                        parameter_node_index: descriptor.parameter_node_index,
+                        cache_node_index: descriptor.cache_node_index,
+                        coefficient: descriptor.coefficient,
+                        weighted_gradient,
+                    }
+                })
+                .collect()
+        }
+    }
+    fn evaluate_cached_weighted_value_sum_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+    ) -> f64 {
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let _ = state
+            .expression_ir
+            .evaluate_into(amplitude_values, &mut value_slots);
+        state
+            .values
+            .iter()
+            .map(|descriptor| {
+                let parameter_factor = value_slots[descriptor.parameter_node_index];
+                (parameter_factor * descriptor.weighted_cache_sum * descriptor.coefficient as f64)
+                    .re
+            })
+            .sum()
+    }
+    fn evaluate_cached_weighted_value_sum_lowered(
+        &self,
+        state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
+        amplitude_values: &[Complex64],
+    ) -> Option<f64> {
+        let max_slots = lowered_artifacts
+            .lowered_parameter_factors
+            .iter()
+            .filter_map(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.value_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .max()
+            .unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; max_slots];
+        let mut total = 0.0;
+        for (descriptor, runtime) in state
+            .values
+            .iter()
+            .zip(lowered_artifacts.lowered_parameter_factors.iter())
+        {
+            let parameter_factor = runtime
+                .as_ref()
+                .and_then(|runtime| runtime.value_program())
+                .map(|program| {
+                    program.evaluate_into(
+                        amplitude_values,
+                        &mut value_slots[..program.scratch_slots()],
+                    )
+                })?;
+            total +=
+                (parameter_factor * descriptor.weighted_cache_sum * descriptor.coefficient as f64)
+                    .re;
+        }
+        Some(total)
+    }
+    fn evaluate_cached_weighted_gradient_sum_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> DVector<f64> {
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); state.expression_ir.node_count()];
+        let _ = state.expression_ir.evaluate_gradient_into(
+            amplitude_values,
+            amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+        );
+        state
+            .values
+            .iter()
+            .fold(DVector::zeros(grad_dim), |mut accum, descriptor| {
+                let parameter_gradient = &gradient_slots[descriptor.parameter_node_index];
+                let coefficient = descriptor.coefficient as f64;
+                for (accum_item, gradient_item) in accum.iter_mut().zip(parameter_gradient.iter()) {
+                    *accum_item +=
+                        (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
+                }
+                accum
+            })
+    }
+    fn evaluate_cached_weighted_gradient_sum_lowered(
+        &self,
+        state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> Option<DVector<f64>> {
+        let max_value_slots = lowered_artifacts
+            .lowered_parameter_factors
+            .iter()
+            .filter_map(|runtime| {
+                runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.gradient_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .max()
+            .unwrap_or(0);
+        let mut value_slots = vec![Complex64::ZERO; max_value_slots];
+        let mut gradient_slots = vec![Complex64::ZERO; max_value_slots * grad_dim];
+        let mut total = DVector::zeros(grad_dim);
+        for (descriptor, runtime) in state
+            .values
+            .iter()
+            .zip(lowered_artifacts.lowered_parameter_factors.iter())
+        {
+            let parameter_gradient = runtime
+                .as_ref()
+                .and_then(|runtime| runtime.gradient_program())
+                .map(|program| {
+                    program.evaluate_gradient_into_flat(
+                        amplitude_values,
+                        amplitude_gradients,
+                        &mut value_slots[..program.scratch_slots()],
+                        &mut gradient_slots[..program.scratch_slots() * grad_dim],
+                        grad_dim,
+                    )
+                })?;
+            let coefficient = descriptor.coefficient as f64;
+            for (accum_item, gradient_item) in total.iter_mut().zip(parameter_gradient.iter()) {
+                *accum_item += (*gradient_item * descriptor.weighted_cache_sum * coefficient).re;
+            }
+        }
+        Some(total)
+    }
+    fn evaluate_residual_value_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+    ) -> Complex64 {
+        let mut zeroed_nodes = vec![false; state.expression_ir.node_count()];
+        for descriptor in &state.values {
+            if descriptor.mul_node_index < zeroed_nodes.len() {
+                zeroed_nodes[descriptor.mul_node_index] = true;
+            }
+        }
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        state.expression_ir.evaluate_into_with_zeroed_nodes(
+            amplitude_values,
+            &mut value_slots,
+            &zeroed_nodes,
+        )
+    }
+    fn evaluate_residual_gradient_ir(
+        &self,
+        state: &CachedIntegralCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> DVector<Complex64> {
+        let mut zeroed_nodes = vec![false; state.expression_ir.node_count()];
+        for descriptor in &state.values {
+            if descriptor.mul_node_index < zeroed_nodes.len() {
+                zeroed_nodes[descriptor.mul_node_index] = true;
+            }
+        }
+        let mut value_slots = vec![Complex64::ZERO; state.expression_ir.node_count()];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); state.expression_ir.node_count()];
+        state
+            .expression_ir
+            .evaluate_gradient_into_with_zeroed_nodes(
+                amplitude_values,
+                amplitude_gradients,
+                &mut value_slots,
+                &mut gradient_slots,
+                &zeroed_nodes,
+            )
+    }
+    fn evaluate_residual_gradient_lowered(
+        &self,
+        _state: &CachedIntegralCacheState,
+        lowered_artifacts: &LoweredArtifactCacheState,
+        amplitude_values: &[Complex64],
+        amplitude_gradients: &[DVector<Complex64>],
+        grad_dim: usize,
+    ) -> Option<DVector<Complex64>> {
+        let program = lowered_artifacts
+            .residual_runtime
+            .as_ref()
+            .map(|runtime| runtime.gradient_program())?;
+        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
+        Some(program.evaluate_gradient_into_flat(
+            amplitude_values,
+            amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+            grad_dim,
+        ))
+    }
+
+    fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = self.active_lowered_artifacts();
+        let residual_value_slot_count = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| {
+                artifacts
+                    .residual_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.value_program())
+                    .map(|program| program.scratch_slots())
+            })
+            .unwrap_or_else(|| self.expression_slot_count());
+        let residual_value_program = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .map(|runtime| runtime.value_program());
+        let cached_parameter_indices = &state.execution_sets.cached_parameter_amplitudes;
+        let residual_active_indices = &state.execution_sets.residual_amplitudes;
+        debug_assert!(cached_parameter_indices.iter().all(|&index| resources
+            .active
+            .get(index)
+            .copied()
+            .unwrap_or(false)));
+        debug_assert!(residual_active_indices.iter().all(|&index| resources
+            .active
+            .get(index)
+            .copied()
+            .unwrap_or(false)));
+        let cached_value_sum = {
+            if let Some(cache) = resources.caches.first() {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                self.fill_amplitude_values(
+                    &mut amplitude_values,
+                    cached_parameter_indices,
+                    &parameters,
+                    cache,
+                );
+                lowered_artifacts
+                    .as_ref()
+                    .and_then(|artifacts| {
+                        self.evaluate_cached_weighted_value_sum_lowered(
+                            &state,
+                            artifacts,
+                            &amplitude_values,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        self.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values)
+                    })
+            } else {
+                0.0
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        let residual_sum: f64 = {
+            resources
+                .caches
+                .par_iter()
+                .zip(self.dataset.events_local().par_iter())
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; residual_value_slot_count],
+                        )
+                    },
+                    |(amplitude_values, value_slots), (cache, event)| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            residual_active_indices,
+                            &parameters,
+                            cache,
+                        );
+                        {
+                            let value = residual_value_program
+                                .as_ref()
+                                .map(|program| {
+                                    program.evaluate_into(
+                                        amplitude_values,
+                                        &mut value_slots[..program.scratch_slots()],
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    self.evaluate_residual_value_ir(&state, amplitude_values)
+                                });
+                            event.weight * value.re
+                        }
+                    },
+                )
+                .sum()
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let residual_sum: f64 = {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; residual_value_slot_count];
+            resources
+                .caches
+                .iter()
+                .zip(self.dataset.events_local().iter())
+                .map(|(cache, event)| {
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &residual_active_indices,
+                        &parameters,
+                        cache,
+                    );
+                    {
+                        let value = residual_value_program
+                            .as_ref()
+                            .map(|program| {
+                                program.evaluate_into(
+                                    &amplitude_values,
+                                    &mut value_slots[..program.scratch_slots()],
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                self.evaluate_residual_value_ir(&state, &amplitude_values)
+                            });
+                        event.weight * value.re
+                    }
+                })
+                .sum()
+        };
+        (residual_sum, cached_value_sum)
+    }
+
+    /// Weighted sum over local events of the real expression value.
+    ///
+    /// This returns `sum_e(weight_e * Re(L_e))`.
+    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> f64 {
+        let (residual_sum, cached_value_sum) =
+            self.evaluate_weighted_value_sum_local_components(parameters);
+        residual_sum + cached_value_sum
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Weighted sum over all ranks of the real expression value.
+    ///
+    /// This returns `sum_{r,e}(weight_{r,e} * Re(L_{r,e}))`.
+    pub fn evaluate_weighted_value_sum_mpi(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> f64 {
+        let (residual_sum_local, cached_value_sum_local) =
+            self.evaluate_weighted_value_sum_local_components(parameters);
+        let mut residual_sum = 0.0;
+        world.all_reduce_into(
+            &residual_sum_local,
+            &mut residual_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut cached_value_sum = 0.0;
+        world.all_reduce_into(
+            &cached_value_sum_local,
+            &mut cached_value_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        residual_sum + cached_value_sum
+    }
+
+    /// Weighted sum over local events of the real gradient of the expression.
+    ///
+    /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
+    fn evaluate_weighted_gradient_sum_local_components(
+        &self,
+        parameters: &[f64],
+    ) -> (DVector<f64>, DVector<f64>) {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let state = self.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = self.active_lowered_artifacts();
+        let active_index_set = resources.active_indices();
+        let cached_parameter_indices = state
+            .execution_sets
+            .cached_parameter_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        let residual_active_indices = state
+            .execution_sets
+            .residual_amplitudes
+            .iter()
+            .copied()
+            .filter(|index| active_index_set.binary_search(index).is_ok())
+            .collect::<Vec<_>>();
+        let mut cached_parameter_mask = vec![false; amplitude_len];
+        for &index in &cached_parameter_indices {
+            cached_parameter_mask[index] = true;
+        }
+        let mut residual_active_mask = vec![false; amplitude_len];
+        for &index in &residual_active_indices {
+            residual_active_mask[index] = true;
+        }
+        let cached_term_sum = {
+            if let Some(cache) = resources.caches.first() {
+                let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+                self.fill_amplitude_values(
+                    &mut amplitude_values,
+                    &cached_parameter_indices,
+                    &parameters,
+                    cache,
+                );
+                let mut amplitude_gradients = (0..amplitude_len)
+                    .map(|_| DVector::zeros(grad_dim))
+                    .collect::<Vec<_>>();
+                self.fill_amplitude_gradients(
+                    &mut amplitude_gradients,
+                    &cached_parameter_mask,
+                    &parameters,
+                    cache,
+                );
+                lowered_artifacts
+                    .as_ref()
+                    .and_then(|artifacts| {
+                        self.evaluate_cached_weighted_gradient_sum_lowered(
+                            &state,
+                            artifacts,
+                            &amplitude_values,
+                            &amplitude_gradients,
+                            grad_dim,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        self.evaluate_cached_weighted_gradient_sum_ir(
+                            &state,
+                            &amplitude_values,
+                            &amplitude_gradients,
+                            grad_dim,
+                        )
+                    })
+            } else {
+                DVector::zeros(grad_dim)
+            }
+        };
+
+        #[cfg(feature = "rayon")]
+        let residual_sum = {
+            resources
+                .caches
+                .par_iter()
+                .zip(self.dataset.events_local().par_iter())
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; self.expression_slot_count()],
+                            vec![
+                                DVector::<Complex64>::zeros(grad_dim);
+                                self.expression_slot_count()
+                            ],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                     (cache, event)| {
+                        let _ = value_slots;
+                        let _ = gradient_slots;
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &residual_active_indices,
+                            &residual_active_mask,
+                            &parameters,
+                            cache,
+                        );
+                        let gradient = self
+                            .active_lowered_artifacts()
+                            .as_ref()
+                            .and_then(|artifacts| {
+                                self.evaluate_residual_gradient_lowered(
+                                    &state,
+                                    artifacts,
+                                    amplitude_values,
+                                    gradient_values,
+                                    grad_dim,
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                self.evaluate_residual_gradient_ir(
+                                    &state,
+                                    amplitude_values,
+                                    gradient_values,
+                                    grad_dim,
+                                )
+                            });
+                        gradient.map(|value| value.re).scale(event.weight)
+                    },
+                )
+                .reduce(
+                    || DVector::zeros(grad_dim),
+                    |mut accum, value| {
+                        accum += value;
+                        accum
+                    },
+                )
+        };
+
+        #[cfg(not(feature = "rayon"))]
+        let residual_sum = {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            resources
+                .caches
+                .iter()
+                .zip(self.dataset.events_local().iter())
+                .map(|(cache, event)| {
+                    self.fill_amplitude_values_and_gradients(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &residual_active_indices,
+                        &residual_active_mask,
+                        &parameters,
+                        cache,
+                    );
+                    let gradient = self
+                        .active_lowered_artifacts()
+                        .as_ref()
+                        .and_then(|artifacts| {
+                            self.evaluate_residual_gradient_lowered(
+                                &state,
+                                artifacts,
+                                &amplitude_values,
+                                &gradient_values,
+                                grad_dim,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            self.evaluate_residual_gradient_ir(
+                                &state,
+                                &amplitude_values,
+                                &gradient_values,
+                                grad_dim,
+                            )
+                        });
+                    gradient.map(|value| value.re).scale(event.weight)
+                })
+                .sum()
+        };
+        (residual_sum, cached_term_sum)
+    }
+
+    /// Weighted sum over local events of the real gradient of the expression.
+    ///
+    /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
+    pub fn evaluate_weighted_gradient_sum_local(&self, parameters: &[f64]) -> DVector<f64> {
+        let (residual_sum, cached_term_sum) =
+            self.evaluate_weighted_gradient_sum_local_components(parameters);
+        residual_sum + cached_term_sum
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Weighted sum over all ranks of the real gradient of the expression.
+    ///
+    /// This returns `sum_{r,e}(weight_{r,e} * Re(dL_{r,e}/dp))`.
+    pub fn evaluate_weighted_gradient_sum_mpi(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> DVector<f64> {
+        let (residual_sum_local, cached_term_sum_local) =
+            self.evaluate_weighted_gradient_sum_local_components(parameters);
+        let mut residual_sum = vec![0.0; residual_sum_local.len()];
+        world.all_reduce_into(
+            residual_sum_local.as_slice(),
+            &mut residual_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut cached_term_sum = vec![0.0; cached_term_sum_local.len()];
+        world.all_reduce_into(
+            cached_term_sum_local.as_slice(),
+            &mut cached_term_sum,
+            mpi::collective::SystemOperation::sum(),
+        );
+        let mut total = DVector::from_vec(residual_sum);
+        total += DVector::from_vec(cached_term_sum);
+        total
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -1249,8 +3093,7 @@ impl Evaluator {
         amplitude_values: &[Complex64],
         scratch: &mut [Complex64],
     ) -> Complex64 {
-        self.expression_program
-            .evaluate_into(amplitude_values, scratch)
+        self.evaluate_expression_runtime_value_with_scratch(amplitude_values, scratch)
     }
 
     pub fn evaluate_expression_gradient_with_scratch(
@@ -1260,7 +3103,22 @@ impl Evaluator {
         value_scratch: &mut [Complex64],
         gradient_scratch: &mut [DVector<Complex64>],
     ) -> DVector<Complex64> {
-        self.expression_program.evaluate_gradient_into(
+        self.evaluate_expression_runtime_gradient_with_scratch(
+            amplitude_values,
+            gradient_values,
+            value_scratch,
+            gradient_scratch,
+        )
+    }
+
+    pub fn evaluate_expression_value_gradient_with_scratch(
+        &self,
+        amplitude_values: &[Complex64],
+        gradient_values: &[DVector<Complex64>],
+        value_scratch: &mut [Complex64],
+        gradient_scratch: &mut [DVector<Complex64>],
+    ) -> (Complex64, DVector<Complex64>) {
+        self.evaluate_expression_runtime_value_gradient_with_scratch(
             amplitude_values,
             gradient_values,
             value_scratch,
@@ -1269,7 +3127,7 @@ impl Evaluator {
     }
 
     pub fn evaluate_expression_value(&self, amplitude_values: &[Complex64]) -> Complex64 {
-        self.expression_program.evaluate(amplitude_values)
+        self.evaluate_expression_runtime_value(amplitude_values)
     }
 
     pub fn evaluate_expression_gradient(
@@ -1277,8 +3135,7 @@ impl Evaluator {
         amplitude_values: &[Complex64],
         gradient_values: &[DVector<Complex64>],
     ) -> DVector<Complex64> {
-        self.expression_program
-            .evaluate_gradient(amplitude_values, gradient_values)
+        self.evaluate_expression_runtime_gradient(amplitude_values, gradient_values)
     }
 
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
@@ -1359,68 +3216,112 @@ impl Evaluator {
     /// Activate an [`Amplitude`] by name, skipping missing entries.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().activate(name);
+        self.refresh_runtime_specializations();
     }
     /// Activate an [`Amplitude`] by name and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().activate_strict(name)
+        self.resources.write().activate_strict(name)?;
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Activate several [`Amplitude`]s by name, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().activate_many(names);
+        self.refresh_runtime_specializations();
     }
     /// Activate several [`Amplitude`]s by name and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().activate_many_strict(names)
+        self.resources.write().activate_many_strict(names)?;
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Activate all registered [`Amplitude`]s.
     pub fn activate_all(&self) {
         self.resources.write().activate_all();
+        self.refresh_runtime_specializations();
     }
 
     /// Dectivate an [`Amplitude`] by name, skipping missing entries.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().deactivate(name);
+        self.refresh_runtime_specializations();
     }
 
     /// Dectivate an [`Amplitude`] by name and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().deactivate_strict(name)
+        self.resources.write().deactivate_strict(name)?;
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Deactivate several [`Amplitude`]s by name, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().deactivate_many(names);
+        self.refresh_runtime_specializations();
     }
     /// Dectivate several [`Amplitude`]s by name and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().deactivate_many_strict(names)
+        self.resources.write().deactivate_many_strict(names)?;
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Deactivate all registered [`Amplitude`]s.
     pub fn deactivate_all(&self) {
         self.resources.write().deactivate_all();
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate an [`Amplitude`] by name (deactivate the rest), skipping missing entries.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
         self.resources.write().isolate(name);
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate an [`Amplitude`] by name (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
-        self.resources.write().isolate_strict(name)
+        self.resources.write().isolate_strict(name)?;
+        self.refresh_runtime_specializations();
+        Ok(())
     }
 
     /// Isolate several [`Amplitude`]s by name (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
         self.resources.write().isolate_many(names);
+        self.refresh_runtime_specializations();
     }
 
     /// Isolate several [`Amplitude`]s by name (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
-        self.resources.write().isolate_many_strict(names)
+        self.resources.write().isolate_many_strict(names)?;
+        self.refresh_runtime_specializations();
+        Ok(())
+    }
+
+    /// Return a copy of the current active-amplitude mask.
+    pub fn active_mask(&self) -> Vec<bool> {
+        self.resources.read().active.clone()
+    }
+
+    /// Apply a precomputed active-amplitude mask.
+    pub fn set_active_mask(&self, mask: &[bool]) -> LadduResult<()> {
+        let resources = {
+            let mut resources = self.resources.write();
+            if mask.len() != resources.active.len() {
+                return Err(LadduError::LengthMismatch {
+                    context: "active amplitude mask".to_string(),
+                    expected: resources.active.len(),
+                    actual: mask.len(),
+                });
+            }
+            resources.active.clone_from_slice(mask);
+            resources.refresh_active_indices();
+            resources.clone()
+        };
+        self.rebuild_runtime_specializations(&resources);
+        Ok(())
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -1435,13 +3336,13 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
-            self.dataset
-                .events
+            resources
+                .caches
                 .par_iter()
-                .zip(resources.caches.par_iter())
                 .map_init(
                     || {
                         (
@@ -1449,15 +3350,18 @@ impl Evaluator {
                             vec![Complex64::ZERO; slot_count],
                         )
                     },
-                    |(amplitude_values, expr_slots), (event, cache)| {
+                    |(amplitude_values, expr_slots), cache| {
                         self.fill_amplitude_values(
                             amplitude_values,
                             &active_indices,
                             &parameters,
-                            event,
                             cache,
                         );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
                     },
                 )
                 .collect()
@@ -1466,22 +3370,168 @@ impl Evaluator {
         {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            self.dataset
-                .events
+            resources
+                .caches
                 .iter()
-                .zip(resources.caches.iter())
-                .map(|(event, cache)| {
+                .map(|cache| {
                     self.fill_amplitude_values(
                         &mut amplitude_values,
                         &active_indices,
                         &parameters,
-                        event,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                    self.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
                 })
                 .collect()
         }
+    }
+
+    /// Evaluate local events using an explicit active-amplitude mask without mutating evaluator state.
+    pub fn evaluate_local_with_active_mask(
+        &self,
+        parameters: &[f64],
+        active_mask: &[bool],
+    ) -> LadduResult<Vec<Complex64>> {
+        let resources = self.resources.read();
+        if active_mask.len() != resources.active.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "active amplitude mask".to_string(),
+                expected: resources.active.len(),
+                actual: active_mask.len(),
+            });
+        }
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = active_mask
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &active)| if active { Some(index) } else { None })
+            .collect::<Vec<_>>();
+        let program_snapshot =
+            self.expression_value_program_snapshot_for_active_mask(active_mask)?;
+        let slot_count = self.expression_value_program_snapshot_slot_count(&program_snapshot);
+        #[cfg(feature = "rayon")]
+        {
+            Ok(resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                        )
+                    },
+                    |(amplitude_values, expr_slots), cache| {
+                        self.fill_amplitude_values(
+                            amplitude_values,
+                            &active_indices,
+                            &parameters,
+                            cache,
+                        );
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
+                    },
+                )
+                .collect())
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut expr_slots = vec![Complex64::ZERO; slot_count];
+            Ok(resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.fill_amplitude_values(
+                        &mut amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
+                })
+                .collect())
+        }
+    }
+
+    /// Evaluate the stored expression over local events using a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_local_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
+        #[cfg(feature = "rayon")]
+        {
+            if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
+                return execution_context.install(|| {
+                    resources
+                        .caches
+                        .par_iter()
+                        .map_init(
+                            || {
+                                (
+                                    vec![Complex64::ZERO; amplitude_len],
+                                    vec![Complex64::ZERO; slot_count],
+                                )
+                            },
+                            |(amplitude_values, expr_slots), cache| {
+                                self.fill_amplitude_values(
+                                    amplitude_values,
+                                    &active_indices,
+                                    &parameters,
+                                    cache,
+                                );
+                                self.evaluate_expression_value_with_program_snapshot(
+                                    &program_snapshot,
+                                    amplitude_values,
+                                    expr_slots,
+                                )
+                            },
+                        )
+                        .collect()
+                });
+            }
+        }
+        execution_context.with_scratch(|scratch| {
+            let (amplitude_values, expr_slots) =
+                scratch.reserve_value_workspaces(amplitude_len, slot_count);
+            resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.fill_amplitude_values(
+                        amplitude_values,
+                        &active_indices,
+                        &parameters,
+                        cache,
+                    );
+                    self.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    )
+                })
+                .collect()
+        })
     }
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -1498,6 +3548,28 @@ impl Evaluator {
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event outputs.
+            // Do not replace with all-reduce unless semantics change to scalar aggregates only.
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
+        }
+        buffer
+    }
+
+    #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
+    fn evaluate_mpi_with_ctx(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        let local_evaluation = self.evaluate_local_with_ctx(parameters, execution_context);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
+        let (counts, displs) = world.get_counts_displs(n_events);
+        {
+            // NOTE: gather is required here because the public MPI API returns full per-event outputs.
+            // Do not replace with all-reduce unless semantics change to scalar aggregates only.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
@@ -1516,6 +3588,26 @@ impl Evaluator {
         self.evaluate_local(parameters)
     }
 
+    /// Evaluate the stored expression with a reusable execution context.
+    ///
+    /// This is intended for repeated calls with the same context instance.
+    /// Thread behavior follows [`ThreadPolicy`](crate::ThreadPolicy) configured on
+    /// [`ExecutionContext`](crate::ExecutionContext).
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<Complex64> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_mpi_with_ctx(parameters, &world, execution_context);
+            }
+        }
+        self.evaluate_local_with_ctx(parameters, execution_context)
+    }
+
     /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
     /// than all events in the total dataset.
     pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
@@ -1523,7 +3615,8 @@ impl Evaluator {
         let parameters = Parameters::new(parameters, &resources.constants);
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_value_slot_count();
+        let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
             indices
@@ -1536,16 +3629,18 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, expr_slots), &idx| {
-                        let event = &self.dataset.events[idx];
                         let cache = &resources.caches[idx];
                         self.fill_amplitude_values(
                             amplitude_values,
                             &active_indices,
                             &parameters,
-                            event,
                             cache,
                         );
-                        self.evaluate_expression_value_with_scratch(amplitude_values, expr_slots)
+                        self.evaluate_expression_value_with_program_snapshot(
+                            &program_snapshot,
+                            amplitude_values,
+                            expr_slots,
+                        )
                     },
                 )
                 .collect()
@@ -1557,16 +3652,18 @@ impl Evaluator {
             indices
                 .iter()
                 .map(|&idx| {
-                    let event = &self.dataset.events[idx];
                     let cache = &resources.caches[idx];
                     self.fill_amplitude_values(
                         &mut amplitude_values,
                         &active_indices,
                         &parameters,
-                        event,
                         cache,
                     );
-                    self.evaluate_expression_value_with_scratch(&amplitude_values, &mut expr_slots)
+                    self.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        &amplitude_values,
+                        &mut expr_slots,
+                    )
                 })
                 .collect()
         }
@@ -1612,43 +3709,32 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            self.dataset
-                .events
+            resources
+                .caches
                 .par_iter()
-                .zip(resources.caches.par_iter())
                 .map_init(
                     || {
                         (
                             vec![Complex64::ZERO; amplitude_len],
                             vec![DVector::zeros(grad_dim); amplitude_len],
                             vec![Complex64::ZERO; slot_count],
-                            vec![DVector::zeros(grad_dim); slot_count],
+                            vec![Complex64::ZERO; slot_count * grad_dim],
                         )
                     },
-                    |(amplitude_values, gradient_values, value_slots, gradient_slots),
-                     (event, cache)| {
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            event,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            event,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
+                        self.evaluate_cache_gradient_with_flat_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -1659,35 +3745,94 @@ impl Evaluator {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
-            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-            self.dataset
-                .events
+            let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+            resources
+                .caches
                 .iter()
-                .zip(resources.caches.iter())
-                .map(|(event, cache)| {
-                    self.fill_amplitude_values(
+                .map(|cache| {
+                    self.evaluate_cache_gradient_with_flat_scratch(
                         &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        event,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
                         &mut gradient_values,
-                        &resources.active,
-                        &parameters,
-                        event,
-                        cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
                         &mut value_slots,
                         &mut gradient_slots,
+                        grad_dim,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
                     )
                 })
                 .collect()
         }
+    }
+
+    /// Evaluate the gradient over local events using a reusable execution context.
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_gradient_local_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            if !matches!(execution_context.thread_policy(), ThreadPolicy::Single) {
+                return execution_context.install(|| {
+                    resources
+                        .caches
+                        .par_iter()
+                        .map_init(
+                            || {
+                                (
+                                    vec![Complex64::ZERO; amplitude_len],
+                                    vec![DVector::zeros(grad_dim); amplitude_len],
+                                    vec![Complex64::ZERO; slot_count],
+                                    vec![DVector::zeros(grad_dim); slot_count],
+                                )
+                            },
+                            |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                             cache| {
+                                self.evaluate_cache_gradient_with_scratch(
+                                    amplitude_values,
+                                    gradient_values,
+                                    value_slots,
+                                    gradient_slots,
+                                    &active_indices,
+                                    &resources.active,
+                                    &parameters,
+                                    cache,
+                                )
+                            },
+                        )
+                        .collect()
+                });
+            }
+        }
+        execution_context.with_scratch(|scratch| {
+            let (amplitude_values, value_slots, gradient_values, gradient_slots) =
+                scratch.reserve_gradient_workspaces(amplitude_len, slot_count, grad_dim);
+            resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.evaluate_cache_gradient_with_scratch(
+                        amplitude_values,
+                        gradient_values,
+                        value_slots,
+                        gradient_slots,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    )
+                })
+                .collect()
+        })
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
@@ -1706,8 +3851,10 @@ impl Evaluator {
         let local_evaluation = self.evaluate_gradient_local(parameters);
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
-        let (counts, displs) = world.get_counts_displs(n_events);
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
         {
+            // NOTE: gather is required here because the public MPI API returns full per-event gradients.
+            // Do not replace with all-reduce unless semantics change to aggregate-only outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(
                 &local_evaluation
@@ -1720,7 +3867,37 @@ impl Evaluator {
         }
         buffer
             .chunks(parameters.len())
-            .map(|chunk| DVector::from_row_slice(chunk))
+            .map(DVector::from_row_slice)
+            .collect()
+    }
+
+    #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
+    fn evaluate_gradient_mpi_with_ctx(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        let local_evaluation = self.evaluate_gradient_local_with_ctx(parameters, execution_context);
+        let n_events = self.dataset.n_events();
+        let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
+        let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
+        {
+            // NOTE: gather is required here because the public MPI API returns full per-event gradients.
+            // Do not replace with all-reduce unless semantics change to aggregate-only outputs.
+            let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
+            world.all_gather_varcount_into(
+                &local_evaluation
+                    .iter()
+                    .flat_map(|v| v.data.as_vec())
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &mut partitioned_buffer,
+            );
+        }
+        buffer
+            .chunks(parameters.len())
+            .map(DVector::from_row_slice)
             .collect()
     }
 
@@ -1736,6 +3913,26 @@ impl Evaluator {
         self.evaluate_gradient_local(parameters)
     }
 
+    /// Evaluate the gradient with a reusable execution context.
+    ///
+    /// This is intended for repeated calls with the same context instance.
+    /// Thread behavior follows [`ThreadPolicy`](crate::ThreadPolicy) configured on
+    /// [`ExecutionContext`](crate::ExecutionContext).
+    #[cfg(feature = "execution-context-prototype")]
+    pub fn evaluate_gradient_with_ctx(
+        &self,
+        parameters: &[f64],
+        execution_context: &ExecutionContext,
+    ) -> Vec<DVector<Complex64>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                return self.evaluate_gradient_mpi_with_ctx(parameters, &world, execution_context);
+            }
+        }
+        self.evaluate_gradient_local_with_ctx(parameters, execution_context)
+    }
+
     /// See [`Evaluator::evaluate_gradient_local`]. This method evaluates over a subset
     /// of events rather than all events in the total dataset.
     pub fn evaluate_gradient_batch_local(
@@ -1748,7 +3945,7 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
-        let slot_count = self.expression_slot_count();
+        let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
             indices
@@ -1759,31 +3956,21 @@ impl Evaluator {
                             vec![Complex64::ZERO; amplitude_len],
                             vec![DVector::zeros(grad_dim); amplitude_len],
                             vec![Complex64::ZERO; slot_count],
-                            vec![DVector::zeros(grad_dim); slot_count],
+                            vec![Complex64::ZERO; slot_count * grad_dim],
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
-                        let event = &self.dataset.events[idx];
                         let cache = &resources.caches[idx];
-                        self.fill_amplitude_values(
-                            amplitude_values,
-                            &active_indices,
-                            &parameters,
-                            event,
-                            cache,
-                        );
-                        self.fill_amplitude_gradients(
-                            gradient_values,
-                            &resources.active,
-                            &parameters,
-                            event,
-                            cache,
-                        );
-                        self.evaluate_expression_gradient_with_scratch(
+                        self.evaluate_cache_gradient_with_flat_scratch(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
                         )
                     },
                 )
@@ -1794,31 +3981,21 @@ impl Evaluator {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
-            let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
             indices
                 .iter()
                 .map(|&idx| {
-                    let event = &self.dataset.events[idx];
                     let cache = &resources.caches[idx];
-                    self.fill_amplitude_values(
+                    self.evaluate_cache_gradient_with_flat_scratch(
                         &mut amplitude_values,
-                        &active_indices,
-                        &parameters,
-                        event,
-                        cache,
-                    );
-                    self.fill_amplitude_gradients(
                         &mut gradient_values,
-                        &resources.active,
-                        &parameters,
-                        event,
-                        cache,
-                    );
-                    self.evaluate_expression_gradient_with_scratch(
-                        &amplitude_values,
-                        &gradient_values,
                         &mut value_slots,
                         &mut gradient_slots,
+                        grad_dim,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
                     )
                 })
                 .collect()
@@ -1869,6 +4046,233 @@ impl Evaluator {
         }
         self.evaluate_gradient_batch_local(parameters, indices)
     }
+
+    /// Evaluate the stored expression and its gradient over local events in one fused pass.
+    pub fn evaluate_with_gradient_local(
+        &self,
+        parameters: &[f64],
+    ) -> Vec<(Complex64, DVector<Complex64>)> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_value_gradient_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![Complex64::ZERO; slot_count * grad_dim],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
+                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    },
+                )
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+            resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.evaluate_cache_value_gradient_with_flat_scratch(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    )
+                })
+                .collect()
+        }
+    }
+
+    /// Evaluate local events and gradients with an explicit active-amplitude mask without mutating evaluator state.
+    pub fn evaluate_with_gradient_local_with_active_mask(
+        &self,
+        parameters: &[f64],
+        active_mask: &[bool],
+    ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
+        let resources = self.resources.read();
+        if active_mask.len() != resources.active.len() {
+            return Err(LadduError::LengthMismatch {
+                context: "active amplitude mask".to_string(),
+                expected: resources.active.len(),
+                actual: active_mask.len(),
+            });
+        }
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = active_mask
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &active)| if active { Some(index) } else { None })
+            .collect::<Vec<_>>();
+        let lowered_runtime = self.lower_expression_runtime_for_active_mask(active_mask)?;
+        let slot_count = lowered_runtime.value_gradient_program().scratch_slots();
+        #[cfg(feature = "rayon")]
+        {
+            Ok(resources
+                .caches
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![Complex64::ZERO; slot_count * grad_dim],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            active_mask,
+                            &parameters,
+                            cache,
+                        );
+                        lowered_runtime
+                            .value_gradient_program()
+                            .evaluate_value_gradient_into_flat(
+                                amplitude_values,
+                                gradient_values,
+                                value_slots,
+                                gradient_slots,
+                                grad_dim,
+                            )
+                    },
+                )
+                .collect())
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+            Ok(resources
+                .caches
+                .iter()
+                .map(|cache| {
+                    self.fill_amplitude_values_and_gradients(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &active_indices,
+                        active_mask,
+                        &parameters,
+                        cache,
+                    );
+                    lowered_runtime
+                        .value_gradient_program()
+                        .evaluate_value_gradient_into_flat(
+                            &amplitude_values,
+                            &gradient_values,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                            grad_dim,
+                        )
+                })
+                .collect())
+        }
+    }
+
+    /// Evaluate the stored expression and its gradient over a local subset of events in one fused pass.
+    pub fn evaluate_with_gradient_batch_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+    ) -> Vec<(Complex64, DVector<Complex64>)> {
+        let resources = self.resources.read();
+        let parameters = Parameters::new(parameters, &resources.constants);
+        let amplitude_len = self.amplitudes.len();
+        let grad_dim = parameters.len();
+        let active_indices = resources.active_indices().to_vec();
+        let slot_count = self.expression_value_gradient_slot_count();
+        #[cfg(feature = "rayon")]
+        {
+            indices
+                .par_iter()
+                .map_init(
+                    || {
+                        (
+                            vec![Complex64::ZERO; amplitude_len],
+                            vec![DVector::zeros(grad_dim); amplitude_len],
+                            vec![Complex64::ZERO; slot_count],
+                            vec![Complex64::ZERO; slot_count * grad_dim],
+                        )
+                    },
+                    |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
+                        let cache = &resources.caches[idx];
+                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                            grad_dim,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        )
+                    },
+                )
+                .collect()
+        }
+        #[cfg(not(feature = "rayon"))]
+        {
+            let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+            let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
+            indices
+                .iter()
+                .map(|&idx| {
+                    let cache = &resources.caches[idx];
+                    self.evaluate_cache_value_gradient_with_flat_scratch(
+                        &mut amplitude_values,
+                        &mut gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
+                        &active_indices,
+                        &resources.active,
+                        &parameters,
+                        cache,
+                    )
+                })
+                .collect()
+        }
+    }
 }
 
 /// A testing [`Amplitude`].
@@ -1879,6 +4283,7 @@ pub struct TestAmplitude {
     pid_re: ParameterID,
     im: ParameterLike,
     pid_im: ParameterID,
+    beam_energy: crate::ScalarID,
 }
 
 impl TestAmplitude {
@@ -1891,6 +4296,7 @@ impl TestAmplitude {
             pid_re: Default::default(),
             im,
             pid_im: Default::default(),
+            beam_energy: Default::default(),
         }
         .into_expression()
     }
@@ -1901,39 +4307,46 @@ impl Amplitude for TestAmplitude {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid_re = resources.register_parameter(&self.re)?;
         self.pid_im = resources.register_parameter(&self.im)?;
+        self.beam_energy = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
         resources.register_amplitude(&self.name)
     }
 
-    fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im)) * event.p4s[0].e()
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let beam = event.p4_at(0);
+        cache.store_scalar(self.beam_energy, beam.e());
+    }
+
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+        Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
+            * cache.get_scalar(self.beam_energy)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        event: &EventData,
-        _cache: &Cache,
+        cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
+        let beam_energy = cache.get_scalar(self.beam_energy);
         if let ParameterID::Parameter(ind) = self.pid_re {
-            gradient[ind] = Complex64::ONE * event.p4s[0].e();
+            gradient[ind] = Complex64::ONE * beam_energy;
         }
         if let ParameterID::Parameter(ind) = self.pid_im {
-            gradient[ind] = Complex64::I * event.p4s[0].e();
+            gradient[ind] = Complex64::I * beam_energy;
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::data::{test_dataset, test_event, DatasetMetadata};
+    use crate::data::{test_dataset, test_event, DatasetMetadata, EventData};
 
     use super::*;
-    use crate::{
-        data::EventData,
-        resources::{Cache, ParameterID, Parameters, Resources},
-    };
+    use crate::resources::{Cache, ParameterID, Parameters, Resources, ScalarID};
+    use crate::utils::vectors::Vec4;
     use approx::assert_relative_eq;
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use serde::{Deserialize, Serialize};
 
     #[derive(Clone, Serialize, Deserialize)]
@@ -1967,19 +4380,13 @@ mod tests {
             resources.register_amplitude(&self.name)
         }
 
-        fn compute(
-            &self,
-            parameters: &Parameters,
-            _event: &EventData,
-            _cache: &Cache,
-        ) -> Complex64 {
+        fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
         }
 
         fn compute_gradient(
             &self,
             _parameters: &Parameters,
-            _event: &EventData,
             _cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {
@@ -1989,6 +4396,385 @@ mod tests {
             if let ParameterID::Parameter(ind) = self.pid_im {
                 gradient[ind] = Complex64::I;
             }
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct ParameterOnlyScalar {
+        name: String,
+        value: ParameterLike,
+        pid: ParameterID,
+    }
+
+    impl ParameterOnlyScalar {
+        #[allow(clippy::new_ret_no_self)]
+        pub fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                value,
+                pid: Default::default(),
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for ParameterOnlyScalar {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.pid = resources.register_parameter(&self.value)?;
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::ParameterOnly
+        }
+
+        fn real_valued_hint(&self) -> bool {
+            true
+        }
+
+        fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+            Complex64::new(parameters.get(self.pid), 0.0)
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct CacheOnlyScalar {
+        name: String,
+        beam_energy: ScalarID,
+    }
+
+    impl CacheOnlyScalar {
+        #[allow(clippy::new_ret_no_self)]
+        pub fn new(name: &str) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                beam_energy: Default::default(),
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CacheOnlyScalar {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.beam_energy =
+                resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::CacheOnly
+        }
+
+        fn real_valued_hint(&self) -> bool {
+            true
+        }
+
+        fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.beam_energy, event.p4_at(0).e());
+        }
+
+        fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(cache.get_scalar(self.beam_energy), 0.0)
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum DeterministicFixtureKind {
+        Separable,
+        Partial,
+        NonSeparable,
+    }
+
+    struct DeterministicFixture {
+        expression: Expression,
+        dataset: Arc<Dataset>,
+        parameters: Vec<f64>,
+    }
+
+    const DETERMINISTIC_STRICT_ABS_TOL: f64 = 1e-12;
+    const DETERMINISTIC_STRICT_REL_TOL: f64 = 1e-10;
+
+    fn deterministic_fixture_dataset() -> Arc<Dataset> {
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: -1.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 2.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 0.75,
+            }),
+        ];
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    fn make_deterministic_fixture(kind: DeterministicFixtureKind) -> DeterministicFixture {
+        let dataset = deterministic_fixture_dataset();
+        match kind {
+            DeterministicFixtureKind::Separable => {
+                let p1 = ParameterOnlyScalar::new("p1", parameter("p1"))
+                    .expect("separable p1 should build");
+                let p2 = ParameterOnlyScalar::new("p2", parameter("p2"))
+                    .expect("separable p2 should build");
+                let c1 = CacheOnlyScalar::new("c1").expect("separable c1 should build");
+                let c2 = CacheOnlyScalar::new("c2").expect("separable c2 should build");
+                DeterministicFixture {
+                    expression: (&p1 * &c1) + &(&p2 * &c2),
+                    dataset,
+                    parameters: vec![0.4, -0.3],
+                }
+            }
+            DeterministicFixtureKind::Partial => {
+                let p =
+                    ParameterOnlyScalar::new("p", parameter("p")).expect("partial p should build");
+                let c = CacheOnlyScalar::new("c").expect("partial c should build");
+                let m = TestAmplitude::new("m", parameter("mr"), parameter("mi"))
+                    .expect("partial m should build");
+                DeterministicFixture {
+                    expression: (&p * &c) + &m,
+                    dataset,
+                    parameters: vec![0.55, 0.2, -0.15],
+                }
+            }
+            DeterministicFixtureKind::NonSeparable => {
+                let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i"))
+                    .expect("non-separable m1 should build");
+                let m2 = TestAmplitude::new("m2", parameter("m2r"), parameter("m2i"))
+                    .expect("non-separable m2 should build");
+                DeterministicFixture {
+                    expression: &m1 * &m2,
+                    dataset,
+                    parameters: vec![0.25, -0.4, 0.6, 0.1],
+                }
+            }
+        }
+    }
+
+    fn assert_weighted_sum_matches_eventwise_baseline(fixture: &DeterministicFixture) {
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let expected_value = evaluator
+            .evaluate_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let expected_gradient = evaluator
+            .evaluate_gradient_local(&fixture.parameters)
+            .iter()
+            .zip(fixture.dataset.events_local().iter())
+            .fold(
+                DVector::zeros(fixture.parameters.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+    fn assert_mixed_normalization_components_match_combined_path(fixture: &DeterministicFixture) {
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let state = {
+            let resources = evaluator.resources.read();
+            evaluator.ensure_cached_integral_cache_state(&resources)
+        };
+        assert!(
+            !state.values.is_empty(),
+            "fixture should exercise cached normalization terms"
+        );
+        assert!(
+            !state.execution_sets.residual_amplitudes.is_empty(),
+            "fixture should exercise residual normalization amplitudes"
+        );
+
+        let (residual_value_sum, cached_value_sum) =
+            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        assert!(residual_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
+        assert!(cached_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
+        let combined_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            residual_value_sum + cached_value_sum,
+            combined_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let (residual_gradient_sum, cached_gradient_sum) =
+            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
+        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        assert!(residual_gradient_sum
+            .iter()
+            .any(|value| value.abs() > DETERMINISTIC_STRICT_ABS_TOL));
+        assert!(cached_gradient_sum
+            .iter()
+            .any(|value| value.abs() > DETERMINISTIC_STRICT_ABS_TOL));
+        for ((residual_item, cached_item), combined_item) in residual_gradient_sum
+            .iter()
+            .zip(cached_gradient_sum.iter())
+            .zip(combined_gradient.iter())
+        {
+            assert_relative_eq!(
+                residual_item + cached_item,
+                *combined_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
+    #[test]
+    fn test_deterministic_fixture_weighted_sums_stable_across_activation_mask_toggle() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let original_mask = evaluator.active_mask();
+
+        let original_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+
+        evaluator.isolate_many(&["p", "c"]);
+        assert_ne!(evaluator.active_mask(), original_mask);
+
+        evaluator
+            .set_active_mask(&original_mask)
+            .expect("original fixture active mask should restore");
+        assert_eq!(evaluator.active_mask(), original_mask);
+        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            original_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+    }
+
+    #[test]
+    fn test_deterministic_fixtures_match_eventwise_weighted_sums() {
+        let separable = make_deterministic_fixture(DeterministicFixtureKind::Separable);
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let non_separable = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+
+        assert_weighted_sum_matches_eventwise_baseline(&separable);
+        assert_weighted_sum_matches_eventwise_baseline(&partial);
+        assert_weighted_sum_matches_eventwise_baseline(&non_separable);
+    }
+    #[test]
+    fn test_deterministic_fixtures_cover_separable_partial_non_separable_models() {
+        let separable = make_deterministic_fixture(DeterministicFixtureKind::Separable);
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let non_separable = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+
+        let separable_evaluator = separable
+            .expression
+            .load(&separable.dataset)
+            .expect("separable evaluator should load");
+        let partial_evaluator = partial
+            .expression
+            .load(&partial.dataset)
+            .expect("partial evaluator should load");
+        let non_separable_evaluator = non_separable
+            .expression
+            .load(&non_separable.dataset)
+            .expect("non-separable evaluator should load");
+
+        assert_eq!(
+            separable_evaluator
+                .expression_precomputed_cached_integrals()
+                .len(),
+            2
+        );
+        assert_eq!(
+            partial_evaluator
+                .expression_precomputed_cached_integrals()
+                .len(),
+            1
+        );
+        assert!(non_separable_evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+    }
+    #[test]
+    fn test_partial_fixture_combined_normalization_components_match_total() {
+        let partial = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        assert_mixed_normalization_components_match_combined_path(&partial);
+    }
+    #[test]
+    fn test_non_separable_fixture_normalization_components_stay_residual_only() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::NonSeparable);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+        let resources = evaluator.resources.read();
+        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        assert!(state.values.is_empty());
+
+        let (residual_value_sum, cached_value_sum) =
+            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        assert_relative_eq!(
+            cached_value_sum,
+            0.0,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL
+        );
+        assert_relative_eq!(
+            residual_value_sum,
+            evaluator.evaluate_weighted_value_sum_local(&fixture.parameters),
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let (residual_gradient_sum, cached_gradient_sum) =
+            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
+        assert!(cached_gradient_sum
+            .iter()
+            .all(|value| value.abs() <= DETERMINISTIC_STRICT_ABS_TOL));
+        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        for (residual_item, combined_item) in
+            residual_gradient_sum.iter().zip(combined_gradient.iter())
+        {
+            assert_relative_eq!(
+                *residual_item,
+                *combined_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
         }
     }
 
@@ -2016,6 +4802,1395 @@ mod tests {
         assert_eq!(result_grad[0][1], Complex64::new(0.0, 10.0));
         assert_eq!(result_grad[1][0], Complex64::new(12.0, 0.0));
         assert_eq!(result_grad[1][1], Complex64::new(0.0, 12.0));
+    }
+
+    #[test]
+    fn test_load_compiles_expression_ir_once() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator.expression_slot_count() > 0);
+    }
+    #[test]
+    fn test_expression_ir_value_matches_lowered_runtime() {
+        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        .conj()
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
+        let lowered_runtime = evaluator.lowered_runtime();
+        let lowered_program = lowered_runtime.value_program();
+        let mut lowered_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let lowered_value =
+            evaluator.evaluate_expression_value_with_scratch(&amplitude_values, &mut ir_slots);
+        let direct_lowered_value =
+            lowered_program.evaluate_into(&amplitude_values, &mut lowered_slots);
+        let ir_value = evaluator
+            .expression_ir()
+            .evaluate_into(&amplitude_values, &mut ir_slots);
+        assert_relative_eq!(lowered_value.re, direct_lowered_value.re);
+        assert_relative_eq!(lowered_value.im, direct_lowered_value.im);
+        assert_relative_eq!(lowered_value.re, ir_value.re);
+        assert_relative_eq!(lowered_value.im, ir_value.im);
+    }
+    #[test]
+    fn test_expression_ir_load_initializes_with_lowered_value_runtime() {
+        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai"))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let lowered_runtime = evaluator.lowered_runtime();
+        assert_eq!(
+            lowered_runtime.value_program().kind(),
+            lowered::LoweredProgramKind::Value
+        );
+        assert_eq!(
+            lowered_runtime.gradient_program().kind(),
+            lowered::LoweredProgramKind::Gradient
+        );
+        assert_eq!(
+            lowered_runtime.value_gradient_program().kind(),
+            lowered::LoweredProgramKind::ValueGradient
+        );
+    }
+    #[test]
+    fn test_expression_ir_gradient_matches_lowered_runtime() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            * TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_value_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
+        let mut ir_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_ir().node_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let lowered_runtime = evaluator.lowered_runtime();
+        let lowered_program = lowered_runtime.gradient_program();
+        let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let mut lowered_gradient_slots: Vec<DVector<Complex64>> = (0..lowered_program
+            .scratch_slots())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect();
+        let active_gradient = evaluator.evaluate_expression_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let ir_gradient = evaluator.expression_ir().evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let lowered_gradient = lowered_program.evaluate_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut lowered_value_slots,
+            &mut lowered_gradient_slots,
+        );
+        for (active, lowered) in active_gradient.iter().zip(lowered_gradient.iter()) {
+            assert_relative_eq!(active.re, lowered.re);
+            assert_relative_eq!(active.im, lowered.im);
+        }
+        for (lowered, ir) in lowered_gradient.iter().zip(ir_gradient.iter()) {
+            assert_relative_eq!(lowered.re, ir.re);
+            assert_relative_eq!(lowered.im, ir.im);
+        }
+    }
+    #[test]
+    fn test_expression_ir_value_gradient_matches_lowered_runtime() {
+        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            resources.active_indices(),
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in resources.active_indices() {
+            active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let mut ir_value_slots = vec![Complex64::ZERO; evaluator.expression_ir().node_count()];
+        let mut ir_gradient_slots: Vec<DVector<Complex64>> =
+            (0..evaluator.expression_ir().node_count())
+                .map(|_| DVector::zeros(parameters.len()))
+                .collect();
+        let lowered_runtime = evaluator.lowered_runtime();
+        let lowered_program = lowered_runtime.value_gradient_program();
+        let mut lowered_value_slots = vec![Complex64::ZERO; lowered_program.scratch_slots()];
+        let mut lowered_gradient_slots: Vec<DVector<Complex64>> = (0..lowered_program
+            .scratch_slots())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect();
+
+        let active_value_gradient = evaluator.evaluate_expression_value_gradient_with_scratch(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let ir_value_gradient = evaluator.expression_ir().evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut ir_value_slots,
+            &mut ir_gradient_slots,
+        );
+        let lowered_value_gradient = lowered_program.evaluate_value_gradient_into(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut lowered_value_slots,
+            &mut lowered_gradient_slots,
+        );
+
+        assert_relative_eq!(active_value_gradient.0.re, lowered_value_gradient.0.re);
+        assert_relative_eq!(active_value_gradient.0.im, lowered_value_gradient.0.im);
+        for (active, lowered) in active_value_gradient
+            .1
+            .iter()
+            .zip(lowered_value_gradient.1.iter())
+        {
+            assert_relative_eq!(active.re, lowered.re);
+            assert_relative_eq!(active.im, lowered.im);
+        }
+        assert_relative_eq!(lowered_value_gradient.0.re, ir_value_gradient.0.re);
+        assert_relative_eq!(lowered_value_gradient.0.im, ir_value_gradient.0.im);
+        for (lowered, ir) in lowered_value_gradient
+            .1
+            .iter()
+            .zip(ir_value_gradient.1.iter())
+        {
+            assert_relative_eq!(lowered.re, ir.re);
+            assert_relative_eq!(lowered.im, ir.im);
+        }
+    }
+    #[test]
+    fn test_expression_runtime_diagnostics_reports_lowered_programs() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        let diagnostics = evaluator.expression_runtime_diagnostics();
+        assert!(diagnostics.ir_planning_enabled);
+        assert!(diagnostics.lowered_value_program_present);
+        assert!(diagnostics.lowered_gradient_program_present);
+        assert!(diagnostics.lowered_value_gradient_program_present);
+        assert!(diagnostics.residual_runtime_present);
+        assert_eq!(
+            diagnostics.specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::InitialLoad,
+            })
+        );
+    }
+    #[test]
+    fn test_expression_runtime_diagnostics_reports_specialization_origin() {
+        let fixture = make_deterministic_fixture(DeterministicFixtureKind::Partial);
+        let evaluator = fixture
+            .expression
+            .load(&fixture.dataset)
+            .expect("fixture evaluator should load");
+
+        assert_eq!(
+            evaluator
+                .expression_runtime_diagnostics()
+                .specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::InitialLoad,
+            })
+        );
+
+        evaluator.isolate_many(&["p"]);
+        assert_eq!(
+            evaluator
+                .expression_runtime_diagnostics()
+                .specialization_status,
+            Some(ExpressionSpecializationStatus {
+                origin: ExpressionSpecializationOrigin::CacheMissRebuild,
+            })
+        );
+    }
+    #[test]
+    fn test_active_mask_override_ignores_current_ir_specialization() {
+        let expr = ComplexScalar::new("amp", parameter("scale"), constant("amp_im", 0.0))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![2.0];
+
+        evaluator.deactivate("amp");
+        assert_eq!(evaluator.evaluate(&params)[0], Complex64::new(0.0, 0.0));
+
+        let overridden = evaluator
+            .evaluate_local_with_active_mask(&params, &[true])
+            .unwrap();
+        assert_eq!(overridden[0], Complex64::new(4.0, 0.0));
+
+        let overridden_fused = evaluator
+            .evaluate_with_gradient_local_with_active_mask(&params, &[true])
+            .unwrap();
+        assert_eq!(overridden_fused[0].0, Complex64::new(4.0, 0.0));
+        assert_eq!(overridden_fused[0].1[0], Complex64::new(4.0, 0.0));
+    }
+    #[test]
+    fn test_expression_ir_dependence_diagnostics_surface() {
+        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let annotations = evaluator.expression_node_dependence_annotations();
+        assert_eq!(annotations.len(), evaluator.expression_ir().node_count());
+        assert!(annotations
+            .iter()
+            .all(|dependence| *dependence == ExpressionDependence::Mixed));
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
+    }
+    #[test]
+    fn test_expression_ir_default_dependence_hint_is_mixed() {
+        let expr = ComplexScalar::new("c", parameter("cr"), parameter("ci")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
+    }
+    #[test]
+    fn test_expression_ir_parameter_only_dependence_hint_propagates() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::ParameterOnly
+        );
+    }
+    #[test]
+    fn test_expression_ir_cache_only_dependence_hint_propagates() {
+        let expr = CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::CacheOnly
+        );
+    }
+    #[test]
+    fn test_expression_ir_real_valued_hint_folds_imag_projection_to_zero() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+            .unwrap()
+            .imag();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let ir = evaluator.expression_ir();
+
+        assert!(matches!(
+            ir.nodes()[ir.root()],
+            ir::IrNode::Constant(value) if value == Complex64::ZERO
+        ));
+        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::ZERO);
+    }
+    #[test]
+    fn test_expression_ir_real_valued_hint_simplifies_conjugation() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+            .unwrap()
+            .conj();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let ir = evaluator.expression_ir();
+
+        assert!(matches!(ir.nodes()[ir.root()], ir::IrNode::Amp(0)));
+        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::new(2.5, 0.0));
+    }
+    #[test]
+    fn test_expression_ir_dependence_warnings_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            + &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator
+            .expression_dependence_warnings()
+            .iter()
+            .any(|warning| warning.contains("both ParameterOnly and CacheOnly")));
+    }
+    #[test]
+    fn test_expression_ir_normalization_plan_explain_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let explain = evaluator.expression_normalization_plan_explain();
+        assert_eq!(explain.root_dependence, ExpressionDependence::Mixed);
+        assert_eq!(explain.separable_mul_candidate_nodes.len(), 1);
+        assert_eq!(
+            explain.cached_separable_nodes,
+            explain.separable_mul_candidate_nodes
+        );
+        assert!(explain.residual_terms.iter().all(|index| {
+            !explain
+                .separable_mul_candidate_nodes
+                .iter()
+                .any(|candidate| candidate == index)
+        }));
+    }
+    #[test]
+    fn test_expression_ir_normalization_execution_sets_surface() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let sets = evaluator.expression_normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert!(sets.residual_amplitudes.is_empty());
+    }
+    #[test]
+    fn test_expression_ir_normalization_execution_sets_partial_surface() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let sets = evaluator.expression_normalization_execution_sets();
+        assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
+        assert_eq!(sets.cached_cache_amplitudes, vec![1]);
+        assert_eq!(sets.residual_amplitudes, vec![2]);
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_at_load() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let precomputed = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(precomputed.len(), 1);
+        let cache_reference = CacheOnlyScalar::new("k_ref")
+            .unwrap()
+            .load(&dataset)
+            .unwrap();
+        let cache_values = cache_reference.evaluate_local(&[]);
+        let expected_weighted_sum = cache_values
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(Complex64::ZERO, |acc, (value, event)| {
+                acc + (*value * event.weight())
+            });
+        assert_relative_eq!(
+            precomputed[0].weighted_cache_sum.re,
+            expected_weighted_sum.re
+        );
+        assert_relative_eq!(
+            precomputed[0].weighted_cache_sum.im,
+            expected_weighted_sum.im
+        );
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_empty_when_non_separable() {
+        let expr = TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_recompute_on_activation_change() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+
+        evaluator.isolate_many(&["p"]);
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integrals_recompute_on_dataset_change() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let before = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(before.len(), 1);
+
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+        let after = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].weighted_cache_sum, Complex64::ZERO);
+        assert!(before[0].weighted_cache_sum != after[0].weighted_cache_sum);
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integral_gradient_terms_scale_by_cache_integrals() {
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+        let gradient_terms =
+            evaluator.expression_precomputed_cached_integral_gradient_terms(&[1.25]);
+        assert_eq!(gradient_terms.len(), 1);
+        assert_eq!(gradient_terms[0].weighted_gradient.len(), 1);
+        assert_relative_eq!(
+            gradient_terms[0].weighted_gradient[0].re,
+            cached_integrals[0].weighted_cache_sum.re,
+            epsilon = 1e-6
+        );
+        assert_relative_eq!(
+            gradient_terms[0].weighted_gradient[0].im,
+            cached_integrals[0].weighted_cache_sum.im,
+            epsilon = 1e-6
+        );
+    }
+    #[test]
+    fn test_expression_ir_precomputed_cached_integral_gradient_terms_empty_when_not_separable() {
+        let expr = TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        assert!(evaluator
+            .expression_precomputed_cached_integral_gradient_terms(&[0.1, -0.2])
+            .is_empty());
+    }
+    #[test]
+    fn test_expression_ir_lowered_cached_factor_programs_match_ir_cached_paths() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
+        let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
+
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            &state.execution_sets.cached_parameter_amplitudes,
+            &parameters,
+            &resources.caches[0],
+        );
+        let cached_value_ir =
+            evaluator.evaluate_cached_weighted_value_sum_ir(&state, &amplitude_values);
+        let cached_value_lowered = evaluator
+            .evaluate_cached_weighted_value_sum_lowered(
+                &state,
+                lowered_artifacts.as_ref(),
+                &amplitude_values,
+            )
+            .expect("cached value lowering should succeed");
+        assert_relative_eq!(cached_value_lowered, cached_value_ir, epsilon = 1e-12);
+
+        let mut cached_parameter_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in &state.execution_sets.cached_parameter_amplitudes {
+            cached_parameter_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &cached_parameter_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let cached_gradient_ir = evaluator.evaluate_cached_weighted_gradient_sum_ir(
+            &state,
+            &amplitude_values,
+            &amplitude_gradients,
+            parameters.len(),
+        );
+        let cached_gradient_lowered = evaluator
+            .evaluate_cached_weighted_gradient_sum_lowered(
+                &state,
+                lowered_artifacts.as_ref(),
+                &amplitude_values,
+                &amplitude_gradients,
+                parameters.len(),
+            )
+            .expect("cached gradient lowering should succeed");
+        for (lowered, ir) in cached_gradient_lowered
+            .iter()
+            .zip(cached_gradient_ir.iter())
+        {
+            assert_relative_eq!(*lowered, *ir, epsilon = 1e-12);
+        }
+    }
+    #[test]
+    fn test_expression_ir_lowered_residual_runtime_matches_zeroed_node_path() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let resources = evaluator.resources.read();
+        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
+        let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
+
+        let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
+        evaluator.fill_amplitude_values(
+            &mut amplitude_values,
+            &state.execution_sets.residual_amplitudes,
+            &parameters,
+            &resources.caches[0],
+        );
+        let residual_value_ir = evaluator.evaluate_residual_value_ir(&state, &amplitude_values);
+        let residual_program = lowered_artifacts
+            .residual_runtime
+            .as_ref()
+            .map(|runtime| runtime.value_program())
+            .expect("residual value lowering should succeed");
+        let mut value_slots = vec![Complex64::ZERO; residual_program.scratch_slots()];
+        let residual_value_lowered =
+            residual_program.evaluate_into(&amplitude_values, &mut value_slots);
+        assert_relative_eq!(
+            residual_value_lowered.re,
+            residual_value_ir.re,
+            epsilon = 1e-12
+        );
+        assert_relative_eq!(
+            residual_value_lowered.im,
+            residual_value_ir.im,
+            epsilon = 1e-12
+        );
+
+        let mut residual_active_mask = vec![false; evaluator.amplitudes.len()];
+        for &index in &state.execution_sets.residual_amplitudes {
+            residual_active_mask[index] = true;
+        }
+        let mut amplitude_gradients = (0..evaluator.amplitudes.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect::<Vec<_>>();
+        evaluator.fill_amplitude_gradients(
+            &mut amplitude_gradients,
+            &residual_active_mask,
+            &parameters,
+            &resources.caches[0],
+        );
+        let residual_gradient_ir = evaluator.evaluate_residual_gradient_ir(
+            &state,
+            &amplitude_values,
+            &amplitude_gradients,
+            parameters.len(),
+        );
+        let residual_gradient_lowered = evaluator
+            .evaluate_residual_gradient_lowered(
+                &state,
+                lowered_artifacts.as_ref(),
+                &amplitude_values,
+                &amplitude_gradients,
+                parameters.len(),
+            )
+            .expect("residual gradient lowering should succeed");
+        for (lowered, ir) in residual_gradient_lowered
+            .iter()
+            .zip(residual_gradient_ir.iter())
+        {
+            assert_relative_eq!(lowered.re, ir.re, epsilon = 1e-12);
+            assert_relative_eq!(lowered.im, ir.im, epsilon = 1e-12);
+        }
+    }
+    #[test]
+    fn test_expression_ir_reuses_lowered_artifacts_when_dataset_key_changes() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(test_dataset());
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+
+        assert_eq!(evaluator.specialization_cache_len(), 1);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
+
+        evaluator.reset_expression_compile_metrics();
+        evaluator.reset_expression_specialization_metrics();
+
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+        assert_eq!(cached_integrals[0].weighted_cache_sum, Complex64::ZERO);
+
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 1,
+            }
+        );
+
+        let compile_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(compile_metrics.specialization_cache_hits, 0);
+        assert_eq!(compile_metrics.specialization_cache_misses, 1);
+        assert_eq!(compile_metrics.specialization_lowering_cache_hits, 1);
+        assert_eq!(compile_metrics.specialization_lowering_cache_misses, 0);
+        assert!(compile_metrics.specialization_ir_compile_nanos > 0);
+        assert!(compile_metrics.specialization_cached_integrals_nanos > 0);
+        assert_eq!(compile_metrics.specialization_lowering_nanos, 0);
+    }
+
+    #[test]
+    fn test_evaluate_weighted_gradient_sum_local_matches_eventwise_baseline() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+        let expected = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_evaluate_weighted_value_sum_local_matches_eventwise_baseline() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+        let expected = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(actual, expected, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_sums_match_hardcoded_reference_values() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+
+        let metadata = Arc::new(DatasetMetadata::default());
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                    aux: vec![],
+                    weight: 0.5,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                    aux: vec![],
+                    weight: -1.25,
+                }),
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                    aux: vec![],
+                    weight: 2.0,
+                }),
+            ],
+            metadata,
+        ));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![0.7, -1.1, 0.9, -0.4];
+
+        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(weighted_value_sum, 22.7725, epsilon = 1e-12);
+
+        let weighted_gradient_sum = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        let free_parameters = evaluator
+            .free_parameters()
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(free_parameters, vec!["p1", "p2", "m1r", "m1i"]);
+        let expected_gradient = [43.925, 7.25, 28.525, 0.0];
+        assert_eq!(weighted_gradient_sum.len(), expected_gradient.len());
+        for (actual, expected) in weighted_gradient_sum.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(*actual, *expected, epsilon = 1e-9);
+        }
+    }
+    #[test]
+    fn test_evaluate_weighted_gradient_sum_local_respects_signed_cached_terms() {
+        let expr = Expression::one()
+            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+                * &CacheOnlyScalar::new("k").unwrap());
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            -1
+        );
+        let params = vec![0.75];
+        let expected = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
+            assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
+        }
+    }
+    #[test]
+    fn test_evaluate_weighted_value_sum_local_respects_signed_cached_terms() {
+        let expr = Expression::one()
+            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+                * &CacheOnlyScalar::new("k").unwrap());
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            -1
+        );
+        let params = vec![0.75];
+        let expected = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        assert_relative_eq!(actual, expected, epsilon = 1e-10);
+    }
+    #[test]
+    fn test_expression_ir_diagnostics_follow_activation_changes() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let all_active = evaluator.expression_normalization_plan_explain();
+        assert_eq!(all_active.cached_separable_nodes.len(), 1);
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::Mixed
+        );
+
+        evaluator.isolate_many(&["p"]);
+        let param_only = evaluator.expression_normalization_plan_explain();
+        assert!(param_only.cached_separable_nodes.is_empty());
+        assert_eq!(
+            evaluator.expression_root_dependence(),
+            ExpressionDependence::ParameterOnly
+        );
+    }
+    #[test]
+    fn test_expression_ir_specialization_cache_reuses_prior_mask_specializations() {
+        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap())
+            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let initial_compile_metrics = evaluator.expression_compile_metrics();
+        assert!(initial_compile_metrics.initial_ir_compile_nanos > 0);
+        assert!(initial_compile_metrics.initial_cached_integrals_nanos > 0);
+        assert!(initial_compile_metrics.initial_lowering_nanos > 0);
+        assert_eq!(initial_compile_metrics.specialization_cache_hits, 0);
+        assert_eq!(initial_compile_metrics.specialization_cache_misses, 0);
+        assert_eq!(
+            initial_compile_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            initial_compile_metrics.specialization_lowering_cache_misses,
+            1
+        );
+
+        assert_eq!(evaluator.specialization_cache_len(), 1);
+        assert_eq!(evaluator.lowered_artifact_cache_len(), 1);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 1,
+            }
+        );
+        let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
+
+        evaluator.isolate_many(&["p"]);
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 0,
+                cache_misses: 2,
+            }
+        );
+        let after_cache_miss_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(after_cache_miss_metrics.specialization_cache_hits, 0);
+        assert_eq!(after_cache_miss_metrics.specialization_cache_misses, 1);
+        assert_eq!(
+            after_cache_miss_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            after_cache_miss_metrics.specialization_lowering_cache_misses,
+            2
+        );
+        assert!(after_cache_miss_metrics.specialization_ir_compile_nanos > 0);
+        assert!(after_cache_miss_metrics.specialization_cached_integrals_nanos > 0);
+        assert!(after_cache_miss_metrics.specialization_lowering_nanos > 0);
+        assert!(evaluator
+            .expression_precomputed_cached_integrals()
+            .is_empty());
+
+        evaluator.activate_many(&["k", "m"]);
+        assert_eq!(evaluator.specialization_cache_len(), 2);
+        assert_eq!(
+            evaluator.expression_specialization_metrics(),
+            ExpressionSpecializationMetrics {
+                cache_hits: 1,
+                cache_misses: 2,
+            }
+        );
+        assert_eq!(
+            evaluator.expression_precomputed_cached_integrals(),
+            all_active_cached_integrals
+        );
+        let after_cache_hit_metrics = evaluator.expression_compile_metrics();
+        assert_eq!(after_cache_hit_metrics.specialization_cache_hits, 1);
+        assert_eq!(after_cache_hit_metrics.specialization_cache_misses, 1);
+        assert_eq!(
+            after_cache_hit_metrics.specialization_lowering_cache_hits,
+            0
+        );
+        assert_eq!(
+            after_cache_hit_metrics.specialization_lowering_cache_misses,
+            2
+        );
+        assert!(after_cache_hit_metrics.specialization_cache_restore_nanos > 0);
+    }
+
+    #[test]
+    fn test_weighted_sums_match_baseline_after_activation_changes() {
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+
+        evaluator.isolate_many(&["p1", "c1", "m1", "c3"]);
+
+        let expected_value = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        assert_relative_eq!(
+            evaluator.evaluate_weighted_value_sum_local(&params),
+            expected_value,
+            epsilon = 1e-10
+        );
+    }
+
+    #[test]
+    fn test_evaluate_local_does_not_depend_on_dataset_rows() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let expected_len = evaluator.resources.read().caches.len();
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+        let cached = evaluator.evaluate_local(&[1.25, -0.75]);
+        assert_eq!(cached.len(), expected_len);
+    }
+
+    #[test]
+    fn test_evaluate_gradient_local_does_not_depend_on_dataset_rows() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let mut evaluator = expr.load(&dataset).unwrap();
+        drop(dataset);
+        let expected_len = evaluator.resources.read().caches.len();
+        Arc::get_mut(&mut evaluator.dataset)
+            .expect("evaluator should own dataset Arc in this test")
+            .clear_events_local();
+        let cached = evaluator.evaluate_gradient_local(&[1.25, -0.75]);
+        assert_eq!(cached.len(), expected_len);
+    }
+
+    #[test]
+    fn test_evaluate_with_gradient_local_matches_separate_paths() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = [1.25, -0.75];
+        let values = evaluator.evaluate_local(&params);
+        let gradients = evaluator.evaluate_gradient_local(&params);
+        let fused = evaluator.evaluate_with_gradient_local(&params);
+        assert_eq!(fused.len(), values.len());
+        assert_eq!(fused.len(), gradients.len());
+        for ((value_gradient, value), gradient) in
+            fused.iter().zip(values.iter()).zip(gradients.iter())
+        {
+            let (fused_value, fused_gradient) = value_gradient;
+            assert_relative_eq!(fused_value.re, value.re, epsilon = 1e-12);
+            assert_relative_eq!(fused_value.im, value.im, epsilon = 1e-12);
+            assert_eq!(fused_gradient.len(), gradient.len());
+            for (fused_item, item) in fused_gradient.iter().zip(gradient.iter()) {
+                assert_relative_eq!(fused_item.re, item.re, epsilon = 1e-12);
+                assert_relative_eq!(fused_item.im, item.im, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn test_evaluate_with_gradient_batch_local_matches_separate_paths() {
+        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+            .unwrap()
+            .norm_sqr();
+        let dataset = Arc::new(Dataset::new(vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ]));
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = [0.5, -1.25];
+        let indices = vec![0, 2, 3];
+        let values = evaluator.evaluate_batch_local(&params, &indices);
+        let gradients = evaluator.evaluate_gradient_batch_local(&params, &indices);
+        let fused = evaluator.evaluate_with_gradient_batch_local(&params, &indices);
+        assert_eq!(fused.len(), values.len());
+        assert_eq!(fused.len(), gradients.len());
+        for ((value_gradient, value), gradient) in
+            fused.iter().zip(values.iter()).zip(gradients.iter())
+        {
+            let (fused_value, fused_gradient) = value_gradient;
+            assert_relative_eq!(fused_value.re, value.re, epsilon = 1e-12);
+            assert_relative_eq!(fused_value.im, value.im, epsilon = 1e-12);
+            assert_eq!(fused_gradient.len(), gradient.len());
+            for (fused_item, item) in fused_gradient.iter().zip(gradient.iter()) {
+                assert_relative_eq!(fused_item.re, item.re, epsilon = 1e-12);
+                assert_relative_eq!(fused_item.im, item.im, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn test_precompute_all_columnar_populates_cache() {
+        let mut event1 = test_event();
+        event1.p4s[0].t = 7.5;
+        let mut event2 = test_event();
+        event2.p4s[0].t = 8.25;
+        let mut event3 = test_event();
+        event3.p4s[0].t = 9.0;
+        let dataset = Dataset::new_with_metadata(
+            vec![Arc::new(event1), Arc::new(event2), Arc::new(event3)],
+            Arc::new(DatasetMetadata::default()),
+        );
+        let mut amplitude = TestAmplitude {
+            name: "test".to_string(),
+            re: parameter("real"),
+            pid_re: ParameterID::default(),
+            im: parameter("imag"),
+            pid_im: ParameterID::default(),
+            beam_energy: Default::default(),
+        };
+        let mut resources = Resources::default();
+        amplitude
+            .register(&mut resources)
+            .expect("test amplitude should register");
+        resources.reserve_cache(dataset.n_events());
+        amplitude.precompute_all(&dataset, &mut resources);
+        for cache in &resources.caches {
+            assert!(cache.get_scalar(amplitude.beam_energy) > 0.0);
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_load_reserves_local_cache_size_in_mpi() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+
+        use_mpi(true);
+        assert!(get_world().is_some(), "MPI world should be initialized");
+
+        let expr = ComplexScalar::new(
+            "constant",
+            constant("const_re", 2.0),
+            constant("const_im", 3.0),
+        )
+        .expect("constant amplitude should construct");
+        let events = vec![
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+            Arc::new(test_event()),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let local_events = dataset.n_events_local();
+        let cache_len = evaluator.resources.read().caches.len();
+
+        assert_eq!(
+            cache_len, local_events,
+            "cache length must match local event count under MPI"
+        );
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_expression_ir_cached_integrals_are_rank_local_in_mpi() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+        use mpi::{collective::SystemOperation, topology::Communicator, traits::*};
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            * &CacheOnlyScalar::new("k").unwrap();
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: 1.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 1.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 4.0)],
+                aux: vec![],
+                weight: 2.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 2.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 6.0)],
+                aux: vec![],
+                weight: 3.0,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 7.0)],
+                aux: vec![],
+                weight: 3.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 8.0)],
+                aux: vec![],
+                weight: 4.0,
+            }),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        assert_eq!(cached_integrals.len(), 1);
+
+        let local_expected = dataset.events_local().iter().fold(0.0, |acc, event| {
+            acc + event.weight() * event.data().p4s[0].e()
+        });
+        let cached_local = cached_integrals[0].weighted_cache_sum;
+        assert_relative_eq!(cached_local.re, local_expected, epsilon = 1e-12);
+        assert_relative_eq!(cached_local.im, 0.0, epsilon = 1e-12);
+
+        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&[2.0]);
+        assert_relative_eq!(weighted_value_sum, 2.0 * local_expected, epsilon = 1e-10);
+
+        let mut global_expected = 0.0;
+        world.all_reduce_into(
+            &local_expected,
+            &mut global_expected,
+            SystemOperation::sum(),
+        );
+        if world.size() > 1 {
+            assert!(
+                (cached_local.re - global_expected).abs() > 1e-12,
+                "cached integral should remain rank-local before MPI reduction"
+            );
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn test_expression_ir_weighted_sum_mpi_matches_global_eventwise_baseline() {
+        use crate::mpi::{finalize_mpi, get_world, use_mpi};
+        use mpi::{collective::SystemOperation, traits::*};
+
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let c1 = CacheOnlyScalar::new("c1").unwrap();
+        let c2 = CacheOnlyScalar::new("c2").unwrap();
+        let c3 = CacheOnlyScalar::new("c3").unwrap();
+        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
+        let events = vec![
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 1.0)],
+                aux: vec![],
+                weight: 0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 2.0)],
+                aux: vec![],
+                weight: -1.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 3.0)],
+                aux: vec![],
+                weight: 0.75,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 4.0)],
+                aux: vec![],
+                weight: 1.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 5.0)],
+                aux: vec![],
+                weight: 2.25,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 6.0)],
+                aux: vec![],
+                weight: -0.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 7.0)],
+                aux: vec![],
+                weight: 3.5,
+            }),
+            Arc::new(EventData {
+                p4s: vec![Vec4::new(0.0, 0.0, 0.0, 8.0)],
+                aux: vec![],
+                weight: 1.25,
+            }),
+        ];
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            events,
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).expect("evaluator should load");
+        let params = vec![0.2, -0.3, 1.1, -0.7];
+
+        let local_expected_value = evaluator
+            .evaluate_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(0.0, |accum, (value, event)| {
+                accum + event.weight() * value.re
+            });
+        let mut global_expected_value = 0.0;
+        world.all_reduce_into(
+            &local_expected_value,
+            &mut global_expected_value,
+            SystemOperation::sum(),
+        );
+        let mpi_value = evaluator.evaluate_weighted_value_sum_mpi(&params, &world);
+        assert_relative_eq!(mpi_value, global_expected_value, epsilon = 1e-10);
+
+        let local_expected_gradient = evaluator
+            .evaluate_gradient_local(&params)
+            .iter()
+            .zip(dataset.events_local().iter())
+            .fold(
+                DVector::zeros(params.len()),
+                |mut accum, (gradient, event)| {
+                    accum += gradient.map(|value| value.re).scale(event.weight());
+                    accum
+                },
+            );
+        let mut global_expected_gradient = vec![0.0; local_expected_gradient.len()];
+        world.all_reduce_into(
+            local_expected_gradient.as_slice(),
+            &mut global_expected_gradient,
+            SystemOperation::sum(),
+        );
+        let mpi_gradient = evaluator.evaluate_weighted_gradient_sum_mpi(&params, &world);
+        for (actual, expected) in mpi_gradient.iter().zip(global_expected_gradient.iter()) {
+            assert_relative_eq!(*actual, *expected, epsilon = 1e-10);
+        }
+
+        finalize_mpi();
+    }
+
+    #[test]
+    fn test_evaluate_local_succeeds_for_constant_amplitude() {
+        let expr = ComplexScalar::new(
+            "constant",
+            constant("const_re", 2.0),
+            constant("const_im", 3.0),
+        )
+        .unwrap();
+        let dataset = Arc::new(Dataset::new_with_metadata(
+            vec![Arc::new(test_event())],
+            Arc::new(DatasetMetadata::default()),
+        ));
+        let evaluator = expr.load(&dataset).unwrap();
+        let values = evaluator.evaluate_local(&[]);
+        assert_eq!(values.len(), 1);
+        let gradients = evaluator.evaluate_gradient_local(&[]);
+        assert_eq!(gradients.len(), 1);
     }
 
     #[test]
@@ -2370,6 +6545,25 @@ mod tests {
         // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
+    }
+    #[test]
+    fn test_default_build_uses_lowered_expression_runtime() {
+        let expr = ComplexScalar::new(
+            "opt_in_gate",
+            constant("opt_in_gate_re", 2.0),
+            constant("opt_in_gate_im", 0.0),
+        )
+        .unwrap()
+        .norm_sqr();
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let diagnostics = evaluator.expression_runtime_diagnostics();
+        assert!(diagnostics.ir_planning_enabled);
+        assert!(diagnostics.lowered_value_program_present);
+        assert!(diagnostics.lowered_gradient_program_present);
+        assert!(diagnostics.lowered_value_gradient_program_present);
+        assert_eq!(evaluator.evaluate(&[])[0], Complex64::new(4.0, 0.0));
     }
 
     #[test]

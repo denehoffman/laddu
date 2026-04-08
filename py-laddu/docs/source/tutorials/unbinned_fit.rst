@@ -165,13 +165,20 @@ Finally, let's run the fit. By default, we will be using the L-BFGS-B algorithm,
 
 .. code:: python
 
-   status = nll.minimize([100.0, 100.0, 100.0, 0.100, 0.100], bounds=[(None, None), (None, None), (None, None), (0.001, 0.4), (0.001, 0.4)])
+   import ganesh
 
-The ``status`` object contains a lot of information about the fit result, particularly we can check ``status.converged`` to see if the fit was successful, ``status.x`` to see the best position, ``status.err`` to get uncertainties, and ``status.fx`` to view the negative log-likelihood. We can also print it all out at once:
+   result = nll.minimize(
+       [100.0, 100.0, 100.0, 0.100, 0.100],
+       config=ganesh.LBFGSBConfig(
+           bounds=[(None, None), (None, None), (None, None), (0.001, 0.4), (0.001, 0.4)]
+       ),
+   )
+
+The ``result`` object is a Ganesh minimization summary. In particular, we can check ``result.success`` to see if the fit was successful, ``result.x`` to see the best position, ``result.std`` to get uncertainties when available, and ``result.fx`` to view the negative log-likelihood. We can also print it all out at once:
 
 .. code:: python
 
-   print(status)
+   print(result)
 
 .. code::
 
@@ -191,13 +198,18 @@ The ``status`` object contains a lot of information about the fit result, partic
    │     4 ║    +7.931E-2 │    +3.144E-4 ║    +1.000E-1 │    +1.000E-3 │    +4.000E-1 │           │
    └───────╨──────────────┴──────────────╨──────────────┴──────────────┴──────────────┴───────────┘
 
-Now that we have the fitted free parameters, we can plot the result by calculating weights for the accepted Monte Carlo. This will be done using the ``NLL.project`` and ``NLL.project_with`` methods. Every amplitude in the model is either activated or deactivated. Deactivated amplitudes act like zeros in the model, so we can deactive certain amplitudes to isolate others. The ``NLL.project_with`` method provides a shorthand way to do this, isolating the given amplitudes for just a single calculation before reverting the ``NLL`` back to its prior state. ``NLL.project`` just calculates weights given all currently active amplitudes, and if we don't deactivate any, this will give us the total fit result.
+Now that we have the fitted free parameters, we can plot the result by calculating weights for the accepted Monte Carlo. This will be done using the ``NLL.project_weights`` method. Every amplitude in the model is either activated or deactivated. Deactivated amplitudes act like zeros in the model, so we can isolate certain amplitudes by passing them through the ``subset=...`` keyword argument for just a single calculation before reverting the ``NLL`` back to its prior state. If we need several projections at once, we can batch them with ``subsets=[...]``. A ``None`` entry means "use the full currently active model", so we can request the total and selected components in one call.
 
 .. code:: python
 
-   tot_weights = nll.project(status.x)
-   f0_weights = nll.project_with(status.x, ["[f_0(1500)]", "BW_0", "Z00+"])
-   f2_weights = nll.project_with(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"])
+   tot_weights, f0_weights, f2_weights = nll.project_weights(
+       result.x,
+       subsets=[
+           None,
+           ["[f_0(1500)]", "BW_0", "Z00+"],
+           ["[f_2'(1525)]", "BW_2", "Z22+"],
+       ],
+   )
 
    fig, ax = plt.subplots(ncols=2, sharey=True)
    # Plot the data on both axes
@@ -268,9 +280,15 @@ To create an ``Evaluator`` object, we just need to load up the model and dataset
 .. code:: python
 
    gen_eval = model.load(genmc_ds)
-   tot_weights_acc = nll.project(status.x, mc_evaluator=gen_eval)
-   f0_weights_acc = nll.project_with(status.x, ["[f_0(1500)]", "BW_0", "Z00+"], mc_evaluator=gen_eval)
-   f2_weights_acc = nll.project_with(status.x, ["[f_2'(1525)]", "BW_2", "Z22+"], mc_evaluator=gen_eval)
+   tot_weights_acc, f0_weights_acc, f2_weights_acc = nll.project_weights(
+       result.x,
+       subsets=[
+           None,
+           ["[f_0(1500)]", "BW_0", "Z00+"],
+           ["[f_2'(1525)]", "BW_2", "Z22+"],
+       ],
+       mc_evaluator=gen_eval,
+   )
 
    # acceptance-correct the data distribution
    m_data_hist, _ = np.histogram(m_data, bins=100, range=(1.0, 2.0))
@@ -310,8 +328,8 @@ Finally, we might want to save this fit result and refer back to it in the futur
 
 .. code:: python
 
-   status.save_as("fit_result.pkl")
-   # This saves the status to a file called "fit_result.pkl"
+   result.save_as("fit_result.pkl")
+   # This saves the minimization summary to a file called "fit_result.pkl"
 
    saved_status = Status.load("fit_result.pkl")
    # Now we've loaded that fit result again

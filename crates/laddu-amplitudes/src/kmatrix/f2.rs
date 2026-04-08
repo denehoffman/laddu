@@ -1,7 +1,7 @@
 use super::FixedKMatrix;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, ParameterLike},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
     Expression, LadduResult,
@@ -168,7 +168,7 @@ impl Amplitude for KopfKMatrixF2 {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
@@ -176,8 +176,7 @@ impl Amplitude for KopfKMatrixF2 {
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let betas = SVector::from_fn(|i, _| {
             Complex64::new(
                 parameters.get(self.couplings_indices_real[i]),
@@ -188,11 +187,9 @@ impl Amplitude for KopfKMatrixF2 {
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         FixedKMatrix::compute(&betas, &ikc_inv_vec, &p_vec_constants)
     }
-
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {

@@ -165,10 +165,13 @@ pub mod mpi {
     ///
     /// </div>
     pub fn finalize_mpi() {
-        if using_mpi() {
-            let mut universe = MPI_UNIVERSE.get().unwrap().write();
-            *universe = None;
+        if get_world().is_some() {
+            if let Some(universe_lock) = MPI_UNIVERSE.get() {
+                let mut universe = universe_lock.write();
+                *universe = None;
+            }
         }
+        USE_MPI.store(false, Ordering::SeqCst);
     }
 
     /// Check if MPI backend is enabled
@@ -296,6 +299,14 @@ pub mod mpi {
             total: usize,
             stride: Option<usize>,
         ) -> Vec<T>;
+        /// Gather local slices into a buffer using explicit
+        /// `(counts, displacements)` in element units.
+        fn all_gather_with_counts<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            counts: &[i32],
+            displs: &[i32],
+        ) -> Vec<T>;
         /// Gather batches corresponding to arbitrary global indices while
         /// preserving the order of `global_indices`.
         fn all_gather_batched_partitioned<T: Equivalence + Default + Clone>(
@@ -356,6 +367,31 @@ pub mod mpi {
             let (counts, displs) = counts_displs(size, total, stride);
             {
                 let mut partition = PartitionMut::new(&mut out, counts, displs);
+                self.all_gather_varcount_into(local, &mut partition);
+            }
+            out
+        }
+
+        fn all_gather_with_counts<T: Equivalence + Default + Clone>(
+            &self,
+            local: &[T],
+            counts: &[i32],
+            displs: &[i32],
+        ) -> Vec<T> {
+            assert_eq!(
+                counts.len(),
+                displs.len(),
+                "Counts and displacements must have the same length"
+            );
+            assert_eq!(
+                counts.len(),
+                self.size() as usize,
+                "Counts/displacements must match communicator size"
+            );
+            let total = counts.iter().map(|count| *count as usize).sum();
+            let mut out = vec![T::default(); total];
+            {
+                let mut partition = PartitionMut::new(&mut out, counts.to_vec(), displs.to_vec());
                 self.all_gather_varcount_into(local, &mut partition);
             }
             out
@@ -423,9 +459,8 @@ pub mod mpi {
                 let mut cursor = displs[rank] as usize;
                 for &target in &targets_by_rank[rank] {
                     let dst = target * stride;
-                    for offset in 0..stride {
-                        result[dst + offset] = gathered[cursor + offset].clone();
-                    }
+                    result[dst..(stride + dst)]
+                        .clone_from_slice(&gathered[cursor..(stride + cursor)]);
                     cursor += stride;
                 }
             }
@@ -496,10 +531,15 @@ use thiserror::Error;
 pub mod amplitudes;
 /// Methods for loading and manipulating [`EventData`]-based data.
 pub mod data;
+/// Prototype execution context API for thread-policy and scratch reuse.
+#[cfg(feature = "execution-context-prototype")]
+pub mod execution_context;
 /// Utilities for tracking parameter state across expressions and likelihoods.
 pub mod parameter_manager;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
+/// Shared per-call thread-pool reuse utilities.
+pub mod thread_pool;
 /// Utility functions, enums, and traits
 pub mod utils;
 /// Useful traits for all crate structs
@@ -512,10 +552,13 @@ pub mod traits {
 pub use crate::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, Event, EventData,
 };
+#[cfg(feature = "execution-context-prototype")]
+pub use crate::execution_context::{ExecutionContext, ScratchAllocator, ThreadPolicy};
 pub use crate::resources::{
     Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ParameterID, Parameters,
     Resources, ScalarID, VectorID,
 };
+pub use crate::thread_pool::ThreadPoolManager;
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
@@ -533,16 +576,16 @@ pub type LadduResult<T> = Result<T, LadduError>;
 #[derive(Error, Debug)]
 pub enum LadduError {
     /// An alias for [`std::io::Error`].
-    #[error("IO Error: {0}")]
+    #[error(transparent)]
     IOError(#[from] std::io::Error),
     /// An alias for [`parquet::errors::ParquetError`].
-    #[error("Parquet Error: {0}")]
+    #[error(transparent)]
     ParquetError(#[from] parquet::errors::ParquetError),
     /// An alias for [`arrow::error::ArrowError`].
-    #[error("Arrow Error: {0}")]
+    #[error(transparent)]
     ArrowError(#[from] arrow::error::ArrowError),
     /// An alias for [`shellexpand::LookupError`].
-    #[error("Failed to expand path: {0}")]
+    #[error(transparent)]
     LookupError(#[from] shellexpand::LookupError<std::env::VarError>),
     /// An error which occurs when the user tries to register two amplitudes by the same name.
     #[error("An amplitude by the name \"{name}\" is already registered!")]
@@ -565,14 +608,11 @@ pub enum LadduError {
         /// The name of the object it failed to parse into
         object: String,
     },
-    /// An error returned by the Rust encoder
-    #[error("Encoder error: {0}")]
-    EncodeError(#[from] bincode::error::EncodeError),
-    /// An error returned by the Rust decoder
-    #[error("Decoder error: {0}")]
-    DecodeError(#[from] bincode::error::DecodeError),
+    /// An error returned by internal bitcode serialization
+    #[error(transparent)]
+    BitcodeError(#[from] bitcode::Error),
     /// An error returned by the Python pickle (de)serializer
-    #[error("Pickle conversion error: {0}")]
+    #[error(transparent)]
     PickleError(#[from] serde_pickle::Error),
     /// An error which occurs when parameter definitions conflict or clash.
     #[error("Parameter \"{name}\" conflict: {reason}")]
@@ -590,13 +630,19 @@ pub enum LadduError {
         /// Reason for failure
         reason: String,
     },
+    /// An error which occurs during execution-context setup.
+    #[error("Execution context setup failed: {reason}")]
+    ExecutionContextError {
+        /// Description of setup failure
+        reason: String,
+    },
     /// An error type for [`rayon`] thread pools
     #[cfg(feature = "rayon")]
-    #[error("Error building thread pool: {0}")]
+    #[error(transparent)]
     ThreadPoolError(#[from] rayon::ThreadPoolBuildError),
     /// An error type for [`numpy`]-related conversions
     #[cfg(feature = "numpy")]
-    #[error("Numpy error: {0}")]
+    #[error(transparent)]
     NumpyError(#[from] numpy::FromVecError),
     /// A required column was not found in the input
     #[error("Required column \"{name}\" was not found in the dataset")]
@@ -611,6 +657,16 @@ pub enum LadduError {
         name: String,
         /// Detected data type
         datatype: String,
+    },
+    /// A value has an unexpected length.
+    #[error("{context} length mismatch: expected {expected}, received {actual}")]
+    LengthMismatch {
+        /// Description of what length was validated.
+        context: String,
+        /// Expected length.
+        expected: usize,
+        /// Actual length observed.
+        actual: usize,
     },
     /// A duplicate name was provided for p4 or aux data
     #[error("Duplicate {category} name \"{name}\" provided")]
@@ -632,6 +688,18 @@ pub enum LadduError {
     /// category.
     #[error("{0}")]
     Custom(String),
+}
+
+/// Validate the number of free parameters supplied to a public entrypoint.
+pub fn validate_free_parameter_len(input_len: usize, expected_len: usize) -> LadduResult<()> {
+    if input_len != expected_len {
+        return Err(LadduError::LengthMismatch {
+            context: "free parameter vector".to_string(),
+            expected: expected_len,
+            actual: input_len,
+        });
+    }
+    Ok(())
 }
 
 impl Clone for LadduError {
@@ -656,21 +724,22 @@ impl From<LadduError> for PyErr {
             LadduError::ParquetError(_)
             | LadduError::ArrowError(_)
             | LadduError::IOError(_)
-            | LadduError::EncodeError(_)
-            | LadduError::DecodeError(_)
+            | LadduError::BitcodeError(_)
             | LadduError::PickleError(_) => PyIOError::new_err(err_string),
             LadduError::MissingColumn { .. } | LadduError::UnknownName { .. } => {
                 PyKeyError::new_err(err_string)
             }
             LadduError::InvalidColumnType { .. }
+            | LadduError::LengthMismatch { .. }
             | LadduError::DuplicateName { .. }
             | LadduError::ParameterConflict { .. }
             | LadduError::UnregisteredParameter { .. } => PyValueError::new_err(err_string),
-            LadduError::Custom(_) => PyException::new_err(err_string),
+            LadduError::ExecutionContextError { .. } => PyRuntimeError::new_err(err_string),
+            LadduError::Custom(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "rayon")]
-            LadduError::ThreadPoolError(_) => PyException::new_err(err_string),
+            LadduError::ThreadPoolError(_) => PyRuntimeError::new_err(err_string),
             #[cfg(feature = "numpy")]
-            LadduError::NumpyError(_) => PyException::new_err(err_string),
+            LadduError::NumpyError(_) => PyValueError::new_err(err_string),
         }
     }
 }

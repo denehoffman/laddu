@@ -2,6 +2,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "corner",
+#     "ganesh-rs",
 #     "laddu",
 #     "loguru",
 #     "matplotlib",
@@ -14,6 +15,7 @@ import os
 import pickle
 from pathlib import Path
 
+import ganesh
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,18 +52,19 @@ class CustomAutocorrelationTerminator(ld.MCMCTerminator):
     def check_for_termination(
         self, step: int, status: ld.EnsembleStatus
     ) -> ld.ControlFlow:
-        latest_step = status.get_chain()[:, -1, :]
+        latest_step = status.chain()[:, -1, :]
         tot = []
         s0s = []
         d2s = []
         for i_walker in range(status.dimension[0]):
-            tot.append(np.sum(self.nll.project(latest_step[i_walker])))
-            s0s.append(
-                np.sum(self.nll.project_with(latest_step[i_walker], ['Z00+', 'S0+']))
+            walker_weights = self.nll.project_weights(
+                latest_step[i_walker],
+                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
             )
-            d2s.append(
-                np.sum(self.nll.project_with(latest_step[i_walker], ['Z22+', 'D2+']))
-            )
+            tot_weight, s0_weight, d2_weight = walker_weights.sum(axis=1)
+            tot.append(tot_weight)
+            s0s.append(s0_weight)
+            d2s.append(d2_weight)
         self.tot.append(tot)
         self.s0s.append(s0s)
         self.d2s.append(d2s)
@@ -170,16 +173,22 @@ def main() -> None:
         best = fit['best']
         bootstraps = fit['bootstraps']
         nll = ld.NLL(model, data_ds_binned[ibin], accmc_ds_binned[ibin])
-        tot_fit = np.sum(nll.project(best.x))
-        s0_fit = np.sum(nll.project_with(best.x, ['Z00+', 'S0+']))
-        d2_fit = np.sum(nll.project_with(best.x, ['Z22+', 'D2+']))
+        fit_weights = nll.project_weights(
+            best.x, subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']]
+        )
+        tot_fit, s0_fit, d2_fit = fit_weights.sum(axis=1)
         tot_boot = []
         s0_boot = []
         d2_boot = []
         for bootstrap in bootstraps:
-            tot_boot.append(np.sum(nll.project(best.x)))
-            s0_boot.append(np.sum(nll.project_with(bootstrap.x, ['Z00+', 'S0+'])))
-            d2_boot.append(np.sum(nll.project_with(bootstrap.x, ['Z22+', 'D2+'])))
+            bootstrap_weights = nll.project_weights(
+                bootstrap.x,
+                subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+            )
+            tot_count, s0_count, d2_count = bootstrap_weights.sum(axis=1)
+            tot_boot.append(tot_count)
+            s0_boot.append(s0_count)
+            d2_boot.append(d2_count)
 
         tot_ci_boot = np.quantile(tot_boot, [0.16, 0.84])
         s0s_ci_boot = np.quantile(s0_boot, [0.16, 0.84])
@@ -197,24 +206,43 @@ def main() -> None:
             requested_steps = 100
             excess_steps = n_steps_burned - requested_steps  # 110
             thin = 1 if excess_steps < 0 else n_steps_burned // requested_steps
-            flat_chain = ensemble.get_flat_chain(burn=int(tau * 3), thin=thin)
+            flat_chain = ensemble.chain(burn=int(tau * 3), thin=thin, flat=True)
             tot = []
             s0s = []
             d2s = []
             for position in flat_chain:
-                tot.append(np.sum(nll.project(position)))
-                s0s.append(np.sum(nll.project_with(position, ['Z00+', 'S0+'])))
-                d2s.append(np.sum(nll.project_with(position, ['Z22+', 'D2+'])))
+                projected = nll.project_weights(
+                    position,
+                    subsets=[None, ['Z00+', 'S0+'], ['Z22+', 'D2+']],
+                )
+                tot_count, s0_count, d2_count = projected.sum(axis=1)
+                tot.append(tot_count)
+                s0s.append(s0_count)
+                d2s.append(d2_count)
         else:
             p0 = best.x + np.random.normal(0, scale=0.01, size=(100, len(best.x)))
             nll_clone = nll
             caco = CustomAutocorrelationTerminator(nll_clone)
-            aco = ld.AutocorrelationTerminator(n_check=10, terminate=False, verbose=True)
             ensemble = nll.mcmc(
-                p0, method='ess', max_steps=30000, terminators=[caco, aco]
+                p0,
+                method='ess',
+                options=ganesh.ESSOptions(
+                    max_steps=30000,
+                    autocorrelation=ganesh.AutocorrelationTerminator(
+                        n_check=10, terminate=False, verbose=True
+                    ),
+                ),
+                terminators=[caco],
             )
             tau = caco.latest_tau
-            taus = aco.taus
+            diagnostics = ensemble.diagnostics()
+            print(diagnostics)
+            taus = [
+                np.mean(
+                    ld.integrated_autocorrelation_times(ensemble.chain(burn=int(i * 0.5)))
+                )
+                for i in range(0, ensemble.dimension[1], 10)
+            ]
             bin_out = {'ensemble': ensemble, 'tau': tau, 'taus': taus}
             tot = np.array(caco.tot).reshape(-1)
             s0s = np.array(caco.s0s).reshape(-1)
@@ -224,11 +252,11 @@ def main() -> None:
             requested_steps = 100
             excess_steps = n_steps_burned - requested_steps  # 110
             thin = 1 if excess_steps < 0 else n_steps_burned // requested_steps
-            flat_chain = ensemble.get_flat_chain(burn=int(tau * 3), thin=thin)
+            flat_chain = ensemble.chain(burn=int(tau * 3), thin=thin, flat=True)
             with Path(f'bin_{ibin}_mcmc.pkl').open('wb') as bin_out_file:
                 pickle.dump(bin_out, bin_out_file)
 
-        chain = ensemble.get_chain(burn=int(tau * 10), thin=thin).transpose(1, 0, 2)
+        chain = ensemble.chain(burn=int(tau * 10), thin=thin).transpose(1, 0, 2)
         _, axes = plt.subplots(3, figsize=(10, 7), sharex=True)
         labels = ['$S_0^+$ real', '$D_2^+$ real', '$D_2^+$ imag']
         for i in range(3):

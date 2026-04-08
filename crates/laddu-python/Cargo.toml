@@ -15,13 +15,14 @@ readme = "README.md"
 [dependencies]
 laddu-core = { workspace = true, features = ["python"] }
 
-bincode = { workspace = true }
+bitcode = { workspace = true }
 num = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }
 rayon = { workspace = true, optional = true }
 serde = { workspace = true }
+serde-pickle = { workspace = true }
 typetag = { workspace = true }
 
 [features]

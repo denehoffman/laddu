@@ -13,10 +13,12 @@ readme = "README.md"
 [dependencies]
 laddu-core = { workspace = true }
 laddu-python = { workspace = true, optional = true }
+laddu-amplitudes = { workspace = true }
+approx = { workspace = true }
 
 accurate = { workspace = true }
 auto_ops = { workspace = true }
-bincode = { workspace = true }
+bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
@@ -31,11 +33,12 @@ pyo3 = { workspace = true, features = [
   "num-complex",
   "abi3-py37",
 ], optional = true }
+serde-pickle = { workspace = true }
 
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-python = ["laddu-python", "pyo3", "numpy"]
+python = ["laddu-python", "pyo3", "numpy", "ganesh/python"]
 pyo3 = ["dep:pyo3"]
 laddu-python = ["dep:laddu-python"]
 numpy = ["dep:numpy"]
@@ -43,8 +46,18 @@ mpi = ["dep:mpi", "laddu-core/mpi"]
 
 [dev-dependencies]
 approx = { workspace = true }
+mpi_test = { workspace = true }
 serde = { workspace = true }
 typetag = { workspace = true }
 
+[[bin]]
+name = "mpi_nll_check"
+path = "bin/mpi_nll_check.rs"
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(coverage,coverage_nightly)',
+] }

@@ -119,20 +119,8 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-//!         let mass = self.resonance_mass.value(event);
-//!         let mass0 = parameters.get(self.pid_mass);
-//!         let width0 = parameters.get(self.pid_width);
-//!         let mass1 = self.daughter_1_mass.value(event);
-//!         let mass2 = self.daughter_2_mass.value(event);
-//!         let q0 = breakup_momentum(mass0, mass1, mass2);
-//!         let q = breakup_momentum(mass, mass1, mass2);
-//!         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-//!         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
-//!         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//!         let n = (mass0 * width0 / PI).sqrt();
-//!         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//!         Complex64::from(f * n) / d
+//!     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+//!         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
 //!     }
 //! }
 //! ```
@@ -210,20 +198,8 @@
 //! #         Ok(())
 //! #     }
 //! #
-//! #     fn compute(&self, parameters: &Parameters, event: &EventData, _cache: &Cache) -> Complex64 {
-//! #         let mass = self.resonance_mass.value(event);
-//! #         let mass0 = parameters.get(self.pid_mass);
-//! #         let width0 = parameters.get(self.pid_width);
-//! #         let mass1 = self.daughter_1_mass.value(event);
-//! #         let mass2 = self.daughter_2_mass.value(event);
-//! #         let q0 = breakup_momentum(mass0, mass1, mass2);
-//! #         let q = breakup_momentum(mass, mass1, mass2);
-//! #         let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-//! #         let f = blatt_weisskopf(mass, mass1, mass2, self.l);
-//! #         let width = width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2);
-//! #         let n = (mass0 * width0 / PI).sqrt();
-//! #         let d = Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width));
-//! #         Complex64::from(f * n) / d
+//! #     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
+//! #         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
 //! #     }
 //! # }
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
@@ -247,9 +223,9 @@
 //! let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
 //! let expr = (mag * bw).norm_sqr();
 //!
-//! let nll = NLL::new(&expr, &ds_data, &ds_mc).unwrap();
+//! let nll = NLL::new(&expr, &ds_data, &ds_mc, None).unwrap();
 //! println!("Parameters names and order: {:?}", nll.parameters());
-//! let result = nll.evaluate(&[1.27, 0.120, 100.0]);
+//! let result = nll.evaluate(&[1.27, 0.120, 100.0]).unwrap();
 //! println!("The extended negative log-likelihood is {}", result);
 //! ```
 //! In practice, amplitudes can also be added together, their real and imaginary parts can be taken, and evaluators should mostly take the real part of whatever complex value comes out of the model.

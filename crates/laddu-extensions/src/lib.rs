@@ -1,6 +1,7 @@
 //! # laddu-extensions
 //!
 //! This is an internal crate used by `laddu`.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
 /// Experimental extensions to the `laddu` ecosystem
@@ -15,6 +16,7 @@ pub mod experimental;
 
 /// A module containing the `laddu` interface with the [`ganesh`] library
 pub mod ganesh_ext;
+pub use ganesh_ext::LikelihoodTermObserver;
 
 /// Extended maximum likelihood cost functions with support for additive terms
 pub mod likelihoods;
@@ -47,7 +49,12 @@ fn floyd_sample(m: usize, n: usize, rng: &mut Rng) -> RapidHashSet<usize> {
 
 impl RngSubsetExtension for Rng {
     fn subset(&mut self, m: usize, n: usize) -> Vec<usize> {
-        assert!(m < n);
+        if m == 0 || n == 0 {
+            return Vec::new();
+        }
+        if m >= n {
+            return (0..n).collect();
+        }
         if m > n / 2 {
             let k = n - m;
             let exclude = floyd_sample(k, n, self);

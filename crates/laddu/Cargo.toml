@@ -18,17 +18,27 @@ laddu-core = { workspace = true }
 laddu-amplitudes = { workspace = true }
 laddu-extensions = { workspace = true }
 mpi = { workspace = true, optional = true }
+num = { workspace = true }
+fastrand = { workspace = true }
+rayon = { workspace = true }
 
 serde = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
-num = { workspace = true }
 criterion = { workspace = true }
-num_cpus = { workspace = true }
-fastrand = { workspace = true }
 fastrand-contrib = { workspace = true }
-rayon = { workspace = true }
+nalgebra = { workspace = true }
+num_cpus = { workspace = true }
+
+[[bench]]
+name = "workflow_behavior_cpu_benchmarks"
+harness = false
+
+[[bench]]
+name = "workflow_behavior_mpi_benchmarks"
+harness = false
+required-features = ["mpi"]
 
 [[bench]]
 name = "kmatrix_benchmark"
@@ -43,6 +53,7 @@ python = [
   "laddu-extensions/python",
 ]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
+execution-context-prototype = ["laddu-core/execution-context-prototype"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "./docs-header.html"]

@@ -36,7 +36,7 @@ jobs:
         with:
           tool: cargo-hack
       - run: cargo hack check --rust-version --feature-powerset --no-dev-deps
-      - run: cargo hack test --feature-powerset
+      - run: cargo hack test --each-feature
       - run: |-
           uv venv
           . .venv/bin/activate
@@ -44,9 +44,11 @@ jobs:
           uvx --with "maturin[patchelf]>=1.7,<2" maturin build --manifest-path py-laddu-cpu/Cargo.toml --release -o py-laddu-cpu/dist
           uv pip install --no-cache-dir --find-links py-laddu-cpu/dist laddu-cpu
           uv pip install --no-cache-dir -e "py-laddu[tests]"
+          uvx --with "maturin[patchelf]>=1.7,<2" maturin develop --manifest-path py-laddu-mpi/Cargo.toml --release
       - run: uvx ruff check . --extend-exclude=.yamloom.py
       - run: uvx ty check . --exclude=.yamloom.py
       - run: uv run pytest
+      - run: LADDU_BACKEND=MPI mpirun -n 2 .venv/bin/python crates/laddu-extensions/scripts/check_python_mpi_dataset_iteration.py
   linux-cpu:
     name: Build Linux Wheels (cpu)
     permissions:
@@ -61,9 +63,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -75,9 +74,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -89,9 +85,6 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -103,9 +96,6 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -117,9 +107,6 @@ jobs:
           - runner: ubuntu-22.04
             target: s390x
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -131,9 +118,6 @@ jobs:
           - runner: ubuntu-22.04
             target: ppc64le
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -177,9 +161,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -191,9 +172,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -205,9 +183,6 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -219,9 +194,6 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -265,9 +237,6 @@ jobs:
           - runner: windows-latest
             target: x64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -280,9 +249,6 @@ jobs:
           - runner: windows-latest
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -333,9 +299,6 @@ jobs:
           - runner: macos-15-intel
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -347,8 +310,6 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -377,184 +338,6 @@ jobs:
         with:
           path: dist
           name: cpu-macos-${{ matrix.platform.target }}
-  linux-mpi:
-    name: Build Linux Wheels (mpi)
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: ubuntu-22.04
-            target: x86_64
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: ubuntu-22.04
-            target: x86
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-      fail-fast: false
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: version.txt
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          manylinux: 2_28
-          target: ${{ matrix.platform.target }}
-          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          before-script-linux: |-
-            yum -y install openmpi openmpi-devel pkgconfig clang llvm-devel
-            export MPICC="$(find /usr -name 'mpicc' 2>/dev/null | head -n 1)"
-            MPI_LIB_DIR="$(dirname "$(find /usr -name 'libmpi.so' 2>/dev/null | head -n 1)")"
-            export LD_LIBRARY_PATH="${MPI_LIB_DIR}:${LD_LIBRARY_PATH:-}"
-          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-linux-${{ matrix.platform.target }}
-  windows-mpi:
-    name: Build Windows Wheels (mpi)
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: windows-latest
-            target: x64
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-            python_arch: x64
-      fail-fast: false
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: version.txt
-          architecture: ${{ matrix.platform.python_arch }}
-      - name: Setup intelmpi
-        uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: intelmpi
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-windows-${{ matrix.platform.target }}
-  macos-mpi:
-    name: Build macOS Wheels (mpi)
-    permissions:
-      contents: read
-    needs:
-      - build-check-test
-    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: macos-15-intel
-            target: x86_64
-            python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-          - runner: macos-latest
-            target: aarch64
-            python_versions:
-              - "3.8"
-              - "3.9"
-              - "3.10"
-              - "3.11"
-              - "3.12"
-              - "3.13"
-              - 3.13t
-              - "3.14"
-              - 3.14t
-              - pypy3.11
-      fail-fast: false
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
-      - run: printf "%s\n" ${{ join(matrix.platform.python_versions, ' ') }} >> version.txt
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: version.txt
-      - name: Setup openmpi
-        uses: mpi4py/setup-mpi@v1
-        with:
-          mpi: openmpi
-      - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.platform.target }}
-          sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
-          args: --release --out dist --manifest-path py-laddu-mpi/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v6
-        with:
-          path: dist
-          name: mpi-macos-${{ matrix.platform.target }}
   sdist-cpu:
     name: Build Source Distribution
     permissions:
@@ -577,7 +360,7 @@ jobs:
           path: dist
           name: cpu-sdist
   sdist-mpi:
-    name: Build Source Distribution
+    name: Build MPI Source Distribution
     permissions:
       contents: read
     needs:
@@ -607,9 +390,6 @@ jobs:
       - musllinux-cpu
       - windows-cpu
       - macos-cpu
-      - linux-mpi
-      - windows-mpi
-      - macos-mpi
       - sdist-cpu
       - sdist-mpi
     if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
@@ -622,8 +402,7 @@ jobs:
         uses: actions/download-artifact@v7
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
-      - run: uv publish --trusted-publishing always cpu-*/*
-      - run: uv publish --trusted-publishing always mpi-*/*
+      - run: uv publish --trusted-publishing always cpu-*/* cpu-sdist/* mpi-sdist/*
       - run: |-
           uv build py-laddu --out-dir dist
           uv publish --trusted-publishing always dist/*

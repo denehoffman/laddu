@@ -1,5 +1,9 @@
 import os
-from typing import Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Literal
+
+import numpy as np
+import numpy.typing as npt
 
 from laddu.amplitudes import (
     Evaluator,
@@ -35,9 +39,10 @@ from laddu.data import BinnedDataset, Dataset, Event
 from laddu.experimental import BinnedGuideTerm, Regularizer
 from laddu.extensions import (
     NLL,
-    AutocorrelationTerminator,
     ControlFlow,
     EnsembleStatus,
+    GradientFreeStatus,
+    GradientStatus,
     LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodOne,
@@ -47,9 +52,7 @@ from laddu.extensions import (
     MinimizationStatus,
     MinimizationSummary,
     StochasticNLL,
-    Swarm,
-    SwarmParticle,
-    Walker,
+    SwarmStatus,
     integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
@@ -71,7 +74,6 @@ from laddu.utils.vectors import Vec3, Vec4
 __all__ = [
     'NLL',
     'Angles',
-    'AutocorrelationTerminator',
     'BinnedDataset',
     'BinnedGuideTerm',
     'BreitWigner',
@@ -83,6 +85,8 @@ __all__ = [
     'Evaluator',
     'Event',
     'Expression',
+    'GradientFreeStatus',
+    'GradientStatus',
     'KopfKMatrixA0',
     'KopfKMatrixA2',
     'KopfKMatrixF0',
@@ -101,6 +105,7 @@ __all__ = [
     'MinimizationSummary',
     'One',
     'ParameterLike',
+    'ParquetChunkIter',
     'PhaseSpaceFactor',
     'Phi',
     'PiecewiseComplexScalar',
@@ -114,14 +119,12 @@ __all__ = [
     'Regularizer',
     'Scalar',
     'StochasticNLL',
-    'Swarm',
-    'SwarmParticle',
+    'SwarmStatus',
     'TestAmplitude',
     'Topology',
     'VariableExpression',
     'Vec3',
     'Vec4',
-    'Walker',
     'Ylm',
     'Zero',
     'Zlm',
@@ -130,8 +133,10 @@ __all__ = [
     'expr_product',
     'expr_sum',
     'finalize_mpi',
+    'from_columns',
     'get_rank',
     'get_size',
+    'get_threads',
     'integrated_autocorrelation_times',
     'is_mpi_available',
     'is_root',
@@ -139,7 +144,9 @@ __all__ = [
     'likelihood_sum',
     'parameter',
     'read_parquet',
+    'read_parquet_chunked',
     'read_root',
+    'set_threads',
     'use_mpi',
     'using_mpi',
     'version',
@@ -147,11 +154,21 @@ __all__ = [
     'write_root',
 ]
 
+class ParquetChunkIter:
+    def __iter__(self) -> ParquetChunkIter: ...
+    def __next__(self) -> Dataset: ...
+
 def version() -> str:
     """Return the version string of the loaded laddu backend."""
 
 def available_parallelism() -> int:
     """Return the number of logical CPU cores available to laddu."""
+
+def get_threads() -> int:
+    """Return the global default thread count, or ``0`` for the ambient default."""
+
+def set_threads(n_threads: int) -> None:
+    """Set the global default thread count for omitted or zero-valued thread arguments."""
 
 def use_mpi(*, trigger: bool = True) -> None:
     """Enable the MPI backend if the extension was compiled with MPI support."""
@@ -182,6 +199,27 @@ def read_parquet(
     aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset:
     """Load a dataset from a Parquet file using the loaded backend."""
+
+def read_parquet_chunked(
+    path: str | os.PathLike[str],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+    chunk_size: int | None = None,
+) -> ParquetChunkIter:
+    """Load a dataset from a Parquet file in chunks using the loaded backend."""
+
+def from_columns(
+    columns: Mapping[
+        str, Sequence[float] | npt.NDArray[np.float32] | npt.NDArray[np.float64]
+    ],
+    *,
+    p4s: list[str] | None = None,
+    aux: list[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
+) -> Dataset:
+    """Build a dataset from in-memory columnar arrays."""
 
 def read_root(
     path: str | os.PathLike[str],

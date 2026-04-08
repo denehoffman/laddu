@@ -9,7 +9,7 @@ use pyo3::{exceptions::PyTypeError, prelude::*};
 /// px, py, pz : float
 ///     The Cartesian components of the 3-vector
 ///
-#[pyclass(name = "Vec3", module = "laddu")]
+#[pyclass(name = "Vec3", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyVec3(pub Vec3);
 #[pymethods]
@@ -311,7 +311,7 @@ impl PyVec3 {
 ///     The energy component
 ///
 ///
-#[pyclass(name = "Vec4", module = "laddu")]
+#[pyclass(name = "Vec4", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyVec4(pub Vec4);
 #[pymethods]

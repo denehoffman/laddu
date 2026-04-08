@@ -1,5 +1,5 @@
-from collections.abc import Mapping, Sequence
-from typing import overload
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any, Literal, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,44 +16,53 @@ from laddu.utils.variables import (
 from laddu.utils.vectors import Vec4
 
 class Event:
-    p4s: Mapping[str, Vec4]
-    aux: Mapping[str, float]
+    p4s: dict[str, Vec4]
+    aux: dict[str, float]
     weight: float
 
     def __init__(
         self,
-        p4s: list[Vec4],
-        aux: list[float],
+        p4s: Sequence[Vec4],
+        aux: Sequence[float],
         weight: float,
         *,
-        p4_names: list[str] | None = None,
-        aux_names: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
-    def get_p4_sum(self, names: list[str]) -> Vec4: ...
-    def boost_to_rest_frame_of(self, names: list[str]) -> Event: ...
-    def p4(self, name: str) -> Vec4 | None: ...
+    def get_p4_sum(self, names: Sequence[str]) -> Vec4: ...
+    def boost_to_rest_frame_of(self, names: Sequence[str]) -> Event: ...
+    def p4(self, name: str) -> Vec4: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> float: ...
 
 class Dataset(Sequence[Event]):
     events: list[Event]
+    events_global: list[Event]
+    events_local: list[Event]
     n_events: int
+    n_events_global: int
+    n_events_local: int
     n_events_weighted: float
+    n_events_weighted_global: float
+    n_events_weighted_local: float
     weights: NDArray[np.float64]
+    weights_global: NDArray[np.float64]
+    weights_local: NDArray[np.float64]
     p4_names: list[str]
     aux_names: list[str]
 
     def __init__(
         self,
-        events: list[Event],
+        events: Sequence[Event],
         *,
-        p4_names: list[str] | None = None,
-        aux_names: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
     def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[Event]: ...
     def __add__(self, other: Dataset | int) -> Dataset: ...
     def __radd__(self, other: Dataset | int) -> Dataset: ...
     @overload
@@ -76,12 +85,16 @@ class Dataset(Sequence[Event]):
     ) -> BinnedDataset: ...
     def filter(self, expression: VariableExpression) -> Dataset: ...
     def bootstrap(self, seed: int) -> Dataset: ...
+    def iter_local(self) -> Iterator[Event]: ...
+    def iter_global(self) -> Iterator[Event]: ...
+    def event_global(self, index: int) -> Event: ...
     def p4_by_name(self, index: int, name: str) -> Vec4: ...
     def aux_by_name(self, index: int, name: str) -> float: ...
-    def boost_to_rest_frame_of(self, names: list[str]) -> Dataset: ...
+    def boost_to_rest_frame_of(self, names: Sequence[str]) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...
+    def to_arrow(self, *, precision: Literal['f64', 'f32'] = 'f64') -> Any: ...
 
 class BinnedDataset:
     n_bins: int

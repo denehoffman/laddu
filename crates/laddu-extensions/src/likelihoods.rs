@@ -4,17 +4,22 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "rayon")]
+use std::cell::RefCell;
+
 use crate::RngSubsetExtension;
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
+#[cfg(feature = "python")]
+use laddu_core::ThreadPoolManager;
 use laddu_core::{
-    amplitudes::{central_difference, Evaluator, Expression},
+    amplitudes::{Evaluator, Expression},
     data::Dataset,
     parameter_manager::ParameterManager,
     resources::Parameters,
-    LadduError, LadduResult,
+    validate_free_parameter_len, LadduError, LadduResult,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -23,41 +28,506 @@ use num::complex::Complex64;
 use laddu_core::mpi::LadduMPI;
 
 #[cfg(feature = "mpi")]
-use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
+use mpi::{
+    collective::SystemOperation, datatype::PartitionMut, topology::SimpleCommunicator, traits::*,
+};
 use parking_lot::Mutex;
 
 #[cfg(feature = "python")]
-use crate::ganesh_ext::{
-    py_ganesh::{FromPyArgs, PyMCMCSummary, PyMinimizationSummary},
-    MCMCSettings, MinimizationSettings,
-};
+use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
+#[cfg(feature = "python")]
+use ganesh::python::IntoPySummary;
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyEvaluator, PyExpression},
     data::PyDataset,
 };
 #[cfg(feature = "python")]
-use numpy::PyArray1;
+use numpy::{PyArray1, PyArray2, PyArray3};
 #[cfg(feature = "python")]
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyDict, PyList},
+    types::{PyAny, PyList},
+    IntoPyObjectExt,
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
-#[cfg(all(feature = "python", feature = "rayon"))]
-use rayon::ThreadPoolBuilder;
+
+type ProjectionMaskCacheKey = (bool, Vec<String>);
+
+fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduResult<()> {
+    if n_events == 0 {
+        return Err(LadduError::Custom(
+            "stochastic batch_size requires a non-empty dataset".to_string(),
+        ));
+    }
+    if batch_size == 0 || batch_size > n_events {
+        return Err(LadduError::LengthMismatch {
+            context: format!("stochastic batch_size (valid range: 1..={n_events})"),
+            expected: n_events,
+            actual: batch_size,
+        });
+    }
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(feature = "python")]
+fn install_laddu_with_threads<R: Send>(
+    threads: Option<usize>,
+    op: impl FnOnce() -> LadduResult<R> + Send,
+) -> LadduResult<R> {
+    ThreadPoolManager::shared().install(threads, op)?
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(feature = "python")]
+fn extract_subset_names(subset: Option<Bound<'_, PyAny>>) -> PyResult<Option<Vec<String>>> {
+    let Some(subset) = subset else {
+        return Ok(None);
+    };
+    if let Ok(string_arg) = subset.extract::<String>() {
+        Ok(Some(vec![string_arg]))
+    } else if let Ok(list_arg) = subset.extract::<Vec<String>>() {
+        Ok(Some(list_arg))
+    } else {
+        Err(PyTypeError::new_err(
+            "subset must be either a string or a list of strings",
+        ))
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg(feature = "python")]
+fn extract_subsets_arg(
+    subsets: Option<Bound<'_, PyAny>>,
+) -> PyResult<Option<Vec<Option<Vec<String>>>>> {
+    let Some(subsets) = subsets else {
+        return Ok(None);
+    };
+    subsets
+        .extract::<Vec<Option<Vec<String>>>>()
+        .map(Some)
+        .map_err(|_| {
+            PyTypeError::new_err(
+                "subsets must be a list whose items are either None or lists of strings",
+            )
+        })
+}
+
+#[cfg(feature = "mpi")]
+fn reduce_scalar(world: &SimpleCommunicator, value: f64) -> f64 {
+    let mut reduced = 0.0;
+    world.all_reduce_into(&value, &mut reduced, SystemOperation::sum());
+    reduced
+}
+
+#[cfg(feature = "mpi")]
+fn reduce_gradient(world: &SimpleCommunicator, gradient: &DVector<f64>) -> DVector<f64> {
+    let mut reduced = vec![0.0; gradient.len()];
+    world.all_reduce_into(gradient.as_slice(), &mut reduced, SystemOperation::sum());
+    DVector::from_vec(reduced)
+}
+
+fn evaluate_weighted_expression_sum_local<F>(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    value_map: F,
+) -> f64
+where
+    F: Fn(Complex64) -> f64 + Copy + Send + Sync,
+{
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resources.active_indices().to_vec();
+    let program_snapshot = evaluator.expression_value_program_snapshot();
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
+    #[cfg(feature = "rayon")]
+    {
+        resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let l = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
+                    event.weight * value_map(l)
+                },
+            )
+            .parallel_sum_with_accumulator::<Klein<f64>>()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let l = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
+                event.weight * value_map(l)
+            })
+            .sum_with_accumulator::<Klein<f64>>()
+    }
+}
+
+fn project_weights_local_from_evaluator(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+) -> Vec<f64> {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resources.active_indices().to_vec();
+    let program_snapshot = evaluator.expression_value_program_snapshot();
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
+    #[cfg(feature = "rayon")]
+    {
+        resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
+                    event.weight * value.re / n_mc
+                },
+            )
+            .collect()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
+                event.weight * value.re / n_mc
+            })
+            .collect()
+    }
+}
+
+fn project_weights_local_from_resolved_mask(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+    resolved_mask: &[bool],
+) -> LadduResult<Vec<f64>> {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let active_indices = resolved_mask
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &active)| if active { Some(index) } else { None })
+        .collect::<Vec<_>>();
+    let program_snapshot =
+        evaluator.expression_value_program_snapshot_for_active_mask(resolved_mask)?;
+    let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
+    #[cfg(feature = "rayon")]
+    {
+        Ok(resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                    )
+                },
+                |(amplitude_values, expr_slots), (cache, event)| {
+                    for &amp_idx in &active_indices {
+                        amplitude_values[amp_idx] =
+                            evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                    }
+                    let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                        &program_snapshot,
+                        amplitude_values,
+                        expr_slots,
+                    );
+                    event.weight * value.re / n_mc
+                },
+            )
+            .collect())
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut expr_slots = vec![Complex64::ZERO; slot_count];
+        Ok(resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                for &amp_idx in &active_indices {
+                    amplitude_values[amp_idx] =
+                        evaluator.amplitudes[amp_idx].compute(&parameters, cache);
+                }
+                let value = evaluator.evaluate_expression_value_with_program_snapshot(
+                    &program_snapshot,
+                    &amplitude_values,
+                    &mut expr_slots,
+                );
+                event.weight * value.re / n_mc
+            })
+            .collect())
+    }
+}
+
+fn project_weights_and_gradients_local_from_evaluator(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+    n_mc: f64,
+) -> (Vec<f64>, Vec<DVector<f64>>) {
+    let resources = evaluator.resources.read();
+    let parameters = Parameters::new(parameters, &resources.constants);
+    let amplitude_len = evaluator.amplitudes.len();
+    let grad_dim = parameters.len();
+    let active_indices = resources.active_indices().to_vec();
+    let active_mask = resources.active.clone();
+    let slot_count = evaluator.expression_value_gradient_slot_count_public();
+
+    #[cfg(feature = "rayon")]
+    {
+        let weighted = resources
+            .caches
+            .par_iter()
+            .zip(evaluator.dataset.events_local().par_iter())
+            .map_init(
+                || {
+                    (
+                        vec![Complex64::ZERO; amplitude_len],
+                        vec![DVector::zeros(grad_dim); amplitude_len],
+                        vec![Complex64::ZERO; slot_count],
+                        vec![DVector::zeros(grad_dim); slot_count],
+                    )
+                },
+                |(amplitude_values, gradient_values, value_slots, gradient_slots),
+                 (cache, event)| {
+                    evaluator.fill_amplitude_values_and_gradients_public(
+                        amplitude_values,
+                        gradient_values,
+                        &active_indices,
+                        &active_mask,
+                        &parameters,
+                        cache,
+                    );
+                    let (value, gradient) = evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            amplitude_values,
+                            gradient_values,
+                            value_slots,
+                            gradient_slots,
+                        );
+                    (
+                        event.weight * value.re / n_mc,
+                        gradient.map(|g| g.re).scale(event.weight / n_mc),
+                    )
+                },
+            )
+            .collect::<Vec<_>>();
+        weighted.into_iter().unzip()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
+        let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+        let mut value_slots = vec![Complex64::ZERO; slot_count];
+        let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
+        resources
+            .caches
+            .iter()
+            .zip(evaluator.dataset.events_local().iter())
+            .map(|(cache, event)| {
+                evaluator.fill_amplitude_values_and_gradients_public(
+                    &mut amplitude_values,
+                    &mut gradient_values,
+                    &active_indices,
+                    &active_mask,
+                    &parameters,
+                    cache,
+                );
+                let (value, gradient) = evaluator.evaluate_expression_value_gradient_with_scratch(
+                    &amplitude_values,
+                    &gradient_values,
+                    &mut value_slots,
+                    &mut gradient_slots,
+                );
+                (
+                    event.weight * value.re / n_mc,
+                    gradient.map(|g| g.re).scale(event.weight / n_mc),
+                )
+            })
+            .unzip()
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn sum_dvectors_parallel(
+    iter: impl rayon::iter::ParallelIterator<Item = DVector<f64>>,
+    len: usize,
+) -> DVector<f64> {
+    iter.reduce(
+        || DVector::zeros(len),
+        |mut accum, value| {
+            accum += value;
+            accum
+        },
+    )
+}
+
+#[cfg(feature = "rayon")]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct GradientScratchKey {
+    n_parameters: usize,
+    n_amplitudes: usize,
+    n_expression_slots: usize,
+}
+
+#[cfg(feature = "rayon")]
+struct GradientScratchWorkspace {
+    amplitude_values: Vec<Complex64>,
+    gradient_values: Vec<DVector<Complex64>>,
+    value_slots: Vec<Complex64>,
+    gradient_slots: Vec<DVector<Complex64>>,
+}
+
+#[cfg(feature = "rayon")]
+impl GradientScratchWorkspace {
+    fn new(key: GradientScratchKey) -> Self {
+        Self {
+            amplitude_values: vec![Complex64::ZERO; key.n_amplitudes],
+            gradient_values: vec![DVector::zeros(key.n_parameters); key.n_amplitudes],
+            value_slots: vec![Complex64::ZERO; key.n_expression_slots],
+            gradient_slots: vec![DVector::zeros(key.n_parameters); key.n_expression_slots],
+        }
+    }
+
+    fn matches_key(&self, key: GradientScratchKey) -> bool {
+        self.amplitude_values.len() == key.n_amplitudes
+            && self.gradient_values.len() == key.n_amplitudes
+            && self.value_slots.len() == key.n_expression_slots
+            && self.gradient_slots.len() == key.n_expression_slots
+            && self
+                .gradient_values
+                .iter()
+                .all(|gradient| gradient.len() == key.n_parameters)
+            && self
+                .gradient_slots
+                .iter()
+                .all(|slot| slot.len() == key.n_parameters)
+    }
+}
+
+#[cfg(feature = "rayon")]
+struct GradientScratchLease {
+    key: GradientScratchKey,
+    workspace: Option<GradientScratchWorkspace>,
+}
+
+#[cfg(feature = "rayon")]
+impl GradientScratchLease {
+    fn workspace_mut(&mut self) -> &mut GradientScratchWorkspace {
+        self.workspace
+            .as_mut()
+            .expect("gradient scratch workspace must be available while leased")
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl Drop for GradientScratchLease {
+    fn drop(&mut self) {
+        if let Some(workspace) = self.workspace.take() {
+            TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
+                pool.borrow_mut().insert(self.key, workspace);
+            });
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+fn acquire_gradient_scratch(key: GradientScratchKey) -> GradientScratchLease {
+    let mut workspace = TLS_GRADIENT_SCRATCH_POOL.with(|pool| {
+        pool.borrow_mut()
+            .remove(&key)
+            .unwrap_or_else(|| GradientScratchWorkspace::new(key))
+    });
+    if !workspace.matches_key(key) {
+        workspace = GradientScratchWorkspace::new(key);
+    }
+    GradientScratchLease {
+        key,
+        workspace: Some(workspace),
+    }
+}
+
+#[cfg(feature = "rayon")]
+thread_local! {
+    static TLS_GRADIENT_SCRATCH_POOL: RefCell<HashMap<GradientScratchKey, GradientScratchWorkspace>> =
+        RefCell::new(HashMap::new());
+}
 
 /// A trait which describes a term that can be used like a likelihood (more correctly, a negative
 /// log-likelihood) in a minimization.
 pub trait LikelihoodTerm: DynClone + Send + Sync {
     /// Evaluate the term given some input parameters.
-    fn evaluate(&self, parameters: &[f64]) -> f64;
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64>;
     /// Evaluate the gradient of the term given some input parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        central_difference(parameters, |parameters: &[f64]| self.evaluate(parameters))
-    }
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>>;
     /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
     fn parameters(&self) -> Vec<String>;
     /// Access the parameter manager describing free/fixed state.
@@ -86,25 +556,92 @@ pub struct NLL {
     pub data_evaluator: Evaluator,
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
+    n_mc: f64,
     parameter_manager: ParameterManager,
+    projection_active_mask_cache: Arc<Mutex<HashMap<ProjectionMaskCacheKey, Vec<bool>>>>,
 }
 
 impl NLL {
     /// Construct an [`NLL`] from an [`Expression`] and two [`Dataset`]s (data and Monte Carlo). This mirrors loading a model but starts from
-    /// the expression directly.
+    /// the expression directly. The number of Monte Carlo events used in the denominator of the
+    /// normalization integral may also be specified (uses the weighted number of accepted Monte
+    /// Carlo events if None is given).
     pub fn new(
         expression: &Expression,
         ds_data: &Arc<Dataset>,
         ds_accmc: &Arc<Dataset>,
+        n_mc: Option<f64>,
     ) -> LadduResult<Box<Self>> {
         let data_evaluator = expression.load(ds_data)?;
         let accmc_evaluator = expression.load(ds_accmc)?;
         Ok(Self {
             parameter_manager: data_evaluator.parameter_manager().clone(),
             data_evaluator,
+            n_mc: n_mc.unwrap_or(accmc_evaluator.dataset.n_events_weighted()),
             accmc_evaluator,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
+    }
+
+    fn normalized_projection_key<T: AsRef<str>>(names: &[T]) -> Vec<String> {
+        let mut key = names
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect::<Vec<_>>();
+        key.sort_unstable();
+        key.dedup();
+        key
+    }
+
+    fn projection_cache_key<T: AsRef<str>>(names: &[T], strict: bool) -> ProjectionMaskCacheKey {
+        (strict, Self::normalized_projection_key(names))
+    }
+
+    fn resolve_projection_active_mask_for_evaluator<T: AsRef<str>>(
+        evaluator: &Evaluator,
+        names: &[T],
+        strict: bool,
+    ) -> LadduResult<Vec<bool>> {
+        let current_active_mask = evaluator.active_mask();
+        let isolate_result = if strict {
+            evaluator.isolate_many_strict(names)
+        } else {
+            evaluator.isolate_many(names);
+            Ok(())
+        };
+        if let Err(err) = isolate_result {
+            evaluator.set_active_mask(&current_active_mask)?;
+            return Err(err);
+        }
+        let resolved_mask = evaluator.active_mask();
+        evaluator.set_active_mask(&current_active_mask)?;
+        Ok(resolved_mask)
+    }
+
+    fn get_or_build_projection_active_mask<T: AsRef<str>>(
+        &self,
+        names: &[T],
+        strict: bool,
+    ) -> LadduResult<Vec<bool>> {
+        let key = Self::projection_cache_key(names, strict);
+        if let Some(mask) = self.projection_active_mask_cache.lock().get(&key).cloned() {
+            return Ok(mask);
+        }
+
+        let resolved_mask = Self::resolve_projection_active_mask_for_evaluator(
+            &self.accmc_evaluator,
+            names,
+            strict,
+        )?;
+        self.projection_active_mask_cache
+            .lock()
+            .insert(key, resolved_mask.clone());
+        Ok(resolved_mask)
+    }
+
+    fn invalidate_projection_mask_cache(&self) {
+        self.projection_active_mask_cache.lock().clear();
     }
 
     /// The parameter names for this NLL.
@@ -145,6 +682,8 @@ impl NLL {
             parameter_manager: self.parameter_manager.fix(name, value)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -157,6 +696,8 @@ impl NLL {
             parameter_manager: self.parameter_manager.free(name)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -169,6 +710,8 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename(old, new)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
@@ -181,82 +724,108 @@ impl NLL {
             parameter_manager: self.parameter_manager.rename_parameters(mapping)?,
             data_evaluator,
             accmc_evaluator,
+            n_mc: self.n_mc,
+            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
         }
         .into())
     }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
-    pub fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> StochasticNLL {
+    pub fn to_stochastic(
+        &self,
+        batch_size: usize,
+        seed: Option<usize>,
+    ) -> LadduResult<StochasticNLL> {
         StochasticNLL::new(self.clone(), batch_size, seed)
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
     pub fn activate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate(&name);
         self.accmc_evaluator.activate(name);
     }
     /// Activate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn activate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_strict(&name)?;
-        self.accmc_evaluator.activate_strict(name)
+        self.accmc_evaluator.activate_strict(name)?;
+        Ok(())
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn activate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many(names);
         self.accmc_evaluator.activate_many(names);
     }
     /// Activate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn activate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_many_strict(names)?;
-        self.accmc_evaluator.activate_many_strict(names)
+        self.accmc_evaluator.activate_many_strict(names)?;
+        Ok(())
     }
     /// Activate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn activate_all(&self) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.activate_all();
         self.accmc_evaluator.activate_all();
     }
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name, skipping missing entries.
     pub fn deactivate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate(&name);
         self.accmc_evaluator.deactivate(name);
     }
     /// Dectivate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name and return an error if it is missing.
     pub fn deactivate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_strict(&name)?;
-        self.accmc_evaluator.deactivate_strict(name)
+        self.accmc_evaluator.deactivate_strict(name)?;
+        Ok(())
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, skipping missing entries.
     pub fn deactivate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many(names);
         self.accmc_evaluator.deactivate_many(names);
     }
     /// Deactivate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name and return an error if any are missing.
     pub fn deactivate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_many_strict(names)?;
-        self.accmc_evaluator.deactivate_many_strict(names)
+        self.accmc_evaluator.deactivate_many_strict(names)?;
+        Ok(())
     }
     /// Deactivate all registered [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s.
     pub fn deactivate_all(&self) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.deactivate_all();
         self.accmc_evaluator.deactivate_all();
     }
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest), skipping missing entries.
     pub fn isolate<T: AsRef<str>>(&self, name: T) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate(&name);
         self.accmc_evaluator.isolate(name);
     }
     /// Isolate an [`Amplitude`](`laddu_core::amplitudes::Amplitude`) by name (deactivate the rest) and return an error if it is missing.
     pub fn isolate_strict<T: AsRef<str>>(&self, name: T) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_strict(&name)?;
-        self.accmc_evaluator.isolate_strict(name)
+        self.accmc_evaluator.isolate_strict(name)?;
+        Ok(())
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest), skipping missing entries.
     pub fn isolate_many<T: AsRef<str>>(&self, names: &[T]) {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many(names);
         self.accmc_evaluator.isolate_many(names);
     }
     /// Isolate several [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name (deactivate the rest) and return an error if any are missing.
     pub fn isolate_many_strict<T: AsRef<str>>(&self, names: &[T]) -> LadduResult<()> {
+        self.invalidate_projection_mask_cache();
         self.data_evaluator.isolate_many_strict(names)?;
-        self.accmc_evaluator.isolate_many_strict(names)
+        self.accmc_evaluator.isolate_many_strict(names)?;
+        Ok(())
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -266,34 +835,26 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
-    pub fn project_local(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
-        let (mc_dataset, result) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_local(parameters),
-            )
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights`] instead.
+    pub fn project_weights_local(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        if let Some(mc_evaluator) = mc_evaluator {
+            Ok(project_weights_local_from_evaluator(
+                &mc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
         } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate_local(parameters),
-            )
-        };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-        #[cfg(feature = "rayon")]
-        let output: Vec<f64> = result
-            .par_iter()
-            .zip(mc_dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect();
-
-        #[cfg(not(feature = "rayon"))]
-        let output: Vec<f64> = result
-            .iter()
-            .zip(mc_dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re / n_mc)
-            .collect();
-        output
+            Ok(project_weights_local_from_evaluator(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
+        }
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -303,27 +864,29 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_mpi(
+    pub fn project_weights_mpi(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> Vec<f64> {
+    ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projection = self.project_local(parameters, mc_evaluator);
+        let local_projection = self.project_weights_local(parameters, mc_evaluator)?;
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection returns per-event global outputs.
+            // Use all-reduce only for aggregate scalar/vector reductions.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
-        buffer
+        Ok(buffer)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -339,14 +902,18 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project(&self, parameters: &[f64], mc_evaluator: Option<Evaluator>) -> Vec<f64> {
+    pub fn project_weights(
+        &self,
+        parameters: &[f64],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_mpi(parameters, mc_evaluator, &world);
+                return self.project_weights_mpi(parameters, mc_evaluator, &world);
             }
         }
-        self.project_local(parameters, mc_evaluator)
+        self.project_weights_local(parameters, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
@@ -356,55 +923,25 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
-    pub fn project_gradient_local(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_and_gradients`] instead.
+    pub fn project_weights_and_gradients_local(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
-        let (mc_dataset, result, result_gradient) = if let Some(mc_evaluator) = mc_evaluator {
-            (
-                mc_evaluator.dataset.clone(),
-                mc_evaluator.evaluate_local(parameters),
-                mc_evaluator.evaluate_gradient_local(parameters),
-            )
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        if let Some(mc_evaluator) = mc_evaluator {
+            Ok(project_weights_and_gradients_local_from_evaluator(
+                &mc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
         } else {
-            (
-                self.accmc_evaluator.dataset.clone(),
-                self.accmc_evaluator.evaluate_local(parameters),
-                self.accmc_evaluator.evaluate_gradient_local(parameters),
-            )
-        };
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-        #[cfg(feature = "rayon")]
-        {
-            (
-                result
-                    .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
-                    .collect(),
-                result_gradient
-                    .par_iter()
-                    .zip(mc_dataset.events.par_iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                    .collect(),
-            )
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            (
-                result
-                    .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(l, e)| e.weight * l.re / n_mc)
-                    .collect(),
-                result_gradient
-                    .iter()
-                    .zip(mc_dataset.events.iter())
-                    .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                    .collect(),
-            )
+            Ok(project_weights_and_gradients_local_from_evaluator(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
+            ))
         }
     }
 
@@ -415,24 +952,25 @@ impl NLL {
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_gradient`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_and_gradients`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_gradient_mpi(
+    pub fn project_weights_and_gradients_mpi(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
         let (local_projection, local_gradient_projection) =
-            self.project_gradient_local(parameters, mc_evaluator);
+            self.project_weights_and_gradients_local(parameters, mc_evaluator)?;
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection-gradient returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -445,6 +983,7 @@ impl NLL {
         let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        // NOTE: gather is required because projection-gradient returns full per-event gradients.
         world.all_gather_varcount_into(
             &flattened_local_gradient_projection,
             &mut partitioned_flattened_result_buffer,
@@ -453,7 +992,7 @@ impl NLL {
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
             .collect();
-        (projection_result, gradient_projection_result)
+        Ok((projection_result, gradient_projection_result))
     }
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
@@ -468,115 +1007,143 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_gradient(
+    pub fn project_weights_and_gradients(
         &self,
         parameters: &[f64],
         mc_evaluator: Option<Evaluator>,
-    ) -> (Vec<f64>, Vec<DVector<f64>>) {
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_gradient_mpi(parameters, mc_evaluator, &world);
+                return self.project_weights_and_gradients_mpi(parameters, mc_evaluator, &world);
             }
         }
-        self.project_gradient_local(parameters, mc_evaluator)
+        self.project_weights_and_gradients_local(parameters, mc_evaluator)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
-    pub fn project_with_local<T: AsRef<str>>(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
+    fn project_weights_subset_local_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        if let Some(mc_evaluator) = mc_evaluator.as_ref() {
+            let resolved_mask =
+                Self::resolve_projection_active_mask_for_evaluator(mc_evaluator, names, strict)?;
+            project_weights_local_from_resolved_mask(
+                mc_evaluator,
+                parameters,
+                self.n_mc,
+                &resolved_mask,
+            )
+        } else {
+            let resolved_mask = self.get_or_build_projection_active_mask(names, strict)?;
+            project_weights_local_from_resolved_mask(
+                &self.accmc_evaluator,
+                parameters,
+                self.n_mc,
+                &resolved_mask,
+            )
+        }
+    }
+
+    /// Project the model over one isolated amplitude subset in local execution, skipping
+    /// missing amplitude names.
+    pub fn project_weights_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<Vec<f64>> {
-        if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many_strict(names)?;
-            let mc_dataset = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-            #[cfg(feature = "rayon")]
-            let output: Vec<f64> = result
-                .par_iter()
-                .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let output: Vec<f64> = result
-                .iter()
-                .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            mc_evaluator.resources.write().active = current_active_mc;
-            Ok(output)
-        } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many_strict(names)?;
-            let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate_local(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-            #[cfg(feature = "rayon")]
-            let output: Vec<f64> = result
-                .par_iter()
-                .zip(mc_dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            #[cfg(not(feature = "rayon"))]
-            let output: Vec<f64> = result
-                .iter()
-                .zip(mc_dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re / n_mc)
-                .collect();
-            self.data_evaluator.resources.write().active = current_active_data;
-            self.accmc_evaluator.resources.write().active = current_active_accmc;
-            Ok(output)
-        }
+        self.project_weights_subset_local_with_strict(parameters, names, mc_evaluator, false)
+    }
+
+    /// Project the model over one isolated amplitude subset in local execution and return
+    /// an error if any requested amplitude name is missing.
+    pub fn project_weights_subset_local_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
+        self.project_weights_subset_local_with_strict(parameters, names, mc_evaluator, true)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_with_mpi<T: AsRef<str>>(
+    fn project_weights_subset_mpi_with_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
+        strict: bool,
     ) -> LadduResult<Vec<f64>> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let local_projection = self.project_with_local(parameters, names, mc_evaluator)?;
+        let local_projection =
+            self.project_weights_subset_local_with_strict(parameters, names, mc_evaluator, strict)?;
         let mut buffer: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
         Ok(buffer)
     }
 
+    #[cfg(feature = "mpi")]
+    /// Project the model over one isolated amplitude subset in MPI execution, skipping
+    /// missing amplitude names.
+    pub fn project_weights_subset_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<f64>> {
+        self.project_weights_subset_mpi_with_strict(parameters, names, mc_evaluator, world, false)
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Project the model over one isolated amplitude subset in MPI execution and return
+    /// an error if any requested amplitude name is missing.
+    pub fn project_weights_subset_mpi_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<f64>> {
+        self.project_weights_subset_mpi_with_strict(parameters, names, mc_evaluator, world, true)
+    }
+
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation.
     ///
     /// This method takes the real part of the given expression (discarding
@@ -590,148 +1157,360 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_with<T: AsRef<str>>(
+    fn project_weights_subset_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<Vec<f64>> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_weights_subset_mpi_with_strict(
+                    parameters,
+                    names,
+                    mc_evaluator,
+                    &world,
+                    strict,
+                );
+            }
+        }
+        self.project_weights_subset_local_with_strict(parameters, names, mc_evaluator, strict)
+    }
+
+    /// Project the model over one isolated amplitude subset, skipping missing amplitude
+    /// names.
+    pub fn project_weights_subset<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<Vec<f64>> {
+        self.project_weights_subset_with_strict(parameters, names, mc_evaluator, false)
+    }
+
+    /// Project the model over one isolated amplitude subset and return an error if any
+    /// requested amplitude name is missing.
+    pub fn project_weights_subset_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<f64>> {
+        self.project_weights_subset_with_strict(parameters, names, mc_evaluator, true)
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets (non-MPI version).
+    fn project_weights_subsets_local_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        if subsets.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(mc_evaluator) = mc_evaluator.as_ref() {
+            let resolved_masks = subsets
+                .iter()
+                .map(|names| {
+                    Self::resolve_projection_active_mask_for_evaluator(mc_evaluator, names, strict)
+                })
+                .collect::<LadduResult<Vec<_>>>()?;
+            resolved_masks
+                .iter()
+                .map(|mask| {
+                    project_weights_local_from_resolved_mask(
+                        mc_evaluator,
+                        parameters,
+                        self.n_mc,
+                        mask,
+                    )
+                })
+                .collect()
+        } else {
+            let resolved_masks = subsets
+                .iter()
+                .map(|names| self.get_or_build_projection_active_mask(names, strict))
+                .collect::<LadduResult<Vec<_>>>()?;
+            resolved_masks
+                .iter()
+                .map(|mask| {
+                    project_weights_local_from_resolved_mask(
+                        &self.accmc_evaluator,
+                        parameters,
+                        self.n_mc,
+                        mask,
+                    )
+                })
+                .collect()
+        }
+    }
+
+    /// Project the model over multiple isolated amplitude subsets in local execution,
+    /// skipping missing amplitude names within each subset.
+    pub fn project_weights_subsets_local<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_local_with_strict(parameters, subsets, mc_evaluator, false)
+    }
+
+    /// Project the model over multiple isolated amplitude subsets in local execution and
+    /// return an error if any requested amplitude name is missing.
+    pub fn project_weights_subsets_local_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_local_with_strict(parameters, subsets, mc_evaluator, true)
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets (MPI-compatible version).
+    #[cfg(feature = "mpi")]
+    fn project_weights_subsets_mpi_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+        strict: bool,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        let n_events = mc_evaluator
+            .as_ref()
+            .unwrap_or(&self.accmc_evaluator)
+            .dataset
+            .n_events();
+        let local_projections = self.project_weights_subsets_local_with_strict(
+            parameters,
+            subsets,
+            mc_evaluator,
+            strict,
+        )?;
+        let (counts, displs) = world.get_counts_displs(n_events);
+        let mut gathered = Vec::with_capacity(local_projections.len());
+        for local_projection in local_projections {
+            let mut buffer = vec![0.0; n_events];
+            {
+                let mut partitioned_buffer =
+                    PartitionMut::new(&mut buffer, counts.clone(), displs.clone());
+                world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
+            }
+            gathered.push(buffer);
+        }
+        Ok(gathered)
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Project the model over multiple isolated amplitude subsets in MPI execution,
+    /// skipping missing amplitude names within each subset.
+    pub fn project_weights_subsets_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_mpi_with_strict(
+            parameters,
+            subsets,
+            mc_evaluator,
+            world,
+            false,
+        )
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Project the model over multiple isolated amplitude subsets in MPI execution and
+    /// return an error if any requested amplitude name is missing.
+    pub fn project_weights_subsets_mpi_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_mpi_with_strict(parameters, subsets, mc_evaluator, world, true)
+    }
+
+    /// Project the stored model over multiple isolated amplitude subsets.
+    fn project_weights_subsets_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<Vec<Vec<f64>>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_with_mpi(parameters, names, mc_evaluator, &world);
+                return self.project_weights_subsets_mpi_with_strict(
+                    parameters,
+                    subsets,
+                    mc_evaluator,
+                    &world,
+                    strict,
+                );
             }
         }
-        self.project_with_local(parameters, names, mc_evaluator)
+        self.project_weights_subsets_local_with_strict(parameters, subsets, mc_evaluator, strict)
+    }
+
+    /// Project the model over multiple isolated amplitude subsets, skipping missing
+    /// amplitude names within each subset.
+    pub fn project_weights_subsets<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_with_strict(parameters, subsets, mc_evaluator, false)
+    }
+
+    /// Project the model over multiple isolated amplitude subsets and return an error if
+    /// any requested amplitude name is missing.
+    pub fn project_weights_subsets_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        subsets: &[Vec<T>],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<Vec<Vec<f64>>> {
+        self.project_weights_subsets_with_strict(parameters, subsets, mc_evaluator, true)
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
-    pub fn project_gradient_with_local<T: AsRef<str>>(
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
+    fn project_weights_and_gradients_subset_local_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
+        let evaluator = mc_evaluator.as_ref().unwrap_or(&self.accmc_evaluator);
+        let resolved_mask = if let Some(mc_evaluator) = mc_evaluator.as_ref() {
+            Self::resolve_projection_active_mask_for_evaluator(mc_evaluator, names, strict)?
+        } else {
+            self.get_or_build_projection_active_mask(names, strict)?
+        };
+        let mc_dataset = &evaluator.dataset;
+        let result =
+            evaluator.evaluate_with_gradient_local_with_active_mask(parameters, &resolved_mask)?;
+        #[cfg(feature = "rayon")]
+        let (res, res_gradient) = {
+            (
+                result
+                    .par_iter()
+                    .zip(mc_dataset.events_local().par_iter())
+                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
+                    .collect(),
+                result
+                    .par_iter()
+                    .zip(mc_dataset.events_local().par_iter())
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
+                    .collect(),
+            )
+        };
+        #[cfg(not(feature = "rayon"))]
+        let (res, res_gradient) = {
+            (
+                result
+                    .iter()
+                    .zip(mc_dataset.events_local().iter())
+                    .map(|((l, _), e)| e.weight * l.re / self.n_mc)
+                    .collect(),
+                result
+                    .iter()
+                    .zip(mc_dataset.events_local().iter())
+                    .map(|((_, grad_l), e)| grad_l.map(|g| g.re).scale(e.weight / self.n_mc))
+                    .collect(),
+            )
+        };
+        Ok((res, res_gradient))
+    }
+
+    /// Project the model and parameter gradients over one isolated amplitude subset in
+    /// local execution, skipping missing amplitude names.
+    pub fn project_weights_and_gradients_subset_local<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
-        if let Some(mc_evaluator) = &mc_evaluator {
-            let current_active_mc = mc_evaluator.resources.read().active.clone();
-            mc_evaluator.isolate_many_strict(names)?;
-            let mc_dataset = mc_evaluator.dataset.clone();
-            let result = mc_evaluator.evaluate_local(parameters);
-            let result_gradient = mc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-            #[cfg(feature = "rayon")]
-            let (res, res_gradient) = {
-                (
-                    result
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
-                        .collect(),
-                    result_gradient
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                        .collect(),
-                )
-            };
-            #[cfg(not(feature = "rayon"))]
-            let (res, res_gradient) = {
-                (
-                    result
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
-                        .collect(),
-                    result_gradient
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                        .collect(),
-                )
-            };
-            mc_evaluator.resources.write().active = current_active_mc;
-            Ok((res, res_gradient))
-        } else {
-            let current_active_data = self.data_evaluator.resources.read().active.clone();
-            let current_active_accmc = self.accmc_evaluator.resources.read().active.clone();
-            self.isolate_many_strict(names)?;
-            let mc_dataset = &self.accmc_evaluator.dataset;
-            let result = self.accmc_evaluator.evaluate_local(parameters);
-            let result_gradient = self.accmc_evaluator.evaluate_gradient(parameters);
-            let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-            #[cfg(feature = "rayon")]
-            let (res, res_gradient) = {
-                (
-                    result
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
-                        .collect(),
-                    result_gradient
-                        .par_iter()
-                        .zip(mc_dataset.events.par_iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                        .collect(),
-                )
-            };
-            #[cfg(not(feature = "rayon"))]
-            let (res, res_gradient) = {
-                (
-                    result
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(l, e)| e.weight * l.re / n_mc)
-                        .collect(),
-                    result_gradient
-                        .iter()
-                        .zip(mc_dataset.events.iter())
-                        .map(|(grad_l, e)| grad_l.map(|g| g.re).scale(e.weight / n_mc))
-                        .collect(),
-                )
-            };
-            self.data_evaluator.resources.write().active = current_active_data;
-            self.accmc_evaluator.resources.write().active = current_active_accmc;
-            Ok((res, res_gradient))
-        }
+        self.project_weights_and_gradients_subset_local_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            false,
+        )
+    }
+
+    /// Project the model and parameter gradients over one isolated amplitude subset in
+    /// local execution and return an error if any requested amplitude name is missing.
+    pub fn project_weights_and_gradients_subset_local_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        self.project_weights_and_gradients_subset_local_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            true,
+        )
     }
 
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
-    /// [`NLL::project_gradient`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
+    /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
     ///
     /// # Notes
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
-    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_with`] instead.
+    /// that have `mpi`-feature-gated versions. Most users will want to call [`NLL::project_weights_subset`] instead.
     #[cfg(feature = "mpi")]
-    pub fn project_gradient_with_mpi<T: AsRef<str>>(
+    fn project_weights_and_gradients_subset_mpi_with_strict<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
         world: &SimpleCommunicator,
+        strict: bool,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         let n_events = mc_evaluator
             .as_ref()
             .unwrap_or(&self.accmc_evaluator)
             .dataset
             .n_events();
-        let (local_projection, local_gradient_projection) =
-            self.project_gradient_with_local(parameters, names, mc_evaluator)?;
+        let (local_projection, local_gradient_projection) = self
+            .project_weights_and_gradients_subset_local_with_strict(
+                parameters,
+                names,
+                mc_evaluator,
+                strict,
+            )?;
         let mut projection_result: Vec<f64> = vec![0.0; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
         {
+            // NOTE: gather is required because projection-gradient returns per-event global outputs.
             let mut partitioned_buffer = PartitionMut::new(&mut projection_result, counts, displs);
             world.all_gather_varcount_into(&local_projection, &mut partitioned_buffer);
         }
@@ -744,6 +1523,7 @@ impl NLL {
         let mut flattened_result_buffer = vec![0.0; n_events * parameters.len()];
         let mut partitioned_flattened_result_buffer =
             PartitionMut::new(&mut flattened_result_buffer, counts, displs);
+        // NOTE: gather is required because projection-gradient returns full per-event gradients.
         world.all_gather_varcount_into(
             &flattened_local_gradient_projection,
             &mut partitioned_flattened_result_buffer,
@@ -754,10 +1534,48 @@ impl NLL {
             .collect();
         Ok((projection_result, gradient_projection_result))
     }
+
+    #[cfg(feature = "mpi")]
+    /// Project the model and parameter gradients over one isolated amplitude subset in
+    /// MPI execution, skipping missing amplitude names.
+    pub fn project_weights_and_gradients_subset_mpi<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        self.project_weights_and_gradients_subset_mpi_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            world,
+            false,
+        )
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Project the model and parameter gradients over one isolated amplitude subset in
+    /// MPI execution and return an error if any requested amplitude name is missing.
+    pub fn project_weights_and_gradients_subset_mpi_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        world: &SimpleCommunicator,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        self.project_weights_and_gradients_subset_mpi_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            world,
+            true,
+        )
+    }
     /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each
-    /// Monte-Carlo event. This method differs from the standard [`NLL::project_gradient`] in that it first
+    /// Monte-Carlo event. This method differs from the standard [`NLL::project_weights_and_gradients`] in that it first
     /// isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s by name, but returns
     /// the [`NLL`] to its prior state after calculation.
     ///
@@ -772,257 +1590,196 @@ impl NLL {
     ///
     /// Note that $`N_{\text{MC}}`$ will always be the number of accepted Monte Carlo events,
     /// regardless of the `mc_evaluator`.
-    pub fn project_gradient_with<T: AsRef<str>>(
+    fn project_weights_and_gradients_subset_with_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+        strict: bool,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = laddu_core::mpi::get_world() {
+                return self.project_weights_and_gradients_subset_mpi_with_strict(
+                    parameters,
+                    names,
+                    mc_evaluator,
+                    &world,
+                    strict,
+                );
+            }
+        }
+        self.project_weights_and_gradients_subset_local_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            strict,
+        )
+    }
+
+    /// Project the model and parameter gradients over one isolated amplitude subset,
+    /// skipping missing amplitude names.
+    pub fn project_weights_and_gradients_subset<T: AsRef<str>>(
         &self,
         parameters: &[f64],
         names: &[T],
         mc_evaluator: Option<Evaluator>,
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = laddu_core::mpi::get_world() {
-                return self.project_gradient_with_mpi(parameters, names, mc_evaluator, &world);
-            }
-        }
-        self.project_gradient_with_local(parameters, names, mc_evaluator)
+        self.project_weights_and_gradients_subset_with_strict(
+            parameters,
+            names,
+            mc_evaluator,
+            false,
+        )
+    }
+
+    /// Project the model and parameter gradients over one isolated amplitude subset and
+    /// return an error if any requested amplitude name is missing.
+    pub fn project_weights_and_gradients_subset_strict<T: AsRef<str>>(
+        &self,
+        parameters: &[f64],
+        names: &[T],
+        mc_evaluator: Option<Evaluator>,
+    ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
+        self.project_weights_and_gradients_subset_with_strict(parameters, names, mc_evaluator, true)
+    }
+
+    fn evaluate_data_term_local(&self, parameters: &[f64]) -> f64 {
+        evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| f64::ln(l.re))
+    }
+
+    fn evaluate_mc_term_local(&self, parameters: &[f64]) -> f64 {
+        self.accmc_evaluator
+            .evaluate_weighted_value_sum_local(parameters)
+    }
+
+    #[doc(hidden)]
+    pub fn profile_data_term_local_value(&self, parameters: &[f64]) -> f64 {
+        self.evaluate_data_term_local(parameters)
+    }
+
+    #[doc(hidden)]
+    pub fn profile_mc_term_local_value(&self, parameters: &[f64]) -> f64 {
+        self.evaluate_mc_term_local(parameters)
     }
 
     fn evaluate_local(&self, parameters: &[f64]) -> f64 {
-        let data_result = self.data_evaluator.evaluate_local(parameters);
-        let mc_result = self.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-        #[cfg(feature = "rayon")]
-        let data_term: f64 = data_result
-            .par_iter()
-            .zip(self.data_evaluator.dataset.events.par_iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(feature = "rayon")]
-        let mc_term: f64 = mc_result
-            .par_iter()
-            .zip(self.accmc_evaluator.dataset.events.par_iter())
-            .map(|(l, e)| e.weight * l.re)
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let data_term: f64 = data_result
-            .iter()
-            .zip(self.data_evaluator.dataset.events.iter())
-            .map(|(l, e)| e.weight * f64::ln(l.re))
-            .sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: f64 = mc_result
-            .iter()
-            .zip(self.accmc_evaluator.dataset.events.iter())
-            .map(|(l, e)| e.weight * l.re)
-            .sum_with_accumulator::<Klein<f64>>();
-        -2.0 * (data_term - mc_term / n_mc)
+        let data_term = self.evaluate_data_term_local(parameters);
+        let mc_term = self.evaluate_mc_term_local(parameters);
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
     fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
-        let local_evaluation = self.evaluate_local(parameters);
-        let mut buffer: Vec<f64> = vec![0.0; world.size() as usize];
-        world.all_gather_into(&local_evaluation, &mut buffer);
-        buffer.iter().sum()
+        let data_term_local = self.evaluate_data_term_local(parameters);
+        let data_term = reduce_scalar(world, data_term_local);
+        let mc_term = self
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_mpi(parameters, world);
+        -2.0 * (data_term - mc_term / self.n_mc)
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Evaluate the NLL value across all ranks.
+    pub fn evaluate_mpi_value(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
+        self.evaluate_mpi(parameters, world)
+    }
+
+    fn evaluate_data_gradient_term_local(&self, parameters: &[f64]) -> DVector<f64> {
+        let data_resources = self.data_evaluator.resources.read();
+        let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        #[cfg(feature = "rayon")]
+        let n_parameters = parameters.len();
+        #[cfg(feature = "rayon")]
+        let data_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.data_evaluator.amplitudes.len(),
+            n_expression_slots: self.data_evaluator.expression_slot_count(),
+        };
+        #[cfg(feature = "rayon")]
+        let data_term: DVector<f64> = sum_dvectors_parallel(
+            self.data_evaluator
+                .dataset
+                .events_local()
+                .par_iter()
+                .zip(data_resources.caches.par_iter())
+                .map_init(
+                    || acquire_gradient_scratch(data_scratch_key),
+                    |scratch, (event, cache)| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
+                        for (idx, amp) in self.data_evaluator.amplitudes.iter().enumerate() {
+                            if data_resources.active[idx] {
+                                grad_vals[idx].fill(Complex64::ZERO);
+                                amp.compute_gradient(&data_parameters, cache, &mut grad_vals[idx]);
+                                amp_vals[idx] = amp.compute(&data_parameters, cache);
+                            } else {
+                                grad_vals[idx].fill(Complex64::ZERO);
+                                amp_vals[idx] = Complex64::ZERO;
+                            }
+                        }
+                        let (value, gradient) = self
+                            .data_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, value, gradient)
+                    },
+                )
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
+            n_parameters,
+        );
+        #[cfg(not(feature = "rayon"))]
+        let data_term: DVector<f64> = {
+            let mut amp_vals = vec![Complex64::ZERO; self.data_evaluator.amplitudes.len()];
+            let mut grad_vals =
+                vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.data_evaluator.expression_slot_count()];
+            let mut gradient_slots =
+                vec![DVector::zeros(parameters.len()); self.data_evaluator.expression_slot_count()];
+            self.data_evaluator
+                .dataset
+                .events_local()
+                .iter()
+                .zip(data_resources.caches.iter())
+                .map(|(event, cache)| {
+                    for (idx, amp) in self.data_evaluator.amplitudes.iter().enumerate() {
+                        if data_resources.active[idx] {
+                            grad_vals[idx].fill(Complex64::ZERO);
+                            amp.compute_gradient(&data_parameters, cache, &mut grad_vals[idx]);
+                            amp_vals[idx] = amp.compute(&data_parameters, cache);
+                        } else {
+                            grad_vals[idx].fill(Complex64::ZERO);
+                            amp_vals[idx] = Complex64::ZERO;
+                        }
+                    }
+                    let (value, gradient) = self
+                        .data_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, value, gradient)
+                })
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
+                .sum()
+        };
+        data_term
     }
 
     fn evaluate_gradient_local(&self, parameters: &[f64]) -> DVector<f64> {
-        let data_resources = self.data_evaluator.resources.read();
-        let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.accmc_evaluator.resources.read();
-        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
-        let n_mc = self.accmc_evaluator.dataset.n_events_weighted();
-        #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = self
-            .data_evaluator
-            .dataset
-            .events
-            .par_iter()
-            .zip(data_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.data_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(data_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&data_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.data_evaluator.evaluate_expression_value(&amp_vals),
-                    self.data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum(); // TODO: replace with custom implementation of accurate crate's trait
-        #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
+        let data_term = self.evaluate_data_gradient_term_local(parameters);
+        let mc_term = self
             .accmc_evaluator
-            .dataset
-            .events
-            .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-                self.accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.accmc_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&mc_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let data_term: DVector<f64> = self
-            .data_evaluator
-            .dataset
-            .events
-            .iter()
-            .zip(data_resources.caches.iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.data_evaluator.amplitudes.len()];
-                self.data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.data_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(data_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&data_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.data_evaluator.evaluate_expression_value(&amp_vals),
-                    self.data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = self
-            .accmc_evaluator
-            .dataset
-            .events
-            .iter()
-            .zip(mc_resources.caches.iter())
-            .map(|(event, cache)| {
-                let mut gradient_values =
-                    vec![DVector::zeros(parameters.len()); self.accmc_evaluator.amplitudes.len()];
-                self.accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.accmc_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&mc_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .sum();
-        -2.0 * (data_term - mc_term / n_mc)
+            .evaluate_weighted_gradient_sum_local(parameters);
+        -2.0 * (data_term - mc_term / self.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1031,17 +1788,22 @@ impl NLL {
         parameters: &[f64],
         world: &SimpleCommunicator,
     ) -> DVector<f64> {
-        let local_evaluation_vec = self
-            .evaluate_gradient_local(parameters)
-            .data
-            .as_vec()
-            .to_vec();
-        let mut flattened_result_buffer = vec![0.0; world.size() as usize * parameters.len()];
-        world.all_gather_into(&local_evaluation_vec, &mut flattened_result_buffer);
-        flattened_result_buffer
-            .chunks(parameters.len())
-            .map(DVector::from_row_slice)
-            .sum::<DVector<f64>>()
+        let data_term_local = self.evaluate_data_gradient_term_local(parameters);
+        let data_term = reduce_gradient(world, &data_term_local);
+        let mc_term = self
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_mpi(parameters, world);
+        -2.0 * (data_term - mc_term / self.n_mc)
+    }
+
+    #[cfg(feature = "mpi")]
+    /// Evaluate the gradient across all ranks.
+    pub fn evaluate_mpi_gradient(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> DVector<f64> {
+        self.evaluate_gradient_mpi(parameters, world)
     }
 }
 
@@ -1054,39 +1816,25 @@ impl LikelihoodTerm for NLL {
     fn parameter_manager(&self) -> &ParameterManager {
         &self.parameter_manager
     }
-
-    /// Evaluate the stored [`Model`] over the events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`). The
-    /// result is given by the following formula:
-    ///
-    /// ```math
-    /// NLL(\vec{p}) = -2 \left(\sum_{e \in \text{Data}} \text{weight}(e) \ln(\mathcal{L}(e)) - \frac{1}{N_{\text{MC}_A}} \sum_{e \in \text{MC}_A} \text{weight}(e) \mathcal{L}(e) \right)
-    /// ```
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &world);
+                return Ok(self.evaluate_mpi(parameters, &world));
             }
         }
-        self.evaluate_local(parameters)
+        Ok(self.evaluate_local(parameters))
     }
-
-    /// Evaluate the gradient of the stored [`Model`] over the events in the [`Dataset`]
-    /// stored by the [`Evaluator`] with the given values for free parameters. This method takes the
-    /// real part of the given expression (discarding the imaginary part entirely, which
-    /// does not matter if expressions are coherent sums wrapped in
-    /// [`Expression::norm_sqr`](`laddu_core::Expression::norm_sqr`).
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &world);
+                return Ok(self.evaluate_gradient_mpi(parameters, &world));
             }
         }
-        self.evaluate_gradient_local(parameters)
+        Ok(self.evaluate_gradient_local(parameters))
     }
 }
 
@@ -1112,46 +1860,47 @@ impl LikelihoodTerm for StochasticNLL {
     fn parameter_manager(&self) -> &ParameterManager {
         self.nll.parameter_manager()
     }
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_mpi(parameters, &indices, &world);
+                return Ok(self.evaluate_mpi(parameters, &indices, &world));
             }
         }
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_local(parameters, &indices, n_data_batch_local)
+        Ok(self.evaluate_local(parameters, &indices, n_data_batch_local))
     }
-
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return self.evaluate_gradient_mpi(parameters, &indices, &world);
+                return Ok(self.evaluate_gradient_mpi(parameters, &indices, &world));
             }
         }
         #[cfg(feature = "rayon")]
         let n_data_batch_local = indices
             .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .parallel_sum_with_accumulator::<Klein<f64>>();
         #[cfg(not(feature = "rayon"))]
         let n_data_batch_local = indices
             .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        self.evaluate_gradient_local(parameters, &indices, n_data_batch_local)
+        Ok(self.evaluate_gradient_local(parameters, &indices, n_data_batch_local))
     }
     fn update(&self) {
         self.resample();
@@ -1164,18 +1913,18 @@ impl StochasticNLL {
     /// # See Also
     ///
     /// [`NLL::to_stochastic`]
-    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> Self {
+    pub fn new(nll: NLL, batch_size: usize, seed: Option<usize>) -> LadduResult<Self> {
         let mut rng = seed.map_or_else(Rng::new, |seed| Rng::with_seed(seed as u64));
         let n = nll.data_evaluator.dataset.n_events();
-        assert!(batch_size > 0 && batch_size <= n);
+        validate_stochastic_batch_size(batch_size, n)?;
         let batch_indices = rng.subset(batch_size, n);
-        Self {
+        Ok(Self {
             nll,
             n,
             batch_size,
             batch_indices: Arc::new(Mutex::new(batch_indices)),
             rng: Arc::new(Mutex::new(rng)),
-        }
+        })
     }
     /// Resample the batch indices used in evaluation
     pub fn resample(&self) {
@@ -1212,48 +1961,57 @@ impl StochasticNLL {
     pub fn n_parameters(&self) -> usize {
         self.nll.n_parameters()
     }
-    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+    #[cfg(feature = "mpi")]
+    fn data_batch_weight_local(&self, indices: &[usize]) -> f64 {
+        #[cfg(feature = "rayon")]
+        return indices
+            .par_iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .parallel_sum_with_accumulator::<Klein<f64>>();
+        #[cfg(not(feature = "rayon"))]
+        return indices
+            .iter()
+            .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
+            .sum_with_accumulator::<Klein<f64>>();
+    }
+
+    fn evaluate_data_term_local(&self, parameters: &[f64], indices: &[usize]) -> f64 {
         let data_result = self
             .nll
             .data_evaluator
             .evaluate_batch_local(parameters, indices);
-        let mc_result = self.nll.accmc_evaluator.evaluate_local(parameters);
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
-        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
         #[cfg(feature = "rayon")]
         {
-            let data_term: f64 = indices
+            indices
                 .par_iter()
                 .zip(data_result.par_iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .parallel_sum_with_accumulator::<Klein<f64>>();
-            let mc_term: f64 = mc_result
-                .par_iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.par_iter())
-                .map(|(l, e)| e.weight * l.re)
-                .parallel_sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+                .parallel_sum_with_accumulator::<Klein<f64>>()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            let data_term: f64 = indices
+            indices
                 .iter()
                 .zip(data_result.iter())
                 .map(|(&i, &l)| {
-                    let e = &self.nll.data_evaluator.dataset.events[i];
+                    let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .sum_with_accumulator::<Klein<f64>>();
-            let mc_term: f64 = mc_result
-                .iter()
-                .zip(self.nll.accmc_evaluator.dataset.events.iter())
-                .map(|(l, e)| e.weight * l.re)
-                .sum_with_accumulator::<Klein<f64>>();
-            -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+                .sum_with_accumulator::<Klein<f64>>()
         }
+    }
+
+    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let data_term = self.evaluate_data_term_local(parameters, indices);
+        let mc_term = self
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(parameters);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1265,30 +2023,116 @@ impl StochasticNLL {
     ) -> f64 {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
-        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
+        let n_data_batch_local = self.data_batch_weight_local(&locals);
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let data_term_local = self.evaluate_data_term_local(parameters, &locals);
+        let n_data_batch = reduce_scalar(world, n_data_batch_local);
+        let data_term = reduce_scalar(world, data_term_local);
+        let mc_term = self
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_mpi(parameters, world);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
+    }
+
+    fn evaluate_data_gradient_term_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+    ) -> DVector<f64> {
+        let data_resources = self.nll.data_evaluator.resources.read();
+        let data_parameters = Parameters::new(parameters, &data_resources.constants);
         #[cfg(feature = "rayon")]
-        let n_data_batch_local = indices
-            .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let n_data_batch_local = indices
-            .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
-            .sum_with_accumulator::<Klein<f64>>();
-        world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
+        let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
-        let n_data_batch = n_data_batch_partitioned
-            .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
+        let data_scratch_key = GradientScratchKey {
+            n_parameters,
+            n_amplitudes: self.nll.data_evaluator.amplitudes.len(),
+            n_expression_slots: self.nll.data_evaluator.expression_slot_count(),
+        };
+        #[cfg(feature = "rayon")]
+        let data_term: DVector<f64> = sum_dvectors_parallel(
+            indices
+                .par_iter()
+                .map_init(
+                    || acquire_gradient_scratch(data_scratch_key),
+                    |scratch, &idx| {
+                        let workspace = scratch.workspace_mut();
+                        let amp_vals = &mut workspace.amplitude_values;
+                        let grad_vals = &mut workspace.gradient_values;
+                        let event = &self.nll.data_evaluator.dataset.events_local()[idx];
+                        let cache = &data_resources.caches[idx];
+                        for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate()
+                        {
+                            if data_resources.active[amp_idx] {
+                                grad_vals[amp_idx].fill(Complex64::ZERO);
+                                amp.compute_gradient(
+                                    &data_parameters,
+                                    cache,
+                                    &mut grad_vals[amp_idx],
+                                );
+                                amp_vals[amp_idx] = amp.compute(&data_parameters, cache);
+                            } else {
+                                grad_vals[amp_idx].fill(Complex64::ZERO);
+                                amp_vals[amp_idx] = Complex64::ZERO;
+                            }
+                        }
+                        let (value, gradient) = self
+                            .nll
+                            .data_evaluator
+                            .evaluate_expression_value_gradient_with_scratch(
+                                amp_vals,
+                                grad_vals,
+                                &mut workspace.value_slots,
+                                &mut workspace.gradient_slots,
+                            );
+                        (event.weight, value, gradient)
+                    },
+                )
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re)),
+            n_parameters,
+        );
         #[cfg(not(feature = "rayon"))]
-        let n_data_batch = n_data_batch_partitioned
-            .into_iter()
-            .sum_with_accumulator::<Klein<f64>>();
-        let local_evaluation = self.evaluate_local(parameters, &locals, n_data_batch);
-        let mut buffer: Vec<f64> = vec![0.0; world.size() as usize];
-        world.all_gather_into(&local_evaluation, &mut buffer);
-        buffer.iter().sum()
+        let data_term: DVector<f64> = {
+            let mut amp_vals = vec![Complex64::ZERO; self.nll.data_evaluator.amplitudes.len()];
+            let mut grad_vals =
+                vec![DVector::zeros(parameters.len()); self.nll.data_evaluator.amplitudes.len()];
+            let mut value_slots =
+                vec![Complex64::ZERO; self.nll.data_evaluator.expression_slot_count()];
+            let mut gradient_slots = vec![
+                DVector::zeros(parameters.len());
+                self.nll.data_evaluator.expression_slot_count()
+            ];
+            indices
+                .iter()
+                .map(|&idx| {
+                    let event = &self.nll.data_evaluator.dataset.events_local()[idx];
+                    let cache = &data_resources.caches[idx];
+                    for (amp_idx, amp) in self.nll.data_evaluator.amplitudes.iter().enumerate() {
+                        if data_resources.active[amp_idx] {
+                            grad_vals[amp_idx].fill(Complex64::ZERO);
+                            amp.compute_gradient(&data_parameters, cache, &mut grad_vals[amp_idx]);
+                            amp_vals[amp_idx] = amp.compute(&data_parameters, cache);
+                        } else {
+                            grad_vals[amp_idx].fill(Complex64::ZERO);
+                            amp_vals[amp_idx] = Complex64::ZERO;
+                        }
+                    }
+                    let (value, gradient) = self
+                        .nll
+                        .data_evaluator
+                        .evaluate_expression_value_gradient_with_scratch(
+                            &amp_vals,
+                            &grad_vals,
+                            &mut value_slots,
+                            &mut gradient_slots,
+                        );
+                    (event.weight, value, gradient)
+                })
+                .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
+                .sum()
+        };
+        data_term
     }
 
     fn evaluate_gradient_local(
@@ -1297,211 +2141,13 @@ impl StochasticNLL {
         indices: &[usize],
         n_data_batch: f64,
     ) -> DVector<f64> {
-        let data_resources = self.nll.data_evaluator.resources.read();
-        let data_parameters = Parameters::new(parameters, &data_resources.constants);
-        let mc_resources = self.nll.accmc_evaluator.resources.read();
-        let mc_parameters = Parameters::new(parameters, &mc_resources.constants);
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let n_mc = self.nll.accmc_evaluator.dataset.n_events_weighted();
-        #[cfg(feature = "rayon")]
-        let data_term: DVector<f64> = indices
-            .par_iter()
-            .map(|&idx| {
-                let event = &self.nll.data_evaluator.dataset.events[idx];
-                let cache = &data_resources.caches[idx];
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.data_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
-                        }
-                    });
-                let amp_vals: Vec<_> = self
-                    .nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .map(|(amp, active)| {
-                        if *active {
-                            amp.compute(&data_parameters, event, cache)
-                        } else {
-                            Complex64::ZERO
-                        }
-                    })
-                    .collect();
-                (
-                    event.weight,
-                    self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
-                    self.nll
-                        .data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &gradient_values),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum(); // TODO: replace with custom implementation of accurate crate's trait
-        #[cfg(feature = "rayon")]
-        let mc_term: DVector<f64> = self
+        let data_term = self.evaluate_data_gradient_term_local(parameters, indices);
+        let mc_term = self
             .nll
             .accmc_evaluator
-            .dataset
-            .events
-            .par_iter()
-            .zip(mc_resources.caches.par_iter())
-            .map(|(event, cache)| {
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.accmc_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.nll
-                        .accmc_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&mc_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.nll
-                        .accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .collect::<Vec<DVector<f64>>>()
-            .iter()
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let data_term: DVector<f64> = indices
-            .iter()
-            .map(|&idx| {
-                let event = &self.nll.data_evaluator.dataset.events[idx];
-                let cache = &data_resources.caches[idx];
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.data_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&data_parameters, event, cache, grad)
-                        }
-                    });
-                let amp_vals: Vec<_> = self
-                    .nll
-                    .data_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(data_resources.active.iter())
-                    .map(|(amp, active)| {
-                        if *active {
-                            amp.compute(&data_parameters, event, cache)
-                        } else {
-                            Complex64::ZERO
-                        }
-                    })
-                    .collect();
-                (
-                    event.weight,
-                    self.nll.data_evaluator.evaluate_expression_value(&amp_vals),
-                    self.nll
-                        .data_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &gradient_values),
-                )
-            })
-            .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
-            .sum();
-        #[cfg(not(feature = "rayon"))]
-        let mc_term: DVector<f64> = self
-            .nll
-            .accmc_evaluator
-            .dataset
-            .events
-            .iter()
-            .zip(mc_resources.caches.iter())
-            .map(|(event, cache)| {
-                let mut gradient_values = vec![
-                    DVector::zeros(parameters.len());
-                    self.nll.accmc_evaluator.amplitudes.len()
-                ];
-                self.nll
-                    .accmc_evaluator
-                    .amplitudes
-                    .iter()
-                    .zip(mc_resources.active.iter())
-                    .zip(gradient_values.iter_mut())
-                    .for_each(|((amp, active), grad)| {
-                        if *active {
-                            amp.compute_gradient(&mc_parameters, event, cache, grad)
-                        }
-                    });
-                (
-                    event.weight,
-                    self.nll
-                        .accmc_evaluator
-                        .amplitudes
-                        .iter()
-                        .zip(mc_resources.active.iter())
-                        .map(|(amp, active)| {
-                            if *active {
-                                amp.compute(&mc_parameters, event, cache)
-                            } else {
-                                Complex64::ZERO
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                    gradient_values,
-                )
-            })
-            .map(|(weight, amp_vals, grad_vals)| {
-                (
-                    weight,
-                    self.nll
-                        .accmc_evaluator
-                        .evaluate_expression_gradient(&amp_vals, &grad_vals),
-                )
-            })
-            .map(|(w, g)| w * g.map(|gi| gi.re))
-            .sum();
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / n_mc)
+            .evaluate_weighted_gradient_sum_local(parameters);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 
     #[cfg(feature = "mpi")]
@@ -1513,37 +2159,16 @@ impl StochasticNLL {
     ) -> DVector<f64> {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
-        let mut n_data_batch_partitioned: Vec<f64> = vec![0.0; world.size() as usize];
-        #[cfg(feature = "rayon")]
-        let n_data_batch_local = indices
-            .par_iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let n_data_batch_local = indices
-            .iter()
-            .map(|&i| self.nll.data_evaluator.dataset.events[i].weight)
-            .sum_with_accumulator::<Klein<f64>>();
-        world.all_gather_into(&n_data_batch_local, &mut n_data_batch_partitioned);
-        #[cfg(feature = "rayon")]
-        let n_data_batch = n_data_batch_partitioned
-            .into_par_iter()
-            .parallel_sum_with_accumulator::<Klein<f64>>();
-        #[cfg(not(feature = "rayon"))]
-        let n_data_batch = n_data_batch_partitioned
-            .into_iter()
-            .sum_with_accumulator::<Klein<f64>>();
-        let local_evaluation_vec = self
-            .evaluate_gradient_local(parameters, &locals, n_data_batch)
-            .data
-            .as_vec()
-            .to_vec();
-        let mut flattened_result_buffer = vec![0.0; world.size() as usize * parameters.len()];
-        world.all_gather_into(&local_evaluation_vec, &mut flattened_result_buffer);
-        flattened_result_buffer
-            .chunks(parameters.len())
-            .map(DVector::from_row_slice)
-            .sum::<DVector<f64>>()
+        let n_data_batch_local = self.data_batch_weight_local(&locals);
+        let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
+        let data_term_local = self.evaluate_data_gradient_term_local(parameters, &locals);
+        let n_data_batch = reduce_scalar(world, n_data_batch_local);
+        let data_term = reduce_gradient(world, &data_term_local);
+        let mc_term = self
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_mpi(parameters, world);
+        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
     }
 }
 
@@ -1557,19 +2182,33 @@ impl StochasticNLL {
 ///     A Dataset representing true signal data
 /// ds_accmc : Dataset
 ///     A Dataset of physically flat accepted Monte Carlo data used for normalization
+/// n_mc : float, optional
+///     The number of Monte Carlo events used in the denominator of the normalization integral
+///     (uses the weighted number of accepted Monte Carlo events if None is given)
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "NLL", module = "laddu")]
+#[pyclass(name = "NLL", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyNLL(pub Box<NLL>);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyNLL {
     #[new]
-    #[pyo3(signature = (expression, ds_data, ds_accmc))]
-    fn new(expression: &PyExpression, ds_data: &PyDataset, ds_accmc: &PyDataset) -> PyResult<Self> {
-        Ok(Self(NLL::new(&expression.0, &ds_data.0, &ds_accmc.0)?))
+    #[pyo3(signature = (expression, ds_data, ds_accmc, *, n_mc=None))]
+    fn new(
+        expression: &PyExpression,
+        ds_data: &PyDataset,
+        ds_accmc: &PyDataset,
+        n_mc: Option<f64>,
+    ) -> PyResult<Self> {
+        Ok(Self(NLL::new(
+            &expression.0,
+            &ds_data.0,
+            &ds_accmc.0,
+            n_mc,
+        )?))
     }
     /// The underlying signal dataset used in calculating the NLL
     ///
@@ -1604,8 +2243,8 @@ impl PyNLL {
     /// StochasticNLL
     ///
     #[pyo3(signature = (batch_size, *, seed=None))]
-    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyStochasticNLL {
-        PyStochasticNLL(self.0.to_stochastic(batch_size, seed))
+    fn to_stochastic(&self, batch_size: usize, seed: Option<usize>) -> PyResult<PyStochasticNLL> {
+        Ok(PyStochasticNLL(self.0.to_stochastic(batch_size, seed)?))
     }
     /// Turn an ``NLL`` into a likelihood expression that can be combined with other terms.
     fn to_expression(&self) -> PyLikelihoodExpression {
@@ -1675,7 +2314,7 @@ impl PyNLL {
     ///     If `arg` is not a str or list of str
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
-    /// strict : bool, default=True
+    /// strict : bool, default=False
     ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
     ///     silently skip missing amplitudes.
     #[pyo3(signature = (arg, *, strict=true))]
@@ -1801,7 +2440,9 @@ impl PyNLL {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -1814,20 +2455,12 @@ impl PyNLL {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(LikelihoodTerm::evaluate(self.0.as_ref(), &parameters))
-        }
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        install_laddu_with_threads(threads, || {
+            LikelihoodTerm::evaluate(self.0.as_ref(), &parameters)
+        })
+        .map_err(PyErr::from)
     }
     /// Evaluate the gradient of the negative log-likelihood over the stored Dataset
     ///
@@ -1836,7 +2469,9 @@ impl PyNLL {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -1850,32 +2485,17 @@ impl PyNLL {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
-                    .as_slice(),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0.evaluate_gradient(&parameters).as_slice(),
-            ))
-        }
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        let gradient = install_laddu_with_threads(threads, || {
+            LikelihoodTerm::evaluate_gradient(self.0.as_ref(), &parameters)
+        })?;
+        Ok(PyArray1::from_slice(py, gradient.as_slice()))
     }
     /// Project the model over the Monte Carlo dataset with the given parameter values
     ///
@@ -1887,85 +2507,30 @@ impl PyNLL {
     /// ----------
     /// parameters : list of float
     ///     The values to use for the free parameters
+    /// subset : str or list of str, optional
+    ///     Isolate one amplitude subset for this call only
+    /// subsets : list of list of str or None, optional
+    ///     Batch multiple isolated amplitude subsets into one call. A ``None`` entry uses
+    ///     the full currently active model for that slot.
+    /// strict : bool, default=True
+    ///     When ``True``, raise an error if any requested amplitude is missing. When
+    ///     ``False``, silently skip missing amplitudes inside ``subset`` or ``subsets``.
     /// mc_evaluator: Evaluator, optional
     ///     Project using the given Evaluator or use the stored ``accmc`` if None
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
     /// result : array_like
-    ///     Weights for every Monte Carlo event which represent the fit to data
-    ///
-    /// Raises
-    /// ------
-    /// Exception
-    ///     If there was an error building the thread pool or problem creating the resulting
-    ///     ``numpy`` array
-    ///
-    #[pyo3(signature = (parameters, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
-    fn project<'py>(
-        &self,
-        py: Python<'py>,
-        parameters: Vec<f64>,
-        mc_evaluator: Option<PyEvaluator>,
-        threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    })
-                    .as_slice(),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0
-                    .project(&parameters, mc_evaluator.map(|pyeval| pyeval.0.clone()))
-                    .as_slice(),
-            ))
-        }
-    }
-
-    /// Project the model over the Monte Carlo dataset with the given parameter values, first
-    /// isolating the given terms by name. The NLL is then reset to its previous state of
-    /// activation.
-    ///
-    /// This is defined as
-    ///
-    /// .. math:: e_w(\vec{p}) = \frac{e_w}{N_{MC}} \mathcal{L}(e)
-    ///
-    /// Parameters
-    /// ----------
-    /// parameters : list of float
-    ///     The values to use for the free parameters
-    /// arg : str or list of str
-    ///     Names of Amplitudes to be isolated
-    /// mc_evaluator: Evaluator, optional
-    ///     Project using the given Evaluator or use the stored ``accmc`` if None
-    /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
-    ///
-    /// Returns
-    /// -------
-    /// result : array_like
-    ///     Weights for every Monte Carlo event which represent the fit to data
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If `arg` is not a str or list of str
+    ///     If neither ``subset`` nor ``subsets`` is provided, returns weights with shape
+    ///     ``(n_events,)``.
+    ///     If ``subset`` is provided, returns weights with shape ``(n_events,)`` for the
+    ///     isolated subset.
+    ///     If ``subsets`` is provided, returns weights with shape
+    ///     ``(n_subsets, n_events)``.
     ///
     /// Raises
     /// ------
@@ -1973,58 +2538,250 @@ impl PyNLL {
     ///     If there was an error building the thread pool or problem creating the resulting
     ///     ``numpy`` array
     /// ValueError
-    ///     If `arg` or any items of `arg` are not registered Amplitudes
+    ///     If both ``subset`` and ``subsets`` are provided
+    ///     If ``strict`` is ``True`` and any requested amplitude is missing
     ///
-    #[pyo3(signature = (parameters, arg, *, mc_evaluator = None, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
-    fn project_with<'py>(
+    #[pyo3(signature = (
+        parameters,
+        *,
+        subset = None,
+        subsets = None,
+        strict = false,
+        mc_evaluator = None,
+        threads = None
+    ))]
+    fn project_weights<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
-        arg: &Bound<'_, PyAny>,
+        subset: Option<Bound<'_, PyAny>>,
+        subsets: Option<Bound<'_, PyAny>>,
+        strict: bool,
         mc_evaluator: Option<PyEvaluator>,
         threads: Option<usize>,
-    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        let names = if let Ok(string_arg) = arg.extract::<String>() {
-            vec![string_arg]
-        } else if let Ok(list_arg) = arg.cast::<PyList>() {
-            let vec: Vec<String> = list_arg.extract()?;
-            vec
-        } else {
-            return Err(PyTypeError::new_err(
-                "Argument must be either a string or a list of strings",
+    ) -> PyResult<Bound<'py, PyAny>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        if subset.is_some() && subsets.is_some() {
+            return Err(PyValueError::new_err(
+                "subset and subsets are mutually exclusive",
             ));
-        };
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0.project_with(
+        }
+        let subset = extract_subset_names(subset)?;
+        let subsets = extract_subsets_arg(subsets)?;
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        match (subset, subsets) {
+            (Some(names), None) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    if strict {
+                        self.0.project_weights_subset_strict(
                             &parameters,
                             &names,
-                            mc_evaluator.map(|pyeval| pyeval.0.clone()),
+                            mc_evaluator.clone(),
                         )
-                    })?
-                    .as_slice(),
-            ))
+                    } else {
+                        self.0
+                            .project_weights_subset(&parameters, &names, mc_evaluator.clone())
+                    }
+                })?;
+                Ok(PyArray1::from_slice(py, projection.as_slice()).into_any())
+            }
+            (None, Some(subsets)) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    let mut rows = Vec::with_capacity(subsets.len());
+                    for subset in &subsets {
+                        let weights = match subset {
+                            Some(names) => {
+                                if strict {
+                                    self.0.project_weights_subset_strict(
+                                        &parameters,
+                                        names,
+                                        mc_evaluator.clone(),
+                                    )?
+                                } else {
+                                    self.0.project_weights_subset(
+                                        &parameters,
+                                        names,
+                                        mc_evaluator.clone(),
+                                    )?
+                                }
+                            }
+                            None => self.0.project_weights(&parameters, mc_evaluator.clone())?,
+                        };
+                        rows.push(weights);
+                    }
+                    Ok::<_, LadduError>(rows)
+                })?;
+                Ok(PyArray2::from_vec2(py, &projection)
+                    .map_err(LadduError::NumpyError)?
+                    .into_any())
+            }
+            (None, None) => {
+                let projection = install_laddu_with_threads(threads, || {
+                    self.0.project_weights(&parameters, mc_evaluator.clone())
+                })?;
+                Ok(PyArray1::from_slice(py, projection.as_slice()).into_any())
+            }
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0
-                    .project_with(
-                        &parameters,
-                        &names,
-                        mc_evaluator.map(|pyeval| pyeval.0.clone()),
-                    )?
-                    .as_slice(),
-            ))
+    }
+
+    /// Project the model and gradients over the Monte Carlo dataset.
+    ///
+    /// With ``subset=...``, only the named amplitudes are isolated for the duration of
+    /// the calculation. With ``subsets=...``, the method returns batched projections for
+    /// each isolated subset. A ``None`` entry in ``subsets`` uses the full currently active
+    /// model for that slot. ``subset`` and ``subsets`` are mutually exclusive.
+    ///
+    /// Parameters
+    /// ----------
+    /// parameters : list of float
+    ///     The values to use for the free parameters
+    /// subset : str or list of str, optional
+    ///     Isolate one amplitude subset for this call only
+    /// subsets : list of list of str or None, optional
+    ///     Batch multiple isolated amplitude subsets into one call. A ``None`` entry uses
+    ///     the full currently active model for that slot.
+    /// strict : bool, default=False
+    ///     When ``True``, raise an error if any requested amplitude is missing. When
+    ///     ``False``, silently skip missing amplitudes inside ``subset`` or ``subsets``.
+    /// mc_evaluator: Evaluator, optional
+    ///     Project using the given Evaluator or use the stored ``accmc`` if None
+    /// threads : int, optional
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
+    ///
+    /// Returns
+    /// -------
+    /// tuple
+    ///     If neither ``subset`` nor ``subsets`` is provided, returns
+    ///     ``(weights, gradients)`` with shapes
+    ///     ``(n_events,)`` and ``(n_events, n_parameters)``.
+    ///     If ``subset`` is provided, returns ``(weights, gradients)`` with shapes
+    ///     ``(n_events,)`` and ``(n_events, n_parameters)``.
+    ///     If ``subsets`` is provided, returns ``(weights, gradients)`` with shapes
+    ///     ``(n_subsets, n_events)`` and ``(n_subsets, n_events, n_parameters)``.
+    ///
+    /// Raises
+    /// ------
+    /// Exception
+    ///     If there was an error building the thread pool or problem creating the resulting
+    ///     ``numpy`` arrays
+    /// ValueError
+    ///     If both ``subset`` and ``subsets`` are provided
+    ///     If ``strict`` is ``True`` and any requested amplitude is missing
+    #[pyo3(signature = (
+        parameters,
+        *,
+        subset = None,
+        subsets = None,
+        strict = false,
+        mc_evaluator = None,
+        threads = None
+    ))]
+    fn project_weights_and_gradients<'py>(
+        &self,
+        py: Python<'py>,
+        parameters: Vec<f64>,
+        subset: Option<Bound<'_, PyAny>>,
+        subsets: Option<Bound<'_, PyAny>>,
+        strict: bool,
+        mc_evaluator: Option<PyEvaluator>,
+        threads: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        if subset.is_some() && subsets.is_some() {
+            return Err(PyValueError::new_err(
+                "subset and subsets are mutually exclusive",
+            ));
+        }
+        let subset = extract_subset_names(subset)?;
+        let subsets = extract_subsets_arg(subsets)?;
+        let mc_evaluator = mc_evaluator.map(|pyeval| pyeval.0.clone());
+        match (subset, subsets) {
+            (Some(names), None) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    if strict {
+                        self.0.project_weights_and_gradients_subset_strict(
+                            &parameters,
+                            &names,
+                            mc_evaluator.clone(),
+                        )
+                    } else {
+                        self.0.project_weights_and_gradients_subset(
+                            &parameters,
+                            &names,
+                            mc_evaluator.clone(),
+                        )
+                    }
+                })?;
+                let gradients = gradients
+                    .iter()
+                    .map(|gradient| gradient.as_slice().to_vec())
+                    .collect::<Vec<_>>();
+                (
+                    PyArray1::from_slice(py, weights.as_slice()),
+                    PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (None, Some(subsets)) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    let mut weight_rows = Vec::with_capacity(subsets.len());
+                    let mut gradient_rows = Vec::with_capacity(subsets.len());
+                    for subset in &subsets {
+                        let (subset_weights, subset_gradients) = match subset {
+                            Some(names) => {
+                                if strict {
+                                    self.0.project_weights_and_gradients_subset_strict(
+                                        &parameters,
+                                        names,
+                                        mc_evaluator.clone(),
+                                    )?
+                                } else {
+                                    self.0.project_weights_and_gradients_subset(
+                                        &parameters,
+                                        names,
+                                        mc_evaluator.clone(),
+                                    )?
+                                }
+                            }
+                            None => self
+                                .0
+                                .project_weights_and_gradients(&parameters, mc_evaluator.clone())?,
+                        };
+                        weight_rows.push(subset_weights);
+                        gradient_rows.push(
+                            subset_gradients
+                                .iter()
+                                .map(|gradient| gradient.as_slice().to_vec())
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    Ok::<_, LadduError>((weight_rows, gradient_rows))
+                })?;
+                (
+                    PyArray2::from_vec2(py, &weights).map_err(LadduError::NumpyError)?,
+                    PyArray3::from_vec3(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (None, None) => {
+                let (weights, gradients) = install_laddu_with_threads(threads, || {
+                    self.0
+                        .project_weights_and_gradients(&parameters, mc_evaluator.clone())
+                })?;
+                let gradients = gradients
+                    .iter()
+                    .map(|gradient| gradient.as_slice().to_vec())
+                    .collect::<Vec<_>>();
+                (
+                    PyArray1::from_slice(py, weights.as_slice()),
+                    PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?,
+                )
+                    .into_bound_py_any(py)
+            }
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
     }
 
@@ -2037,29 +2794,33 @@ impl PyNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial values for the free parameters (length ``n_free``)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the minimization algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -2069,122 +2830,9 @@ impl PyNLL {
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
-    /// recognises the following keys:
-    ///
-    /// Notes
-    /// -----
-    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
-    /// algorithm has different settings:
-    ///
-    /// L-BFGS-B
-    /// ========
-    /// m : int, default=10
-    ///     The number of saved corrections to the approximated Hessian.
-    /// skip_hessian : bool, default=False
-    ///     If True, the exact Hessian will not be calculated.
-    /// line_search : dict
-    ///     Settings for the line search (see next section).
-    /// eps_f : float, default=`MACH_EPS^(1/2)`
-    ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float, default=1e-5
-    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
-    ///
-    /// Line Search
-    /// ===========
-    /// method : {"morethuente", "hagerzhang"}
-    ///     The line search method to use.
-    /// max_iterations : int, default=100
-    ///     The maximum number of line search iterations.
-    /// c1 : float, default=1e-4
-    ///     The first Wolfe condition constant (More-Thuente only).
-    /// c2 : float, default=0.9
-    ///     The second Wolfe condition constant (More-Thuente only).
-    /// max_zoom : int, default=100
-    ///     The maximum number of zoom steps (More-Thuente only).
-    /// delta : float, default=0.1
-    ///     The first Wolfe condition constant (Hager-Zhang only).
-    /// sigma : float, default=0.9
-    ///     The second Wolfe condition constant (Hager-Zhang only).
-    /// epsilon : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
-    /// theta : float, default=0.5
-    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
-    /// gamma : float, default=0.66
-    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
-    /// max_bisects : int, default=50
-    ///     The maximum number of allowed bisections (Hager-Zhang only).
-    ///
-    /// Adam
-    /// ====
-    /// beta_c : float, default=0.9
-    ///     The slope of the exponential moving average used to terminate the algorithm.
-    /// eps_loss : float, default=`MACH_EPS^(1/2)`
-    ///     The minimum change in exponential moving average loss which will increase the patience counter.
-    /// patience : int, default=1
-    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
-    ///
-    /// Nelder-Mead
-    /// ===========
-    /// alpha : float, default=1.0
-    ///     The reflection coefficient.
-    /// beta : float, default=2.0
-    ///     The expansion coefficient.
-    /// gamma : float, default=0.5
-    ///     The contraction coefficient.
-    /// delta : float, default=0.5
-    ///     The shrink coefficient.
-    /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han (2010).
-    /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See Lagarias et al. (1998) for details.
-    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
-    ///     The method used to generate the initial simplex.
-    /// orthogonal_multiplier : float, default=1.05
-    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
-    /// orthogonal_zero_step : float, default=0.00025
-    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
-    /// simplex_size : float, default=1.0
-    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
-    /// simplex : list of list of floats
-    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
-    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See Singer & Singer (2004) for details. Set to None to skip this check.
-    /// eps_f : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the f_terminator method.
-    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See Singer & Singer (2004) for details. Set to None to skip this check.
-    /// eps_x : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the x_terminator method.
-    ///
-    /// Particle Swarm Optimization (PSO)
-    /// =================================
-    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
-    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
-    /// swarm_position_bounds : list of tuple of floats or None
-    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm_size : int
-    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm : list of list of floats
-    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
-    /// swarm_topology : {"global", "ring"}
-    ///     The topology connecting particles in the swarm.
-    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
-    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
-    /// swarm_boundary_method : {"inf", "shr"}
-    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
-    /// use_transform : bool, default=False
-    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
-    /// swarm_velocity_bounds : list of tuple of floats or None, optional
-    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
-    /// omega : float, default=0.8
-    ///     The inertial weight.
-    /// c1 : float, default = 0.1
-    ///     The cognitive weight.
-    /// c2 : float, default = 0.1
-    ///     The social weight.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -2199,44 +2847,33 @@ impl PyNLL {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
-        Ok(PyMinimizationSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            self.0.as_ref(),
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
 
     /// Run an MCMC algorithm on the free parameters of the NLL's model
@@ -2246,24 +2883,26 @@ impl PyNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the MCMC algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
@@ -2282,42 +2921,19 @@ impl PyNLL {
     ///
     /// Examples
     /// --------
-    /// >>> nll.mcmc([[0.0, 0.5]], method='ess', max_steps=512)  # doctest: +SKIP
+    /// >>> import ganesh
+    /// >>> nll.mcmc(
+    /// ...     [[0.0, 0.5], [0.1, 0.6]],
+    /// ...     method='ess',
+    /// ...     options=ganesh.ESSOptions(max_steps=512),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm exposes different keys:
-    ///
-    /// AIES (Affine-Invariant Ensemble Sampler)
-    /// ========================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
-    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
-    ///     parameter may be provided to specify properties of moves which support it. For the AIES
-    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
-    ///     (2.0 by default). See Goodman & Weare (2010).
-    ///
-    /// ESS (Ensemble Slice Sampler)
-    /// ============================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
-    ///     should be used relative to the sum of all frequencies given across all moves. An
-    ///     optional middle dictionary parameter may be provided to specify properties of moves
-    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
-    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
-    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
-    ///     'n_components' parameter (5 by default) which represents the number of mixture
-    ///     components to use for clustering (should be larger than the expected number of modes).
-    ///     See Karamanis & Beutler (2021).
-    /// n_adaptive : int, default=0
-    ///     The number of adaptive moves to perform at the start of sampling
-    /// max_steps : int, default=10000
-    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
-    /// mu : float, default = 1.0
-    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -2325,45 +2941,33 @@ impl PyNLL {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn mcmc<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
-            &full_settings,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            self.0.as_ref(),
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
 }
 
@@ -2376,10 +2980,11 @@ impl PyNLL {
 /// -----
 /// See the `NLL.to_stochastic` method for details.
 #[cfg(feature = "python")]
-#[pyclass(name = "StochasticNLL", module = "laddu")]
+#[pyclass(name = "StochasticNLL", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyStochasticNLL(pub StochasticNLL);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyStochasticNLL {
@@ -2402,29 +3007,33 @@ impl PyStochasticNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the minimization algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -2434,122 +3043,9 @@ impl PyStochasticNLL {
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
-    /// recognises the following keys:
-    ///
-    /// Notes
-    /// -----
-    /// The `settings` dict is passed to the minimization algorithm as keyword arguments. Each
-    /// algorithm has different settings:
-    ///
-    /// L-BFGS-B
-    /// ========
-    /// m : int, default=10
-    ///     The number of saved corrections to the approximated Hessian.
-    /// skip_hessian : bool, default=False
-    ///     If True, the exact Hessian will not be calculated.
-    /// line_search : dict
-    ///     Settings for the line search (see next section).
-    /// eps_f : float, default=`MACH_EPS^(1/2)`
-    ///     The tolerance for stopping based on the change in function value.
-    /// eps_g : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance for stopping based on the change in function gradient.
-    /// eps_norm_g : float, default=1e-5
-    ///     The tolerance for stopping based on the change in the infinity-norm of the function gradient.
-    ///
-    /// Line Search
-    /// ===========
-    /// method : {"morethuente", "hagerzhang"}
-    ///     The line search method to use.
-    /// max_iterations : int, default=100
-    ///     The maximum number of line search iterations.
-    /// c1 : float, default=1e-4
-    ///     The first Wolfe condition constant (More-Thuente only).
-    /// c2 : float, default=0.9
-    ///     The second Wolfe condition constant (More-Thuente only).
-    /// max_zoom : int, default=100
-    ///     The maximum number of zoom steps (More-Thuente only).
-    /// delta : float, default=0.1
-    ///     The first Wolfe condition constant (Hager-Zhang only).
-    /// sigma : float, default=0.9
-    ///     The second Wolfe condition constant (Hager-Zhang only).
-    /// epsilon : float, default=`MACH_EPS^(1/3)`
-    ///     The tolerance parameter on approximate Wolfe termination (Hager-Zhang only).
-    /// theta : float, default=0.5
-    ///     The split ratio for interval updates (defaults to bisection) (Hager-Zhang only).
-    /// gamma : float, default=0.66
-    ///     A parameter which determines when a bisection is performed (Hager-Zhang only).
-    /// max_bisects : int, default=50
-    ///     The maximum number of allowed bisections (Hager-Zhang only).
-    ///
-    /// Adam
-    /// ====
-    /// beta_c : float, default=0.9
-    ///     The slope of the exponential moving average used to terminate the algorithm.
-    /// eps_loss : float, default=`MACH_EPS^(1/2)`
-    ///     The minimum change in exponential moving average loss which will increase the patience counter.
-    /// patience : int, default=1
-    ///     The number of allowed iterations with no improvement in the loss (according to an exponential moving average) before the algorithm terminates.
-    ///
-    /// Nelder-Mead
-    /// ===========
-    /// alpha : float, default=1.0
-    ///     The reflection coefficient.
-    /// beta : float, default=2.0
-    ///     The expansion coefficient.
-    /// gamma : float, default=0.5
-    ///     The contraction coefficient.
-    /// delta : float, default=0.5
-    ///     The shrink coefficient.
-    /// adaptive : bool, default=False
-    ///     Use adaptive hyperparameters according to Gao and Han (2010).
-    /// expansion_method : {"greedyminimization", "greedyexpansion"}
-    ///     Greedy minimization will favor points which minimize faster, but greedy expansion may explore a space more efficiently. See Lagarias et al. (1998) for details.
-    /// simplex_construction_method : {"scaledorthogonal", "orthogonal", "custom"}
-    ///     The method used to generate the initial simplex.
-    /// orthogonal_multiplier : float, default=1.05
-    ///     Multiplier used on nonzero coordinates of the initial vertex in simplex generation (scaled orthogonal method).
-    /// orthogonal_zero_step : float, default=0.00025
-    ///     Value to use for coordinates of the initial vertex which are zero in simplex generation (scaled orthogonal method).
-    /// simplex_size : float, default=1.0
-    ///     The step in each orthogonal direction from the initial vertex in simplex generation (orthogonal method).
-    /// simplex : list of list of floats
-    ///     Specify the initial simplex directly. Each entry in the list must be a unique point in the parameter space. The initial vertex is also included, so this argument must specify as many vertices as there are dimensions in the parameter space. This must be specified if simplex_construction_method is set to "custom".
-    /// f_terminator : {"stddev", "absolute", "amoeba"} or None, default="stddev"
-    ///     Set the method to terminate the algorithm based on the function values over the simplex. See Singer & Singer (2004) for details. Set to None to skip this check.
-    /// eps_f : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the f_terminator method.
-    /// x_terminator : {"singer", "diameter", "higham", "rowan"} or None, default="singer"
-    ///     Set the method to terminate the algorithm based on the position of simplex vertices. See Singer & Singer (2004) for details. Set to None to skip this check.
-    /// eps_x : float, default=`MACH_EPS^(1/4)`
-    ///     The tolerance for the x_terminator method.
-    ///
-    /// Particle Swarm Optimization (PSO)
-    /// =================================
-    /// swarm_position_initializer : {"randominlimits", "latinhypercube", "custom"}
-    ///     The method used to initialize the swarm position. The "randominlimits" and "latinhypercube" methods require swarm_position_bounds and swarm_size to be specified, and they ignore the initial position given when constructing the swarm (this behavior may change in the future). The "custom" method requires swarm to be specified and does include the initial position.
-    /// swarm_position_bounds : list of tuple of floats or None
-    ///     Bounds used when randomly generating a swarm with either the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm_size : int
-    ///     The number of particles in the swarm when using the "randominlimits" or "latinhypercube" swarm_position_initializer.
-    /// swarm : list of list of floats
-    ///     A list of positions of each particle in the swarm. This argument is required when using the "custom" swarm_position_initializer.
-    /// swarm_topology : {"global", "ring"}
-    ///     The topology connecting particles in the swarm.
-    /// swarm_update_method : {"sync", "synchronous", "async", "asynchronous"}
-    ///     Synchronous updates update positions and targets in separate loops (slower but sometimes more stable) while asynchronous updates them in the same loop (faster but sometimes less stable).
-    /// swarm_boundary_method : {"inf", "shr"}
-    ///     The boundary method used for the swarm. "inf" sets infeasable values to +inf while "shr" shrinks the velocity vector to place the particle on the boundary where it would cross.
-    /// use_transform : bool, default=False
-    ///     If True, the algorithm will ignore the swarm_boundary_method and instead perform a coordinate transformation on the swarm to ensure the swarm is within bounds.
-    /// swarm_velocity_bounds : list of tuple of floats or None, optional
-    ///     Bounds used when randomly generating the initial velocity of each particle in the swarm. If not specified, initial velocities are set to zero.
-    /// omega : float, default=0.8
-    ///     The inertial weight.
-    /// c1 : float, default = 0.1
-    ///     The cognitive weight.
-    /// c2 : float, default = 0.1
-    ///     The social weight.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -2564,44 +3060,33 @@ impl PyStochasticNLL {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
-        Ok(PyMinimizationSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
     /// Run an MCMC algorithm on the free parameters of the StochasticNLL's model
     ///
@@ -2610,24 +3095,26 @@ impl PyStochasticNLL {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the MCMC algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
@@ -2646,43 +3133,19 @@ impl PyStochasticNLL {
     ///
     /// Examples
     /// --------
+    /// >>> import ganesh
     /// >>> s_nll = nll.to_stochastic(batch_size=2048, seed=1234)  # doctest: +SKIP
-    /// >>> s_nll.mcmc([[0.0, 0.5]], max_steps=1024)  # doctest: +SKIP
+    /// >>> s_nll.mcmc(
+    /// ...     [[0.0, 0.5], [0.1, 0.6]],
+    /// ...     options=ganesh.AIESOptions(max_steps=1024),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm exposes different keys:
-    ///
-    /// AIES (Affine-Invariant Ensemble Sampler)
-    /// ========================================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('stretch', {'a': 2.0}, 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('stretch' or 'walk') and the last is the frequency that move should be used relative
-    ///     to the sum of all frequencies given across all moves. An optional middle dictionary
-    ///     parameter may be provided to specify properties of moves which support it. For the AIES
-    ///     algorithm, the stretch move may use the 'a' parameter to specify the scaling parameter
-    ///     (2.0 by default). See Goodman & Weare (2010).
-    ///
-    /// ESS (Ensemble Slice Sampler)
-    /// ============================
-    /// moves : list of tuple of (str, float) or (str, dict, float), default = [('differential', 1.0)]
-    ///     The list of moves to use. The first element of the tuple is the name of the move
-    ///     ('differential', 'gaussian', or 'global') and the last is the frequency that move
-    ///     should be used relative to the sum of all frequencies given across all moves. An
-    ///     optional middle dictionary parameter may be provided to specify properties of moves
-    ///     which support it. For the ESS algorithm, the global move may use a 'scale' parameter
-    ///     (1.0 by default) which rescales steps within a local cluster, a 'rescale_cov' parameter
-    ///     (0.001 by default) which rescales the covariance matrix of clusters, and an
-    ///     'n_components' parameter (5 by default) which represents the number of mixture
-    ///     components to use for clustering (should be larger than the expected number of modes).
-    ///     See Karamanis & Beutler (2021).
-    /// n_adaptive : int, default=0
-    ///     The number of adaptive moves to perform at the start of sampling
-    /// max_steps : int, default=10000
-    ///     The maximum number of expansions/contractions to perform at each step in the algorithm
-    /// mu : float, default = 1.0
-    ///     The adaptive scaling parameter (only applies if 'n_adaptive' is greater than zero)
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -2690,45 +3153,33 @@ impl PyStochasticNLL {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn mcmc<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
-            &full_settings,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
 }
 
@@ -3037,9 +3488,9 @@ impl LikelihoodRegistry {
     }
 }
 
-///
+/// Python wrapper for [`LikelihoodExpression`].
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodExpression", module = "laddu")]
+#[pyclass(name = "LikelihoodExpression", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 
@@ -3074,6 +3525,7 @@ pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 /// -----
 /// When multiple inputs share the same parameter name, the value and fixed/free status from the
 /// earliest term in the sequence take precedence.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3133,6 +3585,7 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 /// Notes
 /// -----
 /// When parameters overlap between inputs, the parameter definition from the earliest term is used.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3182,6 +3635,7 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
 /// []
 /// >>> evaluator.evaluate([])
 /// 0.0
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodZero")]
 pub fn py_likelihood_zero() -> PyLikelihoodExpression {
@@ -3205,12 +3659,14 @@ pub fn py_likelihood_zero() -> PyLikelihoodExpression {
 /// >>> from laddu import LikelihoodOne
 /// >>> LikelihoodOne().load().evaluate([])
 /// 1.0
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodOne")]
 pub fn py_likelihood_one() -> PyLikelihoodExpression {
     PyLikelihoodExpression(LikelihoodExpression::one())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodExpression {
@@ -3407,17 +3863,93 @@ impl LikelihoodEvaluator {
         self.parameter_manager.n_parameters()
     }
 
-    fn assemble_parameters(&self, parameters: &[f64]) -> Vec<f64> {
-        if parameters.len() != self.free_parameter_indices.len() {
-            panic!(
-                "mismatched parameter dimension: received {}, expected {} free",
-                parameters.len(),
-                self.free_parameter_indices.len()
-            );
+    fn assemble_parameters(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
+        validate_free_parameter_len(parameters.len(), self.free_parameter_indices.len())?;
+        self.parameter_manager.assemble_full(parameters)
+    }
+
+    /// Evaluate the sum/product of all terms.
+    pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        let parameters = self.assemble_parameters(parameters)?;
+        let mut param_buffers: Vec<Vec<f64>> = self
+            .likelihood_registry
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self
+            .likelihood_registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
         }
-        self.parameter_manager
-            .assemble_full(parameters)
-            .expect("slice length should match free parameter count")
+        let likelihood_values = LikelihoodValues(
+            self.likelihood_registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        Ok(self.likelihood_expression.evaluate(&likelihood_values))
+    }
+
+    /// Evaluate the gradient.
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        let parameters = self.assemble_parameters(parameters)?;
+        let mut param_buffers: Vec<Vec<f64>> = self
+            .likelihood_registry
+            .param_counts
+            .iter()
+            .map(|&count| vec![0.0; count])
+            .collect();
+        for (layout, buffer) in self
+            .likelihood_registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
+        }
+        let likelihood_values = LikelihoodValues(
+            self.likelihood_registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
+            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
+            .collect();
+        for (((term, param_buffer), gradient_buffer), layout) in self
+            .likelihood_registry
+            .terms
+            .iter()
+            .zip(param_buffers.iter())
+            .zip(gradient_buffers.iter_mut())
+            .zip(self.likelihood_registry.param_layouts.iter())
+        {
+            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
+            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
+                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
+            }
+        }
+        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
+        let full_gradient = self
+            .likelihood_expression
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
+        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
+        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
+            reduced[out_idx] = full_gradient[global_idx];
+        }
+        Ok(reduced)
     }
 }
 
@@ -3437,88 +3969,14 @@ impl LikelihoodTerm for LikelihoodEvaluator {
     }
     /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
     /// contained by this [`LikelihoodEvaluator`].
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        let parameters = self.assemble_parameters(parameters);
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
-        );
-        self.likelihood_expression.evaluate(&likelihood_values)
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        LikelihoodEvaluator::evaluate(self, parameters)
     }
 
     /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
     /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> DVector<f64> {
-        let parameters = self.assemble_parameters(parameters);
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect(),
-        );
-        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
-            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
-            .collect();
-        for (((term, param_buffer), gradient_buffer), layout) in self
-            .likelihood_registry
-            .terms
-            .iter()
-            .zip(param_buffers.iter())
-            .zip(gradient_buffers.iter_mut())
-            .zip(self.likelihood_registry.param_layouts.iter())
-        {
-            let term_gradient = term.evaluate_gradient(param_buffer); // This has a local layout
-            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
-                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
-            }
-        }
-        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        let full_gradient = self
-            .likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
-        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
-        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
-            reduced[out_idx] = full_gradient[global_idx];
-        }
-        reduced
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        LikelihoodEvaluator::evaluate_gradient(self, parameters)
     }
 }
 
@@ -3526,9 +3984,10 @@ impl LikelihoodTerm for LikelihoodEvaluator {
 /// [`LikelihoodExpression`]
 ///
 #[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodEvaluator", module = "laddu")]
+#[pyclass(name = "LikelihoodEvaluator", module = "laddu", skip_from_py_object)]
 pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodEvaluator {
@@ -3580,7 +4039,9 @@ impl PyLikelihoodEvaluator {
     /// parameters : list of float
     ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -3593,20 +4054,9 @@ impl PyLikelihoodEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate(&self, parameters: Vec<f64>, threads: Option<usize>) -> PyResult<f64> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(ThreadPoolBuilder::new()
-                .num_threads(threads.unwrap_or(0))
-                .build()
-                .map_err(LadduError::from)?
-                .install(|| self.0.evaluate(&parameters)))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(self.0.evaluate(&parameters))
-        }
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        install_laddu_with_threads(threads, || self.0.evaluate(&parameters)).map_err(PyErr::from)
     }
     /// Evaluate the gradient of the sum of all terms in the evaluator
     ///
@@ -3615,7 +4065,9 @@ impl PyLikelihoodEvaluator {
     /// parameters : list of float
     ///     Parameter values for the free parameters (length ``n_free``).
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -3630,32 +4082,16 @@ impl PyLikelihoodEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or(0))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_gradient(&parameters))
-                    .as_slice(),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                self.0.evaluate_gradient(&parameters).as_slice(),
-            ))
-        }
+        validate_free_parameter_len(parameters.len(), self.0.n_free())?;
+        let gradient =
+            install_laddu_with_threads(threads, || self.0.evaluate_gradient(&parameters))?;
+        Ok(PyArray1::from_slice(py, gradient.as_slice()))
     }
     #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the LikelihoodTerm with respect to the free parameters in the model
@@ -3666,29 +4102,33 @@ impl PyLikelihoodEvaluator {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial parameters at the start of optimization
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
-    /// method : {'lbfgsb', 'nelder-mead', 'adam', 'pso'}
+    /// p0 : array_like or ganesh.NelderMeadInit or ganesh.PSOInit or ganesh.CMAESInit or ganesh.DifferentialEvolutionInit
+    ///     Initial state for the selected minimizer. Use a length-``n_free`` vector for
+    ///     ``lbfgsb``, ``adam``, ``conjugate-gradient``, and ``trust-region``; either a
+    ///     vector or ``ganesh.NelderMeadInit`` for ``nelder-mead``; a ``ganesh.CMAESInit``
+    ///     for ``cma-es``; a ``ganesh.DifferentialEvolutionInit`` for ``differential-evolution``,
+    ///     and either a 2D swarm array or ``ganesh.PSOInit`` for ``pso``.
+    /// method : {'lbfgsb', 'adam', 'conjugate-gradient', 'trust-region', 'nelder-mead', 'cma-es', 'differential-evolution', 'pso'}
     ///     The minimization algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the minimization algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.LBFGSBConfig`` or
+    ///     ``ganesh.PSOConfig``. Bounds are configured here when supported by the method.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MinimizerObserver or list of MinimizerObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MinimizerTerminator or list of MinimizerTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
     /// MinimizationSummary
-    ///     The status of the minimization algorithm at termination
+    ///     A summary of the minimization algorithm at termination
     ///
     /// Raises
     /// ------
@@ -3697,56 +4137,18 @@ impl PyLikelihoodEvaluator {
     ///
     /// Examples
     /// --------
-    /// >>> s_nll.minimize([1.0, 0.1], method='adam', max_steps=500)  # doctest: +SKIP
+    /// >>> import ganesh
+    /// >>> evaluator.minimize(
+    /// ...     [1.0],
+    /// ...     method='lbfgsb',
+    /// ...     options=ganesh.LBFGSBOptions(max_steps=150),
+    /// ... )  # doctest: +SKIP
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is forwarded to the solver as keyword arguments. Each algorithm
-    /// recognises the following keys:
-    ///
-    /// Available algorithms
-    /// --------------------
-    /// **`lbfgsb` (Limited-memory BFGS-B)**
-    ///     - `m` (int, default `10`): Number of correction vectors retained for the Hessian
-    ///       approximation.
-    ///     - `skip_hessian` (bool, default `False`): Skip the exact Hessian recomputation during
-    ///       convergence checks.
-    ///     - `line_search` (dict): fine-tunes the line search with entries such as::
-    ///
-    ///         {"method": "hagerzhang", "max_iterations": 100, "c1": 1e-4, "c2": 0.9}
-    ///
-    ///       Supported keys are `method` (`"morethuente"` or `"hagerzhang"`), `max_iterations`,
-    ///       `c1`, `c2`, `max_zoom`, `delta`, `sigma`, `epsilon`, `theta`, `gamma`, and
-    ///       `max_bisects`.
-    ///
-    /// **`adam` (Adaptive Moment Estimation)**
-    ///     - `beta_c` (float, default `0.9`): Slope of the exponential moving average used to
-    ///       judge convergence.
-    ///     - `eps_loss` (float, default `sqrt(MACH_EPS)`): Minimum change in the averaged loss
-    ///       required to reset the patience counter.
-    ///     - `patience` (int, default `1`): Number of tolerated non-improving iterations.
-    ///
-    /// **`nelder-mead` (Simplex search with adaptive parameters)**
-    ///     - `alpha`/`beta`/`gamma`/`delta` control the reflection, expansion, contraction, and
-    ///       shrink steps (defaults: `1.0`, `2.0`, `0.5`, `0.5`).
-    ///     - `adaptive` (bool): Enable the Gao & Han (2010) adaptive schedule.
-    ///     - `expansion_method`: Either `"greedyminimization"` or `"greedyexpansion"` (see
-    ///       Lagarias et al., 1998).
-    ///     - `simplex_construction_method`: `"scaledorthogonal"`, `"orthogonal"`, or `"custom"`.
-    ///       When `custom` is selected, provide `simplex` with explicit vertices.
-    ///     - `f_terminator` / `x_terminator` and their tolerances (`eps_f` / `eps_x`) choose the
-    ///       function- and position-based stopping criteria described by Singer & Singer (2004).
-    ///
-    /// **`pso` (Particle Swarm Optimisation)**
-    ///     - `swarm_position_initializer`: `"randominlimits"`, `"latinhypercube"`, or `"custom"`.
-    ///       Random initialisers require `swarm_position_bounds` and `swarm_size`; the custom mode
-    ///       consumes the `swarm` argument directly.
-    ///     - `swarm_topology` (`"global"` or `"ring"`) and `swarm_update_method`
-    ///       (`"sync"`/`"async"`) select the neighbourhood structure.
-    ///     - `swarm_boundary_method` (`"inf"` or `"shr"`) and `use_transform` control how bounds
-    ///       are enforced.
-    ///     - `swarm_velocity_bounds` (optional), `omega` (default `0.8`), `c1` and `c2` (defaults
-    ///       `0.1`) tune the particle dynamics.
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, pass
+    /// ``ganesh.LBFGSBConfig(bounds=[...])`` for bounded L-BFGS-B, or
+    /// ``ganesh.AdamOptions(max_steps=500)`` to cap the number of Adam iterations.
     ///
     /// References
     /// ----------
@@ -3761,44 +4163,33 @@ impl PyLikelihoodEvaluator {
     /// Appl. Numer. Anal. & Comput. 1(2), 524–534. <https://doi.org/10.1002/anac.200410015>
     ///
     #[cfg_attr(doctest, doc = "```")]
-    #[pyo3(signature = (p0, *, bounds=None, method="lbfgsb".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="lbfgsb".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn minimize<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<f64>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMinimizationSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self
-            .0
-            .minimize(MinimizationSettings::from_pyargs(&p0, &full_settings)?)?;
-        Ok(PyMinimizationSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        minimize_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
     /// Run an MCMC algorithm on the free parameters of the LikelihoodTerm's model
     ///
@@ -3807,24 +4198,26 @@ impl PyLikelihoodEvaluator {
     ///
     /// Parameters
     /// ----------
-    /// p0 : array_like
-    ///     The initial positions of each walker with dimension (n_walkers, n_parameters)
-    /// bounds : list of tuple of float or None, optional
-    ///     Optional bounds on each parameter (use None or an infinity for no bound)
+    /// p0 : array_like or ganesh.AIESInit or ganesh.ESSInit
+    ///     Initial sampler state. Use a 2D walker matrix with shape
+    ///     ``(n_walkers, n_parameters)`` for the common case, or pass an explicit Ganesh
+    ///     init object for method-specific initialization.
     /// method : {'aies', 'ess'}
     ///     The MCMC algorithm to use
-    /// settings : dict, optional
-    ///     Settings for the MCMC algorithm (see notes)
+    /// config : ganesh config object, optional
+    ///     Method-specific Ganesh configuration, such as ``ganesh.AIESConfig`` or
+    ///     ``ganesh.ESSConfig``.
+    /// options : ganesh options object, optional
+    ///     Method-specific Ganesh options object controlling step limits, built-in observers,
+    ///     and built-in terminators.
     /// observers : MCMCObserver or list of MCMCObserver, optional
     ///     User-defined observers which are called at each step
     /// terminators : MCMCTerminator or list of MCMCTerminator, optional
     ///     User-defined terminators which are called at each step
-    /// max_steps : int, optional
-    ///     Set the maximum number of steps
-    /// debug : bool, default=False
-    ///     Use a debug observer to print out debugging information at each step
     /// threads : int, default=0
-    ///     The number of threads to use (setting this to 0 will use all available CPUs)
+    ///     The number of threads to use (setting this to ``0`` uses the current global or
+    ///     context-managed default; any positive value overrides that default for this call
+    ///     only)
     ///
     /// Returns
     /// -------
@@ -3843,39 +4236,25 @@ impl PyLikelihoodEvaluator {
     ///
     /// Examples
     /// --------
-    /// >>> expr = likelihood_sum([LikelihoodScalar('scale')])  # doctest: +SKIP
-    /// >>> evaluator = expr.load()  # doctest: +SKIP
-    /// >>> evaluator.minimize([1.0], method='pso', max_steps=150)  # doctest: +SKIP
-    ///
-    /// Examples
-    /// --------
     /// >>> from laddu import LikelihoodScalar, likelihood_sum
+    /// >>> import ganesh
     /// >>> evaluator = likelihood_sum([LikelihoodScalar('alpha')]).load()
-    /// >>> summary = evaluator.mcmc([[0.0], [0.4]], max_steps=4, method='aies')
+    /// >>> summary = evaluator.mcmc(
+    /// ...     [[0.0], [0.4]],
+    /// ...     method='aies',
+    /// ...     options=ganesh.AIESOptions(max_steps=4),
+    /// ... )
     /// >>> summary.dimension[2]
     /// 1
-    /// >>> summary.get_flat_chain().shape[1]
+    /// >>> summary.chain(flat=True).shape[1]
     /// 1
     ///
     /// Notes
     /// -----
-    /// The `settings` dict is passed to the MCMC algorithm as keyword arguments. Each
-    /// algorithm exposes different keys:
-    ///
-    /// Sampling algorithms
-    /// -------------------
-    /// **`aies` (Affine-Invariant Ensemble Sampler; Goodman & Weare, 2010)**
-    ///     - `moves`: Sequence of tuples `("stretch", freq)` or `("walk", freq)`. The optional
-    ///       dictionary overrides parameters such as `{"a": 2.0}` for the stretch move.
-    ///     - `n_adaptive`: Number of adaptive warm-up steps (default `0`).
-    ///
-    /// **`ess` (Ensemble Slice Sampler; Karamanis & Beutler, 2021)**
-    ///     - `moves`: Sequence of tuples selecting `"differential"`, `"gaussian"`, or `"global"`
-    ///       moves. The optional dictionary configures `scale` (default `1.0`), `rescale_cov`
-    ///       (default `0.001`), and `n_components` (default `5`) for the global move.
-    ///     - `n_adaptive`: Number of adaptive moves to perform at the start of sampling (default `0`).
-    ///     - `max_steps`: Maximum number of expansions/contractions per slice-evaluation step (default `10000`).
-    ///     - `mu`: Adaptive scaling parameter used when `n_adaptive > 0` (default `1.0`).
+    /// ``config`` and ``options`` use Ganesh's Python API directly. For example, custom
+    /// move mixes belong in ``ganesh.AIESConfig`` or ``ganesh.ESSConfig``, while
+    /// ``ganesh.AIESOptions(max_steps=...)`` and ``ganesh.ESSOptions(max_steps=...)`` control
+    /// run limits.
     ///
     /// References
     /// ----------
@@ -3883,45 +4262,33 @@ impl PyLikelihoodEvaluator {
     ///
     /// Karamanis, M. & Beutler, F. (2021). *Ensemble slice sampling*. Stat Comput 31(5). <https://doi.org/10.1007/s11222-021-10038-2>
     ///
-    #[pyo3(signature = (p0, *, bounds=None, method="aies".to_string(), settings=None, observers=None, terminators=None, max_steps=None, debug=false, threads=0))]
+    #[pyo3(signature = (p0, *, method="aies".to_string(), config=None, options=None, observers=None, terminators=None, threads=0))]
     #[allow(clippy::too_many_arguments)]
     fn mcmc<'py>(
         &self,
         py: Python<'py>,
-        p0: Vec<Vec<f64>>,
-        bounds: Option<Vec<(Option<f64>, Option<f64>)>>,
+        p0: Bound<'_, PyAny>,
         method: String,
-        settings: Option<Bound<'py, PyDict>>,
+        config: Option<Bound<'_, PyAny>>,
+        options: Option<Bound<'_, PyAny>>,
         observers: Option<Bound<'_, PyAny>>,
         terminators: Option<Bound<'_, PyAny>>,
-        max_steps: Option<usize>,
-        debug: bool,
         threads: usize,
-    ) -> PyResult<PyMCMCSummary> {
-        let full_settings = PyDict::new(py);
-        if let Some(bounds) = bounds {
-            full_settings.set_item("bounds", bounds)?;
-        }
-        full_settings.set_item("method", method)?;
-        if let Some(observers) = observers {
-            full_settings.set_item("observers", observers)?;
-        }
-        if let Some(terminators) = terminators {
-            full_settings.set_item("terminators", terminators)?;
-        }
-        if let Some(max_steps) = max_steps {
-            full_settings.set_item("max_steps", max_steps)?;
-        }
-        full_settings.set_item("debug", debug)?;
-        full_settings.set_item("threads", threads)?;
-        if let Some(settings) = settings {
-            full_settings.set_item("settings", settings)?;
-        }
-        let result = self.0.mcmc(MCMCSettings::from_pyargs(
-            &p0.into_iter().map(|p| DVector::from_vec(p)).collect(),
-            &full_settings,
-        )?)?;
-        Ok(PyMCMCSummary(result))
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let parameter_names = self.0.free_parameters();
+        mcmc_from_python(
+            &self.0,
+            &p0,
+            self.0.n_free(),
+            &parameter_names,
+            method,
+            config.as_ref(),
+            options.as_ref(),
+            observers,
+            terminators,
+            threads,
+        )?
+        .to_py_class(py)
     }
 }
 
@@ -3953,12 +4320,14 @@ impl LikelihoodScalar {
 }
 
 impl LikelihoodTerm for LikelihoodScalar {
-    fn evaluate(&self, parameters: &[f64]) -> f64 {
-        parameters[0]
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        validate_free_parameter_len(parameters.len(), 1)?;
+        Ok(parameters[0])
     }
 
-    fn evaluate_gradient(&self, _parameters: &[f64]) -> DVector<f64> {
-        DVector::from_vec(vec![1.0])
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        validate_free_parameter_len(parameters.len(), 1)?;
+        Ok(DVector::from_vec(vec![1.0]))
     }
 
     fn parameters(&self) -> Vec<String> {
@@ -3993,6 +4362,7 @@ impl LikelihoodTerm for LikelihoodScalar {
 /// >>> expr = likelihood_sum([LikelihoodScalar('alpha')])
 /// >>> expr.load().evaluate([1.25])
 /// 1.25
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodScalar")]
 pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
@@ -4001,19 +4371,32 @@ pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "python")]
+    use super::install_laddu_with_threads;
     use super::{LikelihoodScalar, LikelihoodTerm, NLL};
     use approx::assert_relative_eq;
+    #[cfg(feature = "mpi")]
+    use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
     use laddu_core::{
-        amplitudes::{parameter, Amplitude, AmplitudeID, ParameterLike},
+        amplitudes::{parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike},
         data::{Dataset, DatasetMetadata, EventData},
-        resources::{Cache, ParameterID, Parameters, Resources},
+        resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
         utils::vectors::Vec4,
-        Expression, LadduResult,
+        Expression, LadduError, LadduResult,
     };
+    #[cfg(feature = "mpi")]
+    use mpi::topology::{Communicator, SimpleCommunicator};
+    #[cfg(feature = "mpi")]
+    use mpi_test::mpi_test;
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
+    #[cfg(feature = "mpi")]
+    use std::fs;
     use std::sync::Arc;
+
+    const LENGTH_MISMATCH_MESSAGE_FRAGMENT: &str = "length mismatch";
+    const AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT: &str = "No registered amplitude";
 
     #[derive(Clone, Serialize, Deserialize)]
     struct ConstantAmplitude {
@@ -4041,25 +4424,117 @@ mod tests {
             resources.register_amplitude(&self.name)
         }
 
-        fn compute(
-            &self,
-            parameters: &Parameters,
-            _event: &EventData,
-            _cache: &Cache,
-        ) -> Complex64 {
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::ParameterOnly
+        }
+
+        fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
             Complex64::new(parameters.get(self.pid), 0.0)
         }
 
         fn compute_gradient(
             &self,
             _parameters: &Parameters,
-            _event: &EventData,
             _cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {
             if let ParameterID::Parameter(index) = self.pid {
                 gradient[index] = Complex64::ONE;
             }
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct CachedBeamScaleAmplitude {
+        name: String,
+        parameter: ParameterLike,
+        pid: ParameterID,
+        sid: ScalarID,
+        p4_index: usize,
+    }
+
+    impl CachedBeamScaleAmplitude {
+        #[allow(clippy::new_ret_no_self)]
+        fn new(name: &str, parameter: ParameterLike, p4_index: usize) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                parameter,
+                pid: ParameterID::default(),
+                sid: ScalarID::default(),
+                p4_index,
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CachedBeamScaleAmplitude {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.pid = resources.register_parameter(&self.parameter)?;
+            self.sid = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::Mixed
+        }
+
+        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
+        }
+
+        fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(parameters.get(self.pid), 0.0) * cache.get_scalar(self.sid)
+        }
+
+        fn compute_gradient(
+            &self,
+            _parameters: &Parameters,
+            cache: &Cache,
+            gradient: &mut DVector<Complex64>,
+        ) {
+            if let ParameterID::Parameter(index) = self.pid {
+                gradient[index] = Complex64::new(cache.get_scalar(self.sid), 0.0);
+            }
+        }
+    }
+
+    #[derive(Clone, Serialize, Deserialize)]
+    struct CacheOnlyBeamAmplitude {
+        name: String,
+        sid: ScalarID,
+        p4_index: usize,
+    }
+
+    impl CacheOnlyBeamAmplitude {
+        #[allow(clippy::new_ret_no_self)]
+        fn new(name: &str, p4_index: usize) -> LadduResult<Expression> {
+            Self {
+                name: name.to_string(),
+                sid: ScalarID::default(),
+                p4_index,
+            }
+            .into_expression()
+        }
+    }
+
+    #[typetag::serde]
+    impl Amplitude for CacheOnlyBeamAmplitude {
+        fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+            self.sid = resources.register_scalar(Some(&format!("{}.beam_energy", self.name)));
+            resources.register_amplitude(&self.name)
+        }
+
+        fn dependence_hint(&self) -> ExpressionDependence {
+            ExpressionDependence::CacheOnly
+        }
+
+        fn precompute(&self, event: &laddu_core::data::NamedEventView<'_>, cache: &mut Cache) {
+            cache.store_scalar(self.sid, event.p4_at(self.p4_index).e());
+        }
+
+        fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+            Complex64::new(cache.get_scalar(self.sid), 0.0)
         }
     }
 
@@ -4078,13 +4553,461 @@ mod tests {
         Arc::new(Dataset::new_with_metadata(events, metadata))
     }
 
+    fn dataset_with_two_p4_and_weights(
+        beam_energies: &[(f64, f64)],
+        weights: &[f64],
+    ) -> Arc<Dataset> {
+        assert_eq!(beam_energies.len(), weights.len());
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = beam_energies
+            .iter()
+            .zip(weights.iter())
+            .map(|(&(e0, e1), &weight)| {
+                Arc::new(EventData {
+                    p4s: vec![Vec4::new(0.0, 0.0, 0.0, e0), Vec4::new(0.0, 0.0, 0.0, e1)],
+                    aux: vec![],
+                    weight,
+                })
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
+    #[cfg(feature = "mpi")]
+    fn read_resident_rss_kb() -> Option<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            let status = fs::read_to_string("/proc/self/status").ok()?;
+            let vm_rss = status
+                .lines()
+                .find(|line| line.starts_with("VmRSS:"))?
+                .split_whitespace()
+                .nth(1)?;
+            vm_rss.parse::<u64>().ok()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn generated_two_p4_dataset(
+        n_events: usize,
+        base_energy: f64,
+        weight_scale: f64,
+    ) -> Arc<Dataset> {
+        let metadata = Arc::new(DatasetMetadata::default());
+        let events = (0..n_events)
+            .map(|index| {
+                let idx = index as f64;
+                let beam_e0 = base_energy + (idx % 17.0) * 0.35 + idx * 0.0025;
+                let beam_e1 = 0.5 * base_energy + (idx % 11.0) * 0.2 + idx * 0.0015;
+                let weight = 0.75 + weight_scale * (1.0 + (index % 9) as f64);
+                Arc::new(EventData {
+                    p4s: vec![
+                        Vec4::new(0.0, 0.0, 0.0, beam_e0),
+                        Vec4::new(0.0, 0.0, 0.0, beam_e1),
+                    ],
+                    aux: vec![],
+                    weight,
+                })
+            })
+            .collect();
+        Arc::new(Dataset::new_with_metadata(events, metadata))
+    }
+
     fn make_constant_nll() -> (Box<NLL>, Vec<f64>) {
         let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
         let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0]);
         let mc = dataset_with_weights(&[0.5, 1.5]);
-        let nll = NLL::new(&expr, &data, &mc).unwrap();
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         (nll, vec![2.0])
+    }
+
+    fn make_two_parameter_nll() -> (Box<NLL>, Vec<f64>) {
+        let amp_a = ConstantAmplitude::new("amp_a", parameter("alpha")).unwrap();
+        let amp_b = ConstantAmplitude::new("amp_b", parameter("beta")).unwrap();
+        let expr = (amp_a + amp_b).norm_sqr();
+        let data = dataset_with_weights(&[1.0, 2.0, 3.0, 1.0]);
+        let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
+        (nll, vec![0.75, -1.25])
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn install_laddu_with_threads_handles_repeated_short_calls() {
+        let (nll, params) = make_two_parameter_nll();
+
+        let expected_value = nll
+            .evaluate(&params)
+            .expect("reference evaluation should succeed");
+        let expected_gradient = nll
+            .evaluate_gradient(&params)
+            .expect("reference gradient should succeed");
+        let expected_projection = nll
+            .project_weights(&params, None)
+            .expect("reference projection should succeed");
+
+        for _ in 0..64 {
+            let value = install_laddu_with_threads(Some(2), || nll.evaluate(&params))
+                .expect("threaded evaluation should succeed");
+            let gradient = install_laddu_with_threads(Some(2), || nll.evaluate_gradient(&params))
+                .expect("threaded gradient should succeed");
+            let projection =
+                install_laddu_with_threads(Some(2), || nll.project_weights(&params, None))
+                    .expect("threaded projection should succeed");
+
+            assert_relative_eq!(value, expected_value, epsilon = 1e-12);
+            assert_eq!(gradient.len(), expected_gradient.len());
+            for (lhs, rhs) in gradient.iter().zip(expected_gradient.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            assert_eq!(projection.len(), expected_projection.len());
+            for (lhs, rhs) in projection.iter().zip(expected_projection.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum DeterministicModelKind {
+        Separable,
+        Partial,
+        NonSeparable,
+    }
+
+    struct DeterministicNllFixture {
+        nll: Box<NLL>,
+        parameters: Vec<f64>,
+    }
+
+    const DETERMINISTIC_STRICT_ABS_TOL: f64 = 1e-12;
+    const DETERMINISTIC_STRICT_REL_TOL: f64 = 1e-10;
+
+    fn assert_nll_fixture_matches_weighted_baseline(fixture: &DeterministicNllFixture) {
+        let expected_value = super::evaluate_weighted_expression_sum_local(
+            &fixture.nll.data_evaluator,
+            &fixture.parameters,
+            |l| f64::ln(l.re),
+        );
+        let expected_mc_term = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters);
+        let expected_value = -2.0 * (expected_value - expected_mc_term / fixture.nll.n_mc);
+
+        let expected_data_gradient = fixture
+            .nll
+            .evaluate_data_gradient_term_local(&fixture.parameters);
+        let expected_mc_gradient = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let expected_gradient =
+            -2.0 * (expected_data_gradient - expected_mc_gradient / fixture.nll.n_mc);
+
+        let actual_value = fixture.nll.evaluate_local(&fixture.parameters);
+        assert_relative_eq!(
+            actual_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let actual_gradient = fixture.nll.evaluate_gradient_local(&fixture.parameters);
+        assert_eq!(
+            actual_gradient.len(),
+            expected_gradient.len(),
+            "fixture NLL gradient length mismatch (actual={}, expected={})",
+            actual_gradient.len(),
+            expected_gradient.len()
+        );
+        for (actual_item, expected_item) in actual_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn assert_nll_fixture_matches_mpi_reduced_baseline(
+        fixture: &DeterministicNllFixture,
+        world: &SimpleCommunicator,
+    ) {
+        let data_term_local = super::evaluate_weighted_expression_sum_local(
+            &fixture.nll.data_evaluator,
+            &fixture.parameters,
+            |l| f64::ln(l.re),
+        );
+        let mc_term_local = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters);
+        let data_term = super::reduce_scalar(world, data_term_local);
+        let mc_term = super::reduce_scalar(world, mc_term_local);
+        let expected_value = -2.0 * (data_term - mc_term / fixture.nll.n_mc);
+        let mpi_value = fixture.nll.evaluate_mpi_value(&fixture.parameters, world);
+        assert_relative_eq!(
+            mpi_value,
+            expected_value,
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        let data_gradient_local = fixture
+            .nll
+            .evaluate_data_gradient_term_local(&fixture.parameters);
+        let mc_gradient_local = fixture
+            .nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let data_gradient = super::reduce_gradient(world, &data_gradient_local);
+        let mc_gradient = super::reduce_gradient(world, &mc_gradient_local);
+        let expected_gradient = -2.0 * (data_gradient - mc_gradient / fixture.nll.n_mc);
+        let mpi_gradient = fixture
+            .nll
+            .evaluate_mpi_gradient(&fixture.parameters, world);
+        assert_eq!(
+            mpi_gradient.len(),
+            expected_gradient.len(),
+            "fixture MPI gradient length mismatch (actual={}, expected={})",
+            mpi_gradient.len(),
+            expected_gradient.len()
+        );
+        for (actual_item, expected_item) in mpi_gradient.iter().zip(expected_gradient.iter()) {
+            assert_relative_eq!(
+                *actual_item,
+                *expected_item,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+        }
+    }
+
+    fn make_deterministic_nll_fixture(kind: DeterministicModelKind) -> DeterministicNllFixture {
+        let data = dataset_with_two_p4_and_weights(
+            &[
+                (1.0, 0.8),
+                (2.5, 1.7),
+                (4.0, 2.4),
+                (3.3, 1.1),
+                (5.2, 2.8),
+                (1.7, 0.9),
+            ],
+            &[0.7, 1.2, 0.9, 1.5, 0.8, 1.1],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[
+                (1.5, 1.0),
+                (3.0, 2.1),
+                (5.5, 2.9),
+                (2.0, 1.2),
+                (4.2, 1.8),
+                (2.8, 1.4),
+            ],
+            &[0.8, 1.4, 0.6, 1.1, 0.75, 1.25],
+        );
+
+        match kind {
+            DeterministicModelKind::Separable => {
+                let p1 = ConstantAmplitude::new("p1", parameter("p1"))
+                    .expect("separable p1 should build");
+                let p2 = ConstantAmplitude::new("p2", parameter("p2"))
+                    .expect("separable p2 should build");
+                let c1 = CacheOnlyBeamAmplitude::new("c1", 0).expect("separable c1 should build");
+                let c2 = CacheOnlyBeamAmplitude::new("c2", 1).expect("separable c2 should build");
+                let expression = (&p1 * &c1) + &(&p2 * &c2);
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc, None)
+                        .expect("separable NLL should build"),
+                    parameters: vec![0.4, 0.2],
+                }
+            }
+            DeterministicModelKind::Partial => {
+                let p =
+                    ConstantAmplitude::new("p", parameter("p")).expect("partial p should build");
+                let c = CacheOnlyBeamAmplitude::new("c", 0).expect("partial c should build");
+                let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+                    .expect("partial m should build");
+                let expression = (&p * &c) + &m;
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc, None).expect("partial NLL should build"),
+                    parameters: vec![0.35, 0.25],
+                }
+            }
+            DeterministicModelKind::NonSeparable => {
+                let m1 = CachedBeamScaleAmplitude::new("m1", parameter("m1"), 0)
+                    .expect("non-separable m1 should build");
+                let m2 = CachedBeamScaleAmplitude::new("m2", parameter("m2"), 1)
+                    .expect("non-separable m2 should build");
+                let expression = &m1 * &m2;
+                DeterministicNllFixture {
+                    nll: NLL::new(&expression, &data, &mc, None)
+                        .expect("non-separable NLL should build"),
+                    parameters: vec![0.2, 0.15],
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    fn make_mixed_workload_nll_fixture(n_events: usize) -> DeterministicNllFixture {
+        let data = generated_two_p4_dataset(n_events, 1.4, 0.08);
+        let mc = generated_two_p4_dataset(n_events, 1.9, 0.11);
+        let p = ConstantAmplitude::new("p", parameter("p")).expect("mixed-workload p should build");
+        let c = CacheOnlyBeamAmplitude::new("c", 0)
+            .expect("mixed-workload cache amplitude should build");
+        let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+            .expect("mixed-workload beam amplitude should build");
+        let expression = (&p * &c) + &m;
+        DeterministicNllFixture {
+            nll: NLL::new(&expression, &data, &mc, None).expect("mixed-workload NLL should build"),
+            parameters: vec![0.35, 0.25],
+        }
+    }
+
+    fn case_nll_evaluate_short(nll: &NLL) -> LadduResult<()> {
+        nll.evaluate(&[]).map(|_| ())
+    }
+
+    fn case_nll_evaluate_gradient_long(nll: &NLL) -> LadduResult<()> {
+        nll.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
+    }
+
+    fn case_nll_project_short(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights(&[], None).map(|_| ())
+    }
+
+    fn case_nll_project_weights_and_gradients_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_and_gradients(&[1.0, 2.0], None)
+            .map(|_| ())
+    }
+
+    fn case_nll_project_weights_subset_short(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_subset_local::<&str>(&[], &["missing_amplitude"], None)
+            .map(|_| ())
+    }
+
+    fn case_nll_project_weights_and_gradients_subset_long(nll: &NLL) -> LadduResult<()> {
+        nll.project_weights_and_gradients_subset_local::<&str>(
+            &[1.0, 2.0],
+            &["missing_amplitude"],
+            None,
+        )
+        .map(|_| ())
+    }
+
+    fn case_likelihood_evaluate_short() -> LadduResult<()> {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+        evaluator.evaluate(&[]).map(|_| ())
+    }
+
+    fn case_likelihood_gradient_long() -> LadduResult<()> {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+        evaluator.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
+    }
+
+    #[test]
+    fn table_driven_length_mismatch_errors() {
+        let (nll, _) = make_constant_nll();
+        let cases: [(&str, LadduResult<()>); 8] = [
+            ("nll.evaluate short", case_nll_evaluate_short(nll.as_ref())),
+            (
+                "nll.evaluate_gradient long",
+                case_nll_evaluate_gradient_long(nll.as_ref()),
+            ),
+            (
+                "nll.project_weights short",
+                case_nll_project_short(nll.as_ref()),
+            ),
+            (
+                "nll.project_weights_and_gradients long",
+                case_nll_project_weights_and_gradients_long(nll.as_ref()),
+            ),
+            (
+                "nll.project_weights_subset short",
+                case_nll_project_weights_subset_short(nll.as_ref()),
+            ),
+            (
+                "nll.project_weights_and_gradients_subset long",
+                case_nll_project_weights_and_gradients_subset_long(nll.as_ref()),
+            ),
+            (
+                "likelihood.evaluate short",
+                case_likelihood_evaluate_short(),
+            ),
+            (
+                "likelihood.evaluate_gradient long",
+                case_likelihood_gradient_long(),
+            ),
+        ];
+        for (label, result) in cases {
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, LadduError::LengthMismatch { .. }),
+                "expected LengthMismatch for {label}, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains(LENGTH_MISMATCH_MESSAGE_FRAGMENT),
+                "expected message containing \"{LENGTH_MISMATCH_MESSAGE_FRAGMENT}\" for {label}, got {}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn table_driven_unknown_amplitude_errors() {
+        let (nll, params) = make_constant_nll();
+        let cases: [(&str, LadduResult<()>); 4] = [
+            (
+                "activate_strict unknown",
+                nll.activate_strict("missing_amplitude"),
+            ),
+            (
+                "isolate_strict unknown",
+                nll.isolate_strict("missing_amplitude"),
+            ),
+            (
+                "project_weights_subset unknown",
+                nll.project_weights_subset_local_strict::<&str>(
+                    &params,
+                    &["missing_amplitude"],
+                    None,
+                )
+                .map(|_| ()),
+            ),
+            (
+                "project_weights_and_gradients_subset unknown",
+                nll.project_weights_and_gradients_subset_local_strict::<&str>(
+                    &params,
+                    &["missing_amplitude"],
+                    None,
+                )
+                .map(|_| ()),
+            ),
+        ];
+        for (label, result) in cases {
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, LadduError::AmplitudeNotFoundError { .. }),
+                "expected AmplitudeNotFoundError for {label}, got {err:?}"
+            );
+            assert!(
+                err.to_string()
+                    .contains(AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT),
+                "expected message containing \"{AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT}\" for {label}, got {}",
+                err
+            );
+        }
     }
 
     #[test]
@@ -4095,8 +5018,8 @@ mod tests {
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
         let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params), 5.0);
-        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 5.0);
+        let grad = evaluator.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 1.0);
         assert_relative_eq!(grad[1], 1.0);
     }
@@ -4108,8 +5031,8 @@ mod tests {
         let expr = &alpha * &beta;
         let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params), 6.0);
-        let grad = evaluator.evaluate_gradient(&params);
+        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 6.0);
+        let grad = evaluator.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 3.0);
         assert_relative_eq!(grad[1], 2.0);
     }
@@ -4127,8 +5050,8 @@ mod tests {
         assert_eq!(evaluator.free_parameters(), vec!["beta"]);
         assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
         let params_free = vec![2.0];
-        assert_relative_eq!(evaluator.evaluate(&params_free), 3.5);
-        let grad_free = evaluator.evaluate_gradient(&params_free);
+        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
+        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
         assert_eq!(grad_free.len(), 1);
         assert_relative_eq!(grad_free[0], 1.0);
     }
@@ -4139,17 +5062,783 @@ mod tests {
         let intensity = params[0] * params[0];
         let weight_sum = 3.0;
         let expected = -2.0 * (weight_sum * intensity.ln() - intensity);
-        assert_relative_eq!(nll.evaluate(&params), expected, epsilon = 1e-12);
-        let grad = nll.evaluate_gradient(&params);
+        assert_relative_eq!(nll.evaluate(&params).unwrap(), expected, epsilon = 1e-12);
+        let grad = nll.evaluate_gradient(&params).unwrap();
         let expected_grad = -4.0 * (weight_sum / params[0] - params[0]);
         assert_relative_eq!(grad[0], expected_grad, epsilon = 1e-12);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn gradient_scratch_reuse_is_thread_safe_across_parallel_calls() {
+        let (nll_single, params_single) = make_constant_nll();
+        let (nll_multi, params_multi) = make_two_parameter_nll();
+        let nll_single = Arc::new(*nll_single);
+        let nll_multi = Arc::new(*nll_multi);
+        let expected_single = nll_single
+            .evaluate_gradient(&params_single)
+            .expect("single-parameter gradient should evaluate");
+        let expected_multi = nll_multi
+            .evaluate_gradient(&params_multi)
+            .expect("two-parameter gradient should evaluate");
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let nll_single = Arc::clone(&nll_single);
+                let nll_multi = Arc::clone(&nll_multi);
+                let params_single = params_single.clone();
+                let params_multi = params_multi.clone();
+                let expected_single = expected_single.clone();
+                let expected_multi = expected_multi.clone();
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        let single_gradient = nll_single
+                            .evaluate_gradient(&params_single)
+                            .expect("single-parameter gradient should evaluate");
+                        assert_relative_eq!(
+                            single_gradient[0],
+                            expected_single[0],
+                            epsilon = 1e-12
+                        );
+                        let multi_gradient = nll_multi
+                            .evaluate_gradient(&params_multi)
+                            .expect("two-parameter gradient should evaluate");
+                        assert_eq!(multi_gradient.len(), expected_multi.len());
+                        for index in 0..expected_multi.len() {
+                            assert_relative_eq!(
+                                multi_gradient[index],
+                                expected_multi[index],
+                                epsilon = 1e-12
+                            );
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn nll_value_matches_mixed_scale_weighted_closed_form() {
+        let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
+        let expr = amp.norm_sqr();
+        let data = dataset_with_weights(&[1.0e12, 1.0e-12, 3.5, 7.25e4, 2.0e-3]);
+        let mc = dataset_with_weights(&[4.0e9, 9.0e-6, 1.25, 2.5e2, 8.0e-4]);
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
+        let params = vec![1.125];
+
+        let intensity: f64 = params[0] * params[0];
+        let data_weight_sum = data
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum::<f64>();
+        let mc_weight_sum = mc
+            .events_local()
+            .iter()
+            .map(|event| event.weight)
+            .sum::<f64>();
+        let n_mc = mc.n_events_weighted();
+        let expected = -2.0 * (data_weight_sum * intensity.ln() - mc_weight_sum * intensity / n_mc);
+
+        let value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(value, expected, epsilon = 1e-9, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn nll_evaluate_and_gradient_match_hardcoded_weighted_reference() {
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("alpha"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("beta"), 1).unwrap();
+        let expr = (&amp_a + &amp_b).norm_sqr();
+        let data = dataset_with_two_p4_and_weights(
+            &[(1.0, 0.8), (2.5, 1.7), (4.0, 2.4), (3.3, 1.1)],
+            &[0.7, 1.2, 0.9, 1.5],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[(1.5, 1.0), (3.0, 2.1), (5.5, 2.9), (2.0, 1.2), (4.2, 1.8)],
+            &[0.8, 1.4, 0.6, 1.1, 0.75],
+        );
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
+        let params = vec![0.6, 1.1];
+        assert_eq!(nll.free_parameters(), vec!["alpha", "beta"]);
+
+        let value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(value, 12.242296380697244, epsilon = 1e-12);
+
+        let gradient = nll.evaluate_gradient(&params).unwrap();
+        assert_eq!(gradient.len(), 2);
+        assert_relative_eq!(gradient[0], 37.78259267741666, epsilon = 1e-12);
+        assert_relative_eq!(gradient[1], 21.8538272590435, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_deterministic_fixtures_cover_separable_partial_and_non_separable_models() {
+        let separable = make_deterministic_nll_fixture(DeterministicModelKind::Separable);
+        let partial = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        let non_separable = make_deterministic_nll_fixture(DeterministicModelKind::NonSeparable);
+
+        for fixture in [separable, partial, non_separable] {
+            assert_nll_fixture_matches_weighted_baseline(&fixture);
+        }
+    }
+
+    #[test]
+    fn nll_deterministic_fixture_matches_baseline_across_activation_toggles() {
+        let fixture = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+
+        fixture.nll.isolate_many(&["p", "c"]);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+
+        fixture.nll.activate_all();
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
     }
 
     #[test]
     fn nll_project_returns_weighted_intensity() {
         let (nll, params) = make_constant_nll();
-        let projection = nll.project_local(&params, None);
+        let projection = nll.project_weights_local(&params, None).unwrap();
         assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
         assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_project_reports_structured_length_error() {
+        let (nll, _) = make_constant_nll();
+        let err = nll.project_weights(&[], None).unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn nll_project_weights_subset_reports_structured_missing_amplitude_error() {
+        let (nll, params) = make_constant_nll();
+        let err = nll
+            .project_weights_subset_local_strict::<&str>(&params, &["missing_amplitude"], None)
+            .unwrap_err();
+        assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
+    }
+
+    #[test]
+    fn nll_project_weights_subsets_matches_repeated_project_weights_subset_calls() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_a".to_string()],
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+        ];
+        let batched = nll
+            .project_weights_subsets_local(&params, &subsets, None)
+            .expect("batched projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_weights_subset_local(&params, subset, None)
+                    .expect("single subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn nll_project_weights_subsets_handles_empty_and_duplicate_subsets() {
+        let (nll, params) = make_two_parameter_nll();
+        let empty: Vec<Vec<String>> = Vec::new();
+        let empty_projection = nll
+            .project_weights_subsets_local(&params, &empty, None)
+            .expect("empty subset list should evaluate");
+        assert!(empty_projection.is_empty());
+
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_b".to_string()],
+        ];
+        let batched = nll
+            .project_weights_subsets_local(&params, &subsets, None)
+            .expect("batched projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_weights_subset_local(&params, subset, None)
+                    .expect("single subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn nll_project_weights_subsets_reports_missing_amplitude_error() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![vec!["amp_a".to_string()], vec!["missing".to_string()]];
+        let err = nll
+            .project_weights_subsets_local_strict(&params, &subsets, None)
+            .expect_err("missing amplitude should fail");
+        assert!(matches!(err, LadduError::AmplitudeNotFoundError { .. }));
+    }
+
+    #[test]
+    fn nll_project_weights_and_gradients_subset_matches_repeated_calls() {
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+        ];
+        for subset in subsets {
+            let (weights_local, gradients_local) = nll
+                .project_weights_and_gradients_subset_local(&params, &subset, None)
+                .expect("local gradient projection should evaluate");
+            let (weights_auto, gradients_auto) = nll
+                .project_weights_and_gradients_subset(&params, &subset, None)
+                .expect("auto gradient projection should evaluate");
+            assert_eq!(weights_local.len(), weights_auto.len());
+            assert_eq!(gradients_local.len(), gradients_auto.len());
+            for (lhs, rhs) in weights_local.iter().zip(weights_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            for (lhs, rhs) in gradients_local.iter().zip(gradients_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+        }
+    }
+
+    #[test]
+    fn nll_activation_changes_invalidate_projection_mask_cache() {
+        let (nll, params) = make_constant_nll();
+        assert!(nll.projection_active_mask_cache.lock().is_empty());
+
+        let _ = nll
+            .project_weights_subset_local::<&str>(&params, &["amp"], None)
+            .unwrap();
+        assert!(!nll.projection_active_mask_cache.lock().is_empty());
+
+        nll.deactivate("amp");
+        assert!(nll.projection_active_mask_cache.lock().is_empty());
+
+        let projection = nll
+            .project_weights_subset_local::<&str>(&params, &["amp"], None)
+            .unwrap();
+        assert_relative_eq!(projection[0], 1.0, epsilon = 1e-12);
+        assert_relative_eq!(projection[1], 3.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn nll_project_weights_subset_validates_length_before_isolation() {
+        let (nll, _) = make_constant_nll();
+        let err = nll
+            .project_weights_subset_local::<&str>(&[], &["missing_amplitude"], None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn nll_project_weights_and_gradients_subset_validates_length_before_isolation() {
+        let (nll, _) = make_constant_nll();
+        let err = nll
+            .project_weights_and_gradients_subset_local::<&str>(
+                &[1.0, 2.0],
+                &["missing_amplitude"],
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn stochastic_nll_validates_batch_size() {
+        let (nll, _params) = make_constant_nll();
+        let err_zero = match nll.to_stochastic(0, Some(0)) {
+            Ok(_) => panic!("expected batch_size=0 to return an error"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err_zero,
+            LadduError::LengthMismatch {
+                expected: 2,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_large = match nll.to_stochastic(3, Some(0)) {
+            Ok(_) => panic!("expected oversized batch to return an error"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err_large,
+            LadduError::LengthMismatch {
+                expected: 2,
+                actual: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn stochastic_nll_accepts_full_dataset_batch() {
+        let (nll, params) = make_constant_nll();
+        let stochastic = nll.to_stochastic(2, Some(0)).unwrap();
+        let value = stochastic.evaluate(&params).unwrap();
+        assert!(value.is_finite());
+    }
+
+    #[test]
+    fn stochastic_nll_matches_closed_form_on_full_batch() {
+        let (nll, params) = make_constant_nll();
+        let stochastic = nll
+            .to_stochastic(nll.data_evaluator.dataset.n_events(), Some(0))
+            .unwrap();
+        let stochastic_value = stochastic.evaluate(&params).unwrap();
+        let deterministic_value = nll.evaluate(&params).unwrap();
+        assert_relative_eq!(stochastic_value, deterministic_value, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn likelihood_evaluator_reports_length_mismatch() {
+        let alpha = LikelihoodScalar::new("alpha");
+        let evaluator = alpha.load();
+
+        let err_short = evaluator.evaluate(&[]).unwrap_err();
+        assert!(matches!(
+            err_short,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_long = evaluator.evaluate_gradient(&[1.0, 2.0]).unwrap_err();
+        assert!(matches!(
+            err_long,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 2,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_negative_paths_report_structured_errors() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let (nll, params) = make_constant_nll();
+
+        let err_len = nll.project_weights_mpi(&[], None, &world).unwrap_err();
+        assert!(matches!(
+            err_len,
+            LadduError::LengthMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        ));
+
+        let err_amp = nll
+            .project_weights_subset_mpi_strict::<&str>(
+                &params,
+                &["missing_amplitude"],
+                None,
+                &world,
+            )
+            .unwrap_err();
+        assert!(matches!(err_amp, LadduError::AmplitudeNotFoundError { .. }));
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_value_and_gradient_match_total_non_mpi() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let (nll, params) = make_constant_nll();
+        let data_term_local =
+            super::evaluate_weighted_expression_sum_local(&nll.data_evaluator, &params, |l| {
+                f64::ln(l.re)
+            });
+        let mc_term_local = nll
+            .accmc_evaluator
+            .evaluate_weighted_value_sum_local(&params);
+        let data_term = super::reduce_scalar(&world, data_term_local);
+        let mc_term = super::reduce_scalar(&world, mc_term_local);
+        let expected_value = -2.0 * (data_term - mc_term / nll.n_mc);
+
+        let mpi_value = nll.evaluate_mpi(&params, &world);
+        assert_relative_eq!(mpi_value, expected_value);
+
+        let data_gradient_local = nll.evaluate_data_gradient_term_local(&params);
+        let mc_gradient_local = nll
+            .accmc_evaluator
+            .evaluate_weighted_gradient_sum_local(&params);
+        let data_gradient = super::reduce_gradient(&world, &data_gradient_local);
+        let mc_gradient = super::reduce_gradient(&world, &mc_gradient_local);
+        let expected_gradient = -2.0 * (data_gradient - mc_gradient / nll.n_mc);
+        let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
+        assert_relative_eq!(mpi_gradient, expected_gradient);
+
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_deterministic_fixture_matches_local_and_reduced_baselines_across_activation_toggles() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+
+        let fixture = make_deterministic_nll_fixture(DeterministicModelKind::Partial);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
+
+        fixture.nll.isolate_many(&["p", "c"]);
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
+
+        fixture.nll.activate_all();
+        assert_nll_fixture_matches_weighted_baseline(&fixture);
+        assert_nll_fixture_matches_mpi_reduced_baseline(&fixture, &world);
+
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_mixed_scale_value_matches_local_evaluate() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("scale_a"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("scale_b"), 1).unwrap();
+        let expr = (amp_a + amp_b).norm_sqr();
+        let data = dataset_with_two_p4_and_weights(
+            &[(1.0, 0.5), (10.0, 1.0), (3.0, 5.0), (1.0e2, 2.0e-1)],
+            &[1.0e12, 1.0e-12, 3.5, 7.25e4],
+        );
+        let mc = dataset_with_two_p4_and_weights(
+            &[(4.0, 0.1), (6.0, 2.0), (8.0, 1.5), (1.0e1, 3.0)],
+            &[4.0e9, 9.0e-6, 1.25, 2.5e2],
+        );
+        let nll = NLL::new(&expr, &data, &mc, None).unwrap();
+        let params = vec![1.125, -0.375];
+
+        let data_local = nll.data_evaluator.evaluate_local(&params);
+        let mc_local = nll.accmc_evaluator.evaluate_local(&params);
+        let data_term_local: f64 = data_local
+            .iter()
+            .zip(nll.data_evaluator.dataset.events_local().iter())
+            .map(|(value, event)| event.weight * value.re.ln())
+            .sum();
+        let mc_term_local: f64 = mc_local
+            .iter()
+            .zip(nll.accmc_evaluator.dataset.events_local().iter())
+            .map(|(value, event)| event.weight * value.re)
+            .sum();
+        let data_term = super::reduce_scalar(&world, data_term_local);
+        let mc_term = super::reduce_scalar(&world, mc_term_local);
+        let expected = -2.0 * (data_term - mc_term / nll.n_mc);
+        let mpi_value = nll.evaluate_mpi_value(&params, &world);
+        assert_relative_eq!(mpi_value, expected, epsilon = 1e-9, max_relative = 1e-12);
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_projection_paths_are_explicit_global_gathers() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let (nll, params) = make_constant_nll();
+
+        let local_projection = nll
+            .project_weights_local(&params, None)
+            .expect("local projection should evaluate");
+        let gathered_projection = nll
+            .project_weights_mpi(&params, None, &world)
+            .expect("mpi projection should gather global projection");
+        let local_len = nll.accmc_evaluator.dataset.n_events_local();
+        let total_len = nll.accmc_evaluator.dataset.n_events();
+        assert_eq!(local_projection.len(), local_len);
+        assert_eq!(gathered_projection.len(), total_len);
+
+        let (counts, displs) = world.get_counts_displs(total_len);
+        let rank = world.rank() as usize;
+        let start = displs[rank] as usize;
+        let end = start + counts[rank] as usize;
+        assert_eq!(
+            &gathered_projection[start..end],
+            local_projection.as_slice()
+        );
+
+        let (local_weights, local_gradients) = nll
+            .project_weights_and_gradients_local(&params, None)
+            .expect("local projection gradient should evaluate");
+        let (gathered_weights, gathered_gradients) = nll
+            .project_weights_and_gradients_mpi(&params, None, &world)
+            .expect("mpi projection gradient should gather global projection");
+        assert_eq!(local_weights.len(), local_len);
+        assert_eq!(local_gradients.len(), local_len);
+        assert_eq!(gathered_weights.len(), total_len);
+        assert_eq!(gathered_gradients.len(), total_len);
+        assert_eq!(&gathered_weights[start..end], local_weights.as_slice());
+
+        let local_grad_slice = &gathered_gradients[start..end];
+        for (lhs, rhs) in local_grad_slice.iter().zip(local_gradients.iter()) {
+            assert_relative_eq!(lhs, rhs);
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_project_weights_subsets_matches_repeated_project_weights_subset_mpi() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+            vec!["amp_a".to_string()],
+        ];
+        let batched = nll
+            .project_weights_subsets_mpi(&params, &subsets, None, &world)
+            .expect("batched mpi projection should evaluate");
+        let repeated = subsets
+            .iter()
+            .map(|subset| {
+                nll.project_weights_subset_mpi(&params, subset, None, &world)
+                    .expect("single mpi subset projection should evaluate")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(batched.len(), repeated.len());
+        for (lhs, rhs) in batched.iter().zip(repeated.iter()) {
+            assert_eq!(lhs.len(), rhs.len());
+            for (lhs_value, rhs_value) in lhs.iter().zip(rhs.iter()) {
+                assert_relative_eq!(lhs_value, rhs_value, epsilon = 1e-12);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_project_weights_and_gradients_subset_matches_repeated_project_weights_and_gradients_subset_mpi(
+    ) {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let (nll, params) = make_two_parameter_nll();
+        let subsets = vec![
+            vec!["amp_b".to_string()],
+            vec!["amp_a".to_string()],
+            vec!["amp_a".to_string(), "amp_b".to_string()],
+        ];
+        for subset in subsets {
+            let (weights_mpi, gradients_mpi) = nll
+                .project_weights_and_gradients_subset_mpi(&params, &subset, None, &world)
+                .expect("mpi gradient projection should evaluate");
+            let (weights_auto, gradients_auto) = nll
+                .project_weights_and_gradients_subset(&params, &subset, None)
+                .expect("auto gradient projection should evaluate");
+            assert_eq!(weights_mpi.len(), weights_auto.len());
+            assert_eq!(gradients_mpi.len(), gradients_auto.len());
+            for (lhs, rhs) in weights_mpi.iter().zip(weights_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+            for (lhs, rhs) in gradients_mpi.iter().zip(gradients_auto.iter()) {
+                assert_relative_eq!(lhs, rhs, epsilon = 1e-12);
+            }
+        }
+        finalize_mpi();
+    }
+
+    #[cfg(feature = "mpi")]
+    #[mpi_test(np = [2])]
+    fn mpi_mixed_workload_rss_stays_bounded() {
+        use_mpi(true);
+        let world = get_world().expect("MPI world should be initialized");
+        let fixture = make_mixed_workload_nll_fixture(2_048);
+
+        let baseline_value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+        let baseline_gradient = fixture
+            .nll
+            .evaluate_gradient_mpi(&fixture.parameters, &world);
+        let baseline_weights = fixture
+            .nll
+            .project_weights_mpi(&fixture.parameters, None, &world)
+            .expect("baseline MPI projection should evaluate");
+        let (baseline_projection_weights, baseline_projection_gradients) = fixture
+            .nll
+            .project_weights_and_gradients_mpi(&fixture.parameters, None, &world)
+            .expect("baseline MPI projection gradient should evaluate");
+        let mut post_warmup_rss_kb = Vec::new();
+
+        assert_relative_eq!(
+            baseline_weights.as_slice(),
+            baseline_projection_weights.as_slice(),
+            epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+            max_relative = DETERMINISTIC_STRICT_REL_TOL
+        );
+
+        for pass_index in 0..24 {
+            let value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+            assert_relative_eq!(
+                value,
+                baseline_value,
+                epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                max_relative = DETERMINISTIC_STRICT_REL_TOL
+            );
+
+            let gradient = fixture
+                .nll
+                .evaluate_gradient_mpi(&fixture.parameters, &world);
+            assert_eq!(
+                gradient.len(),
+                baseline_gradient.len(),
+                "mixed-workload MPI gradient length should remain stable"
+            );
+            for (actual_item, expected_item) in gradient.iter().zip(baseline_gradient.iter()) {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+
+            let weights = fixture
+                .nll
+                .project_weights_mpi(&fixture.parameters, None, &world)
+                .expect("MPI projection should remain evaluable");
+            assert_eq!(
+                weights.len(),
+                baseline_weights.len(),
+                "mixed-workload MPI projection length should remain stable"
+            );
+            for (actual_item, expected_item) in weights.iter().zip(baseline_weights.iter()) {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+
+            let (projection_weights, projection_gradients) = fixture
+                .nll
+                .project_weights_and_gradients_mpi(&fixture.parameters, None, &world)
+                .expect("MPI projection gradients should remain evaluable");
+            assert_eq!(
+                projection_weights.len(),
+                baseline_projection_weights.len(),
+                "mixed-workload MPI projection-gradient weight length should remain stable"
+            );
+            assert_eq!(
+                projection_gradients.len(),
+                baseline_projection_gradients.len(),
+                "mixed-workload MPI projection-gradient length should remain stable"
+            );
+            for (actual_item, expected_item) in projection_weights
+                .iter()
+                .zip(baseline_projection_weights.iter())
+            {
+                assert_relative_eq!(
+                    *actual_item,
+                    *expected_item,
+                    epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                    max_relative = DETERMINISTIC_STRICT_REL_TOL
+                );
+            }
+            for (actual_gradient, expected_gradient) in projection_gradients
+                .iter()
+                .zip(baseline_projection_gradients.iter())
+            {
+                assert_eq!(
+                    actual_gradient.len(),
+                    expected_gradient.len(),
+                    "mixed-workload MPI projection-gradient vector length should remain stable"
+                );
+                for (actual_item, expected_item) in
+                    actual_gradient.iter().zip(expected_gradient.iter())
+                {
+                    assert_relative_eq!(
+                        *actual_item,
+                        *expected_item,
+                        epsilon = DETERMINISTIC_STRICT_ABS_TOL,
+                        max_relative = DETERMINISTIC_STRICT_REL_TOL
+                    );
+                }
+            }
+
+            if pass_index >= 3 {
+                if let Some(rss_kb) = read_resident_rss_kb() {
+                    post_warmup_rss_kb.push(rss_kb);
+                }
+            }
+        }
+
+        if let Some((&first_rss_kb, rest_rss_kb)) = post_warmup_rss_kb.split_first() {
+            let last_rss_kb = *rest_rss_kb.last().unwrap_or(&first_rss_kb);
+            let min_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .min()
+                .expect("post-warmup RSS sample should exist");
+            let max_rss_kb = post_warmup_rss_kb
+                .iter()
+                .copied()
+                .max()
+                .expect("post-warmup RSS sample should exist");
+            const MAX_POST_WARMUP_RSS_GROWTH_KB: u64 = 64 * 1024;
+            const MAX_POST_WARMUP_RSS_SPREAD_KB: u64 = 64 * 1024;
+            assert!(
+                last_rss_kb.saturating_sub(first_rss_kb) <= MAX_POST_WARMUP_RSS_GROWTH_KB,
+                "mixed-workload post-warmup RSS grew by {} KiB (first={} KiB, last={} KiB)",
+                last_rss_kb.saturating_sub(first_rss_kb),
+                first_rss_kb,
+                last_rss_kb
+            );
+            assert!(
+                max_rss_kb.saturating_sub(min_rss_kb) <= MAX_POST_WARMUP_RSS_SPREAD_KB,
+                "mixed-workload post-warmup RSS spread was {} KiB (min={} KiB, max={} KiB)",
+                max_rss_kb.saturating_sub(min_rss_kb),
+                min_rss_kb,
+                max_rss_kb
+            );
+        }
+
+        finalize_mpi();
     }
 }

@@ -8,7 +8,7 @@ use rayon::prelude::*;
 #[cfg(feature = "mpi")]
 use crate::mpi::LadduMPI;
 use crate::{
-    data::{Dataset, DatasetMetadata, EventData},
+    data::{Dataset, DatasetMetadata, EventData, NamedEventView},
     utils::{
         enums::{Channel, Frame},
         vectors::{Vec3, Vec4},
@@ -21,7 +21,7 @@ use auto_ops::impl_op_ex;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
-/// Standard methods for extracting some value out of an [`EventData`].
+/// Standard methods for extracting some value from an event view.
 #[typetag::serde(tag = "type")]
 pub trait Variable: DynClone + Send + Sync + Debug + Display {
     /// Bind the variable to dataset metadata so that any referenced names can be resolved to
@@ -31,11 +31,10 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         Ok(())
     }
 
-    /// This method takes an [`EventData`] and extracts a single value (like the mass of a particle).
-    fn value(&self, event: &EventData) -> f64;
+    /// This method extracts a single value (like a mass) from an event access view.
+    fn value(&self, event: &NamedEventView<'_>) -> f64;
 
-    /// This method distributes the [`Variable::value`] method over each [`EventData`] in a
-    /// [`Dataset`] (non-MPI version).
+    /// This method distributes [`Variable::value`] over each event in a [`Dataset`] (non-MPI version).
     ///
     /// # Notes
     ///
@@ -45,13 +44,20 @@ pub trait Variable: DynClone + Send + Sync + Debug + Display {
         let mut variable = dyn_clone::clone_box(self);
         variable.bind(dataset.metadata())?;
         #[cfg(feature = "rayon")]
-        let local_values: Vec<f64> = dataset
-            .events
-            .par_iter()
-            .map(|e| variable.value(e))
+        let local_values: Vec<f64> = (0..dataset.n_events_local())
+            .into_par_iter()
+            .map(|event_index| {
+                let event = dataset.event_view(event_index);
+                variable.value(&event)
+            })
             .collect();
         #[cfg(not(feature = "rayon"))]
-        let local_values: Vec<f64> = dataset.events.iter().map(|e| variable.value(e)).collect();
+        let local_values: Vec<f64> = (0..dataset.n_events_local())
+            .map(|event_index| {
+                let event = dataset.event_view(event_index);
+                variable.value(&event)
+            })
+            .collect();
         Ok(local_values)
     }
 
@@ -225,8 +231,8 @@ impl CompiledExpression {
         Ok(())
     }
 
-    /// Evaluate the [`CompiledExpression`] on a given [`EventData`].
-    pub fn evaluate(&self, event: &EventData) -> bool {
+    /// Evaluate the [`CompiledExpression`] on a given named event view.
+    pub fn evaluate(&self, event: &NamedEventView<'_>) -> bool {
         let mut stack = Vec::with_capacity(self.bytecode.len());
 
         for op in &self.bytecode {
@@ -833,9 +839,13 @@ impl Variable for Mass {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.constituents.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        self.constituents.momentum(event).m()
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        self.constituents
+            .indices()
+            .iter()
+            .map(|index| event.p4_at(*index))
+            .sum::<Vec4>()
+            .m()
     }
 }
 
@@ -881,33 +891,70 @@ impl Variable for CosTheta {
         self.daughter.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let com_boost = self.topology.com_boost_vector(event);
-        let beam = self.topology.k1_com(event);
-        let resonance = self.topology.k3_com(event);
-        let daughter = self.daughter.momentum(event).boost(&com_boost);
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        let p4_sum = |indices: &[usize]| {
+            indices
+                .iter()
+                .map(|index| event.p4_at(*index))
+                .sum::<Vec4>()
+        };
+        let k1 = match &self.topology {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => p4_sum(k1.indices()),
+            Topology::MissingK1 { k2, k3, k4 } => {
+                p4_sum(k3.indices()) + p4_sum(k4.indices()) - p4_sum(k2.indices())
+            }
+        };
+        let k3 = match &self.topology {
+            Topology::Full { k3, .. }
+            | Topology::MissingK1 { k3, .. }
+            | Topology::MissingK2 { k3, .. }
+            | Topology::MissingK4 { k3, .. } => p4_sum(k3.indices()),
+            Topology::MissingK3 { k1, k2, k4 } => {
+                p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k4.indices())
+            }
+        };
+        let k4 = match &self.topology {
+            Topology::Full { k4, .. }
+            | Topology::MissingK1 { k4, .. }
+            | Topology::MissingK2 { k4, .. }
+            | Topology::MissingK3 { k4, .. } => p4_sum(k4.indices()),
+            Topology::MissingK4 { k1, k2, k3 } => {
+                p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k3.indices())
+            }
+        };
+        let com_boost = match &self.topology {
+            Topology::Full { k3, k4, .. }
+            | Topology::MissingK1 { k3, k4, .. }
+            | Topology::MissingK2 { k3, k4, .. } => {
+                -(p4_sum(k3.indices()) + p4_sum(k4.indices())).beta()
+            }
+            Topology::MissingK3 { k1, k2, .. } | Topology::MissingK4 { k1, k2, .. } => {
+                -(p4_sum(k1.indices()) + p4_sum(k2.indices())).beta()
+            }
+        };
+        let beam = k1.boost(&com_boost);
+        let resonance = k3.boost(&com_boost);
+        let daughter = p4_sum(self.daughter.indices()).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
         let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
         let z = match self.frame {
             Frame::Helicity => {
-                let recoil = self.topology.k4_com(event);
-                let recoil_res = recoil.boost(&-resonance.beta());
+                let recoil_res = k4.boost(&com_boost).boost(&-resonance.beta());
                 (-recoil_res.vec3()).unit()
             }
-            Frame::GottfriedJackson => {
-                let beam_res = beam.boost(&-resonance.beta());
-                beam_res.vec3().unit()
-            }
+            Frame::GottfriedJackson => beam.boost(&-resonance.beta()).vec3().unit(),
         };
         let x = plane_normal.cross(&z).unit();
         let y = z.cross(&x).unit();
-        let angles = Vec3::new(
+        Vec3::new(
             daughter_res.vec3().dot(&x),
             daughter_res.vec3().dot(&y),
             daughter_res.vec3().dot(&z),
-        );
-        angles.costheta()
+        )
+        .costheta()
     }
 }
 
@@ -952,33 +999,70 @@ impl Variable for Phi {
         self.daughter.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let com_boost = self.topology.com_boost_vector(event);
-        let beam = self.topology.k1_com(event);
-        let resonance = self.topology.k3_com(event);
-        let daughter = self.daughter.momentum(event).boost(&com_boost);
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        let p4_sum = |indices: &[usize]| {
+            indices
+                .iter()
+                .map(|index| event.p4_at(*index))
+                .sum::<Vec4>()
+        };
+        let k1 = match &self.topology {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => p4_sum(k1.indices()),
+            Topology::MissingK1 { k2, k3, k4 } => {
+                p4_sum(k3.indices()) + p4_sum(k4.indices()) - p4_sum(k2.indices())
+            }
+        };
+        let k3 = match &self.topology {
+            Topology::Full { k3, .. }
+            | Topology::MissingK1 { k3, .. }
+            | Topology::MissingK2 { k3, .. }
+            | Topology::MissingK4 { k3, .. } => p4_sum(k3.indices()),
+            Topology::MissingK3 { k1, k2, k4 } => {
+                p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k4.indices())
+            }
+        };
+        let k4 = match &self.topology {
+            Topology::Full { k4, .. }
+            | Topology::MissingK1 { k4, .. }
+            | Topology::MissingK2 { k4, .. }
+            | Topology::MissingK3 { k4, .. } => p4_sum(k4.indices()),
+            Topology::MissingK4 { k1, k2, k3 } => {
+                p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k3.indices())
+            }
+        };
+        let com_boost = match &self.topology {
+            Topology::Full { k3, k4, .. }
+            | Topology::MissingK1 { k3, k4, .. }
+            | Topology::MissingK2 { k3, k4, .. } => {
+                -(p4_sum(k3.indices()) + p4_sum(k4.indices())).beta()
+            }
+            Topology::MissingK3 { k1, k2, .. } | Topology::MissingK4 { k1, k2, .. } => {
+                -(p4_sum(k1.indices()) + p4_sum(k2.indices())).beta()
+            }
+        };
+        let beam = k1.boost(&com_boost);
+        let resonance = k3.boost(&com_boost);
+        let daughter = p4_sum(self.daughter.indices()).boost(&com_boost);
         let daughter_res = daughter.boost(&-resonance.beta());
         let plane_normal = beam.vec3().cross(&resonance.vec3()).unit();
         let z = match self.frame {
             Frame::Helicity => {
-                let recoil = self.topology.k4_com(event);
-                let recoil_res = recoil.boost(&-resonance.beta());
+                let recoil_res = k4.boost(&com_boost).boost(&-resonance.beta());
                 (-recoil_res.vec3()).unit()
             }
-            Frame::GottfriedJackson => {
-                let beam_res = beam.boost(&-resonance.beta());
-                beam_res.vec3().unit()
-            }
+            Frame::GottfriedJackson => beam.boost(&-resonance.beta()).vec3().unit(),
         };
         let x = plane_normal.cross(&z).unit();
         let y = z.cross(&x).unit();
-        let angles = Vec3::new(
+        Vec3::new(
             daughter_res.vec3().dot(&x),
             daughter_res.vec3().dot(&y),
             daughter_res.vec3().dot(&z),
-        );
-        angles.phi()
+        )
+        .phi()
     }
 }
 
@@ -1052,11 +1136,32 @@ impl Variable for PolAngle {
         self.angle_aux.bind(metadata)?;
         Ok(())
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        let beam = self.topology.k1(event);
-        let recoil = self.topology.k4(event);
-        let pol_angle = event.aux[self.angle_aux.index()];
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        let p4_sum = |indices: &[usize]| {
+            indices
+                .iter()
+                .map(|index| event.p4_at(*index))
+                .sum::<Vec4>()
+        };
+        let beam = match &self.topology {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => p4_sum(k1.indices()),
+            Topology::MissingK1 { k2, k3, k4 } => {
+                p4_sum(k3.indices()) + p4_sum(k4.indices()) - p4_sum(k2.indices())
+            }
+        };
+        let recoil = match &self.topology {
+            Topology::Full { k4, .. }
+            | Topology::MissingK1 { k4, .. }
+            | Topology::MissingK2 { k4, .. }
+            | Topology::MissingK3 { k4, .. } => p4_sum(k4.indices()),
+            Topology::MissingK4 { k1, k2, k3 } => {
+                p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k3.indices())
+            }
+        };
+        let pol_angle = event.aux_at(self.angle_aux.index());
         let polarization = Vec3::new(pol_angle.cos(), pol_angle.sin(), 0.0);
         let y = beam.vec3().cross(&-recoil.vec3()).unit();
         let numerator = y.dot(&polarization);
@@ -1093,9 +1198,8 @@ impl Variable for PolMagnitude {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.magnitude_aux.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
-        event.aux[self.magnitude_aux.index()]
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        event.aux_at(self.magnitude_aux.index())
     }
 }
 
@@ -1179,22 +1283,57 @@ impl Variable for Mandelstam {
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.topology.bind(metadata)
     }
-
-    fn value(&self, event: &EventData) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
+        let p4_sum = |indices: &[usize]| {
+            indices
+                .iter()
+                .map(|index| event.p4_at(*index))
+                .sum::<Vec4>()
+        };
+        let k1 = match &self.topology {
+            Topology::Full { k1, .. }
+            | Topology::MissingK2 { k1, .. }
+            | Topology::MissingK3 { k1, .. }
+            | Topology::MissingK4 { k1, .. } => p4_sum(k1.indices()),
+            Topology::MissingK1 { k2, k3, k4 } => {
+                p4_sum(k3.indices()) + p4_sum(k4.indices()) - p4_sum(k2.indices())
+            }
+        };
         match self.channel {
             Channel::S => {
-                let k1 = self.topology.k1(event);
-                let k2 = self.topology.k2(event);
+                let k2 = match &self.topology {
+                    Topology::Full { k2, .. }
+                    | Topology::MissingK1 { k2, .. }
+                    | Topology::MissingK3 { k2, .. }
+                    | Topology::MissingK4 { k2, .. } => p4_sum(k2.indices()),
+                    Topology::MissingK2 { k1, k3, k4 } => {
+                        p4_sum(k3.indices()) + p4_sum(k4.indices()) - p4_sum(k1.indices())
+                    }
+                };
                 (k1 + k2).mag2()
             }
             Channel::T => {
-                let k1 = self.topology.k1(event);
-                let k3 = self.topology.k3(event);
+                let k3 = match &self.topology {
+                    Topology::Full { k3, .. }
+                    | Topology::MissingK1 { k3, .. }
+                    | Topology::MissingK2 { k3, .. }
+                    | Topology::MissingK4 { k3, .. } => p4_sum(k3.indices()),
+                    Topology::MissingK3 { k1, k2, k4 } => {
+                        p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k4.indices())
+                    }
+                };
                 (k1 - k3).mag2()
             }
             Channel::U => {
-                let k1 = self.topology.k1(event);
-                let k4 = self.topology.k4(event);
+                let k4 = match &self.topology {
+                    Topology::Full { k4, .. }
+                    | Topology::MissingK1 { k4, .. }
+                    | Topology::MissingK2 { k4, .. }
+                    | Topology::MissingK3 { k4, .. } => p4_sum(k4.indices()),
+                    Topology::MissingK4 { k1, k2, k3 } => {
+                        p4_sum(k1.indices()) + p4_sum(k2.indices()) - p4_sum(k3.indices())
+                    }
+                };
                 (k1 - k4).mag2()
             }
         }
@@ -1309,7 +1448,8 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new("proton");
         mass.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(mass.value(&dataset[0]), 1.007);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(mass.value(&event), 1.007);
     }
 
     #[test]
@@ -1317,7 +1457,8 @@ mod tests {
         let dataset = test_dataset();
         let mut mass = Mass::new(["kshort1", "kshort2"]);
         mass.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(mass.value(&dataset[0]), 1.3743786309153077);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(mass.value(&event), 1.3743786309153077);
     }
 
     #[test]
@@ -1331,11 +1472,8 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::Helicity);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            -0.4611175068834238,
-            epsilon = 1e-12
-        );
+        let event = dataset.event_view(0);
+        assert_relative_eq!(costheta.value(&event), -0.4611175068834238, epsilon = 1e-12);
     }
 
     #[test]
@@ -1352,7 +1490,8 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::Helicity);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.657462587335066, epsilon = 1e-12);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(phi.value(&event), -2.657462587335066, epsilon = 1e-12);
     }
 
     #[test]
@@ -1369,11 +1508,8 @@ mod tests {
         let dataset = test_dataset();
         let mut costheta = CosTheta::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         costheta.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(
-            costheta.value(&dataset[0]),
-            0.09198832278031577,
-            epsilon = 1e-12
-        );
+        let event = dataset.event_view(0);
+        assert_relative_eq!(costheta.value(&event), 0.09198832278031577, epsilon = 1e-12);
     }
 
     #[test]
@@ -1381,7 +1517,8 @@ mod tests {
         let dataset = test_dataset();
         let mut phi = Phi::new(reaction_topology(), "kshort1", Frame::GottfriedJackson);
         phi.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(phi.value(&dataset[0]), -2.713913199133907, epsilon = 1e-12);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(phi.value(&event), -2.713913199133907, epsilon = 1e-12);
     }
 
     #[test]
@@ -1390,13 +1527,14 @@ mod tests {
         let mut angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
         angles.costheta.bind(dataset.metadata()).unwrap();
         angles.phi.bind(dataset.metadata()).unwrap();
+        let event = dataset.event_view(0);
         assert_relative_eq!(
-            angles.costheta.value(&dataset[0]),
+            angles.costheta.value(&event),
             -0.4611175068834238,
             epsilon = 1e-12
         );
         assert_relative_eq!(
-            angles.phi.value(&dataset[0]),
+            angles.phi.value(&event),
             -2.657462587335066,
             epsilon = 1e-12
         );
@@ -1416,7 +1554,8 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_angle = PolAngle::new(reaction_topology(), "pol_angle");
         pol_angle.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(pol_angle.value(&dataset[0]), 1.935929887818673);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(pol_angle.value(&event), 1.935929887818673);
     }
 
     #[test]
@@ -1433,7 +1572,8 @@ mod tests {
         let dataset = test_dataset();
         let mut pol_magnitude = PolMagnitude::new("pol_magnitude");
         pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(pol_magnitude.value(&dataset[0]), 0.38562805);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(pol_magnitude.value(&event), 0.38562805);
     }
 
     #[test]
@@ -1451,8 +1591,9 @@ mod tests {
         let mut polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
         polarization.pol_angle.bind(dataset.metadata()).unwrap();
         polarization.pol_magnitude.bind(dataset.metadata()).unwrap();
-        assert_relative_eq!(polarization.pol_angle.value(&dataset[0]), 1.935929887818673);
-        assert_relative_eq!(polarization.pol_magnitude.value(&dataset[0]), 0.38562805);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(polarization.pol_angle.value(&event), 1.935929887818673);
+        assert_relative_eq!(polarization.pol_magnitude.value(&event), 0.38562805);
     }
 
     #[test]
@@ -1474,23 +1615,24 @@ mod tests {
         for variable in [&mut s, &mut t, &mut u] {
             variable.bind(metadata).unwrap();
         }
-        let event = &dataset[0];
-        assert_relative_eq!(s.value(event), 18.504011052120063);
-        assert_relative_eq!(t.value(event), -0.19222859969898076);
-        assert_relative_eq!(u.value(event), -14.404198931464428);
+        let event = dataset.event_view(0);
+        assert_relative_eq!(s.value(&event), 18.504011052120063);
+        assert_relative_eq!(t.value(&event), -0.19222859969898076);
+        assert_relative_eq!(u.value(&event), -14.404198931464428);
         let mut direct_topology = reaction_topology();
         direct_topology.bind(metadata).unwrap();
-        let k2 = direct_topology.k2(event);
-        let k3 = direct_topology.k3(event);
-        let k4 = direct_topology.k4(event);
-        assert_relative_eq!(s.value(event), (k3 + k4).mag2());
-        assert_relative_eq!(t.value(event), (k2 - k4).mag2());
-        assert_relative_eq!(u.value(event), (k3 - k2).mag2());
+        let event_data = test_event();
+        let k2 = direct_topology.k2(&event_data);
+        let k3 = direct_topology.k3(&event_data);
+        let k4 = direct_topology.k4(&event_data);
+        assert_relative_eq!(s.value(&event), (k3 + k4).mag2());
+        assert_relative_eq!(t.value(&event), (k2 - k4).mag2());
+        assert_relative_eq!(u.value(&event), (k3 - k2).mag2());
         let m2_beam = test_event().get_p4_sum([0]).m2();
         let m2_recoil = test_event().get_p4_sum([1]).m2();
         let m2_res = test_event().get_p4_sum([2, 3]).m2();
         assert_relative_eq!(
-            s.value(event) + t.value(event) + u.value(event) - m2_beam - m2_recoil - m2_res,
+            s.value(&event) + t.value(&event) + u.value(&event) - m2_beam - m2_recoil - m2_res,
             1.00,
             epsilon = 1e-2
         );

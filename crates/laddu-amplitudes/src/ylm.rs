@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
         functions::spherical_harmonic,
@@ -48,36 +48,37 @@ impl Amplitude for Ylm {
         resources.register_amplitude(&self.name)
     }
 
+    fn real_valued_hint(&self) -> bool {
+        self.m == 0
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.angles.costheta.bind(metadata)?;
         self.angles.phi.bind(metadata)?;
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         cache.store_complex_scalar(
             self.csid,
             spherical_harmonic(
                 self.l,
                 self.m,
-                self.angles.costheta.value(event),
-                self.angles.phi.value(event),
+                event.evaluate(&self.angles.costheta),
+                event.evaluate(&self.angles.phi),
             ),
         );
     }
-
-    fn compute(&self, _parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
         cache.get_complex_scalar(self.csid)
     }
 
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         _cache: &Cache,
         _gradient: &mut DVector<Complex64>,
     ) {
-        // This amplitude is independent of free parameters
     }
 }
 
@@ -141,5 +142,27 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+
+    #[test]
+    fn test_ylm_m_zero_reports_real_valued_hint() {
+        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        let real_ylm = Ylm {
+            name: "ylm0".to_string(),
+            l: 1,
+            m: 0,
+            angles: angles.clone(),
+            csid: ComplexScalarID::default(),
+        };
+        let complex_ylm = Ylm {
+            name: "ylm1".to_string(),
+            l: 1,
+            m: 1,
+            angles,
+            csid: ComplexScalarID::default(),
+        };
+
+        assert!(Amplitude::real_valued_hint(&real_ylm));
+        assert!(!Amplitude::real_valued_hint(&complex_ylm));
     }
 }

@@ -1,0 +1,102 @@
+# Build workflow behavior benchmarks without running them (CPU)
+build:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks --no-run
+
+# Run workflow behavior benchmarks (CPU)
+run:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- --noplot
+
+# Build workflow behavior benchmarks without running them (MPI feature)
+build-mpi:
+    cd {{justfile_directory()}} && cargo bench -p laddu --features mpi --bench workflow_behavior_mpi_benchmarks --no-run
+
+# Run workflow behavior benchmarks under MPI with configurable rank count
+run-mpi ranks="4":
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo bench -p laddu --features mpi --bench workflow_behavior_mpi_benchmarks -- --noplot
+
+# Emit Criterion JSON messages for workflow behavior benchmarks (CPU)
+json:
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > ../../../target/criterion/messages_cpu.jsonl
+
+# Emit Criterion JSON messages for workflow behavior benchmarks (MPI)
+json-mpi ranks="4":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && mpirun -n {{ranks}} cargo criterion --features mpi --bench workflow_behavior_mpi_benchmarks --message-format=json > ../../../target/criterion/messages_mpi.jsonl
+
+# Generate benchmark summary artifacts from Criterion JSON message stream
+report-cpu policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
+    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
+      --input ../../../target/criterion/messages_cpu.jsonl \
+      --json-out ../../../target/criterion/summary/benchmark_summary_cpu.json \
+      --md-out ../../../target/criterion/summary/benchmark_summary_cpu.md \
+      --policy {{policy}} \
+      --regression-threshold-pct {{regression_threshold_pct}} \
+      --improvement-threshold-pct {{improvement_threshold_pct}}
+
+# Generate MPI benchmark summary artifacts from Criterion JSON message stream
+report-mpi policy="off" regression_threshold_pct="3.0" improvement_threshold_pct="3.0":
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion/summary
+    cd {{justfile_directory()}} && python3 scripts/criterion_json_report.py \
+      --input ../../../target/criterion/messages_mpi.jsonl \
+      --json-out ../../../target/criterion/summary/benchmark_summary_mpi.json \
+      --md-out ../../../target/criterion/summary/benchmark_summary_mpi.md \
+      --policy {{policy}} \
+      --regression-threshold-pct {{regression_threshold_pct}} \
+      --improvement-threshold-pct {{improvement_threshold_pct}}
+
+# Run CPU Criterion JSON benchmark and generate summary artifacts
+json-report: json report-cpu
+
+# Run MPI Criterion JSON benchmark and generate summary artifacts
+json-report-mpi ranks="4": (json-mpi ranks) report-mpi
+
+# Capture MPI rank-count wall-clock and per-rank RSS metrics
+metrics-mpi rank_counts="2,4":
+    cd {{justfile_directory()}} && python3 scripts/mpi_rank_metrics.py \
+      --rank-counts {{rank_counts}} \
+      --json-out ../../../target/criterion/summary/mpi_rank_metrics.json \
+      --md-out ../../../target/criterion/summary/mpi_rank_metrics.md
+
+# Capture local-vs-distributed scaling across representative dataset sizes
+scaling-mpi size_tiers="small:2000,medium:5000,large:10000" rank_counts="2,4":
+    cd {{justfile_directory()}} && python3 scripts/mpi_local_vs_distributed_scaling.py \
+      --size-tiers {{size_tiers}} \
+      --rank-counts {{rank_counts}} \
+      --json-out ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.json \
+      --md-out ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.md
+
+# Publish consolidated MPI rank-scaling report with known bottlenecks
+report-mpi-scaling:
+    cd {{justfile_directory()}} && python3 scripts/mpi_rank_scaling_report.py \
+      --rank-metrics-json ../../../target/criterion/summary/mpi_rank_metrics.json \
+      --scaling-json ../../../target/criterion/summary/mpi_local_vs_distributed_scaling.json \
+      --json-out ../../../target/criterion/summary/mpi_rank_scaling_report.json \
+      --md-out ../../../target/criterion/summary/mpi_rank_scaling_report.md
+
+# Publish a combined release-review summary from existing artifacts
+report-expression-ir-release:
+    cd {{justfile_directory()}} && python3 scripts/expression_ir_release_review.py \
+      --compile-json ../../../target/criterion/summary/laddu_core_expression_ir_compile_metrics.json \
+      --memory-json ../../../target/criterion/summary/laddu_core_expression_ir_memory_metrics.json \
+      --cpu-json ../../../target/criterion/summary/benchmark_summary_cpu.json \
+      --mpi-json ../../../target/criterion/summary/benchmark_summary_mpi.json \
+      --json-out ../../../target/criterion/summary/expression_ir_release_review.json \
+      --md-out ../../../target/criterion/summary/expression_ir_release_review.md
+
+# Open-path profiling: parquet/root canonical loaders (single run per mode)
+open-parquet:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- parquet_open
+
+open-root:
+    cd {{justfile_directory()}} && cargo run --release -q -p laddu --bin profile_cached_paths -- root_open
+
+# Run only file-open Criterion benchmarks
+bench-open:
+    cd {{justfile_directory()}} && cargo bench -p laddu --bench workflow_behavior_cpu_benchmarks -- file_open --noplot
+
+# Emit Criterion JSON messages for only file-open benchmark group
+json-open:
+    cd {{justfile_directory()}} && mkdir -p ../../../target/criterion
+    cd {{justfile_directory()}} && cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json -- file_open > ../../../target/criterion/messages_cpu_open.jsonl

@@ -3,7 +3,7 @@ use crate::{
     utils::vectors::{PyVec3, PyVec4},
 };
 use laddu_core::{
-    data::{Dataset, DatasetMetadata, EventData},
+    data::{Dataset, DatasetMetadata, Event, EventData, NamedEventView},
     traits::Variable,
     utils::variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
@@ -14,10 +14,7 @@ use laddu_core::{
 use numpy::PyArray1;
 use pyo3::{exceptions::PyValueError, prelude::*};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display};
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {
@@ -80,8 +77,10 @@ impl PyVariable {
         Ok(cloned)
     }
 
-    pub(crate) fn evaluate_event(&self, event: &Arc<EventData>) -> PyResult<f64> {
-        Ok(self.value(event.as_ref()))
+    pub(crate) fn evaluate_event(&self, event: &Event) -> PyResult<f64> {
+        let dataset = Dataset::new_with_metadata(vec![event.data_arc()], event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(self.value(&event_view))
     }
 }
 
@@ -122,7 +121,7 @@ impl PyP4SelectionInput {
 }
 
 /// A reusable 2-to-2 reaction description shared by multiple Variables.
-#[pyclass(name = "Topology", module = "laddu")]
+#[pyclass(name = "Topology", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyTopology(pub Topology);
 
@@ -278,7 +277,7 @@ impl PyTopology {
 /// --------
 /// laddu.utils.vectors.Vec4.m
 ///
-#[pyclass(name = "Mass", module = "laddu")]
+#[pyclass(name = "Mass", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyMass(pub Mass);
 
@@ -308,7 +307,10 @@ impl PyMass {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -391,7 +393,7 @@ impl PyMass {
 /// --------
 /// laddu.utils.vectors.Vec3.costheta
 ///
-#[pyclass(name = "CosTheta", module = "laddu")]
+#[pyclass(name = "CosTheta", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyCosTheta(pub CosTheta);
 
@@ -426,7 +428,10 @@ impl PyCosTheta {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -510,7 +515,7 @@ impl PyCosTheta {
 /// --------
 /// laddu.utils.vectors.Vec3.phi
 ///
-#[pyclass(name = "Phi", module = "laddu")]
+#[pyclass(name = "Phi", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPhi(pub Phi);
 
@@ -545,7 +550,10 @@ impl PyPhi {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -615,7 +623,7 @@ impl PyPhi {
 /// laddu.CosTheta
 /// laddu.Phi
 ///
-#[pyclass(name = "Angles", module = "laddu")]
+#[pyclass(name = "Angles", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAngles(pub Angles);
 #[pymethods]
@@ -669,7 +677,7 @@ impl PyAngles {
 /// pol_angle : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
-#[pyclass(name = "PolAngle", module = "laddu")]
+#[pyclass(name = "PolAngle", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPolAngle(pub PolAngle);
 
@@ -699,7 +707,10 @@ impl PyPolAngle {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -758,7 +769,7 @@ impl PyPolAngle {
 /// --------
 /// laddu.utils.vectors.Vec3.mag
 ///
-#[pyclass(name = "PolMagnitude", module = "laddu")]
+#[pyclass(name = "PolMagnitude", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyPolMagnitude(pub PolMagnitude);
 
@@ -788,7 +799,10 @@ impl PyPolMagnitude {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -852,7 +866,7 @@ impl PyPolMagnitude {
 /// laddu.PolAngle
 /// laddu.PolMagnitude
 ///
-#[pyclass(name = "Polarization", module = "laddu")]
+#[pyclass(name = "Polarization", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPolarization(pub Polarization);
 #[pymethods]
@@ -928,7 +942,7 @@ impl PyPolarization {
 ///
 /// By default, the first equality is used if no particle lists are empty.
 ///
-#[pyclass(name = "Mandelstam", module = "laddu")]
+#[pyclass(name = "Mandelstam", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyMandelstam(pub Mandelstam);
 
@@ -958,7 +972,10 @@ impl PyMandelstam {
             ))?;
         let mut variable = self.0.clone();
         variable.bind(metadata).map_err(PyErr::from)?;
-        Ok(variable.value(event.event.data()))
+        let dataset =
+            Dataset::new_with_metadata(vec![event.event.data_arc()], event.event.metadata_arc());
+        let event_view = dataset.event_view(0);
+        Ok(variable.value(&event_view))
     }
     /// All values of this Variable on the given Dataset
     ///
@@ -1027,7 +1044,7 @@ impl Variable for PyVariable {
         }
     }
 
-    fn value(&self, event: &EventData) -> f64 {
+    fn value(&self, event: &NamedEventView<'_>) -> f64 {
         match self {
             PyVariable::Mass(mass) => mass.0.value(event),
             PyVariable::CosTheta(cos_theta) => cos_theta.0.value(event),

@@ -1,6 +1,6 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
-    data::{DatasetMetadata, EventData},
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     utils::get_bin_index,
@@ -67,22 +67,24 @@ impl Amplitude for PiecewiseScalar {
         resources.register_amplitude(&self.name)
     }
 
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.variable.bind(metadata)?;
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -90,11 +92,9 @@ impl Amplitude for PiecewiseScalar {
             Complex64::from(parameters.get(self.pids[bin_index]))
         }
     }
-
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -221,17 +221,15 @@ impl Amplitude for PiecewiseComplexScalar {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -240,11 +238,9 @@ impl Amplitude for PiecewiseComplexScalar {
             Complex64::new(parameters.get(pid_re_im.0), parameters.get(pid_re_im.1))
         }
     }
-
     fn compute_gradient(
         &self,
         _parameters: &Parameters,
-        _event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
@@ -381,17 +377,15 @@ impl Amplitude for PiecewisePolarComplexScalar {
         Ok(())
     }
 
-    fn precompute(&self, event: &EventData, cache: &mut Cache) {
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
         let maybe_bin_index = get_bin_index(self.variable.value(event), self.bins, self.range);
         if let Some(bin_index) = maybe_bin_index {
             cache.store_scalar(self.bin_index, bin_index as f64);
         } else {
             cache.store_scalar(self.bin_index, (self.bins + 1) as f64);
-            // store ibin = nbins + 1 if outside range
         }
     }
-
-    fn compute(&self, parameters: &Parameters, _event: &EventData, cache: &Cache) -> Complex64 {
+    fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
         let bin_index: usize = cache.get_scalar(self.bin_index) as usize;
         if bin_index == self.bins + 1 {
             Complex64::ZERO
@@ -400,11 +394,9 @@ impl Amplitude for PiecewisePolarComplexScalar {
             Complex64::from_polar(parameters.get(pid_r_theta.0), parameters.get(pid_r_theta.1))
         }
     }
-
     fn compute_gradient(
         &self,
         parameters: &Parameters,
-        _event: &EventData,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {

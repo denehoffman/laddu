@@ -1,7 +1,7 @@
 use crate::data::PyDataset;
 use laddu_core::{
     amplitudes::{constant, parameter, Evaluator, Expression, ParameterLike, TestAmplitude},
-    f64, LadduError, ReadWrite,
+    f64, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -10,13 +10,18 @@ use pyo3::{
     prelude::*,
     types::{PyBytes, PyList},
 };
-#[cfg(feature = "rayon")]
-use rayon::ThreadPoolBuilder;
 use std::collections::HashMap;
+
+fn install_with_threads<R: Send>(
+    threads: Option<usize>,
+    op: impl FnOnce() -> R + Send,
+) -> LadduResult<R> {
+    ThreadPoolManager::shared().install(threads, op)
+}
 
 /// A mathematical expression formed from amplitudes.
 ///
-#[pyclass(name = "Expression", module = "laddu")]
+#[pyclass(name = "Expression", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyExpression(pub Expression);
 
@@ -267,16 +272,15 @@ impl PyExpression {
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(
             py,
-            bincode::serde::encode_to_vec(&self.0, bincode::config::standard())
-                .map_err(LadduError::EncodeError)?
+            serde_pickle::to_vec(&self.0, serde_pickle::SerOptions::new())
+                .map_err(LadduError::PickleError)?
                 .as_slice(),
         ))
     }
     fn __setstate__(&mut self, state: Bound<'_, PyBytes>) -> PyResult<()> {
         *self = Self(
-            bincode::serde::decode_from_slice(state.as_bytes(), bincode::config::standard())
-                .map_err(LadduError::DecodeError)?
-                .0,
+            serde_pickle::from_slice(state.as_bytes(), serde_pickle::DeOptions::new())
+                .map_err(LadduError::PickleError)?,
         );
         Ok(())
     }
@@ -288,7 +292,7 @@ impl PyExpression {
 /// --------
 /// laddu.Expression.load
 ///
-#[pyclass(name = "Evaluator", module = "laddu")]
+#[pyclass(name = "Evaluator", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyEvaluator(pub Evaluator);
 
@@ -474,6 +478,19 @@ impl PyEvaluator {
         }
         Ok(())
     }
+
+    /// Return the current active-amplitude mask.
+    #[getter]
+    fn active_mask(&self) -> Vec<bool> {
+        self.0.active_mask()
+    }
+
+    /// Apply an active-amplitude mask.
+    fn set_active_mask(&self, mask: Vec<bool>) -> PyResult<()> {
+        self.0.set_active_mask(&mask)?;
+        Ok(())
+    }
+
     /// Evaluate the stored Expression over the stored Dataset
     ///
     /// Parameters
@@ -481,7 +498,9 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -494,28 +513,14 @@ impl PyEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate(&parameters)),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(py, &self.0.evaluate(&parameters)))
-        }
+        let values = install_with_threads(threads, || self.0.evaluate(&parameters))?;
+        Ok(PyArray1::from_slice(py, &values))
     }
     /// Evaluate the stored Expression over a subset of the stored Dataset
     ///
@@ -526,7 +531,9 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -539,7 +546,6 @@ impl PyEvaluator {
     ///     If there was an error building the thread pool
     ///
     #[pyo3(signature = (parameters, indices, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_batch<'py>(
         &self,
         py: Python<'py>,
@@ -547,24 +553,9 @@ impl PyEvaluator {
         indices: Vec<usize>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| self.0.evaluate_batch(&parameters, &indices)),
-            ))
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray1::from_slice(
-                py,
-                &self.0.evaluate_batch(&parameters, &indices),
-            ))
-        }
+        let values =
+            install_with_threads(threads, || self.0.evaluate_batch(&parameters, &indices))?;
+        Ok(PyArray1::from_slice(py, &values))
     }
     /// Evaluate the gradient of the stored Expression over the stored Dataset
     ///
@@ -573,7 +564,9 @@ impl PyEvaluator {
     /// parameters : list of float
     ///     The values to use for the free parameters
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -587,44 +580,20 @@ impl PyEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient<'py>(
         &self,
         py: Python<'py>,
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray2::from_vec2(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .evaluate_gradient(&parameters)
-                            .iter()
-                            .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex64>>>()
-                    }),
-            )
-            .map_err(LadduError::NumpyError)?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray2::from_vec2(
-                py,
-                &self
-                    .0
-                    .evaluate_gradient(&parameters)
-                    .iter()
-                    .map(|grad| grad.data.as_vec().to_vec())
-                    .collect::<Vec<Vec<Complex64>>>(),
-            )
-            .map_err(LadduError::NumpyError)?)
-        }
+        let gradients = install_with_threads(threads, || {
+            self.0
+                .evaluate_gradient(&parameters)
+                .iter()
+                .map(|grad| grad.data.as_vec().to_vec())
+                .collect::<Vec<Vec<Complex64>>>()
+        })?;
+        Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
     }
     /// Evaluate the gradient of the stored Expression over a subset of the stored Dataset
     ///
@@ -635,7 +604,9 @@ impl PyEvaluator {
     /// indices : list of int
     ///     The indices of events to evaluate
     /// threads : int, optional
-    ///     The number of threads to use (setting this to None will use all available CPUs)
+    ///     The number of threads to use (setting this to ``None`` or ``0`` uses the current
+    ///     global or context-managed default; any positive value overrides that default for
+    ///     this call only)
     ///
     /// Returns
     /// -------
@@ -649,7 +620,6 @@ impl PyEvaluator {
     ///     ``numpy`` array
     ///
     #[pyo3(signature = (parameters, indices, *, threads=None))]
-    #[cfg_attr(not(feature = "rayon"), allow(unused_variables))]
     fn evaluate_gradient_batch<'py>(
         &self,
         py: Python<'py>,
@@ -657,37 +627,14 @@ impl PyEvaluator {
         indices: Vec<usize>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
-        #[cfg(feature = "rayon")]
-        {
-            Ok(PyArray2::from_vec2(
-                py,
-                &ThreadPoolBuilder::new()
-                    .num_threads(threads.unwrap_or_else(num_cpus::get))
-                    .build()
-                    .map_err(LadduError::from)?
-                    .install(|| {
-                        self.0
-                            .evaluate_gradient_batch(&parameters, &indices)
-                            .iter()
-                            .map(|grad| grad.data.as_vec().to_vec())
-                            .collect::<Vec<Vec<Complex64>>>()
-                    }),
-            )
-            .map_err(LadduError::NumpyError)?)
-        }
-        #[cfg(not(feature = "rayon"))]
-        {
-            Ok(PyArray2::from_vec2(
-                py,
-                &self
-                    .0
-                    .evaluate_gradient_batch(&parameters, &indices)
-                    .iter()
-                    .map(|grad| grad.data.as_vec().to_vec())
-                    .collect::<Vec<Vec<Complex64>>>(),
-            )
-            .map_err(LadduError::NumpyError)?)
-        }
+        let gradients = install_with_threads(threads, || {
+            self.0
+                .evaluate_gradient_batch(&parameters, &indices)
+                .iter()
+                .map(|grad| grad.data.as_vec().to_vec())
+                .collect::<Vec<Vec<Complex64>>>()
+        })?;
+        Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
     }
 }
 
@@ -699,7 +646,7 @@ impl PyEvaluator {
 /// laddu.parameter
 /// laddu.constant
 ///
-#[pyclass(name = "ParameterLike", module = "laddu")]
+#[pyclass(name = "ParameterLike", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyParameterLike(pub ParameterLike);
 
