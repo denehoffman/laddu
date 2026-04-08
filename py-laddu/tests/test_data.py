@@ -1089,7 +1089,7 @@ def test_dataset_from_amptools_custom_polarization_names() -> None:
 
 def test_dataset_from_amptools_rejects_unknown_option() -> None:
     with pytest.raises(TypeError):
-        ldio.read_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # type: ignore[arg-type]
+        ldio.read_amptools(DATA_AMPTOOLS_ROOT, unknown_option=True)  # ty:ignore[unknown-argument]
 
 
 def test_dataset_from_parquet_f64_matches_f32() -> None:

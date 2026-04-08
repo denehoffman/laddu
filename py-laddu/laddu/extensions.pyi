@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import Literal, TypeAlias, overload
 
@@ -32,7 +32,7 @@ class LikelihoodExpression:
     def fix(self, name: str, value: float) -> LikelihoodExpression: ...
     def free(self, name: str) -> LikelihoodExpression: ...
     def rename_parameter(self, old: str, new: str) -> LikelihoodExpression: ...
-    def rename_parameters(self, mapping: dict[str, str]) -> LikelihoodExpression: ...
+    def rename_parameters(self, mapping: Mapping[str, str]) -> LikelihoodExpression: ...
     def load(self) -> LikelihoodEvaluator: ...
     def __add__(self, other: LikelihoodExpression | int) -> LikelihoodExpression: ...
     def __radd__(self, other: LikelihoodExpression | int) -> LikelihoodExpression: ...
@@ -93,7 +93,7 @@ MinimizerOptions: TypeAlias = (
 SamplerConfig: TypeAlias = ganesh.AIESConfig | ganesh.ESSConfig
 SamplerOptions: TypeAlias = ganesh.AIESOptions | ganesh.ESSOptions
 MinimizerInit: TypeAlias = (
-    list[float]
+    Sequence[float]
     | npt.ArrayLike
     | ganesh.NelderMeadInit
     | ganesh.CMAESInit
@@ -101,7 +101,7 @@ MinimizerInit: TypeAlias = (
     | ganesh.PSOInit
 )
 SamplerInit: TypeAlias = (
-    list[list[float]] | npt.ArrayLike | ganesh.AIESInit | ganesh.ESSInit
+    Sequence[Sequence[float]] | npt.ArrayLike | ganesh.AIESInit | ganesh.ESSInit
 )
 
 class LikelihoodEvaluator:
@@ -114,12 +114,12 @@ class LikelihoodEvaluator:
 
     def evaluate(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> float: ...
     def evaluate_gradient(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def minimize(
@@ -218,26 +218,26 @@ class NLL:
     def fix(self, name: str, value: float) -> NLL: ...
     def free(self, name: str) -> NLL: ...
     def rename_parameter(self, old: str, new: str) -> NLL: ...
-    def rename_parameters(self, mapping: dict[str, str]) -> NLL: ...
-    def activate(self, name: str | list[str], *, strict: bool = True) -> None: ...
+    def rename_parameters(self, mapping: Mapping[str, str]) -> NLL: ...
+    def activate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
     def activate_all(self) -> None: ...
-    def deactivate(self, name: str | list[str], *, strict: bool = True) -> None: ...
+    def deactivate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
     def deactivate_all(self) -> None: ...
-    def isolate(self, name: str | list[str], *, strict: bool = True) -> None: ...
+    def isolate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
     def evaluate(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> float: ...
     def evaluate_gradient(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     @overload
     def project_weights(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
         subset: None = None,
         subsets: None = None,
@@ -248,9 +248,9 @@ class NLL:
     @overload
     def project_weights(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
-        subset: str | list[str],
+        subset: str | Sequence[str],
         subsets: None = None,
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
@@ -259,20 +259,20 @@ class NLL:
     @overload
     def project_weights(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
         subset: None = None,
-        subsets: list[list[str] | None],
+        subsets: Sequence[Sequence[str] | None],
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> npt.NDArray[np.float64]: ...
     def project_weights(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
-        subset: str | list[str] | None = None,
-        subsets: list[list[str] | None] | None = None,
+        subset: str | Sequence[str] | None = None,
+        subsets: Sequence[Sequence[str] | None] | None = None,
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
@@ -280,7 +280,7 @@ class NLL:
     @overload
     def project_weights_and_gradients(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
         subset: None = None,
         subsets: None = None,
@@ -291,9 +291,9 @@ class NLL:
     @overload
     def project_weights_and_gradients(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
-        subset: str | list[str],
+        subset: str | Sequence[str],
         subsets: None = None,
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
@@ -302,20 +302,20 @@ class NLL:
     @overload
     def project_weights_and_gradients(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
         subset: None = None,
-        subsets: list[list[str] | None],
+        subsets: Sequence[Sequence[str] | None],
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
     def project_weights_and_gradients(
         self,
-        parameters: list[float] | npt.ArrayLike,
+        parameters: Sequence[float] | npt.ArrayLike,
         *,
-        subset: str | list[str] | None = None,
-        subsets: list[list[str] | None] | None = None,
+        subset: str | Sequence[str] | None = None,
+        subsets: Sequence[Sequence[str] | None] | None = None,
         strict: bool = False,
         mc_evaluator: Evaluator | None = None,
         threads: int | None = None,

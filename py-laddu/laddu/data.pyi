@@ -16,22 +16,22 @@ from laddu.utils.variables import (
 from laddu.utils.vectors import Vec4
 
 class Event:
-    p4s: Mapping[str, Vec4]
-    aux: Mapping[str, float]
+    p4s: dict[str, Vec4]
+    aux: dict[str, float]
     weight: float
 
     def __init__(
         self,
-        p4s: list[Vec4],
-        aux: list[float],
+        p4s: Sequence[Vec4],
+        aux: Sequence[float],
         weight: float,
         *,
-        p4_names: list[str] | None = None,
-        aux_names: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
-    def get_p4_sum(self, names: list[str]) -> Vec4: ...
-    def boost_to_rest_frame_of(self, names: list[str]) -> Event: ...
+    def get_p4_sum(self, names: Sequence[str]) -> Vec4: ...
+    def boost_to_rest_frame_of(self, names: Sequence[str]) -> Event: ...
     def p4(self, name: str) -> Vec4: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
@@ -55,11 +55,11 @@ class Dataset(Sequence[Event]):
 
     def __init__(
         self,
-        events: list[Event],
+        events: Sequence[Event],
         *,
-        p4_names: list[str] | None = None,
-        aux_names: list[str] | None = None,
-        aliases: dict[str, str | list[str]] | None = None,
+        p4_names: Sequence[str] | None = None,
+        aux_names: Sequence[str] | None = None,
+        aliases: Mapping[str, str | Sequence[str]] | None = None,
     ) -> None: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[Event]: ...
@@ -90,7 +90,7 @@ class Dataset(Sequence[Event]):
     def event_global(self, index: int) -> Event: ...
     def p4_by_name(self, index: int, name: str) -> Vec4: ...
     def aux_by_name(self, index: int, name: str) -> float: ...
-    def boost_to_rest_frame_of(self, names: list[str]) -> Dataset: ...
+    def boost_to_rest_frame_of(self, names: Sequence[str]) -> Dataset: ...
     def evaluate(
         self, variable: Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam
     ) -> NDArray[np.float64]: ...

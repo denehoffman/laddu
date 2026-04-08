@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
@@ -11,74 +11,74 @@ PandasDataFrame: TypeAlias = Any
 PolarsDataFrame: TypeAlias = Any
 
 def from_dict(
-    data: dict[str, Any],
+    data: Mapping[str, Any],
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def from_numpy(
-    data: dict[str, NDArray[np.floating]],
+    data: Mapping[str, NDArray[np.floating]],
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def from_pandas(
     data: PandasDataFrame,
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def from_polars(
     data: PolarsDataFrame,
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def from_arrow(
     data: Any,
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def read_parquet(
     path: str | Path,
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
 ) -> Dataset: ...
 def read_parquet_chunked(
     path: str | Path,
     *,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
     chunk_size: int = 10000,
 ) -> Iterator[Dataset]: ...
 def read_root(
     path: str | Path,
     *,
     tree: str | None = None,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
     backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
-    uproot_kwargs: dict[str, Any] | None = None,
+    uproot_kwargs: Mapping[str, Any] | None = None,
 ) -> Dataset: ...
 def read_root_chunked(
     path: str | Path,
     *,
     tree: str | None = None,
-    p4s: list[str] | None = None,
-    aux: list[str] | None = None,
-    aliases: dict[str, str | list[str]] | None = None,
+    p4s: Sequence[str] | None = None,
+    aux: Sequence[str] | None = None,
+    aliases: Mapping[str, str | Sequence[str]] | None = None,
     backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
-    uproot_kwargs: dict[str, Any] | None = None,
+    uproot_kwargs: Mapping[str, Any] | None = None,
     chunk_size: int = 10000,
 ) -> Iterator[Dataset]: ...
 def read_amptools(
@@ -123,7 +123,7 @@ def write_root(
     backend: Literal['oxyroot', 'uproot'] = 'oxyroot',
     chunk_size: int = 10000,
     precision: Literal['f64', 'f32'] = 'f64',
-    uproot_kwargs: dict[str, Any] | None = None,
+    uproot_kwargs: Mapping[str, Any] | None = None,
 ) -> None: ...
 
 __all__ = [
