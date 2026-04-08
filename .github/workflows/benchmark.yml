@@ -19,6 +19,8 @@ jobs:
     concurrency:
       group: CodSpeed-Benchmarks-${{ github.ref }}
       cancel-in-progress: false
+    env:
+      CARGO_BUILD_JOBS: "1"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -28,7 +30,10 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: "cargo-codspeed,cargo-criterion"
-      - run: cargo codspeed build --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark
+      - run: cargo codspeed build --bench open_benchmark
+      - run: cargo codspeed build --bench expression_ir_benchmarks
+      - run: cargo codspeed build --bench workflow_behavior_cpu_benchmarks
+      - run: cargo codspeed build --bench kmatrix_benchmark
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:
