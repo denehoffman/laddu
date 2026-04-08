@@ -26,8 +26,9 @@ serde = { workspace = true }
 typetag = { workspace = true }
 
 [dev-dependencies]
-nalgebra = { workspace = true }
 criterion = { workspace = true }
+fastrand-contrib = { workspace = true }
+nalgebra = { workspace = true }
 num_cpus = { workspace = true }
 
 [[bench]]

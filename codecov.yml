@@ -3,3 +3,4 @@ ignore:
   - "py-laddu-cpu/"
   - "py-laddu-mpi/"
   - "py-laddu/tests" # no need to cover tests as if they were code
+  - "**/bin"

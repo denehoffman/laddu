@@ -27,13 +27,13 @@ jobs:
       - name: Install Rust Tool
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-codspeed
-      - run: cargo codspeed build --bench workflow_behavior_cpu_benchmarks
+          tool: "cargo-codspeed,cargo-criterion"
+      - run: cargo codspeed build
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: cargo codspeed run --bench workflow_behavior_cpu_benchmarks
+          run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
       - run: |-
           mkdir -p target/criterion/summary

@@ -472,15 +472,15 @@ benchmark_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(),
-                InstallRustTool(tool=['cargo-codspeed']),
-                script('cargo codspeed build --bench workflow_behavior_cpu_benchmarks'),
+                InstallRustTool(tool=['cargo-codspeed', 'cargo-criterion']),
+                script('cargo codspeed build'),
                 action(
                     'CodSpeed Action',
                     'CodSpeedHQ/action',
                     ref='v4',
                     with_opts={
                         'mode': 'simulation',
-                        'run': 'cargo codspeed run --bench workflow_behavior_cpu_benchmarks',
+                        'run': 'cargo codspeed run',
                         'token': context.secrets.CODSPEED_TOKEN,
                     },
                 ),
