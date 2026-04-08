@@ -3465,9 +3465,13 @@ impl LikelihoodRegistry {
         let term_manager = term.parameter_manager().clone();
         let (merged_manager, _left_map, layout) = self.parameter_manager.merge(&term_manager);
         self.parameter_manager = merged_manager;
-        let param_layout = layout;
+        let param_layout = term_manager
+            .free_parameter_indices()
+            .into_iter()
+            .map(|idx| layout[idx])
+            .collect();
         self.param_layouts.push(param_layout);
-        self.param_counts.push(term_manager.n_parameters());
+        self.param_counts.push(term_manager.n_free_parameters());
         self.terms.push(term);
         term_idx
     }
@@ -5049,6 +5053,27 @@ mod tests {
         assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
         assert_eq!(evaluator.free_parameters(), vec!["beta"]);
         assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
+        let params_free = vec![2.0];
+        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
+        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
+        assert_eq!(grad_free.len(), 1);
+        assert_relative_eq!(grad_free[0], 1.0);
+    }
+
+    #[test]
+    fn likelihood_expression_handles_term_local_fixed_parameters() {
+        let alpha = LikelihoodScalar::new("alpha").fix("alpha", 1.5).unwrap();
+        let beta = LikelihoodScalar::new("beta");
+        let expr = &alpha + &beta;
+        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(expr.free_parameters(), vec!["beta"]);
+        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+
+        let evaluator = expr.load();
+        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
+        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
+
         let params_free = vec![2.0];
         assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
         let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
