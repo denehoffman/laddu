@@ -267,8 +267,6 @@ jobs:
     name: Build Source Distribution
     permissions:
       contents: read
-    needs:
-      - build-check-test
     if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
     runs-on: ubuntu-22.04
     steps:
