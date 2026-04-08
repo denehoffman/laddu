@@ -14,9 +14,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -28,9 +25,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -42,9 +36,6 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -56,9 +47,6 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -70,9 +58,6 @@ jobs:
           - runner: ubuntu-22.04
             target: s390x
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -84,9 +69,6 @@ jobs:
           - runner: ubuntu-22.04
             target: ppc64le
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -123,9 +105,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -137,9 +116,6 @@ jobs:
           - runner: ubuntu-22.04
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -151,9 +127,6 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -165,9 +138,6 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -204,9 +174,6 @@ jobs:
           - runner: windows-latest
             target: x64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -219,9 +186,6 @@ jobs:
           - runner: windows-latest
             target: x86
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -265,9 +229,6 @@ jobs:
           - runner: macos-15-intel
             target: x86_64
             python_versions:
-              - "3.7"
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -279,8 +240,6 @@ jobs:
           - runner: macos-latest
             target: aarch64
             python_versions:
-              - "3.8"
-              - "3.9"
               - "3.10"
               - "3.11"
               - "3.12"
@@ -304,6 +263,27 @@ jobs:
           target: ${{ matrix.platform.target }}
           sccache: ${{ !(startsWith(github.ref, 'refs/tags/')) }}
           args: --release --out dist --manifest-path py-laddu-cpu/Cargo.toml --interpreter ${{ join(matrix.platform.python_versions, ' ') }}
+  sdist-cpu:
+    name: Build Source Distribution
+    permissions:
+      contents: read
+    needs:
+      - build-check-test
+    if: ${{ (startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch')) }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: "--out dist --manifest-path py-laddu-cpu/Cargo.toml"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist
+          name: cpu-sdist
   sdist-mpi:
     name: Build MPI Source Distribution
     permissions:

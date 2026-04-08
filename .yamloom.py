@@ -37,9 +37,6 @@ class Target:
 
 
 DEFAULT_PYTHON_VERSIONS = [
-    '3.7',
-    '3.8',
-    '3.9',
     '3.10',
     '3.11',
     '3.12',
@@ -102,7 +99,7 @@ TARGET_JOBS_CPU = [
             Target(
                 'windows-11-arm',
                 'aarch64',
-                ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
+                ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
             ),
         ],
     ),
@@ -114,11 +111,12 @@ TARGET_JOBS_CPU = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target('macos-latest', 'aarch64', ['3.7']),
+            Target('macos-latest', 'aarch64'),
         ],
     ),
 ]
 
+# In case we ever decide to build MPI wheels again
 TARGET_JOBS_MPI = [
     TargetJob(
         'Build Linux Wheels',
@@ -163,7 +161,7 @@ TARGET_JOBS_MPI = [
             # Target(
             #     'windows-11-arm',
             #     'aarch64',
-            #     ['3.7', '3.8', '3.9', '3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
+            #     ['3.10', '3.11', '3.13t', '3.14t', 'pypy3.11'],
             # ),
         ],
     ),
@@ -175,7 +173,7 @@ TARGET_JOBS_MPI = [
                 'macos-15-intel',
                 'x86_64',
             ),
-            Target('macos-latest', 'aarch64', ['3.7']),
+            Target('macos-latest', 'aarch64'),
         ],
     ),
 ]
@@ -283,6 +281,22 @@ test_build_workflow = Workflow(
             )
             for tj in TARGET_JOBS_CPU
         },
+        'sdist-cpu': Job(
+            steps=[
+                Checkout(),
+                Maturin(
+                    name='Build sdist',
+                    command='sdist',
+                    args='--out dist --manifest-path py-laddu-cpu/Cargo.toml',
+                ),
+                UploadArtifact(path='dist', artifact_name='cpu-sdist'),
+            ],
+            name='Build Source Distribution',
+            runs_on='ubuntu-22.04',
+            needs=['build-check-test'],
+            condition=context.github.ref.startswith('refs/tags/')
+            | (context.github.event_name == 'workflow_dispatch'),
+        ),
         'sdist-mpi': Job(
             steps=[
                 Checkout(),
@@ -376,7 +390,7 @@ python_release_workflow = Workflow(
                 ),
                 UploadArtifact(path='dist', artifact_name='mpi-sdist'),
             ],
-            name='Build Source Distribution',
+            name='Build MPI Source Distribution',
             runs_on='ubuntu-22.04',
             needs=['build-check-test'],
             condition=context.github.ref.startswith('refs/tags/')
