@@ -25,10 +25,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-codspeed
-      - run: cargo codspeed build --bench open_benchmark
-      - run: cargo codspeed build --bench expression_ir_benchmarks
-      - run: cargo codspeed build --bench workflow_behavior_cpu_benchmarks
-      - run: cargo codspeed build --bench kmatrix_benchmark
+      - run: cargo codspeed build --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark
+        env:
+          CARGO_BUILD_JOBS: "1"
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:
