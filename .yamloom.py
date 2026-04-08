@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from yamloom import (
-    Concurrency,
     Environment,
     Events,
     Job,
@@ -472,7 +471,7 @@ benchmark_workflow = Workflow(
             steps=[
                 Checkout(),
                 SetupRust(),
-                InstallRustTool(tool=['cargo-codspeed', 'cargo-criterion']),
+                InstallRustTool(tool=['cargo-codspeed']),
                 script(
                     'cargo codspeed build --bench open_benchmark',
                 ),
@@ -491,36 +490,13 @@ benchmark_workflow = Workflow(
                     ref='v4',
                     with_opts={
                         'mode': 'simulation',
-                        'run': 'cargo codspeed run --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark',
+                        'run': 'cargo codspeed run',
                         'token': context.secrets.CODSPEED_TOKEN,
                     },
-                ),
-                script(
-                    'mkdir -p target/criterion/summary',
-                    'cargo criterion --bench workflow_behavior_cpu_benchmarks --message-format=json > target/criterion/messages_cpu.jsonl',
-                    'if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then POLICY=warn; else POLICY=fail; fi',
-                    'python3 crates/laddu/benches/scripts/criterion_json_report.py --input target/criterion/messages_cpu.jsonl --json-out target/criterion/summary/benchmark_summary_cpu.json --md-out target/criterion/summary/benchmark_summary_cpu.md --policy "$POLICY" --regression-threshold-pct 3.0 --improvement-threshold-pct 3.0',
-                ),
-                UploadArtifact(
-                    path='target/criterion/messages_cpu.jsonl',
-                    artifact_name='criterion-cpu-jsonl',
-                ),
-                UploadArtifact(
-                    path='target/criterion/summary/benchmark_summary_cpu.json',
-                    artifact_name='criterion-cpu-summary-json',
-                ),
-                UploadArtifact(
-                    path='target/criterion/summary/benchmark_summary_cpu.md',
-                    artifact_name='criterion-cpu-summary-markdown',
                 ),
             ],
             name='Run Benchmarks',
             runs_on='ubuntu-latest',
-            concurrency=Concurrency(
-                group=f'CodSpeed-Benchmarks-{context.github.ref}',
-                cancel_in_progress=False,
-            ),
-            env={'CARGO_BUILD_JOBS': '1'},
         )
     },
 )
