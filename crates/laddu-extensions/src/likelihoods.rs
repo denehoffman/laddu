@@ -2186,7 +2186,6 @@ impl StochasticNLL {
 ///     The number of Monte Carlo events used in the denominator of the normalization integral
 ///     (uses the weighted number of accepted Monte Carlo events if None is given)
 ///
-#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "NLL", module = "laddu", from_py_object)]
 #[derive(Clone)]
@@ -2980,7 +2979,6 @@ impl PyNLL {
 /// Notes
 /// -----
 /// See the `NLL.to_stochastic` method for details.
-#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "StochasticNLL", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
@@ -3491,7 +3489,6 @@ impl LikelihoodRegistry {
 }
 
 /// Python wrapper for [`LikelihoodExpression`].
-#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodExpression", module = "laddu", from_py_object)]
 #[derive(Clone)]
@@ -3986,7 +3983,6 @@ impl LikelihoodTerm for LikelihoodEvaluator {
 /// A class which can be used to evaluate a collection of likelihood terms described by a
 /// [`LikelihoodExpression`]
 ///
-#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodEvaluator", module = "laddu", skip_from_py_object)]
 pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
