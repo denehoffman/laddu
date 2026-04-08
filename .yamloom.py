@@ -473,14 +473,16 @@ benchmark_workflow = Workflow(
                 Checkout(),
                 SetupRust(),
                 InstallRustTool(tool=['cargo-codspeed', 'cargo-criterion']),
-                script('cargo codspeed build'),
+                script(
+                    'cargo codspeed build --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark'
+                ),
                 action(
                     'CodSpeed Action',
                     'CodSpeedHQ/action',
                     ref='v4',
                     with_opts={
                         'mode': 'simulation',
-                        'run': 'cargo codspeed run',
+                        'run': 'cargo codspeed run --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark',
                         'token': context.secrets.CODSPEED_TOKEN,
                     },
                 ),

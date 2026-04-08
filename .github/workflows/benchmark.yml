@@ -28,12 +28,12 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: "cargo-codspeed,cargo-criterion"
-      - run: cargo codspeed build
+      - run: cargo codspeed build --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark
       - name: CodSpeed Action
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: cargo codspeed run
+          run: cargo codspeed run --bench open_benchmark --bench expression_ir_benchmarks --bench workflow_behavior_cpu_benchmarks --bench kmatrix_benchmark
           token: ${{ secrets.CODSPEED_TOKEN }}
       - run: |-
           mkdir -p target/criterion/summary

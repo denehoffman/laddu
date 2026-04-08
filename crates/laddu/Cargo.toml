@@ -40,6 +40,10 @@ name = "workflow_behavior_mpi_benchmarks"
 harness = false
 required-features = ["mpi"]
 
+[[bench]]
+name = "kmatrix_benchmark"
+harness = false
+
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]
