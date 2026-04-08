@@ -1,6 +1,7 @@
 //! # laddu-extensions
 //!
 //! This is an internal crate used by `laddu`.
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 #![warn(clippy::perf, clippy::style, missing_docs)]
 
 /// Experimental extensions to the `laddu` ecosystem
