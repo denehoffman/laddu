@@ -2,6 +2,7 @@ use crate::{
     likelihoods::{LikelihoodTerm, StochasticNLL},
     LikelihoodEvaluator, NLL,
 };
+use ganesh::traits::{Algorithm, Observer, Status};
 use ganesh::traits::{CostFunction, Gradient, LogDensity};
 #[cfg(feature = "python")]
 use ganesh::{
@@ -17,7 +18,6 @@ use ganesh::{
         particles::{PSOConfig, SwarmStatus, PSO},
     },
     core::{Callbacks, MCMCSummary, MinimizationSummary},
-    traits::{Algorithm, Observer, Status},
 };
 use laddu_core::{LadduError, LadduResult, ThreadPoolManager};
 use nalgebra::DVector;
@@ -28,23 +28,12 @@ pub struct MaybeThreadPool {
     requested_threads: Option<usize>,
 }
 
-impl MaybeThreadPool {
-    #[cfg(any(feature = "python", test))]
-    fn new(num_threads: usize) -> Self {
-        Self {
-            requested_threads: Some(num_threads),
-        }
-    }
-
-    fn install<R: Send>(&self, op: impl FnOnce() -> LadduResult<R> + Send) -> LadduResult<R> {
-        ThreadPoolManager::shared().install(self.requested_threads, op)?
-    }
-}
-
-#[cfg(feature = "python")]
+/// An observer which calls [`LikelihoodTerm::update`] on each step of the algorithm.
+///
+/// This should generally be used with any algorithm, but it mostly impacts [`StochasticNLL`] terms
+/// which need to update random state at each step.
 #[derive(Copy, Clone)]
-struct LikelihoodTermObserver;
-#[cfg(feature = "python")]
+pub struct LikelihoodTermObserver;
 impl<A, P, S, U, E, C> Observer<A, P, S, U, E, C> for LikelihoodTermObserver
 where
     A: Algorithm<P, S, U, E, Config = C>,
@@ -64,49 +53,17 @@ where
     }
 }
 
-#[cfg(feature = "python")]
-fn run_minimizer<A, P, S>(
-    problem: &P,
-    num_threads: usize,
-    init: A::Init,
-    config: A::Config,
-    callbacks: Callbacks<A, P, S, MaybeThreadPool, LadduError, A::Config>,
-) -> LadduResult<MinimizationSummary>
-where
-    A: Algorithm<P, S, MaybeThreadPool, LadduError, Summary = MinimizationSummary> + Default,
-    P: LikelihoodTerm,
-    S: Status,
-{
-    let mtp = MaybeThreadPool::new(num_threads);
-    Ok(A::default().process(
-        problem,
-        &mtp,
-        init,
-        config,
-        callbacks.with_observer(LikelihoodTermObserver),
-    )?)
-}
+impl MaybeThreadPool {
+    #[cfg(any(feature = "python", test))]
+    fn new(num_threads: usize) -> Self {
+        Self {
+            requested_threads: Some(num_threads),
+        }
+    }
 
-#[cfg(feature = "python")]
-fn run_mcmc_algorithm<A, P>(
-    problem: &P,
-    num_threads: usize,
-    init: A::Init,
-    config: A::Config,
-    callbacks: Callbacks<A, P, EnsembleStatus, MaybeThreadPool, LadduError, A::Config>,
-) -> LadduResult<MCMCSummary>
-where
-    A: Algorithm<P, EnsembleStatus, MaybeThreadPool, LadduError, Summary = MCMCSummary> + Default,
-    P: LikelihoodTerm,
-{
-    let mtp = MaybeThreadPool::new(num_threads);
-    Ok(A::default().process(
-        problem,
-        &mtp,
-        init,
-        config,
-        callbacks.with_observer(LikelihoodTermObserver),
-    )?)
+    fn install<R: Send>(&self, op: impl FnOnce() -> LadduResult<R> + Send) -> LadduResult<R> {
+        ThreadPoolManager::shared().install(self.requested_threads, op)?
+    }
 }
 
 impl CostFunction<MaybeThreadPool, LadduError> for NLL {
@@ -170,6 +127,7 @@ impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
 }
 
 /// Python bindings for the [`ganesh`] crate
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 pub mod py_ganesh {
     use std::{ops::ControlFlow, sync::Arc};
@@ -207,6 +165,52 @@ pub mod py_ganesh {
         types::PyList,
         Borrowed, PyErr,
     };
+
+    #[cfg(feature = "python")]
+    fn run_minimizer<A, P, S>(
+        problem: &P,
+        num_threads: usize,
+        init: A::Init,
+        config: A::Config,
+        callbacks: Callbacks<A, P, S, MaybeThreadPool, LadduError, A::Config>,
+    ) -> LadduResult<MinimizationSummary>
+    where
+        A: Algorithm<P, S, MaybeThreadPool, LadduError, Summary = MinimizationSummary> + Default,
+        P: LikelihoodTerm,
+        S: Status,
+    {
+        let mtp = MaybeThreadPool::new(num_threads);
+        Ok(A::default().process(
+            problem,
+            &mtp,
+            init,
+            config,
+            callbacks.with_observer(LikelihoodTermObserver),
+        )?)
+    }
+
+    #[cfg(feature = "python")]
+    fn run_mcmc_algorithm<A, P>(
+        problem: &P,
+        num_threads: usize,
+        init: A::Init,
+        config: A::Config,
+        callbacks: Callbacks<A, P, EnsembleStatus, MaybeThreadPool, LadduError, A::Config>,
+    ) -> LadduResult<MCMCSummary>
+    where
+        A: Algorithm<P, EnsembleStatus, MaybeThreadPool, LadduError, Summary = MCMCSummary>
+            + Default,
+        P: LikelihoodTerm,
+    {
+        let mtp = MaybeThreadPool::new(num_threads);
+        Ok(A::default().process(
+            problem,
+            &mtp,
+            init,
+            config,
+            callbacks.with_observer(LikelihoodTermObserver),
+        )?)
+    }
 
     fn validate_mcmc_parameter_len(walkers: &[Vec<f64>], expected_len: usize) -> PyResult<()> {
         for walker in walkers {

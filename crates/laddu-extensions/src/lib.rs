@@ -15,6 +15,7 @@ pub mod experimental;
 
 /// A module containing the `laddu` interface with the [`ganesh`] library
 pub mod ganesh_ext;
+pub use ganesh_ext::LikelihoodTermObserver;
 
 /// Extended maximum likelihood cost functions with support for additive terms
 pub mod likelihoods;

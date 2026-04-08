@@ -72,6 +72,7 @@ fn validate_stochastic_batch_size(batch_size: usize, n_events: usize) -> LadduRe
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 fn install_laddu_with_threads<R: Send>(
     threads: Option<usize>,
@@ -80,6 +81,7 @@ fn install_laddu_with_threads<R: Send>(
     ThreadPoolManager::shared().install(threads, op)?
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 fn extract_subset_names(subset: Option<Bound<'_, PyAny>>) -> PyResult<Option<Vec<String>>> {
     let Some(subset) = subset else {
@@ -96,6 +98,7 @@ fn extract_subset_names(subset: Option<Bound<'_, PyAny>>) -> PyResult<Option<Vec
     }
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 fn extract_subsets_arg(
     subsets: Option<Bound<'_, PyAny>>,
@@ -2183,11 +2186,13 @@ impl StochasticNLL {
 ///     The number of Monte Carlo events used in the denominator of the normalization integral
 ///     (uses the weighted number of accepted Monte Carlo events if None is given)
 ///
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "NLL", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyNLL(pub Box<NLL>);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyNLL {
@@ -2975,11 +2980,13 @@ impl PyNLL {
 /// Notes
 /// -----
 /// See the `NLL.to_stochastic` method for details.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "StochasticNLL", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyStochasticNLL(pub StochasticNLL);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyStochasticNLL {
@@ -3484,6 +3491,7 @@ impl LikelihoodRegistry {
 }
 
 /// Python wrapper for [`LikelihoodExpression`].
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodExpression", module = "laddu", from_py_object)]
 #[derive(Clone)]
@@ -3520,6 +3528,7 @@ pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 /// -----
 /// When multiple inputs share the same parameter name, the value and fixed/free status from the
 /// earliest term in the sequence take precedence.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_sum")]
 pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3579,6 +3588,7 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 /// Notes
 /// -----
 /// When parameters overlap between inputs, the parameter definition from the earliest term is used.
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "likelihood_product")]
 pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodExpression> {
@@ -3628,6 +3638,7 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
 /// []
 /// >>> evaluator.evaluate([])
 /// 0.0
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodZero")]
 pub fn py_likelihood_zero() -> PyLikelihoodExpression {
@@ -3651,12 +3662,14 @@ pub fn py_likelihood_zero() -> PyLikelihoodExpression {
 /// >>> from laddu import LikelihoodOne
 /// >>> LikelihoodOne().load().evaluate([])
 /// 1.0
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodOne")]
 pub fn py_likelihood_one() -> PyLikelihoodExpression {
     PyLikelihoodExpression(LikelihoodExpression::one())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodExpression {
@@ -3973,10 +3986,12 @@ impl LikelihoodTerm for LikelihoodEvaluator {
 /// A class which can be used to evaluate a collection of likelihood terms described by a
 /// [`LikelihoodExpression`]
 ///
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyclass(name = "LikelihoodEvaluator", module = "laddu", skip_from_py_object)]
 pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pymethods]
 impl PyLikelihoodEvaluator {
@@ -4351,6 +4366,7 @@ impl LikelihoodTerm for LikelihoodScalar {
 /// >>> expr = likelihood_sum([LikelihoodScalar('alpha')])
 /// >>> expr.load().evaluate([1.25])
 /// 1.25
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodScalar")]
 pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
