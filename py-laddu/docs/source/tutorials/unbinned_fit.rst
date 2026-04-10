@@ -19,23 +19,24 @@ Of course, we now have the problem of maximizing the resultant likelihood from t
 
 given that the extended probability is related to the standard one by :math:`\mathcal{I} = \mathcal{N} p`. Next, we will consider that the efficiency of the detector can be modeled with a function :math:`\eta(x)`. In reality, we generally cannot know this function to any level where it would be useful in such a minimization, but we can approximate it through a finite sum of simulated events passed through a simulation of the detector used in the experiment. We will then say that
 
-.. math:: \mathcal{N}'(m,\Omega) = \int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x
+.. math:: \mathcal{N}'(m,\Omega) = \int \mathcal{I}(x; m, \Omega)\eta(m, \Omega)\text{d}x
 
 gives the predicted number of events with efficiency encorporated, so
 
-.. math:: \mathcal{L} = \frac{e^{-\mathcal{N}'}}{N!}\prod_{i=1}^{N}\mathcal{I}(x_i; m, \Omega)
+.. math:: \mathcal{L} = \frac{e^{-\mathcal{N}'}}{N!}\prod_{i=1}^{N}\mathcal{I}(x_i; m, \Omega)\eta(m, \Omega)
 
 While we mathematically could maximize the likelihood given above, a large product of terms between zero and one (or floating point values in general) is computationally unstable. Instead, we rephrase the problem from maximimizing the likelihood to maximizing the natural log of the likelihood, since the logarithm is monotonic and the log of a product is just the sum of the logs of the terms. Futhermore, since most optimization algorithms prefer to minimize functions rather than maximize them, we can just flip the sign. The the negative log of the extended likelihood (times two for error estimation purposes) is given by
 
 .. math::
 
-   -2\ln\mathcal{L} &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\right] - \mathcal{N}' + \ln N! \right) \\
-   &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \right] + \ln N! \right) \\
-   &= -2\left(\left[\sum_{i=1}^{N}\ln \mathcal{I}(x; m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \right] + \ln N! \right)
+   -2\ln\mathcal{L}(x) &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\eta(m, \Omega)\right] - \mathcal{N}' + \ln N! \right) \\
+   &= -2\left(\ln\left[\prod_{i=1}^{N}\mathcal{I}(x; m, \Omega)\eta(m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(m, \Omega)\text{d}x \right] + \ln N! \right) \\
+   &= -2\left(\left[\sum_{i=1}^{N}\ln \mathcal{I}(x; m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \right] + \ln N! + \sum_{i=1}^{N}\ln\eta(m, \Omega)\right)
+   &= -2\left(\left[\sum_{i=1}^{N}\ln \mathcal{I}(x; m, \Omega)\right] - \left[\int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \right]\right)
 
-As mentioned, we don't actually know the analytical form of :math:`\eta(x)`, but we can approximate it using Monte Carlo data. Assume we generate some data without any explicit physics model other than the phase space of the channel and pass it through a simulation of the detector. We will call these the "generated" and "accepted" datasets. We can approximate this integral a finite sum over this simulated data:
+The last two terms were ignored because they do not depend on the free parameters of the model, so they will only shift the likelihood surface up and down. As mentioned, we don't actually know the analytical form of :math:`\eta(m, \Omega)`, but we can approximate it using Monte Carlo data. Assume we generate some data without any explicit physics model other than the phase space of the channel and pass it through a simulation of the detector. We will call these the "generated" and "accepted" datasets. We can approximate this integral a finite sum over this simulated data:
 
-.. math:: \int \mathcal{I}(x; m, \Omega)\eta(x)\text{d}x \approx \frac{1}{\mathbb{P} N_g} \sum_{i=1}^{N_a} \mathcal{I}(x_i; m, \Omega)
+.. math:: \int \mathcal{I}(x; m, \Omega)\eta(m, \Omega)\text{d}x \approx \frac{1}{\mathbb{P} N_g} \sum_{i=1}^{N_a} \mathcal{I}(x_i; m, \Omega)
 
 where :math:`N_g` and :math:`N_a` are the size of the generated and accepted datasets respectively, the sum is over accepted events only, and :math:`\mathbb{P}` is the area of the integration region. This last term is another unknown, but in practice, we can consider that :math:`\mathcal{I}` could be rescaled by this factor, and that the multiplicative factor in the first part of the negative-log-likelihood would be extracted as the additive term :math:`N\ln\mathbb{P}` which is a constant in parameter space and therefore doesn't effect the overall minimization.
 
@@ -47,7 +48,7 @@ Next, consider that events in both the data and in the Monte Carlo might have we
 
 .. math:: -2\ln\mathcal{L} = -2\left(\left[\sum_{i=1}^{N} w_i \ln \mathcal{I}(x; m, \Omega)\right] - \left[ \frac{1}{N_a} \sum_{i=1}^{N_a} w_i \mathcal{I}(x_i; m, \Omega) \right]\right)
 
-To visualize the result after minimization, we can weight each accepted Monte Carlo event by :math:`w \mathcal{L}(\text{event}) / N_a` to see the result without acceptance correction, or we can weight each generated Monte Carlo event by :math:`\mathcal{L}(\text{event}) / N_a` (generally the generated Monte Carlo is not weighted) to obtain the result corrected for the efficiency of the detector.
+To visualize the result after minimization, we can weight each accepted Monte Carlo event by :math:`w \mathcal{L}(\text{event}) / N_a` to see the result without acceptance correction, or we can weight each generated Monte Carlo event by :math:`\mathcal{L}(\text{event}) / N_a` (generally the generated Monte Carlo is not weighted) to obtain the result corrected for the efficiency of the detector. While using :math:`N_a` in the denominator is nice when you don't have the generated Monte Carlo handy, it should generally be replaced with :math:`N_g` when possible.
 
 Example
 -------
