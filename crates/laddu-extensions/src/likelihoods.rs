@@ -5082,6 +5082,27 @@ mod tests {
     }
 
     #[test]
+    fn likelihood_product_handles_term_local_fixed_parameters() {
+        let alpha = LikelihoodScalar::new("alpha").fix("alpha", 1.5).unwrap();
+        let beta = LikelihoodScalar::new("beta");
+        let expr = &alpha * &beta;
+        assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(expr.free_parameters(), vec!["beta"]);
+        assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
+
+        let evaluator = expr.load();
+        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
+        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
+        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
+
+        let params_free = vec![2.0];
+        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.0);
+        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
+        assert_eq!(grad_free.len(), 1);
+        assert_relative_eq!(grad_free[0], 1.5);
+    }
+
+    #[test]
     fn nll_evaluate_and_gradient_match_closed_form() {
         let (nll, params) = make_constant_nll();
         let intensity = params[0] * params[0];
