@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/denehoffman/laddu/compare/v0.16.0...v0.16.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* Ensure evaluators always use internal fixed parameter counts ([a9f4be0](https://github.com/denehoffman/laddu/commit/a9f4be07574f9d4341be640ca78e7f144c3f8c9c))
+
 ## [0.16.0](https://github.com/denehoffman/laddu/compare/v0.15.0...v0.16.0) (2026-04-08)
 
 
