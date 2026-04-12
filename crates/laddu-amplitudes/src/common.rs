@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     resources::{Cache, ParameterID, Parameters, Resources},
     LadduResult,
 };
@@ -10,6 +10,8 @@ use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::semantic_key::{debug_key, parameter_key};
 
 /// A scalar-valued [`Amplitude`] which just contains a single parameter as its value.
 #[derive(Clone, Serialize, Deserialize)]
@@ -36,6 +38,13 @@ impl Amplitude for Scalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.pid = resources.register_parameter(&self.value)?;
         resources.register_amplitude(&self.name)
+    }
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("Scalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("value", parameter_key(&self.value)),
+        )
     }
     fn real_valued_hint(&self) -> bool {
         true
@@ -106,6 +115,14 @@ impl Amplitude for ComplexScalar {
         self.pid_re = resources.register_parameter(&self.re)?;
         self.pid_im = resources.register_parameter(&self.im)?;
         resources.register_amplitude(&self.name)
+    }
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("ComplexScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("re", parameter_key(&self.re))
+                .with_field("im", parameter_key(&self.im)),
+        )
     }
     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::new(parameters.get(self.pid_re), parameters.get(self.pid_im))
@@ -182,6 +199,14 @@ impl Amplitude for PolarComplexScalar {
         self.pid_r = resources.register_parameter(&self.r)?;
         self.pid_theta = resources.register_parameter(&self.theta)?;
         resources.register_amplitude(&self.name)
+    }
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("PolarComplexScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("r", parameter_key(&self.r))
+                .with_field("theta", parameter_key(&self.theta)),
+        )
     }
     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
         Complex64::from_polar(parameters.get(self.pid_r), parameters.get(self.pid_theta))
@@ -315,6 +340,32 @@ mod tests {
         assert_relative_eq!(gradient[0][0].im, 0.0);
         assert_relative_eq!(gradient[0][1].re, 8.0);
         assert_relative_eq!(gradient[0][1].im, 0.0);
+    }
+
+    #[test]
+    fn test_semantic_key_deduplicates_matching_complex_scalar() {
+        let dataset = Arc::new(test_dataset());
+        let expr = ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
+            .unwrap()
+            + ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
+                .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let result = evaluator.evaluate(&[1.5, 2.5]);
+
+        assert_eq!(evaluator.amplitudes.len(), 1);
+        assert_relative_eq!(result[0].re, 3.0);
+        assert_relative_eq!(result[0].im, 5.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "re differs")]
+    fn test_semantic_key_reports_mismatched_complex_scalar_field() {
+        let _expr =
+            ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
+                .unwrap()
+                + ComplexScalar::new("same_complex", parameter("other_re"), parameter("im_param"))
+                    .unwrap();
     }
 
     #[test]

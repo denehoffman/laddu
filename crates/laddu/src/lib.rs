@@ -323,8 +323,8 @@ pub mod traits {
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
     pub use laddu_core::amplitudes::{
-        constant, parameter, Amplitude, AmplitudeID, AmplitudeSemanticKey, Evaluator, Expression,
-        ParameterLike,
+        constant, parameter, Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey,
+        Evaluator, Expression, ParameterLike,
     };
 }
 
@@ -340,7 +340,8 @@ pub mod experimental {
 
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
-    constant, parameter, AmplitudeID, AmplitudeSemanticKey, Evaluator, Expression, ParameterLike,
+    constant, parameter, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
+    Expression, ParameterLike,
 };
 pub use laddu_core::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,

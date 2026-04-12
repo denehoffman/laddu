@@ -1,6 +1,7 @@
 use super::FixedKMatrix;
+use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
@@ -64,6 +65,7 @@ pub struct KopfKMatrixA2 {
     couplings_imag: [ParameterLike; 2],
     couplings_indices_real: [ParameterID; 2],
     couplings_indices_imag: [ParameterID; 2],
+    seed: Option<usize>,
     ikc_cache_index: ComplexVectorID<3>,
     p_vec_cache_index: MatrixID<3, 2>,
 }
@@ -114,6 +116,7 @@ impl KopfKMatrixA2 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 2],
             couplings_indices_imag: [ParameterID::default(); 2],
+            seed,
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
@@ -135,6 +138,18 @@ impl Amplitude for KopfKMatrixA2 {
         self.p_vec_cache_index =
             resources.register_matrix(Some(&format!("KopfKMatrixA2<{}> p_vec", self.name)));
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixA2")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag))
+                .with_field("seed", seed_key(self.seed)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {

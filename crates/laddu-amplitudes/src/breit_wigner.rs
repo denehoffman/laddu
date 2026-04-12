@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
@@ -19,6 +19,8 @@ use nalgebra::DVector;
 use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+
+use crate::semantic_key::{debug_key, display_key, parameter_key};
 
 /// A relativistic Breit-Wigner [`Amplitude`], parameterized as follows:
 /// ```math
@@ -87,6 +89,19 @@ impl Amplitude for BreitWigner {
         self.resonance_mass_id =
             resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("BreitWigner")
+                .with_field("name", debug_key(&self.name))
+                .with_field("mass", parameter_key(&self.mass))
+                .with_field("width", parameter_key(&self.width))
+                .with_field("l", self.l.to_string())
+                .with_field("daughter_1_mass", display_key(&self.daughter_1_mass))
+                .with_field("daughter_2_mass", display_key(&self.daughter_2_mass))
+                .with_field("resonance_mass", display_key(&self.resonance_mass)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {

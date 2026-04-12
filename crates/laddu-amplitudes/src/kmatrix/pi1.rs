@@ -1,6 +1,7 @@
 use super::FixedKMatrix;
+use crate::semantic_key::{debug_key, display_key, parameter_array_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
@@ -104,6 +105,17 @@ impl Amplitude for KopfKMatrixPi1 {
         self.p_vec_cache_index =
             resources.register_matrix(Some(&format!("KopfKMatrixPi1<{}> p_vec", self.name)));
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixPi1")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {

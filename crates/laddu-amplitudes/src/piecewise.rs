@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -16,6 +16,10 @@ use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::semantic_key::{
+    debug_key, display_key, f64_pair_key, parameter_pair_slice_key, parameter_slice_key,
+};
 
 /// A piecewise scalar-valued [`Amplitude`] which just contains a single parameter for each bin as its value.
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,6 +69,17 @@ impl Amplitude for PiecewiseScalar {
             .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("PiecewiseScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("variable", display_key(&self.variable))
+                .with_field("bins", self.bins.to_string())
+                .with_field("range", f64_pair_key(self.range))
+                .with_field("values", parameter_slice_key(&self.values)),
+        )
     }
 
     fn real_valued_hint(&self) -> bool {
@@ -214,6 +229,17 @@ impl Amplitude for PiecewiseComplexScalar {
             .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("PiecewiseComplexScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("variable", display_key(&self.variable))
+                .with_field("bins", self.bins.to_string())
+                .with_field("range", f64_pair_key(self.range))
+                .with_field("re_ims", parameter_pair_slice_key(&self.re_ims)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -370,6 +396,17 @@ impl Amplitude for PiecewisePolarComplexScalar {
             .collect::<LadduResult<Vec<_>>>()?;
         self.bin_index = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("PiecewisePolarComplexScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("variable", display_key(&self.variable))
+                .with_field("bins", self.bins.to_string())
+                .with_field("range", f64_pair_key(self.range))
+                .with_field("r_thetas", parameter_pair_slice_key(&self.r_thetas)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {

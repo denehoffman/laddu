@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
@@ -15,6 +15,8 @@ use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::semantic_key::{debug_key, display_key};
 
 /// An [`Amplitude`] for the spherical harmonic function $`Y_\ell^m(\theta, \phi)`$.
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,6 +48,16 @@ impl Amplitude for Ylm {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("Ylm")
+                .with_field("name", debug_key(&self.name))
+                .with_field("l", self.l.to_string())
+                .with_field("m", self.m.to_string())
+                .with_field("angles", display_key(&self.angles)),
+        )
     }
 
     fn real_valued_hint(&self) -> bool {

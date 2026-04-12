@@ -480,11 +480,91 @@ impl Display for AmplitudeID {
     }
 }
 
+/// A single named field in an [`AmplitudeSemanticKey`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmplitudeSemanticField {
+    name: String,
+    value: String,
+}
+
+impl AmplitudeSemanticField {
+    /// Construct a semantic key field.
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
 /// A semantic identity key used to opt into deduplicating same-name amplitude instances.
 ///
 /// The key must include enough type/configuration information to prove that two independently
 /// constructed amplitudes with the same public name can safely share one registered amplitude.
-pub type AmplitudeSemanticKey = String;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmplitudeSemanticKey {
+    kind: String,
+    fields: Vec<AmplitudeSemanticField>,
+}
+
+impl AmplitudeSemanticKey {
+    /// Construct a semantic key for the given amplitude kind.
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// Add a named field to this semantic key.
+    pub fn with_field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push(AmplitudeSemanticField::new(name, value));
+        self
+    }
+
+    fn field_value(&self, name: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|field| field.name == name)
+            .map(|field| field.value.as_str())
+    }
+
+    fn mismatch_summary(&self, other: &Self) -> String {
+        let mut mismatches = Vec::new();
+        if self.kind != other.kind {
+            mismatches.push(format!(
+                "kind differs (existing: {:?}, incoming: {:?})",
+                self.kind, other.kind
+            ));
+        }
+        for field in &self.fields {
+            match other.field_value(&field.name) {
+                Some(value) if value == field.value => {}
+                Some(value) => mismatches.push(format!(
+                    "{} differs (existing: {}, incoming: {})",
+                    field.name, field.value, value
+                )),
+                None => mismatches.push(format!(
+                    "{} is missing from the incoming key (existing: {})",
+                    field.name, field.value
+                )),
+            }
+        }
+        for field in &other.fields {
+            if self.field_value(&field.name).is_none() {
+                mismatches.push(format!(
+                    "{} is missing from the existing key (incoming: {})",
+                    field.name, field.value
+                ));
+            }
+        }
+        if mismatches.is_empty() {
+            "semantic keys differ".to_string()
+        } else {
+            mismatches.join("; ")
+        }
+    }
+}
 
 /// A holder struct that owns both an expression tree and the registered amplitudes.
 #[allow(missing_docs)]
@@ -561,14 +641,23 @@ impl ExpressionRegistry {
         {
             if let Some(existing) = name_to_index.get(name) {
                 let existing_amp_id = amplitude_ids[*existing];
-                let same_semantic_key = amplitude_semantic_keys[*existing]
-                    .as_ref()
-                    .zip(amp.semantic_key().as_ref())
-                    .is_some_and(|(existing, incoming)| existing == incoming);
-                if existing_amp_id != *amp_id && !same_semantic_key {
-                    return Err(LadduError::Custom(format!(
-                        "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
-                    )));
+                let incoming_semantic_key = amp.semantic_key();
+                if existing_amp_id != *amp_id {
+                    match (&amplitude_semantic_keys[*existing], &incoming_semantic_key) {
+                        (Some(existing_key), Some(incoming_key))
+                            if existing_key == incoming_key => {}
+                        (Some(existing_key), Some(incoming_key)) => {
+                            return Err(LadduError::Custom(format!(
+                                "Amplitude name \"{name}\" refers to different underlying amplitudes; semantic keys differ: {}",
+                                existing_key.mismatch_summary(incoming_key)
+                            )));
+                        }
+                        _ => {
+                            return Err(LadduError::Custom(format!(
+                                "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
+                            )));
+                        }
+                    }
                 }
                 right_map.push(*existing);
                 continue;

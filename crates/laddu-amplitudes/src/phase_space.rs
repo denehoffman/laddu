@@ -16,6 +16,8 @@ use num::complex::Complex64;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::semantic_key::{debug_key, display_key};
+
 /// An [`Amplitude`] describing the phase space factor given in Equation A4 [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
 /// ```math
@@ -77,15 +79,15 @@ impl Amplitude for PhaseSpaceFactor {
     }
 
     fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
-        Some(format!(
-            "PhaseSpaceFactor|name={}|recoil_mass={}|daughter_1_mass={}|daughter_2_mass={}|resonance_mass={}|mandelstam_s={}",
-            self.name,
-            self.recoil_mass,
-            self.daughter_1_mass,
-            self.daughter_2_mass,
-            self.resonance_mass,
-            self.mandelstam_s
-        ))
+        Some(
+            AmplitudeSemanticKey::new("PhaseSpaceFactor")
+                .with_field("name", debug_key(&self.name))
+                .with_field("recoil_mass", display_key(&self.recoil_mass))
+                .with_field("daughter_1_mass", display_key(&self.daughter_1_mass))
+                .with_field("daughter_2_mass", display_key(&self.daughter_2_mass))
+                .with_field("resonance_mass", display_key(&self.resonance_mass))
+                .with_field("mandelstam_s", display_key(&self.mandelstam_s)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {

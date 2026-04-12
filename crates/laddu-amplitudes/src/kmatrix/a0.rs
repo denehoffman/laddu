@@ -1,6 +1,7 @@
 use super::FixedKMatrix;
+use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     utils::variables::{Mass, Variable},
@@ -54,6 +55,7 @@ pub struct KopfKMatrixA0 {
     couplings_imag: [ParameterLike; 2],
     couplings_indices_real: [ParameterID; 2],
     couplings_indices_imag: [ParameterID; 2],
+    seed: Option<usize>,
     ikc_cache_index: ComplexVectorID<2>,
     p_vec_cache_index: MatrixID<2, 2>,
 }
@@ -103,6 +105,7 @@ impl KopfKMatrixA0 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 2],
             couplings_indices_imag: [ParameterID::default(); 2],
+            seed,
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
@@ -124,6 +127,18 @@ impl Amplitude for KopfKMatrixA0 {
         self.p_vec_cache_index =
             resources.register_matrix(Some(&format!("KopfKMatrixA0<{}> p_vec", self.name)));
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixA0")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag))
+                .with_field("seed", seed_key(self.seed)),
+        )
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -309,5 +324,64 @@ mod tests {
             Some(1),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn test_a0_semantic_key_deduplicates_matching_seed() {
+        let dataset = Arc::new(test_dataset());
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+            Some(1),
+        )
+        .unwrap()
+            + KopfKMatrixA0::new(
+                "a0",
+                [
+                    [parameter("p0"), parameter("p1")],
+                    [parameter("p2"), parameter("p3")],
+                ],
+                1,
+                &res_mass,
+                Some(1),
+            )
+            .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(evaluator.amplitudes.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "seed differs")]
+    fn test_a0_semantic_key_reports_mismatched_seed() {
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let _expr = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            1,
+            &res_mass,
+            Some(1),
+        )
+        .unwrap()
+            + KopfKMatrixA0::new(
+                "a0",
+                [
+                    [parameter("p0"), parameter("p1")],
+                    [parameter("p2"), parameter("p3")],
+                ],
+                1,
+                &res_mass,
+                Some(2),
+            )
+            .unwrap();
     }
 }
