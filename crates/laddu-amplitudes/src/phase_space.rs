@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, Parameters, Resources},
     utils::{functions::rho, variables::Variable},
@@ -74,6 +74,18 @@ impl Amplitude for PhaseSpaceFactor {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.sid = resources.register_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(format!(
+            "PhaseSpaceFactor|name={}|recoil_mass={}|daughter_1_mass={}|daughter_2_mass={}|resonance_mass={}|mandelstam_s={}",
+            self.name,
+            self.recoil_mass,
+            self.daughter_1_mass,
+            self.daughter_2_mass,
+            self.resonance_mass,
+            self.mandelstam_s
+        ))
     }
 
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -166,24 +178,30 @@ mod tests {
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, utils::variables::Topology, Channel};
 
-    #[test]
-    fn test_phase_space_factor_evaluation() {
-        let dataset = Arc::new(test_dataset());
+    fn test_phase_space_expression(name: &str, channel: Channel) -> Expression {
         let recoil_mass = Mass::new(["proton"]);
         let daughter_1_mass = Mass::new(["kshort1"]);
         let daughter_2_mass = Mass::new(["kshort2"]);
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-        let mandelstam_s = Mandelstam::new(topology, Channel::S);
-        let expr = PhaseSpaceFactor::new(
-            "kappa",
+        let mandelstam_s = Mandelstam::new(
+            Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
+            channel,
+        );
+        PhaseSpaceFactor::new(
+            name,
             &recoil_mass,
             &daughter_1_mass,
             &daughter_2_mass,
             &resonance_mass,
             &mandelstam_s,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn test_phase_space_factor_evaluation() {
+        let dataset = Arc::new(test_dataset());
+        let expr = test_phase_space_expression("kappa", Channel::S);
         let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[]);
@@ -195,26 +213,31 @@ mod tests {
     #[test]
     fn test_phase_space_factor_gradient() {
         let dataset = Arc::new(test_dataset());
-        let recoil_mass = Mass::new(["proton"]);
-        let daughter_1_mass = Mass::new(["kshort1"]);
-        let daughter_2_mass = Mass::new(["kshort2"]);
-        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let mandelstam_s = Mandelstam::new(
-            Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
-            Channel::S,
-        );
-        let expr = PhaseSpaceFactor::new(
-            "kappa",
-            &recoil_mass,
-            &daughter_1_mass,
-            &daughter_2_mass,
-            &resonance_mass,
-            &mandelstam_s,
-        )
-        .unwrap();
+        let expr = test_phase_space_expression("kappa", Channel::S);
         let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[]);
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
+    }
+
+    #[test]
+    fn test_phase_space_factor_same_name_same_key_deduplicates() {
+        let dataset = Arc::new(test_dataset());
+        let expr = test_phase_space_expression("kappa", Channel::S)
+            + test_phase_space_expression("kappa", Channel::S);
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let result = evaluator.evaluate(&[]);
+
+        assert_eq!(evaluator.amplitudes.len(), 1);
+        assert_relative_eq!(result[0].re, 2.0 * 7.028417575882146e-5);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "refers to different underlying amplitudes")]
+    fn test_phase_space_factor_same_name_different_key_errors() {
+        let _expr = test_phase_space_expression("kappa", Channel::S)
+            + test_phase_space_expression("kappa", Channel::T);
     }
 }

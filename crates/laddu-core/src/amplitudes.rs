@@ -305,6 +305,15 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// [`Manager`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
     /// any dataset context.
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID>;
+    /// Optional semantic identity key for same-name deduplication.
+    ///
+    /// Return `Some` only when two independently constructed instances with equal keys are
+    /// interchangeable after registration, binding, precomputation, value evaluation, and gradient
+    /// evaluation. The key should include the concrete amplitude type and all user-facing
+    /// configuration, but must ignore registration-assigned IDs like [`ParameterID`]s and cache IDs.
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        None
+    }
     /// Bind this [`Amplitude`] to a concrete [`Dataset`] by using the provided metadata to wire up
     /// [`Variable`](crate::utils::variables::Variable)s or other dataset-specific state. This will
     /// be invoked when a [`Model`] is loaded with data, after [`register`](Amplitude::register)
@@ -471,6 +480,12 @@ impl Display for AmplitudeID {
     }
 }
 
+/// A semantic identity key used to opt into deduplicating same-name amplitude instances.
+///
+/// The key must include enough type/configuration information to prove that two independently
+/// constructed amplitudes with the same public name can safely share one registered amplitude.
+pub type AmplitudeSemanticKey = String;
+
 /// A holder struct that owns both an expression tree and the registered amplitudes.
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize)]
@@ -516,6 +531,7 @@ impl ExpressionRegistry {
         let mut amplitudes = Vec::new();
         let mut amplitude_names = Vec::new();
         let mut amplitude_ids = Vec::new();
+        let mut amplitude_semantic_keys = Vec::new();
         let mut name_to_index = std::collections::HashMap::new();
 
         let mut left_map = Vec::with_capacity(self.amplitudes.len());
@@ -525,11 +541,13 @@ impl ExpressionRegistry {
             .zip(&self.amplitude_names)
             .zip(&self.amplitude_ids)
         {
+            let semantic_key = amp.semantic_key();
             let mut cloned_amp = dyn_clone::clone_box(&**amp);
             let aid = cloned_amp.register(&mut resources)?;
             amplitudes.push(cloned_amp);
             amplitude_names.push(name.clone());
             amplitude_ids.push(*amp_id);
+            amplitude_semantic_keys.push(semantic_key);
             name_to_index.insert(name.clone(), aid.1);
             left_map.push(aid.1);
         }
@@ -543,7 +561,11 @@ impl ExpressionRegistry {
         {
             if let Some(existing) = name_to_index.get(name) {
                 let existing_amp_id = amplitude_ids[*existing];
-                if existing_amp_id != *amp_id {
+                let same_semantic_key = amplitude_semantic_keys[*existing]
+                    .as_ref()
+                    .zip(amp.semantic_key().as_ref())
+                    .is_some_and(|(existing, incoming)| existing == incoming);
+                if existing_amp_id != *amp_id && !same_semantic_key {
                     return Err(LadduError::Custom(format!(
                         "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
                     )));
@@ -551,11 +573,13 @@ impl ExpressionRegistry {
                 right_map.push(*existing);
                 continue;
             }
+            let semantic_key = amp.semantic_key();
             let mut cloned_amp = dyn_clone::clone_box(&**amp);
             let aid = cloned_amp.register(&mut resources)?;
             amplitudes.push(cloned_amp);
             amplitude_names.push(name.clone());
             amplitude_ids.push(*amp_id);
+            amplitude_semantic_keys.push(semantic_key);
             name_to_index.insert(name.clone(), aid.1);
             right_map.push(aid.1);
         }
