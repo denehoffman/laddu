@@ -167,6 +167,44 @@ impl PyExpression {
     fn norm_sqr(&self) -> PyExpression {
         PyExpression(self.0.norm_sqr())
     }
+    /// The square root of an Expression
+    fn sqrt(&self) -> PyExpression {
+        PyExpression(self.0.sqrt())
+    }
+    /// Raise an Expression to an int, float, or Expression power
+    fn power(&self, power: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(expression) = power.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.pow(&expression.0)))
+        } else if let Ok(value) = power.extract::<i32>() {
+            Ok(PyExpression(self.0.powi(value)))
+        } else if let Ok(value) = power.extract::<f64>() {
+            Ok(PyExpression(self.0.powf(value)))
+        } else {
+            Err(PyTypeError::new_err(
+                "power must be an int, float, or Expression",
+            ))
+        }
+    }
+    /// The exponential of an Expression
+    fn exp(&self) -> PyExpression {
+        PyExpression(self.0.exp())
+    }
+    /// The sine of an Expression
+    fn sin(&self) -> PyExpression {
+        PyExpression(self.0.sin())
+    }
+    /// The cosine of an Expression
+    fn cos(&self) -> PyExpression {
+        PyExpression(self.0.cos())
+    }
+    /// The natural logarithm of an Expression
+    fn log(&self) -> PyExpression {
+        PyExpression(self.0.log())
+    }
+    /// The complex phase factor exp(i * expression)
+    fn cis(&self) -> PyExpression {
+        PyExpression(self.0.cis())
+    }
     /// Return a new Expression with the given parameter fixed
     fn fix(&self, name: &str, value: f64) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.fix(name, value)?))

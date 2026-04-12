@@ -746,6 +746,15 @@ pub enum ExpressionNode {
     Conj(Box<ExpressionNode>),
     /// The absolute square of an [`ExpressionNode`].
     NormSqr(Box<ExpressionNode>),
+    Sqrt(Box<ExpressionNode>),
+    Pow(Box<ExpressionNode>, Box<ExpressionNode>),
+    PowI(Box<ExpressionNode>, i32),
+    PowF(Box<ExpressionNode>, f64),
+    Exp(Box<ExpressionNode>),
+    Sin(Box<ExpressionNode>),
+    Cos(Box<ExpressionNode>),
+    Log(Box<ExpressionNode>),
+    Cis(Box<ExpressionNode>),
 }
 
 #[derive(Clone, Debug)]
@@ -810,6 +819,45 @@ enum ExpressionOp {
         input: usize,
     },
     NormSqr {
+        dst: usize,
+        input: usize,
+    },
+    Sqrt {
+        dst: usize,
+        input: usize,
+    },
+    Pow {
+        dst: usize,
+        value: usize,
+        power: usize,
+    },
+    PowI {
+        dst: usize,
+        input: usize,
+        power: i32,
+    },
+    PowF {
+        dst: usize,
+        input: usize,
+        power: f64,
+    },
+    Exp {
+        dst: usize,
+        input: usize,
+    },
+    Sin {
+        dst: usize,
+        input: usize,
+    },
+    Cos {
+        dst: usize,
+        input: usize,
+    },
+    Log {
+        dst: usize,
+        input: usize,
+    },
+    Cis {
         dst: usize,
         input: usize,
     },
@@ -915,6 +963,69 @@ impl ExpressionProgramBuilder {
                 self.emit(ExpressionOp::NormSqr { dst, input });
                 dst
             }
+            ExpressionNode::Sqrt(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Sqrt { dst, input });
+                dst
+            }
+            ExpressionNode::Pow(a, b) => {
+                let value = self.compile(a);
+                let power = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Pow { dst, value, power });
+                dst
+            }
+            ExpressionNode::PowI(a, power) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::PowI {
+                    dst,
+                    input,
+                    power: *power,
+                });
+                dst
+            }
+            ExpressionNode::PowF(a, power) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::PowF {
+                    dst,
+                    input,
+                    power: *power,
+                });
+                dst
+            }
+            ExpressionNode::Exp(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Exp { dst, input });
+                dst
+            }
+            ExpressionNode::Sin(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Sin { dst, input });
+                dst
+            }
+            ExpressionNode::Cos(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Cos { dst, input });
+                dst
+            }
+            ExpressionNode::Log(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Log { dst, input });
+                dst
+            }
+            ExpressionNode::Cis(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Cis { dst, input });
+                dst
+            }
         }
     }
 }
@@ -961,6 +1072,33 @@ impl ExpressionProgram {
                 }
                 ExpressionOp::NormSqr { dst, input } => {
                     slots[dst] = Complex64::new(slots[input].norm_sqr(), 0.0);
+                }
+                ExpressionOp::Sqrt { dst, input } => {
+                    slots[dst] = slots[input].sqrt();
+                }
+                ExpressionOp::Pow { dst, value, power } => {
+                    slots[dst] = slots[value].powc(slots[power]);
+                }
+                ExpressionOp::PowI { dst, input, power } => {
+                    slots[dst] = slots[input].powi(power);
+                }
+                ExpressionOp::PowF { dst, input, power } => {
+                    slots[dst] = slots[input].powc(Complex64::new(power, 0.0));
+                }
+                ExpressionOp::Exp { dst, input } => {
+                    slots[dst] = slots[input].exp();
+                }
+                ExpressionOp::Sin { dst, input } => {
+                    slots[dst] = slots[input].sin();
+                }
+                ExpressionOp::Cos { dst, input } => {
+                    slots[dst] = slots[input].cos();
+                }
+                ExpressionOp::Log { dst, input } => {
+                    slots[dst] = slots[input].ln();
+                }
+                ExpressionOp::Cis { dst, input } => {
+                    slots[dst] = (Complex64::new(0.0, 1.0) * slots[input]).exp();
                 }
             }
         }
@@ -1131,6 +1269,101 @@ impl ExpressionProgram {
                         *dst_item = Complex64::new(2.0 * (*input_item * conj_value).re, 0.0);
                     }
                 }
+                ExpressionOp::Sqrt { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::new(0.5, 0.0) / values[input].sqrt();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Pow { dst, value, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let base = values[value];
+                    let exponent = values[power];
+                    let output = values[dst];
+                    for ((dst_item, value_item), power_item) in dst_grad
+                        .iter_mut()
+                        .zip(before_dst[value].iter())
+                        .zip(before_dst[power].iter())
+                    {
+                        *dst_item =
+                            output * (*power_item * base.ln() + exponent * *value_item / base);
+                    }
+                }
+                ExpressionOp::PowI { dst, input, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = match power {
+                        0 => Complex64::ZERO,
+                        1 => Complex64::ONE,
+                        _ => {
+                            let base = values[input];
+                            let multiplier = Complex64::new(power as f64, 0.0);
+                            if let Some(derivative_power) = power.checked_sub(1) {
+                                multiplier * base.powi(derivative_power)
+                            } else {
+                                multiplier * base.powi(power) / base
+                            }
+                        }
+                    };
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::PowF { dst, input, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = if power == 0.0 {
+                        Complex64::ZERO
+                    } else {
+                        Complex64::new(power, 0.0)
+                            * values[input].powc(Complex64::new(power - 1.0, 0.0))
+                    };
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Exp { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let output = values[dst];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * output;
+                    }
+                }
+                ExpressionOp::Sin { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = values[input].cos();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Cos { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = -values[input].sin();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Log { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::ONE / values[input];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Cis { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::new(0.0, 1.0) * values[dst];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
             }
         }
     }
@@ -1151,6 +1384,15 @@ impl ExpressionNode {
             Self::NormSqr(a) => Self::NormSqr(Box::new(a.remap(mapping))),
             Self::Zero => Self::Zero,
             Self::One => Self::One,
+            Self::Sqrt(a) => Self::Sqrt(Box::new(a.remap(mapping))),
+            Self::Pow(a, b) => Self::Pow(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::PowI(a, power) => Self::PowI(Box::new(a.remap(mapping)), *power),
+            Self::PowF(a, power) => Self::PowF(Box::new(a.remap(mapping)), *power),
+            Self::Exp(a) => Self::Exp(Box::new(a.remap(mapping))),
+            Self::Sin(a) => Self::Sin(Box::new(a.remap(mapping))),
+            Self::Cos(a) => Self::Cos(Box::new(a.remap(mapping))),
+            Self::Log(a) => Self::Log(Box::new(a.remap(mapping))),
+            Self::Cis(a) => Self::Cis(Box::new(a.remap(mapping))),
         }
     }
 
@@ -1468,6 +1710,42 @@ impl Expression {
     pub fn norm_sqr(&self) -> Self {
         Self::unary_op(self, ExpressionNode::NormSqr)
     }
+    /// Takes the square root of the given [`Expression`].
+    pub fn sqrt(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Sqrt)
+    }
+    /// Raises the given [`Expression`] to an expression-valued power.
+    pub fn pow(&self, power: &Expression) -> Self {
+        Self::binary_op(self, power, ExpressionNode::Pow)
+    }
+    /// Raises the given [`Expression`] to an integer power.
+    pub fn powi(&self, power: i32) -> Self {
+        Self::unary_op(self, |input| ExpressionNode::PowI(input, power))
+    }
+    /// Raises the given [`Expression`] to a real-valued power.
+    pub fn powf(&self, power: f64) -> Self {
+        Self::unary_op(self, |input| ExpressionNode::PowF(input, power))
+    }
+    /// Takes the exponential of the given [`Expression`].
+    pub fn exp(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Exp)
+    }
+    /// Takes the sine of the given [`Expression`].
+    pub fn sin(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Sin)
+    }
+    /// Takes the cosine of the given [`Expression`].
+    pub fn cos(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Cos)
+    }
+    /// Takes the natural logarithm of the given [`Expression`].
+    pub fn log(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Log)
+    }
+    /// Takes the complex phase factor exp(i * expression).
+    pub fn cis(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Cis)
+    }
 
     /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
     fn write_tree(
@@ -1499,6 +1777,15 @@ impl Expression {
             ExpressionNode::NormSqr(_) => "NormSqr".to_string(),
             ExpressionNode::Zero => "0".to_string(),
             ExpressionNode::One => "1".to_string(),
+            ExpressionNode::Sqrt(_) => "Sqrt".to_string(),
+            ExpressionNode::Pow(_, _) => "Pow".to_string(),
+            ExpressionNode::PowI(_, power) => format!("PowI({power})"),
+            ExpressionNode::PowF(_, power) => format!("PowF({power})"),
+            ExpressionNode::Exp(_) => "Exp".to_string(),
+            ExpressionNode::Sin(_) => "Sin".to_string(),
+            ExpressionNode::Cos(_) => "Cos".to_string(),
+            ExpressionNode::Log(_) => "Log".to_string(),
+            ExpressionNode::Cis(_) => "Cis".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match t {
@@ -1506,7 +1793,8 @@ impl Expression {
             ExpressionNode::Add(a, b)
             | ExpressionNode::Sub(a, b)
             | ExpressionNode::Mul(a, b)
-            | ExpressionNode::Div(a, b) => {
+            | ExpressionNode::Div(a, b)
+            | ExpressionNode::Pow(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
@@ -1521,7 +1809,15 @@ impl Expression {
             | ExpressionNode::Real(a)
             | ExpressionNode::Imag(a)
             | ExpressionNode::Conj(a)
-            | ExpressionNode::NormSqr(a) => {
+            | ExpressionNode::NormSqr(a)
+            | ExpressionNode::Sqrt(a)
+            | ExpressionNode::PowI(a, _)
+            | ExpressionNode::PowF(a, _)
+            | ExpressionNode::Exp(a)
+            | ExpressionNode::Sin(a)
+            | ExpressionNode::Cos(a)
+            | ExpressionNode::Log(a)
+            | ExpressionNode::Cis(a) => {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 self.write_tree(a, f, &child_prefix, "└─ ", "   ")?;
             }
@@ -6633,6 +6929,63 @@ mod tests {
         assert_relative_eq!(gradient[0][2].im, 0.0);
         assert_relative_eq!(gradient[0][3].re, 130.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
+    }
+
+    #[test]
+    fn test_expression_function_gradients() {
+        let expr1 = ComplexScalar::new(
+            "function_parametric_1",
+            parameter("function_test_param_re_1"),
+            parameter("function_test_param_im_1"),
+        )
+        .unwrap();
+        let expr2 = ComplexScalar::new(
+            "function_parametric_2",
+            parameter("function_test_param_re_2"),
+            parameter("function_test_param_im_2"),
+        )
+        .unwrap();
+
+        let sin = expr1.sin();
+        let cos = expr1.cos();
+        let trig = &sin * &cos;
+        let pow = expr1.pow(&expr2);
+        let mut expr = expr1.sqrt();
+        expr = &expr + &expr1.exp();
+        expr = &expr + &expr1.powi(2);
+        expr = &expr + &expr1.powf(1.7);
+        expr = &expr + &trig;
+        expr = &expr + &expr1.log();
+        expr = &expr + &expr1.cis();
+        expr = &expr + &pow;
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![2.0, 0.5, 1.2, -0.3];
+        let gradient = evaluator.evaluate_gradient(&params);
+        let eps = 1e-6;
+
+        for param_index in 0..params.len() {
+            let mut plus = params.clone();
+            plus[param_index] += eps;
+            let mut minus = params.clone();
+            minus[param_index] -= eps;
+            let finite_diff = (evaluator.evaluate(&plus)[0] - evaluator.evaluate(&minus)[0])
+                / Complex64::new(2.0 * eps, 0.0);
+
+            assert_relative_eq!(
+                gradient[0][param_index].re,
+                finite_diff.re,
+                epsilon = 1e-6,
+                max_relative = 1e-6
+            );
+            assert_relative_eq!(
+                gradient[0][param_index].im,
+                finite_diff.im,
+                epsilon = 1e-6,
+                max_relative = 1e-6
+            );
+        }
     }
 
     #[test]
