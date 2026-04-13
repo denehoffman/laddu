@@ -13,7 +13,7 @@ mod semantic_key;
 
 /// Common amplitudes (like a scalar value which just contains a single free parameter).
 pub mod common;
-pub use common::{ComplexScalar, PolarComplexScalar, Scalar};
+pub use common::{ComplexScalar, PolarComplexScalar, Scalar, VariableScalar};
 
 /// Amplitudes related to the K-Matrix formalism.
 pub mod kmatrix;

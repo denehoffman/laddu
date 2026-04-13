@@ -1,17 +1,25 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
+    amplitudes::{
+        Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence,
+        ParameterLike,
+    },
+    data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
-    LadduResult,
+    traits::Variable,
+    LadduResult, ScalarID,
 };
 #[cfg(feature = "python")]
-use laddu_python::amplitudes::{PyExpression, PyParameterLike};
+use laddu_python::{
+    amplitudes::{PyExpression, PyParameterLike},
+    utils::variables::PyVariable,
+};
 use nalgebra::DVector;
 use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::semantic_key::{debug_key, parameter_key};
+use crate::semantic_key::{debug_key, display_key, parameter_key};
 
 /// A scalar-valued [`Amplitude`] which just contains a single parameter as its value.
 #[derive(Clone, Serialize, Deserialize)]
@@ -82,6 +90,91 @@ impl Amplitude for Scalar {
 #[pyfunction(name = "Scalar")]
 pub fn py_scalar(name: &str, value: PyParameterLike) -> PyResult<PyExpression> {
     Ok(PyExpression(Scalar::new(name, value.0)?))
+}
+
+/// A real-valued [`Amplitude`] which evaluates an event [`Variable`].
+#[derive(Clone, Serialize, Deserialize)]
+pub struct VariableScalar {
+    name: String,
+    variable: Box<dyn Variable>,
+    value_id: ScalarID,
+}
+
+impl VariableScalar {
+    /// Create a new [`VariableScalar`] that evaluates `variable` on each event.
+    pub fn new<V: Variable + 'static>(name: &str, variable: &V) -> LadduResult<Expression> {
+        Self {
+            name: name.to_string(),
+            variable: dyn_clone::clone_box(variable),
+            value_id: ScalarID::default(),
+        }
+        .into_expression()
+    }
+}
+
+#[typetag::serde]
+impl Amplitude for VariableScalar {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+        self.value_id = resources.register_scalar(Some(&format!("{}.value", self.name)));
+        resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("VariableScalar")
+                .with_field("name", debug_key(&self.name))
+                .with_field("variable", display_key(&self.variable)),
+        )
+    }
+
+    fn dependence_hint(&self) -> ExpressionDependence {
+        ExpressionDependence::CacheOnly
+    }
+
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
+
+    fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
+        self.variable.bind(metadata)
+    }
+
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        cache.store_scalar(self.value_id, self.variable.value(event));
+    }
+
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+        cache.get_scalar(self.value_id).into()
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex64>,
+    ) {
+    }
+}
+
+/// An amplitude which evaluates a Variable as a real-valued Expression.
+///
+/// Parameters
+/// ----------
+/// name : str
+///     The Amplitude name.
+/// variable : laddu.Mass | laddu.CosTheta | laddu.Phi | laddu.PolAngle | laddu.PolMagnitude | laddu.Mandelstam
+///     The event Variable to evaluate.
+///
+/// Returns
+/// -------
+/// laddu.Expression
+///     An Expression which evaluates to the Variable value on each event.
+///
+#[cfg(feature = "python")]
+#[pyfunction(name = "VariableScalar")]
+pub fn py_variable_scalar(name: &str, variable: Bound<'_, PyAny>) -> PyResult<PyExpression> {
+    let variable = variable.extract::<PyVariable>()?;
+    Ok(PyExpression(VariableScalar::new(name, &variable)?))
 }
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its real and
@@ -258,7 +351,9 @@ pub fn py_polar_complex_scalar(
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, parameter, PI};
+    use laddu_core::{
+        amplitudes::ExpressionDependence, data::test_dataset, parameter, utils::variables::Mass, PI,
+    };
     use std::f64;
     use std::sync::Arc;
 
@@ -308,6 +403,45 @@ mod tests {
 
         assert!(Amplitude::real_valued_hint(&scalar));
         assert!(!Amplitude::real_valued_hint(&complex));
+    }
+
+    #[test]
+    fn test_variable_scalar_evaluation() {
+        let dataset = Arc::new(test_dataset());
+        let mut variable = Mass::new(["kshort1", "kshort2"]);
+        variable.bind(dataset.metadata()).unwrap();
+        let expected = variable.value(&dataset.event_view(0));
+
+        let expr = VariableScalar::new("mass", &variable).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, expected);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    fn test_variable_scalar_is_cache_only_and_real() {
+        let amplitude = VariableScalar {
+            name: "mass".to_string(),
+            variable: Box::new(Mass::new(["kshort1", "kshort2"])),
+            value_id: ScalarID::default(),
+        };
+
+        assert_eq!(amplitude.dependence_hint(), ExpressionDependence::CacheOnly);
+        assert!(Amplitude::real_valued_hint(&amplitude));
+    }
+
+    #[test]
+    fn test_variable_scalar_has_no_parameters() {
+        let dataset = Arc::new(test_dataset());
+        let variable = Mass::new(["kshort1", "kshort2"]);
+        let expr = VariableScalar::new("mass", &variable).unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert!(evaluator.parameters().is_empty());
+        assert!(evaluator.free_parameters().is_empty());
+        assert!(evaluator.fixed_parameters().is_empty());
     }
 
     #[test]

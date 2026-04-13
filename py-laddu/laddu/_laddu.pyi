@@ -18,7 +18,12 @@ from laddu.amplitudes import (
     parameter,
 )
 from laddu.amplitudes.breit_wigner import BreitWigner
-from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from laddu.amplitudes.common import (
+    ComplexScalar,
+    PolarComplexScalar,
+    Scalar,
+    VariableScalar,
+)
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA2,
@@ -123,6 +128,7 @@ __all__ = [
     'TestAmplitude',
     'Topology',
     'VariableExpression',
+    'VariableScalar',
     'Vec3',
     'Vec4',
     'Ylm',

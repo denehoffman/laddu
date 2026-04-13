@@ -9,7 +9,7 @@ from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
 from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner
-from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.phase_space import PhaseSpaceFactor
 from .amplitudes.ylm import Ylm
 from .amplitudes.zlm import PolPhase, Zlm
@@ -125,6 +125,7 @@ __all__ = [
     'Scalar',
     'StochasticNLL',
     'Topology',
+    'VariableScalar',
     'Vec3',
     'Vec4',
     'Ylm',
