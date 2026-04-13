@@ -1,38 +1,41 @@
 from collections.abc import Sequence
 from typing import Literal
 
+import numpy as np
+import numpy.typing as npt
+
 from laddu.amplitudes import Expression, ParameterLike
 from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def LookupTable(
     name: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
-    axes: Sequence[Sequence[float]],
-    values: Sequence[complex],
-    interpolation: Literal['nearest', 'step', 'bin'] = 'nearest',
+    axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
+    values: Sequence[complex] | npt.NDArray[np.complex128],
+    interpolation: Literal['nearest', 'step', 'bin', 'linear', 'multilinear'] = 'nearest',
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTableScalar(
     name: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
-    axes: Sequence[Sequence[float]],
+    axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[ParameterLike],
-    interpolation: Literal['nearest', 'step', 'bin'] = 'nearest',
+    interpolation: Literal['nearest', 'step', 'bin', 'linear', 'multilinear'] = 'nearest',
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTableComplex(
     name: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
-    axes: Sequence[Sequence[float]],
+    axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[tuple[ParameterLike, ParameterLike]],
-    interpolation: Literal['nearest', 'step', 'bin'] = 'nearest',
+    interpolation: Literal['nearest', 'step', 'bin', 'linear', 'multilinear'] = 'nearest',
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...
 def LookupTablePolar(
     name: str,
     variables: Sequence[Mass | CosTheta | Phi | PolAngle | PolMagnitude | Mandelstam],
-    axes: Sequence[Sequence[float]],
+    axis_coordinates: Sequence[Sequence[float]] | npt.NDArray[np.float64],
     values: Sequence[tuple[ParameterLike, ParameterLike]],
-    interpolation: Literal['nearest', 'step', 'bin'] = 'nearest',
+    interpolation: Literal['nearest', 'step', 'bin', 'linear', 'multilinear'] = 'nearest',
     boundary_mode: Literal['zero', 'zero_outside', 'zero-outside', 'clamp'] = 'zero',
 ) -> Expression: ...

@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import pytest
 from laddu import Dataset, Event, Mass, Vec3, parameter
 from laddu.amplitudes.lookup_table import (
@@ -90,6 +91,78 @@ def test_lookup_table_clamp_boundary() -> None:
     assert pytest.approx(result[0].imag) == 0.0
 
 
+def test_lookup_table_1d_linear() -> None:
+    amp = LookupTable(
+        'lookup',
+        variables=[Mass(['kshort1'])],
+        axis_coordinates=[[0.0, 1.0]],
+        values=[1.0 + 0.0j, 3.0 + 0.0j],
+        interpolation='linear',
+    )
+
+    result = amp.load(make_test_dataset()).evaluate([])
+
+    assert pytest.approx(result[0].real) == 1.0 + 2.0 * 0.498
+    assert pytest.approx(result[0].imag) == 0.0
+
+
+def test_lookup_table_accepts_numpy_arrays() -> None:
+    amp = LookupTable(
+        'lookup',
+        [Mass(['kshort1'])],
+        axis_coordinates=np.array([[0.0, 1.0]], dtype=np.float64),
+        values=np.array([1.0 + 0.0j, 3.0 + 0.0j], dtype=np.complex128),
+        interpolation='linear',
+    )
+
+    result = amp.load(make_test_dataset()).evaluate([])
+
+    assert pytest.approx(result[0].real) == 1.0 + 2.0 * 0.498
+    assert pytest.approx(result[0].imag) == 0.0
+
+
+def test_lookup_table_2d_linear_row_major() -> None:
+    amp = LookupTable(
+        'lookup',
+        [Mass(['kshort1']), Mass(['proton'])],
+        [[0.0, 1.0], [1.0, 2.0]],
+        [1.0 + 0.0j, 4.0 + 0.0j, 3.0 + 0.0j, 6.0 + 0.0j],
+        interpolation='linear',
+    )
+
+    result = amp.load(make_test_dataset()).evaluate([])
+
+    assert pytest.approx(result[0].real) == 1.0 + 2.0 * 0.498 + 3.0 * 0.007
+    assert pytest.approx(result[0].imag) == 0.0
+
+
+def test_lookup_table_linear_boundaries() -> None:
+    zero = LookupTable(
+        'lookup_zero',
+        [Mass(['kshort1', 'kshort2'])],
+        [[0.0, 1.0]],
+        [1.0 + 0.0j, 3.0 + 0.0j],
+        interpolation='linear',
+    )
+    clamp = LookupTable(
+        'lookup_clamp',
+        [Mass(['kshort1', 'kshort2'])],
+        [[0.0, 1.0]],
+        [1.0 + 0.0j, 3.0 + 0.0j],
+        interpolation='linear',
+        boundary_mode='clamp',
+    )
+
+    dataset = make_test_dataset()
+    zero_result = zero.load(dataset).evaluate([])
+    clamp_result = clamp.load(dataset).evaluate([])
+
+    assert pytest.approx(zero_result[0].real) == 0.0
+    assert pytest.approx(zero_result[0].imag) == 0.0
+    assert pytest.approx(clamp_result[0].real) == 3.0
+    assert pytest.approx(clamp_result[0].imag) == 0.0
+
+
 def test_lookup_table_scalar_parameters_and_gradient() -> None:
     amp = LookupTableScalar(
         'lookup',
@@ -106,6 +179,24 @@ def test_lookup_table_scalar_parameters_and_gradient() -> None:
     assert pytest.approx(gradient[0][1].imag) == 0.0
     assert pytest.approx(gradient[0][2].real) == 0.0
     assert pytest.approx(gradient[0][2].imag) == 0.0
+
+
+def test_lookup_table_linear_scalar_parameters_and_gradient() -> None:
+    amp = LookupTableScalar(
+        'lookup',
+        [Mass(['kshort1'])],
+        [[0.0, 1.0]],
+        [parameter('p0'), parameter('p1')],
+        interpolation='linear',
+    ).norm_sqr()
+
+    gradient = amp.load(make_test_dataset()).evaluate_gradient([1.0, 3.0])
+    value = 0.502 * 1.0 + 0.498 * 3.0
+
+    assert pytest.approx(gradient[0][0].real) == 2.0 * value * 0.502
+    assert pytest.approx(gradient[0][0].imag) == 0.0
+    assert pytest.approx(gradient[0][1].real) == 2.0 * value * 0.498
+    assert pytest.approx(gradient[0][1].imag) == 0.0
 
 
 def test_lookup_table_complex_parameters() -> None:

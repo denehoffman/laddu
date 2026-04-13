@@ -28,6 +28,8 @@ use crate::semantic_key::{debug_key, parameter_pair_slice_key, parameter_slice_k
 pub enum LookupInterpolation {
     /// Select the bin containing the input value on each axis.
     Nearest,
+    /// Interpolate linearly between neighboring table values on each axis.
+    Linear,
 }
 
 impl FromStr for LookupInterpolation {
@@ -36,9 +38,32 @@ impl FromStr for LookupInterpolation {
     fn from_str(value: &str) -> LadduResult<Self> {
         match value.to_ascii_lowercase().as_str() {
             "nearest" | "step" | "bin" => Ok(Self::Nearest),
+            "linear" | "multilinear" => Ok(Self::Linear),
             _ => Err(LadduError::ParseError {
                 name: value.to_string(),
                 object: "LookupInterpolation".to_string(),
+            }),
+        }
+    }
+}
+
+impl LookupInterpolation {
+    fn table_len(self, axis_coordinates: &[LookupAxis]) -> LadduResult<usize> {
+        axis_coordinates.iter().try_fold(1usize, |acc, axis| {
+            acc.checked_mul(axis.value_count(self))
+                .ok_or_else(|| LadduError::Custom("lookup-table shape is too large".to_string()))
+        })
+    }
+
+    fn vertex_count(self, ndim: usize) -> LadduResult<usize> {
+        match self {
+            Self::Nearest => Ok(1),
+            Self::Linear => (0..ndim).try_fold(1usize, |acc, _| {
+                acc.checked_mul(2).ok_or_else(|| {
+                    LadduError::Custom(
+                        "lookup-table interpolation vertex count is too large".to_string(),
+                    )
+                })
             }),
         }
     }
@@ -68,38 +93,53 @@ impl FromStr for LookupBoundaryMode {
     }
 }
 
-/// A lookup-table axis defined by monotonically increasing bin edges.
+/// A lookup-table axis defined by monotonically increasing coordinates.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LookupAxis {
-    edges: Vec<f64>,
+    coordinates: Vec<f64>,
 }
 
 impl LookupAxis {
-    /// Create an axis from bin edges.
-    pub fn new(edges: Vec<f64>) -> LadduResult<Self> {
-        if edges.len() < 2 {
+    /// Create an axis from coordinates.
+    ///
+    /// For nearest interpolation these coordinates are interpreted as bin edges, so `N + 1`
+    /// coordinates define `N` table values. For linear interpolation they are interpreted as grid
+    /// points, so `N` coordinates define `N` table values.
+    pub fn new(coordinates: Vec<f64>) -> LadduResult<Self> {
+        if coordinates.len() < 2 {
             return Err(LadduError::LengthMismatch {
-                context: "lookup-table axis edges".to_string(),
+                context: "lookup-table axis coordinates".to_string(),
                 expected: 2,
-                actual: edges.len(),
+                actual: coordinates.len(),
             });
         }
-        if !edges.iter().all(|edge| edge.is_finite()) {
+        if !coordinates.iter().all(|coordinate| coordinate.is_finite()) {
             return Err(LadduError::Custom(
-                "lookup-table axis edges must be finite".to_string(),
+                "lookup-table axis coordinates must be finite".to_string(),
             ));
         }
-        if !edges.windows(2).all(|window| window[0] < window[1]) {
+        if !coordinates.windows(2).all(|window| window[0] < window[1]) {
             return Err(LadduError::Custom(
-                "lookup-table axis edges must be strictly increasing".to_string(),
+                "lookup-table axis coordinates must be strictly increasing".to_string(),
             ));
         }
-        Ok(Self { edges })
+        Ok(Self { coordinates })
     }
 
     /// Return the number of bins on this axis.
     pub fn bin_count(&self) -> usize {
-        self.edges.len() - 1
+        self.coordinates.len() - 1
+    }
+
+    fn point_count(&self) -> usize {
+        self.coordinates.len()
+    }
+
+    fn value_count(&self, interpolation: LookupInterpolation) -> usize {
+        match interpolation {
+            LookupInterpolation::Nearest => self.bin_count(),
+            LookupInterpolation::Linear => self.point_count(),
+        }
     }
 
     fn bin_index(&self, value: f64, boundary_mode: LookupBoundaryMode) -> Option<usize> {
@@ -107,24 +147,58 @@ impl LookupAxis {
             return None;
         }
         let bins = self.bin_count();
-        if value < self.edges[0] {
+        if value < self.coordinates[0] {
             return match boundary_mode {
                 LookupBoundaryMode::Zero => None,
                 LookupBoundaryMode::Clamp => Some(0),
             };
         }
-        if value >= self.edges[bins] {
+        if value >= self.coordinates[bins] {
             return match boundary_mode {
                 LookupBoundaryMode::Zero => None,
                 LookupBoundaryMode::Clamp => Some(bins - 1),
             };
         }
-        match self
-            .edges
-            .binary_search_by(|edge| edge.partial_cmp(&value).expect("finite edge and value"))
-        {
+        match self.coordinates.binary_search_by(|coordinate| {
+            coordinate
+                .partial_cmp(&value)
+                .expect("finite coordinate and value")
+        }) {
             Ok(index) => Some(index.min(bins - 1)),
             Err(index) => Some(index - 1),
+        }
+    }
+
+    fn linear_cell(&self, value: f64, boundary_mode: LookupBoundaryMode) -> Option<(usize, f64)> {
+        if !value.is_finite() {
+            return None;
+        }
+        let last = self.coordinates.len() - 1;
+        if value < self.coordinates[0] {
+            return match boundary_mode {
+                LookupBoundaryMode::Zero => None,
+                LookupBoundaryMode::Clamp => Some((0, 0.0)),
+            };
+        }
+        if value > self.coordinates[last] {
+            return match boundary_mode {
+                LookupBoundaryMode::Zero => None,
+                LookupBoundaryMode::Clamp => Some((last - 1, 1.0)),
+            };
+        }
+        match self.coordinates.binary_search_by(|coordinate| {
+            coordinate
+                .partial_cmp(&value)
+                .expect("finite coordinate and value")
+        }) {
+            Ok(index) if index == last => Some((last - 1, 1.0)),
+            Ok(index) => Some((index, 0.0)),
+            Err(index) => {
+                let lower = index - 1;
+                let t = (value - self.coordinates[lower])
+                    / (self.coordinates[lower + 1] - self.coordinates[lower]);
+                Some((lower, t))
+            }
         }
     }
 }
@@ -243,20 +317,26 @@ impl LookupValues {
         }
     }
 
-    fn gradient(&self, index: usize, parameters: &Parameters, gradient: &mut DVector<Complex64>) {
+    fn gradient(
+        &self,
+        index: usize,
+        weight: f64,
+        parameters: &Parameters,
+        gradient: &mut DVector<Complex64>,
+    ) {
         match self {
             Self::FixedComplex(_) => {}
             Self::Scalar { pids, .. } => {
                 if let ParameterID::Parameter(ind) = pids[index] {
-                    gradient[ind] = Complex64::ONE;
+                    gradient[ind] += weight * Complex64::ONE;
                 }
             }
             Self::CartesianComplex { pids, .. } => {
                 if let ParameterID::Parameter(ind) = pids[index].0 {
-                    gradient[ind] = Complex64::ONE;
+                    gradient[ind] += weight * Complex64::ONE;
                 }
                 if let ParameterID::Parameter(ind) = pids[index].1 {
-                    gradient[ind] = Complex64::I;
+                    gradient[ind] += weight * Complex64::I;
                 }
             }
             Self::PolarComplex { pids, .. } => {
@@ -264,10 +344,10 @@ impl LookupValues {
                 let theta = parameters.get(pids[index].1);
                 let exp_i_theta = Complex64::cis(theta);
                 if let ParameterID::Parameter(ind) = pids[index].0 {
-                    gradient[ind] = exp_i_theta;
+                    gradient[ind] += weight * exp_i_theta;
                 }
                 if let ParameterID::Parameter(ind) = pids[index].1 {
-                    gradient[ind] = Complex64::I * Complex64::from_polar(r, theta);
+                    gradient[ind] += weight * Complex64::I * Complex64::from_polar(r, theta);
                 }
             }
         }
@@ -279,11 +359,12 @@ impl LookupValues {
 pub struct LookupTable {
     name: String,
     variables: Vec<Box<dyn Variable>>,
-    axes: Vec<LookupAxis>,
+    axis_coordinates: Vec<LookupAxis>,
     values: LookupValues,
     interpolation: LookupInterpolation,
     boundary_mode: LookupBoundaryMode,
-    index_id: ScalarID,
+    vertex_ids: Vec<ScalarID>,
+    weight_ids: Vec<ScalarID>,
 }
 
 impl LookupTable {
@@ -291,7 +372,7 @@ impl LookupTable {
     pub fn new(
         name: &str,
         variables: Vec<Box<dyn Variable>>,
-        axes: Vec<LookupAxis>,
+        axis_coordinates: Vec<LookupAxis>,
         values: Vec<Complex64>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
@@ -299,7 +380,7 @@ impl LookupTable {
         Self::with_values(
             name,
             variables,
-            axes,
+            axis_coordinates,
             LookupValues::fixed_complex(values),
             interpolation,
             boundary_mode,
@@ -310,7 +391,7 @@ impl LookupTable {
     pub fn new_scalar(
         name: &str,
         variables: Vec<Box<dyn Variable>>,
-        axes: Vec<LookupAxis>,
+        axis_coordinates: Vec<LookupAxis>,
         values: Vec<ParameterLike>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
@@ -318,7 +399,7 @@ impl LookupTable {
         Self::with_values(
             name,
             variables,
-            axes,
+            axis_coordinates,
             LookupValues::scalar(values),
             interpolation,
             boundary_mode,
@@ -329,7 +410,7 @@ impl LookupTable {
     pub fn new_cartesian_complex(
         name: &str,
         variables: Vec<Box<dyn Variable>>,
-        axes: Vec<LookupAxis>,
+        axis_coordinates: Vec<LookupAxis>,
         values: Vec<(ParameterLike, ParameterLike)>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
@@ -337,7 +418,7 @@ impl LookupTable {
         Self::with_values(
             name,
             variables,
-            axes,
+            axis_coordinates,
             LookupValues::cartesian_complex(values),
             interpolation,
             boundary_mode,
@@ -348,7 +429,7 @@ impl LookupTable {
     pub fn new_polar_complex(
         name: &str,
         variables: Vec<Box<dyn Variable>>,
-        axes: Vec<LookupAxis>,
+        axis_coordinates: Vec<LookupAxis>,
         values: Vec<(ParameterLike, ParameterLike)>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
@@ -356,7 +437,7 @@ impl LookupTable {
         Self::with_values(
             name,
             variables,
-            axes,
+            axis_coordinates,
             LookupValues::polar_complex(values),
             interpolation,
             boundary_mode,
@@ -366,7 +447,7 @@ impl LookupTable {
     fn with_values(
         name: &str,
         variables: Vec<Box<dyn Variable>>,
-        axes: Vec<LookupAxis>,
+        axis_coordinates: Vec<LookupAxis>,
         values: LookupValues,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
@@ -378,17 +459,14 @@ impl LookupTable {
                 actual: 0,
             });
         }
-        if variables.len() != axes.len() {
+        if variables.len() != axis_coordinates.len() {
             return Err(LadduError::LengthMismatch {
-                context: "lookup-table axes".to_string(),
+                context: "lookup-table axis coordinates".to_string(),
                 expected: variables.len(),
-                actual: axes.len(),
+                actual: axis_coordinates.len(),
             });
         }
-        let expected = axes.iter().try_fold(1usize, |acc, axis| {
-            acc.checked_mul(axis.bin_count())
-                .ok_or_else(|| LadduError::Custom("lookup-table shape is too large".to_string()))
-        })?;
+        let expected = interpolation.table_len(&axis_coordinates)?;
         if values.len() != expected {
             return Err(LadduError::LengthMismatch {
                 context: "lookup-table values".to_string(),
@@ -399,28 +477,62 @@ impl LookupTable {
         Self {
             name: name.to_string(),
             variables,
-            axes,
+            axis_coordinates,
             values,
             interpolation,
             boundary_mode,
-            index_id: ScalarID::default(),
+            vertex_ids: Vec::new(),
+            weight_ids: Vec::new(),
         }
         .into_expression()
     }
 
-    fn index_for_event(&self, event: &NamedEventView<'_>) -> Option<usize> {
+    fn weighted_indices(&self, event: &NamedEventView<'_>) -> Option<Vec<(usize, f64)>> {
         match self.interpolation {
-            LookupInterpolation::Nearest => self.nearest_index(event),
+            LookupInterpolation::Nearest => {
+                self.nearest_index(event).map(|index| vec![(index, 1.0)])
+            }
+            LookupInterpolation::Linear => self.linear_indices(event),
         }
     }
 
     fn nearest_index(&self, event: &NamedEventView<'_>) -> Option<usize> {
         let mut flat_index = 0usize;
-        for (variable, axis) in self.variables.iter().zip(&self.axes) {
+        for (variable, axis) in self.variables.iter().zip(&self.axis_coordinates) {
             let bin_index = axis.bin_index(variable.value(event), self.boundary_mode)?;
             flat_index = flat_index * axis.bin_count() + bin_index;
         }
         Some(flat_index)
+    }
+
+    fn linear_indices(&self, event: &NamedEventView<'_>) -> Option<Vec<(usize, f64)>> {
+        let mut cells = Vec::with_capacity(self.axis_coordinates.len());
+        for (variable, axis) in self.variables.iter().zip(&self.axis_coordinates) {
+            cells.push(axis.linear_cell(variable.value(event), self.boundary_mode)?);
+        }
+        let vertex_count = self
+            .interpolation
+            .vertex_count(self.axis_coordinates.len())
+            .ok()?;
+        let mut weighted_indices = Vec::with_capacity(vertex_count);
+        for vertex in 0..vertex_count {
+            let mut flat_index = 0usize;
+            let mut weight = 1.0;
+            for (axis_index, ((lower_index, t), axis)) in
+                cells.iter().zip(&self.axis_coordinates).enumerate()
+            {
+                let high = (vertex >> (self.axis_coordinates.len() - axis_index - 1)) & 1 == 1;
+                if high {
+                    flat_index = flat_index * axis.point_count() + lower_index + 1;
+                    weight *= *t;
+                } else {
+                    flat_index = flat_index * axis.point_count() + lower_index;
+                    weight *= 1.0 - *t;
+                }
+            }
+            weighted_indices.push((flat_index, weight));
+        }
+        Some(weighted_indices)
     }
 }
 
@@ -428,7 +540,15 @@ impl LookupTable {
 impl Amplitude for LookupTable {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.values.register(resources)?;
-        self.index_id = resources.register_scalar(Some(&format!("{}.index", self.name)));
+        let vertex_count = self
+            .interpolation
+            .vertex_count(self.axis_coordinates.len())?;
+        self.vertex_ids = (0..vertex_count)
+            .map(|index| resources.register_scalar(Some(&format!("{}.vertex_{index}", self.name))))
+            .collect();
+        self.weight_ids = (0..vertex_count)
+            .map(|index| resources.register_scalar(Some(&format!("{}.weight_{index}", self.name))))
+            .collect();
         resources.register_amplitude(&self.name)
     }
 
@@ -437,7 +557,7 @@ impl Amplitude for LookupTable {
             AmplitudeSemanticKey::new("LookupTable")
                 .with_field("name", debug_key(&self.name))
                 .with_field("variables", debug_key(&self.variables))
-                .with_field("axes", debug_key(&self.axes))
+                .with_field("axis_coordinates", debug_key(&self.axis_coordinates))
                 .with_field("values", self.values.semantic_key())
                 .with_field("interpolation", debug_key(self.interpolation))
                 .with_field("boundary_mode", debug_key(self.boundary_mode)),
@@ -460,17 +580,33 @@ impl Amplitude for LookupTable {
     }
 
     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
-        let index = self.index_for_event(event).unwrap_or(self.values.len());
-        cache.store_scalar(self.index_id, index as f64);
+        let weighted_indices = self.weighted_indices(event);
+        for (slot, (vertex_id, weight_id)) in
+            self.vertex_ids.iter().zip(&self.weight_ids).enumerate()
+        {
+            let (index, weight) = weighted_indices
+                .as_ref()
+                .and_then(|indices| indices.get(slot).copied())
+                .unwrap_or((0, 0.0));
+            cache.store_scalar(*vertex_id, index as f64);
+            cache.store_scalar(*weight_id, weight);
+        }
     }
 
     fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
-        let index = cache.get_scalar(self.index_id) as usize;
-        if index == self.values.len() {
-            Complex64::ZERO
-        } else {
-            self.values.value(index, parameters)
-        }
+        self.vertex_ids
+            .iter()
+            .zip(&self.weight_ids)
+            .map(|(vertex_id, weight_id)| {
+                let weight = cache.get_scalar(*weight_id);
+                if weight == 0.0 {
+                    Complex64::ZERO
+                } else {
+                    let index = cache.get_scalar(*vertex_id) as usize;
+                    weight * self.values.value(index, parameters)
+                }
+            })
+            .sum()
     }
 
     fn compute_gradient(
@@ -479,9 +615,12 @@ impl Amplitude for LookupTable {
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
-        let index = cache.get_scalar(self.index_id) as usize;
-        if index != self.values.len() {
-            self.values.gradient(index, parameters, gradient);
+        for (vertex_id, weight_id) in self.vertex_ids.iter().zip(&self.weight_ids) {
+            let weight = cache.get_scalar(*weight_id);
+            if weight != 0.0 {
+                let index = cache.get_scalar(*vertex_id) as usize;
+                self.values.gradient(index, weight, parameters, gradient);
+            }
         }
     }
 }
@@ -489,9 +628,9 @@ impl Amplitude for LookupTable {
 #[cfg(feature = "python")]
 fn py_lookup_inputs(
     variables: Vec<PyVariable>,
-    axes: Vec<Vec<f64>>,
+    axis_coordinates: Vec<Vec<f64>>,
 ) -> LadduResult<(Vec<Box<dyn Variable>>, Vec<LookupAxis>)> {
-    let axes = axes
+    let axis_coordinates = axis_coordinates
         .into_iter()
         .map(LookupAxis::new)
         .collect::<LadduResult<Vec<_>>>()?;
@@ -499,7 +638,7 @@ fn py_lookup_inputs(
         .into_iter()
         .map(|variable| Box::new(variable) as Box<dyn Variable>)
         .collect();
-    Ok((variables, axes))
+    Ok((variables, axis_coordinates))
 }
 
 /// An amplitude which evaluates a fixed complex lookup table over event variables.
@@ -510,12 +649,13 @@ fn py_lookup_inputs(
 ///     The Amplitude name.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
-/// axes : list of list of float
-///     Per-variable bin edges. Each axis must have one more edge than bins.
+/// axis_coordinates : list of list of float
+///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
+///     interpolation treats them as grid points.
 /// values : list of complex
 ///     Flattened row-major table values.
 /// interpolation : str, default: "nearest"
-///     Interpolation mode. Currently supports "nearest".
+///     Interpolation mode. Supports "nearest" and "linear".
 /// boundary_mode : str, default: "zero"
 ///     Out-of-range behavior. Currently supports "zero" and "clamp".
 ///
@@ -525,20 +665,20 @@ fn py_lookup_inputs(
 ///     An Expression which evaluates the lookup table on each event.
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "LookupTable", signature = (name, variables, axes, values, interpolation = "nearest", boundary_mode = "zero"))]
+#[pyfunction(name = "LookupTable", signature = (name, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
 pub fn py_lookup_table(
     name: &str,
     variables: Vec<PyVariable>,
-    axes: Vec<Vec<f64>>,
+    axis_coordinates: Vec<Vec<f64>>,
     values: Vec<Complex64>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
-    let (variables, axes) = py_lookup_inputs(variables, axes)?;
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
     Ok(PyExpression(LookupTable::new(
         name,
         variables,
-        axes,
+        axis_coordinates,
         values,
         interpolation.parse()?,
         boundary_mode.parse()?,
@@ -553,12 +693,13 @@ pub fn py_lookup_table(
 ///     The Amplitude name.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
-/// axes : list of list of float
-///     Per-variable bin edges. Each axis must have one more edge than bins.
+/// axis_coordinates : list of list of float
+///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
+///     interpolation treats them as grid points.
 /// values : list of laddu.ParameterLike
 ///     Flattened row-major scalar parameters.
 /// interpolation : str, default: "nearest"
-///     Interpolation mode. Currently supports "nearest".
+///     Interpolation mode. Supports "nearest" and "linear".
 /// boundary_mode : str, default: "zero"
 ///     Out-of-range behavior. Currently supports "zero" and "clamp".
 ///
@@ -568,20 +709,20 @@ pub fn py_lookup_table(
 ///     An Expression which evaluates the lookup table on each event.
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "LookupTableScalar", signature = (name, variables, axes, values, interpolation = "nearest", boundary_mode = "zero"))]
+#[pyfunction(name = "LookupTableScalar", signature = (name, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
 pub fn py_lookup_table_scalar(
     name: &str,
     variables: Vec<PyVariable>,
-    axes: Vec<Vec<f64>>,
+    axis_coordinates: Vec<Vec<f64>>,
     values: Vec<PyParameterLike>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
-    let (variables, axes) = py_lookup_inputs(variables, axes)?;
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
     Ok(PyExpression(LookupTable::new_scalar(
         name,
         variables,
-        axes,
+        axis_coordinates,
         values.into_iter().map(|value| value.0).collect(),
         interpolation.parse()?,
         boundary_mode.parse()?,
@@ -596,12 +737,13 @@ pub fn py_lookup_table_scalar(
 ///     The Amplitude name.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
-/// axes : list of list of float
-///     Per-variable bin edges. Each axis must have one more edge than bins.
+/// axis_coordinates : list of list of float
+///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
+///     interpolation treats them as grid points.
 /// values : list of tuple of laddu.ParameterLike
 ///     Flattened row-major real and imaginary parameter pairs.
 /// interpolation : str, default: "nearest"
-///     Interpolation mode. Currently supports "nearest".
+///     Interpolation mode. Supports "nearest" and "linear".
 /// boundary_mode : str, default: "zero"
 ///     Out-of-range behavior. Currently supports "zero" and "clamp".
 ///
@@ -611,20 +753,20 @@ pub fn py_lookup_table_scalar(
 ///     An Expression which evaluates the lookup table on each event.
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "LookupTableComplex", signature = (name, variables, axes, values, interpolation = "nearest", boundary_mode = "zero"))]
+#[pyfunction(name = "LookupTableComplex", signature = (name, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
 pub fn py_lookup_table_complex(
     name: &str,
     variables: Vec<PyVariable>,
-    axes: Vec<Vec<f64>>,
+    axis_coordinates: Vec<Vec<f64>>,
     values: Vec<(PyParameterLike, PyParameterLike)>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
-    let (variables, axes) = py_lookup_inputs(variables, axes)?;
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
     Ok(PyExpression(LookupTable::new_cartesian_complex(
         name,
         variables,
-        axes,
+        axis_coordinates,
         values
             .into_iter()
             .map(|(value_re, value_im)| (value_re.0, value_im.0))
@@ -642,12 +784,13 @@ pub fn py_lookup_table_complex(
 ///     The Amplitude name.
 /// variables : list of laddu variables
 ///     The event variables that define the lookup coordinates.
-/// axes : list of list of float
-///     Per-variable bin edges. Each axis must have one more edge than bins.
+/// axis_coordinates : list of list of float
+///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
+///     interpolation treats them as grid points.
 /// values : list of tuple of laddu.ParameterLike
 ///     Flattened row-major magnitude and phase parameter pairs.
 /// interpolation : str, default: "nearest"
-///     Interpolation mode. Currently supports "nearest".
+///     Interpolation mode. Supports "nearest" and "linear".
 /// boundary_mode : str, default: "zero"
 ///     Out-of-range behavior. Currently supports "zero" and "clamp".
 ///
@@ -657,20 +800,20 @@ pub fn py_lookup_table_complex(
 ///     An Expression which evaluates the lookup table on each event.
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "LookupTablePolar", signature = (name, variables, axes, values, interpolation = "nearest", boundary_mode = "zero"))]
+#[pyfunction(name = "LookupTablePolar", signature = (name, variables, axis_coordinates, values, interpolation = "nearest", boundary_mode = "zero"))]
 pub fn py_lookup_table_polar(
     name: &str,
     variables: Vec<PyVariable>,
-    axes: Vec<Vec<f64>>,
+    axis_coordinates: Vec<Vec<f64>>,
     values: Vec<(PyParameterLike, PyParameterLike)>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
-    let (variables, axes) = py_lookup_inputs(variables, axes)?;
+    let (variables, axis_coordinates) = py_lookup_inputs(variables, axis_coordinates)?;
     Ok(PyExpression(LookupTable::new_polar_complex(
         name,
         variables,
-        axes,
+        axis_coordinates,
         values
             .into_iter()
             .map(|(value_r, value_theta)| (value_r.0, value_theta.0))
@@ -785,6 +928,93 @@ mod tests {
     }
 
     #[test]
+    fn test_lookup_table_1d_linear() {
+        let expr = LookupTable::new(
+            "lookup",
+            vec![mass("kshort1")],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, 1.0 + 2.0 * 0.498);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    fn test_lookup_table_2d_linear_row_major() {
+        let expr = LookupTable::new(
+            "lookup",
+            vec![mass("kshort1"), mass("proton")],
+            vec![
+                LookupAxis::new(vec![0.0, 1.0]).unwrap(),
+                LookupAxis::new(vec![1.0, 2.0]).unwrap(),
+            ],
+            vec![
+                Complex64::new(1.0, 0.0),
+                Complex64::new(4.0, 0.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(6.0, 0.0),
+            ],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, 1.0 + 2.0 * 0.498 + 3.0 * 0.007);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    fn test_lookup_table_linear_clamp_boundary() {
+        let expr = LookupTable::new(
+            "lookup",
+            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Clamp,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, 3.0);
+        assert_relative_eq!(result[0].im, 0.0);
+    }
+
+    #[test]
+    fn test_lookup_table_linear_zero_boundary() {
+        let expr = LookupTable::new(
+            "lookup",
+            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_eq!(result[0], Complex64::ZERO);
+    }
+
+    #[test]
     fn test_lookup_table_scalar_parameters_and_gradient() {
         let expr = LookupTable::new_scalar(
             "lookup",
@@ -807,6 +1037,30 @@ mod tests {
         assert_relative_eq!(result[0][1].im, 0.0);
         assert_relative_eq!(result[0][2].re, 0.0);
         assert_relative_eq!(result[0][2].im, 0.0);
+    }
+
+    #[test]
+    fn test_lookup_table_linear_scalar_parameters_and_gradient() {
+        let expr = LookupTable::new_scalar(
+            "lookup",
+            vec![mass("kshort1")],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![parameter("p0"), parameter("p1")],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap()
+        .norm_sqr();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate_gradient(&[1.0, 3.0]);
+        let value = 0.502 * 1.0 + 0.498 * 3.0;
+
+        assert_relative_eq!(result[0][0].re, 2.0 * value * 0.502, epsilon = 1e-12);
+        assert_relative_eq!(result[0][0].im, 0.0);
+        assert_relative_eq!(result[0][1].re, 2.0 * value * 0.498, epsilon = 1e-12);
+        assert_relative_eq!(result[0][1].im, 0.0);
     }
 
     #[test]
