@@ -13,7 +13,7 @@ Despite these downsides, it can still be advantageous to calculate binned fits, 
 Example
 -------
 
-We could approach a binned fit in one of two ways. First, we could use a piecewise amplitude to describe a number of parameters over the entire dataset. This means the minimization procedure will have many free parameters, one or two per wave per bin, and this might slow down the actual minimization process. The other way would be to make a simple model that works for one bin, then split the data up into bins and fit each one separately. We will do the latter here.
+We could approach a binned fit in one of two ways. First, we could use a nearest-bin lookup-table amplitude to describe a number of parameters over the entire dataset. This means the minimization procedure will have many free parameters, one or two per wave per bin, and this might slow down the actual minimization process. The other way would be to make a simple model that works for one bin, then split the data up into bins and fit each one separately. We will do the latter here.
 
 Like before, we begin by loading each dataset, but this time we can chain a method that will generate a ``BinnedDataset`` instead. This will contain all of the same events as the original ``Dataset``, but acts as a list where each element is a ``Dataset`` that only contains events in a particular bin:
 

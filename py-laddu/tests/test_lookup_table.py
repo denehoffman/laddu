@@ -211,7 +211,9 @@ def test_lookup_table_linear_complex_parameters_and_gradient() -> None:
         interpolation='linear',
     )
 
-    gradient = amp.load(make_test_dataset()).evaluate_gradient([1.0, 2.0, 3.0, 4.0])
+    evaluator = amp.load(make_test_dataset())
+    params = np.array([1.0, 2.0, 3.0, 4.0])
+    gradient = evaluator.evaluate_gradient(params)
 
     assert pytest.approx(gradient[0][0].real) == 0.502
     assert pytest.approx(gradient[0][0].imag) == 0.0
@@ -221,6 +223,18 @@ def test_lookup_table_linear_complex_parameters_and_gradient() -> None:
     assert pytest.approx(gradient[0][2].imag) == 0.0
     assert pytest.approx(gradient[0][3].real) == 0.0
     assert pytest.approx(gradient[0][3].imag) == 0.498
+
+    eps = 1e-6
+    for iparam in range(params.size):
+        plus = params.copy()
+        minus = params.copy()
+        plus[iparam] += eps
+        minus[iparam] -= eps
+        finite_difference = (
+            evaluator.evaluate(plus)[0] - evaluator.evaluate(minus)[0]
+        ) / (2.0 * eps)
+        assert pytest.approx(gradient[0][iparam].real) == finite_difference.real
+        assert pytest.approx(gradient[0][iparam].imag) == finite_difference.imag
 
 
 def test_lookup_table_complex_parameters() -> None:

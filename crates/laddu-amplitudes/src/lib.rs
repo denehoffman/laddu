@@ -20,10 +20,6 @@ pub use common::{
 /// Amplitudes related to the K-Matrix formalism.
 pub mod kmatrix;
 
-/// Piecewise functions as amplitudes.
-pub mod piecewise;
-pub use piecewise::{PiecewiseComplexScalar, PiecewisePolarComplexScalar, PiecewiseScalar};
-
 /// Lookup-table amplitudes.
 pub mod lookup_table;
 pub use lookup_table::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTable};

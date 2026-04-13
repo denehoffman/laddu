@@ -11,7 +11,7 @@ amplitudes
    :caption: Amplitudes:
 
    common
-   piecewise
+   lookup_table
    ylm
    zlm
    phase_space

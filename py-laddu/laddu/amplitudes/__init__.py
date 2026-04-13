@@ -37,7 +37,6 @@ from . import (
     kmatrix,
     lookup_table,
     phase_space,
-    piecewise,
     ylm,
     zlm,
 )
@@ -58,7 +57,6 @@ __all__ = [
     'lookup_table',
     'parameter',
     'phase_space',
-    'piecewise',
     'ylm',
     'zlm',
 ]

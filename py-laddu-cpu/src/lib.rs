@@ -41,9 +41,6 @@ mod laddu {
             py_lookup_table, py_lookup_table_complex, py_lookup_table_polar, py_lookup_table_scalar,
         },
         phase_space::py_phase_space_factor,
-        piecewise::{
-            py_piecewise_complex_scalar, py_piecewise_polar_complex_scalar, py_piecewise_scalar,
-        },
         ylm::py_ylm,
         zlm::{py_polphase, py_zlm},
     };

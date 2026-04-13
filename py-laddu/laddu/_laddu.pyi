@@ -39,11 +39,6 @@ from laddu.amplitudes.lookup_table import (
     LookupTableScalar,
 )
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.piecewise import (
-    PiecewiseComplexScalar,
-    PiecewisePolarComplexScalar,
-    PiecewiseScalar,
-)
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import PolPhase, Zlm
 from laddu.data import BinnedDataset, Dataset, Event
@@ -123,9 +118,6 @@ __all__ = [
     'ParquetChunkIter',
     'PhaseSpaceFactor',
     'Phi',
-    'PiecewiseComplexScalar',
-    'PiecewisePolarComplexScalar',
-    'PiecewiseScalar',
     'PolAngle',
     'PolMagnitude',
     'PolPhase',
