@@ -47,10 +47,6 @@ pub(crate) fn parameter_array_key<const N: usize>(parameters: &[ParameterLike; N
     parameter_slice_key(parameters)
 }
 
-pub(crate) fn f64_pair_key(values: (f64, f64)) -> String {
-    format!("({}, {})", f64_key(values.0), f64_key(values.1))
-}
-
 pub(crate) fn seed_key(seed: Option<usize>) -> String {
     match seed {
         Some(seed) => format!("Some({seed})"),

@@ -1,6 +1,13 @@
+import math
+
 import pytest
-from laddu import Dataset, Event, Mass, Vec3
-from laddu.amplitudes.lookup_table import LookupTable
+from laddu import Dataset, Event, Mass, Vec3, parameter
+from laddu.amplitudes.lookup_table import (
+    LookupTable,
+    LookupTableComplex,
+    LookupTablePolar,
+    LookupTableScalar,
+)
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -81,6 +88,60 @@ def test_lookup_table_clamp_boundary() -> None:
 
     assert pytest.approx(result[0].real) == 2.0
     assert pytest.approx(result[0].imag) == 0.0
+
+
+def test_lookup_table_scalar_parameters_and_gradient() -> None:
+    amp = LookupTableScalar(
+        'lookup',
+        [Mass(['kshort1'])],
+        [[0.0, 0.25, 0.75, 1.0]],
+        [parameter('p0'), parameter('p1'), parameter('p2')],
+    ).norm_sqr()
+
+    gradient = amp.load(make_test_dataset()).evaluate_gradient([1.0, 2.0, 3.0])
+
+    assert pytest.approx(gradient[0][0].real) == 0.0
+    assert pytest.approx(gradient[0][0].imag) == 0.0
+    assert pytest.approx(gradient[0][1].real) == 4.0
+    assert pytest.approx(gradient[0][1].imag) == 0.0
+    assert pytest.approx(gradient[0][2].real) == 0.0
+    assert pytest.approx(gradient[0][2].imag) == 0.0
+
+
+def test_lookup_table_complex_parameters() -> None:
+    amp = LookupTableComplex(
+        'lookup',
+        [Mass(['kshort1'])],
+        [[0.0, 0.25, 0.75, 1.0]],
+        [
+            (parameter('re0'), parameter('im0')),
+            (parameter('re1'), parameter('im1')),
+            (parameter('re2'), parameter('im2')),
+        ],
+    )
+
+    result = amp.load(make_test_dataset()).evaluate([1.1, 1.2, 2.1, 2.2, 3.1, 3.2])
+
+    assert pytest.approx(result[0].real) == 2.1
+    assert pytest.approx(result[0].imag) == 2.2
+
+
+def test_lookup_table_polar_parameters() -> None:
+    amp = LookupTablePolar(
+        'lookup',
+        [Mass(['kshort1'])],
+        [[0.0, 0.25, 0.75, 1.0]],
+        [
+            (parameter('r0'), parameter('theta0')),
+            (parameter('r1'), parameter('theta1')),
+            (parameter('r2'), parameter('theta2')),
+        ],
+    )
+
+    result = amp.load(make_test_dataset()).evaluate([1.1, 1.2, 2.1, 2.2, 3.1, 3.2])
+
+    assert pytest.approx(result[0].real) == 2.1 * math.cos(2.2)
+    assert pytest.approx(result[0].imag) == 2.1 * math.sin(2.2)
 
 
 def test_lookup_table_rejects_shape_mismatch() -> None:
