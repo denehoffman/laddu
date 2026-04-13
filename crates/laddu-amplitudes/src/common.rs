@@ -112,6 +112,19 @@ impl VariableScalar {
     }
 }
 
+/// Extension methods for building expressions from event [`Variable`]s.
+pub trait VariableExpressionExt: Variable + 'static {
+    /// Convert this variable into a real-valued [`Expression`].
+    fn as_expression(&self, name: &str) -> LadduResult<Expression>
+    where
+        Self: Sized,
+    {
+        VariableScalar::new(name, self)
+    }
+}
+
+impl<T: Variable + 'static> VariableExpressionExt for T {}
+
 #[typetag::serde]
 impl Amplitude for VariableScalar {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
@@ -442,6 +455,21 @@ mod tests {
         assert!(evaluator.parameters().is_empty());
         assert!(evaluator.free_parameters().is_empty());
         assert!(evaluator.fixed_parameters().is_empty());
+    }
+
+    #[test]
+    fn test_variable_as_expression() {
+        let dataset = Arc::new(test_dataset());
+        let mut variable = Mass::new(["kshort1", "kshort2"]);
+        variable.bind(dataset.metadata()).unwrap();
+        let expected = variable.value(&dataset.event_view(0));
+
+        let expr = variable.as_expression("mass").unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+        let result = evaluator.evaluate(&[]);
+
+        assert_relative_eq!(result[0].re, expected);
+        assert_relative_eq!(result[0].im, 0.0);
     }
 
     #[test]

@@ -145,3 +145,16 @@ def test_variable_value_on() -> None:
     values = mass.value_on(dataset)
     assert len(values) == 1
     assert pytest.approx(values[0]) == 1.3743786309153077
+
+
+def test_variable_as_expression() -> None:
+    dataset = make_test_dataset()
+    mass = Mass(['kshort1', 'kshort2'])
+
+    evaluator = mass.as_expression('mass').load(dataset)
+    values = evaluator.evaluate([])
+
+    assert len(values) == 1
+    assert pytest.approx(values[0].real) == mass.value(make_test_event())
+    assert pytest.approx(values[0].imag) == 0.0
+    assert evaluator.parameters == []
