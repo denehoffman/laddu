@@ -32,6 +32,7 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixPi1,
     KopfKMatrixRho,
 )
+from laddu.amplitudes.lookup_table import LookupTable
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
 from laddu.amplitudes.piecewise import (
     PiecewiseComplexScalar,
@@ -103,6 +104,7 @@ __all__ = [
     'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodZero',
+    'LookupTable',
     'MCMCSummary',
     'Mandelstam',
     'Mass',

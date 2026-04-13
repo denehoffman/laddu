@@ -37,6 +37,7 @@ mod laddu {
             py_kopf_kmatrix_a0, py_kopf_kmatrix_a2, py_kopf_kmatrix_f0, py_kopf_kmatrix_f2,
             py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho,
         },
+        lookup_table::py_lookup_table,
         phase_space::py_phase_space_factor,
         piecewise::{
             py_piecewise_complex_scalar, py_piecewise_polar_complex_scalar, py_piecewise_scalar,

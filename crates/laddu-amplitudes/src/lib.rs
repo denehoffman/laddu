@@ -24,6 +24,10 @@ pub mod kmatrix;
 pub mod piecewise;
 pub use piecewise::{PiecewiseComplexScalar, PiecewisePolarComplexScalar, PiecewiseScalar};
 
+/// Lookup-table amplitudes.
+pub mod lookup_table;
+pub use lookup_table::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTable};
+
 /// A spherical harmonic amplitude.
 pub mod ylm;
 pub use ylm::Ylm;
