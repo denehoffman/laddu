@@ -2,7 +2,10 @@ use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, Parameters, Resources},
-    utils::{functions::rho, variables::Variable},
+    utils::{
+        functions::{rho_m, Sheet},
+        variables::Variable,
+    },
     LadduResult, Mandelstam, Mass, ScalarID, PI,
 };
 #[cfg(feature = "python")]
@@ -105,7 +108,7 @@ impl Amplitude for PhaseSpaceFactor {
         let m_2 = event.evaluate(&self.daughter_2_mass);
         let m_res = event.evaluate(&self.resonance_mass);
         let s = event.evaluate(&self.mandelstam_s);
-        let term = rho(m_res.powi(2), m_1, m_2).re * m_res
+        let term = rho_m(m_res, m_1, m_2, Sheet::Physical).re * m_res
             / (s - m_recoil.powi(2)).powi(2)
             / (2.0 * (4.0 * PI).powi(5));
         cache.store_scalar(self.sid, term.sqrt());

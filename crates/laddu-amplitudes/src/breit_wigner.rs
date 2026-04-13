@@ -5,7 +5,7 @@ use laddu_core::{
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
-        functions::{blatt_weisskopf, breakup_momentum},
+        functions::{blatt_weisskopf_m, q_m, BarrierKind, Sheet, QR_DEFAULT},
         variables::{Mass, Variable},
     },
     LadduResult, ScalarID,
@@ -166,16 +166,32 @@ impl Amplitude for BreitWigner {
         let width0 = parameters.get(self.pid_width).abs();
         let mass1 = cache.get_scalar(self.daughter_1_mass_id);
         let mass2 = cache.get_scalar(self.daughter_2_mass_id);
-        let q0 = breakup_momentum(mass0, mass1, mass2);
-        let q = breakup_momentum(mass, mass1, mass2);
+        let q0 = q_m(mass0, mass1, mass2, Sheet::Physical);
+        let q = q_m(mass, mass1, mass2, Sheet::Physical);
         let width = if self.barrier_factors {
-            let f0 = blatt_weisskopf(mass0, mass1, mass2, self.l);
-            let f = blatt_weisskopf(mass, mass1, mass2, self.l);
+            let f0 = blatt_weisskopf_m(
+                mass0,
+                mass1,
+                mass2,
+                self.l,
+                QR_DEFAULT,
+                Sheet::Physical,
+                BarrierKind::Full,
+            );
+            let f = blatt_weisskopf_m(
+                mass,
+                mass1,
+                mass2,
+                self.l,
+                QR_DEFAULT,
+                Sheet::Physical,
+                BarrierKind::Full,
+            );
             width0 * (mass0 / mass) * (q / q0) * (f / f0).powi(2)
         } else {
             width0 * (mass0 / mass) * (q / q0).powi((2 * self.l + 1) as i32)
         };
-        1.0 / Complex64::new(mass0.powi(2) - mass.powi(2), -(mass0 * width))
+        1.0 / (Complex64::from(mass0.powi(2) - mass.powi(2)) - Complex64::I * mass0 * width)
     }
     fn compute_gradient(
         &self,
@@ -406,7 +422,7 @@ mod tests {
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
-        assert_relative_eq!(result[0].re, 1.4308791652435884);
+        assert_relative_eq!(result[0].re, 1.4308791652435877);
         assert_relative_eq!(result[0].im, 1.3839522217669178);
     }
 
@@ -429,10 +445,10 @@ mod tests {
         let evaluator = amp.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
-        assert_relative_eq!(result[0][0].re, -2.4885111876269255);
-        assert_relative_eq!(result[0][0].im, -1.8242624730389174);
+        assert_relative_eq!(result[0][0].re, -2.4885111876303205);
+        assert_relative_eq!(result[0][0].im, -1.8242624730406152);
         assert_relative_eq!(result[0][1].re, -0.5492978554232557);
-        assert_relative_eq!(result[0][1].im, 0.7828010830313784);
+        assert_relative_eq!(result[0][1].im, 0.7828010830349043);
     }
 
     #[test]
@@ -455,8 +471,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[1.5, 0.3]);
 
-        assert_relative_eq!(result[0].re, 2.0654840145948157);
-        assert_relative_eq!(result[0].im, 1.2058262598870575);
+        assert_relative_eq!(result[0].re, 2.0654840145948143);
+        assert_relative_eq!(result[0].im, 1.2058262598870584);
     }
 
     #[test]
@@ -479,9 +495,9 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
         assert_relative_eq!(result[0][0].re, -3.2382865275566544);
-        assert_relative_eq!(result[0][0].im, -0.9544869810058523);
+        assert_relative_eq!(result[0][0].im, -0.9544869810033058);
         assert_relative_eq!(result[0][1].re, -0.06116353148223782);
-        assert_relative_eq!(result[0][1].im, 0.3131899140692953);
+        assert_relative_eq!(result[0][1].im, 0.31318991406841384);
     }
 
     #[test]

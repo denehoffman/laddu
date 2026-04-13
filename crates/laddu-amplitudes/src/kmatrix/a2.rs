@@ -313,7 +313,7 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, -0.575689604769787);
+        assert_relative_eq!(result[0][0].re, -0.5756896047697867);
         assert_relative_eq!(result[0][0].im, 0.9398863940931068);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);

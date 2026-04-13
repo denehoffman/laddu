@@ -247,8 +247,8 @@ def test_rho_evaluation() -> None:
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4])
-    assert pytest.approx(result[0].real) == 0.09483558754117698
-    assert pytest.approx(result[0].imag) == 0.2609183741271106
+    assert pytest.approx(result[0].real) == 0.09484736010326478
+    assert pytest.approx(result[0].imag) == 0.260866462141048
 
 
 def test_rho_gradient() -> None:
@@ -265,12 +265,12 @@ def test_rho_gradient() -> None:
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([0.1, 0.2, 0.3, 0.4])
-    assert pytest.approx(result[0][0].real) == 0.026520319348816407
-    assert pytest.approx(result[0][0].imag) == -0.026602652559793133
+    assert pytest.approx(result[0][0].real) == 0.02643853899309215
+    assert pytest.approx(result[0][0].imag) == -0.02656332811034412
     assert pytest.approx(result[0][1].real) == pytest.approx(-result[0][0].imag)
     assert pytest.approx(result[0][1].imag) == pytest.approx(result[0][0].real)
-    assert pytest.approx(result[0][2].real) == 0.5172379289201292
-    assert pytest.approx(result[0][2].imag) == 0.17073733305788397
+    assert pytest.approx(result[0][2].real) == 0.517314417778249
+    assert pytest.approx(result[0][2].imag) == 0.17072387301811015
     assert pytest.approx(result[0][3].real) == pytest.approx(-result[0][2].imag)
     assert pytest.approx(result[0][3].imag) == pytest.approx(result[0][2].real)
 

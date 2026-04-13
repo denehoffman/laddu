@@ -56,11 +56,13 @@
 //!
 //! ```rust,no_run
 //! use laddu::{
-//!    AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduResult, LadduError, Mass,
-//!    ParameterID, ParameterLike, Parameters, Resources, PI,
+//!    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass,
+//!    ParameterID, ParameterLike, Parameters, Resources,
 //! };
+//! use laddu::NamedEventView;
+//! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
-//! use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
+//! use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! use laddu::{Deserialize, Serialize, typetag};
 //! use num::complex::Complex64;
 //!
@@ -75,6 +77,9 @@
 //!     daughter_1_mass: Mass,
 //!     daughter_2_mass: Mass,
 //!     resonance_mass: Mass,
+//!     daughter_1_mass_id: ScalarID,
+//!     daughter_2_mass_id: ScalarID,
+//!     resonance_mass_id: ScalarID,
 //! }
 //! impl MyBreitWigner {
 //!     pub fn new(
@@ -96,6 +101,9 @@
 //!             daughter_1_mass: daughter_1_mass.clone(),
 //!             daughter_2_mass: daughter_2_mass.clone(),
 //!             resonance_mass: resonance_mass.clone(),
+//!             daughter_1_mass_id: ScalarID::default(),
+//!             daughter_2_mass_id: ScalarID::default(),
+//!             resonance_mass_id: ScalarID::default(),
 //!         }
 //!         .into_expression()
 //!     }
@@ -106,6 +114,9 @@
 //!     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //!         self.pid_mass = resources.register_parameter(&self.mass)?;
 //!         self.pid_width = resources.register_parameter(&self.width)?;
+//!         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
+//!         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
+//!         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
 //!         resources.register_amplitude(&self.name)
 //!     }
 //!
@@ -119,8 +130,24 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
-//!         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
+//!     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//!         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
+//!         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
+//!         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
+//!     }
+//!
+//!     fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+//!         let m = cache.get_scalar(self.resonance_mass_id);
+//!         let m0 = parameters.get(self.pid_mass).abs();
+//!         let width0 = parameters.get(self.pid_width).abs();
+//!         let m1 = cache.get_scalar(self.daughter_1_mass_id);
+//!         let m2 = cache.get_scalar(self.daughter_2_mass_id);
+//!         let q0 = q_m(m0, m1, m2, Sheet::Physical);
+//!         let q = q_m(m, m1, m2, Sheet::Physical);
+//!         let b0 = blatt_weisskopf_m(m0, m1, m2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
+//!         let b = blatt_weisskopf_m(m, m1, m2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
+//!         let width = width0 * (m0 / m) * (q / q0) * (b / b0).powi(2);
+//!         1.0 / (Complex64::from(m0.powi(2) - m.powi(2)) - Complex64::I * m0 * width)
 //!     }
 //! }
 //! ```
@@ -135,11 +162,13 @@
 //! ```rust,no_run
 //! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 //! # use laddu::{
-//! #    AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduResult, LadduError,
-//! #    ParameterID, ParameterLike, Parameters, Resources, PI,
+//! #    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult,
+//! #    ParameterID, ParameterLike, Parameters, Resources,
 //! # };
+//! # use laddu::NamedEventView;
+//! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
-//! # use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
+//! # use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! # use laddu::{Deserialize, Serialize, typetag};
 //! # use num::complex::Complex64;
 //! #
@@ -154,6 +183,9 @@
 //! #     daughter_1_mass: Mass,
 //! #     daughter_2_mass: Mass,
 //! #     resonance_mass: Mass,
+//! #     daughter_1_mass_id: ScalarID,
+//! #     daughter_2_mass_id: ScalarID,
+//! #     resonance_mass_id: ScalarID,
 //! # }
 //! # impl MyBreitWigner {
 //! #     pub fn new(
@@ -175,6 +207,9 @@
 //! #             daughter_1_mass: daughter_1_mass.clone(),
 //! #             daughter_2_mass: daughter_2_mass.clone(),
 //! #             resonance_mass: resonance_mass.clone(),
+//! #             daughter_1_mass_id: ScalarID::default(),
+//! #             daughter_2_mass_id: ScalarID::default(),
+//! #             resonance_mass_id: ScalarID::default(),
 //! #         }
 //! #         .into_expression()
 //! #     }
@@ -185,6 +220,9 @@
 //! #     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
 //! #         self.pid_mass = resources.register_parameter(&self.mass)?;
 //! #         self.pid_width = resources.register_parameter(&self.width)?;
+//! #         self.daughter_1_mass_id = resources.register_scalar(Some(&format!("{}.daughter_1_mass", self.name)));
+//! #         self.daughter_2_mass_id = resources.register_scalar(Some(&format!("{}.daughter_2_mass", self.name)));
+//! #         self.resonance_mass_id = resources.register_scalar(Some(&format!("{}.resonance_mass", self.name)));
 //! #         resources.register_amplitude(&self.name)
 //! #     }
 //! #
@@ -198,8 +236,24 @@
 //! #         Ok(())
 //! #     }
 //! #
-//! #     fn compute(&self, parameters: &Parameters, _cache: &Cache) -> Complex64 {
-//! #         Complex64::new(parameters.get(self.pid_mass), parameters.get(self.pid_width))
+//! #     fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+//! #         cache.store_scalar(self.daughter_1_mass_id, event.evaluate(&self.daughter_1_mass));
+//! #         cache.store_scalar(self.daughter_2_mass_id, event.evaluate(&self.daughter_2_mass));
+//! #         cache.store_scalar(self.resonance_mass_id, event.evaluate(&self.resonance_mass));
+//! #     }
+//! #
+//! #     fn compute(&self, parameters: &Parameters, cache: &Cache) -> Complex64 {
+//! #         let m = cache.get_scalar(self.resonance_mass_id);
+//! #         let m0 = parameters.get(self.pid_mass).abs();
+//! #         let width0 = parameters.get(self.pid_width).abs();
+//! #         let m1 = cache.get_scalar(self.daughter_1_mass_id);
+//! #         let m2 = cache.get_scalar(self.daughter_2_mass_id);
+//! #         let q0 = q_m(m0, m1, m2, Sheet::Physical);
+//! #         let q = q_m(m, m1, m2, Sheet::Physical);
+//! #         let b0 = blatt_weisskopf_m(m0, m1, m2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
+//! #         let b = blatt_weisskopf_m(m, m1, m2, self.l, QR_DEFAULT, Sheet::Physical, BarrierKind::Full);
+//! #         let width = width0 * (m0 / m) * (q / q0) * (b / b0).powi(2);
+//! #         1.0 / (Complex64::from(m0.powi(2) - m.powi(2)) - Complex64::I * m0 * width)
 //! #     }
 //! # }
 //! let p4_names = ["beam", "proton", "kshort1", "kshort2"];
@@ -345,7 +399,7 @@ pub use laddu_core::amplitudes::{
 };
 pub use laddu_core::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
-    EventData,
+    EventData, NamedEventView,
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::variables::{

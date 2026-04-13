@@ -7,7 +7,11 @@
 
 /// The Breit-Wigner amplitude.
 pub mod breit_wigner;
-pub use breit_wigner::BreitWigner;
+pub use breit_wigner::{BreitWigner, BreitWignerNonRelativistic};
+
+/// The Flatte amplitude.
+pub mod flatte;
+pub use flatte::Flatte;
 
 mod semantic_key;
 

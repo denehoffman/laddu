@@ -254,8 +254,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, 0.09483558754117698);
-        assert_relative_eq!(result[0].im, 0.2609183741271106);
+        assert_relative_eq!(result[0].re, 0.09484736010326478);
+        assert_relative_eq!(result[0].im, 0.260866462141048);
     }
 
     #[test]
@@ -276,12 +276,12 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.026520319348816407);
-        assert_relative_eq!(result[0][0].im, -0.026602652559793133);
+        assert_relative_eq!(result[0][0].re, 0.02643853899309215);
+        assert_relative_eq!(result[0][0].im, -0.02656332811034412);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.5172379289201292);
-        assert_relative_eq!(result[0][2].im, 0.17073733305788397);
+        assert_relative_eq!(result[0][2].re, 0.517314417778249);
+        assert_relative_eq!(result[0][2].im, 0.17072387301811015);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }

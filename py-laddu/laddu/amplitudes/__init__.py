@@ -34,6 +34,7 @@ from laddu.laddu import (
 from . import (
     breit_wigner,
     common,
+    flatte,
     kmatrix,
     lookup_table,
     phase_space,
@@ -53,6 +54,7 @@ __all__ = [
     'constant',
     'expr_product',
     'expr_sum',
+    'flatte',
     'kmatrix',
     'lookup_table',
     'parameter',

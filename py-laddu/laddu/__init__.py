@@ -10,6 +10,7 @@ from ._backend import backend as _backend_module
 from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
+from .amplitudes.flatte import Flatte
 from .amplitudes.phase_space import PhaseSpaceFactor
 from .amplitudes.ylm import Ylm
 from .amplitudes.zlm import PolPhase, Zlm
@@ -98,6 +99,7 @@ __all__ = [
     'Evaluator',
     'Event',
     'Expression',
+    'Flatte',
     'GradientFreeStatus',
     'GradientStatus',
     'LikelihoodEvaluator',

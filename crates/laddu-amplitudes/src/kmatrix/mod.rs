@@ -1,6 +1,8 @@
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
-use laddu_core::utils::functions::{blatt_weisskopf, chi_plus, rho};
+use laddu_core::utils::functions::{
+    blatt_weisskopf_m, chi_plus, rho_s, BarrierKind, Sheet, QR_DEFAULT,
+};
 use nalgebra::{Cholesky, DMatrix, DVector, SMatrix, SVector};
 use num::{
     complex::Complex64,
@@ -134,9 +136,10 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
         SMatrix::from_diagonal(&SVector::from_fn(|i, _| {
             let m1 = self.m1s[i];
             let m2 = self.m2s[i];
-            ((rho(s, m1, m2)
+            ((rho_s(s.into(), m1, m2, Sheet::Physical)
                 * Complex64::ln(
-                    (chi_plus(s, m1, m2) + rho(s, m1, m2)) / (chi_plus(s, m1, m2) - rho(s, m1, m2)),
+                    (chi_plus(s, m1, m2) + rho_s(s.into(), m1, m2, Sheet::Physical))
+                        / (chi_plus(s, m1, m2) - rho_s(s.into(), m1, m2, Sheet::Physical)),
                 ))
                 - (chi_plus(s, m1, m2) * ((m2 - m1) / (m1 + m2)) * f64::ln(m2 / m1)))
                 / f64::PI()
@@ -148,7 +151,24 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
             let m1 = self.m1s[i];
             let m2 = self.m2s[i];
             let mr = self.mrs[a];
-            blatt_weisskopf(m0, m1, m2, self.l) / blatt_weisskopf(mr, m1, m2, self.l)
+            (blatt_weisskopf_m(
+                m0,
+                m1,
+                m2,
+                self.l,
+                QR_DEFAULT,
+                Sheet::Physical,
+                BarrierKind::Full,
+            ) / blatt_weisskopf_m(
+                mr,
+                m1,
+                m2,
+                self.l,
+                QR_DEFAULT,
+                Sheet::Physical,
+                BarrierKind::Full,
+            ))
+            .re
         })
     }
     fn product_of_poles(&self, s: f64) -> f64 {
@@ -291,7 +311,7 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, -0.8428829840871043);
+        assert_relative_eq!(result[0].re, -0.8428829840871046);
         assert_relative_eq!(result[0].im, -0.018842179274928372);
     }
 
@@ -319,7 +339,7 @@ mod tests {
         assert_relative_eq!(result[0][0].im, -0.04825756855221591);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, -1.1803833246734015);
+        assert_relative_eq!(result[0][2].re, -1.180383324673402);
         assert_relative_eq!(result[0][2].im, 1.3227053711279162);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);

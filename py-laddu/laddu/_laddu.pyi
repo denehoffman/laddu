@@ -24,6 +24,7 @@ from laddu.amplitudes.common import (
     Scalar,
     VariableScalar,
 )
+from laddu.amplitudes.flatte import Flatte
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA2,
@@ -92,6 +93,7 @@ __all__ = [
     'Evaluator',
     'Event',
     'Expression',
+    'Flatte',
     'GradientFreeStatus',
     'GradientStatus',
     'KopfKMatrixA0',
