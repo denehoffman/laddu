@@ -12,6 +12,7 @@ def BreitWigner(
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,
+    barrier_factors: bool = True,
 ) -> Expression: ...
 @overload
 def BreitWigner(
@@ -21,5 +22,12 @@ def BreitWigner(
     l: int,
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
+    resonance_mass: Mass,
+    barrier_factors: bool = True,
+) -> Expression: ...
+def BreitWignerNonRelativistic(
+    name: str,
+    mass: ParameterLike,
+    width: ParameterLike,
     resonance_mass: Mass,
 ) -> Expression: ...

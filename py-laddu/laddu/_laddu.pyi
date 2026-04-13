@@ -17,7 +17,7 @@ from laddu.amplitudes import (
     expr_sum,
     parameter,
 )
-from laddu.amplitudes.breit_wigner import BreitWigner
+from laddu.amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from laddu.amplitudes.common import (
     ComplexScalar,
     PolarComplexScalar,
@@ -83,6 +83,7 @@ __all__ = [
     'BinnedDataset',
     'BinnedGuideTerm',
     'BreitWigner',
+    'BreitWignerNonRelativistic',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',

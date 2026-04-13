@@ -12,7 +12,7 @@ from .amplitudes import (
     expr_sum,
     parameter,
 )
-from .amplitudes.breit_wigner import BreitWigner
+from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.phase_space import PhaseSpaceFactor
 from .amplitudes.ylm import Ylm
@@ -66,6 +66,7 @@ __all__ = [
     'Angles',
     'BinnedDataset',
     'BreitWigner',
+    'BreitWignerNonRelativistic',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',

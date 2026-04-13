@@ -31,7 +31,7 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_amplitudes::{
-        breit_wigner::py_breit_wigner,
+        breit_wigner::{py_breit_wigner, py_breit_wigner_non_relativistic},
         common::{py_complex_scalar, py_polar_complex_scalar, py_scalar, py_variable_scalar},
         kmatrix::{
             py_kopf_kmatrix_a0, py_kopf_kmatrix_a2, py_kopf_kmatrix_f0, py_kopf_kmatrix_f2,

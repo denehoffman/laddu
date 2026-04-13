@@ -1,5 +1,13 @@
 import pytest
-from laddu import BreitWigner, Dataset, Event, Mass, Vec3, parameter
+from laddu import (
+    BreitWigner,
+    BreitWignerNonRelativistic,
+    Dataset,
+    Event,
+    Mass,
+    Vec3,
+    parameter,
+)
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
 AUX_NAMES = ['pol_magnitude', 'pol_angle']
@@ -38,8 +46,8 @@ def test_bw_evaluation() -> None:
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.5, 0.3])
-    assert pytest.approx(result[0].real) == 1.458569174900372
-    assert pytest.approx(result[0].imag) == 1.4107341131495694
+    assert pytest.approx(result[0].real) == 1.4308791652435884
+    assert pytest.approx(result[0].imag) == 1.3839522217669178
 
 
 def test_bw_gradient() -> None:
@@ -55,7 +63,75 @@ def test_bw_gradient() -> None:
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate_gradient([1.7, 0.3])
-    assert pytest.approx(result[0][0].real) == -2.4105851202988857
-    assert pytest.approx(result[0][0].imag) == -1.8880913749138584
-    assert pytest.approx(result[0][1].real) == 1.0467031328673773
-    assert pytest.approx(result[0][1].imag) == 1.3683612879088032
+    assert pytest.approx(result[0][0].real) == -2.4885111876269255
+    assert pytest.approx(result[0][0].imag) == -1.8242624730389174
+    assert pytest.approx(result[0][1].real) == -0.5492978554232557
+    assert pytest.approx(result[0][1].imag) == 0.7828010830313784
+
+
+def test_bw_no_bwbf_evaluation() -> None:
+    amp = BreitWigner(
+        'bw',
+        parameter('mass'),
+        parameter('width'),
+        2,
+        Mass(['kshort1']),
+        Mass(['kshort2']),
+        Mass(['kshort1', 'kshort2']),
+        barrier_factors=False,
+    )
+    dataset = make_test_dataset()
+    evaluator = amp.load(dataset)
+    result = evaluator.evaluate([1.5, 0.3])
+    assert pytest.approx(result[0].real) == 2.0654840145948157
+    assert pytest.approx(result[0].imag) == 1.2058262598870575
+
+
+def test_bw_no_bwbf_gradient() -> None:
+    amp = BreitWigner(
+        'bw',
+        parameter('mass'),
+        parameter('width'),
+        2,
+        Mass(['kshort1']),
+        Mass(['kshort2']),
+        Mass(['kshort1', 'kshort2']),
+        barrier_factors=False,
+    )
+    dataset = make_test_dataset()
+    evaluator = amp.load(dataset)
+    result = evaluator.evaluate_gradient([1.7, 0.3])
+    assert pytest.approx(result[0][0].real) == -3.2382865275566544
+    assert pytest.approx(result[0][0].imag) == -0.9544869810058523
+    assert pytest.approx(result[0][1].real) == -0.06116353148223782
+    assert pytest.approx(result[0][1].imag) == 0.3131899140692953
+
+
+def test_bw_nonrel_evaluation() -> None:
+    amp = BreitWignerNonRelativistic(
+        'bw',
+        parameter('mass'),
+        parameter('width'),
+        Mass(['kshort1', 'kshort2']),
+    )
+    dataset = make_test_dataset()
+    evaluator = amp.load(dataset)
+    result = evaluator.evaluate([1.5, 0.3])
+    assert pytest.approx(result[0].real) == 1.084721431628924
+    assert pytest.approx(result[0].imag) == 1.3518336007116172
+
+
+def test_bw_nonrel_gradient() -> None:
+    amp = BreitWignerNonRelativistic(
+        'bw',
+        parameter('mass'),
+        parameter('width'),
+        Mass(['kshort1', 'kshort2']),
+    )
+    dataset = make_test_dataset()
+    evaluator = amp.load(dataset)
+    result = evaluator.evaluate_gradient([1.7, 0.3])
+    assert pytest.approx(result[0][0].real) == -1.7757650016553739
+    assert pytest.approx(result[0][0].imag) == -2.0392238297998153
+    assert pytest.approx(result[0][1].real) == -1.0894724338203443
+    assert pytest.approx(result[0][1].imag) == 0.7917525805669601

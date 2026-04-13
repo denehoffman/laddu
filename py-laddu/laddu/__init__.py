@@ -8,7 +8,7 @@ from typing import cast as _cast
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
 from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
-from .amplitudes.breit_wigner import BreitWigner
+from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.phase_space import PhaseSpaceFactor
 from .amplitudes.ylm import Ylm
@@ -89,6 +89,7 @@ __all__ = [
     'Angles',
     'BinnedDataset',
     'BreitWigner',
+    'BreitWignerNonRelativistic',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',

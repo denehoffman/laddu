@@ -14,6 +14,6 @@ NormSqr
 <BLANKLINE>
 """
 
-from laddu.laddu import BreitWigner
+from laddu.laddu import BreitWigner, BreitWignerNonRelativistic
 
-__all__ = ['BreitWigner']
+__all__ = ['BreitWigner', 'BreitWignerNonRelativistic']
