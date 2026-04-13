@@ -1095,6 +1095,57 @@ mod tests {
     }
 
     #[test]
+    fn test_lookup_table_linear_complex_parameters_and_gradient() {
+        let expr = LookupTable::new_cartesian_complex(
+            "lookup",
+            vec![mass("kshort1")],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![
+                (parameter("re0"), parameter("im0")),
+                (parameter("re1"), parameter("im1")),
+            ],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let gradient = evaluator.evaluate_gradient(&[1.0, 2.0, 3.0, 4.0]);
+
+        assert_relative_eq!(gradient[0][0].re, 0.502, epsilon = 1e-12);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 0.0);
+        assert_relative_eq!(gradient[0][1].im, 0.502, epsilon = 1e-12);
+        assert_relative_eq!(gradient[0][2].re, 0.498, epsilon = 1e-12);
+        assert_relative_eq!(gradient[0][2].im, 0.0);
+        assert_relative_eq!(gradient[0][3].re, 0.0);
+        assert_relative_eq!(gradient[0][3].im, 0.498, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn test_lookup_table_linear_zero_boundary_has_zero_gradient() {
+        let expr = LookupTable::new_scalar(
+            "lookup",
+            vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
+            vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
+            vec![parameter("p0"), parameter("p1")],
+            LookupInterpolation::Linear,
+            LookupBoundaryMode::Zero,
+        )
+        .unwrap();
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let gradient = evaluator.evaluate_gradient(&[1.0, 3.0]);
+
+        assert_relative_eq!(gradient[0][0].re, 0.0);
+        assert_relative_eq!(gradient[0][0].im, 0.0);
+        assert_relative_eq!(gradient[0][1].re, 0.0);
+        assert_relative_eq!(gradient[0][1].im, 0.0);
+    }
+
+    #[test]
     fn test_lookup_table_rejects_shape_mismatch() {
         let result = LookupTable::new(
             "lookup",

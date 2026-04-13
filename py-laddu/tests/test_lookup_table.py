@@ -199,6 +199,30 @@ def test_lookup_table_linear_scalar_parameters_and_gradient() -> None:
     assert pytest.approx(gradient[0][1].imag) == 0.0
 
 
+def test_lookup_table_linear_complex_parameters_and_gradient() -> None:
+    amp = LookupTableComplex(
+        'lookup',
+        [Mass(['kshort1'])],
+        [[0.0, 1.0]],
+        [
+            (parameter('re0'), parameter('im0')),
+            (parameter('re1'), parameter('im1')),
+        ],
+        interpolation='linear',
+    )
+
+    gradient = amp.load(make_test_dataset()).evaluate_gradient([1.0, 2.0, 3.0, 4.0])
+
+    assert pytest.approx(gradient[0][0].real) == 0.502
+    assert pytest.approx(gradient[0][0].imag) == 0.0
+    assert pytest.approx(gradient[0][1].real) == 0.0
+    assert pytest.approx(gradient[0][1].imag) == 0.502
+    assert pytest.approx(gradient[0][2].real) == 0.498
+    assert pytest.approx(gradient[0][2].imag) == 0.0
+    assert pytest.approx(gradient[0][3].real) == 0.0
+    assert pytest.approx(gradient[0][3].imag) == 0.498
+
+
 def test_lookup_table_complex_parameters() -> None:
     amp = LookupTableComplex(
         'lookup',
