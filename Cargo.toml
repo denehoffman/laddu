@@ -21,6 +21,7 @@ criterion = { version = "4.4.1", package = "codspeed-criterion-compat", features
   "html_reports",
 ] }
 dyn-clone = "1.0.20"
+errorfunctions = "0.2.0"
 factorial = "0.4.0"
 fastrand = "2.3.0"
 fastrand-contrib = "0.1.0"

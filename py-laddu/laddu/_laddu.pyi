@@ -40,6 +40,7 @@ from laddu.amplitudes.lookup_table import (
     LookupTableScalar,
 )
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
+from laddu.amplitudes.voigt import Voigt
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import PolPhase, Zlm
 from laddu.data import BinnedDataset, Dataset, Event
@@ -136,6 +137,7 @@ __all__ = [
     'VariableScalar',
     'Vec3',
     'Vec4',
+    'Voigt',
     'Ylm',
     'Zero',
     'Zlm',

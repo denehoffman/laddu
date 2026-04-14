@@ -12,6 +12,7 @@ from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.flatte import Flatte
 from .amplitudes.phase_space import PhaseSpaceFactor
+from .amplitudes.voigt import Voigt
 from .amplitudes.ylm import Ylm
 from .amplitudes.zlm import PolPhase, Zlm
 from .data import BinnedDataset, Dataset, Event
@@ -131,6 +132,7 @@ __all__ = [
     'VariableScalar',
     'Vec3',
     'Vec4',
+    'Voigt',
     'Ylm',
     'Zero',
     'Zlm',

@@ -13,6 +13,10 @@ pub use breit_wigner::{BreitWigner, BreitWignerNonRelativistic};
 pub mod flatte;
 pub use flatte::Flatte;
 
+/// The Voigt amplitude.
+pub mod voigt;
+pub use voigt::Voigt;
+
 mod semantic_key;
 
 /// Common amplitudes (like a scalar value which just contains a single free parameter).
