@@ -1,5 +1,4 @@
 use factorial::Factorial;
-use nalgebra::ComplexField;
 use num::{complex::Complex64, Integer};
 use std::f64::consts::PI;
 
@@ -247,16 +246,58 @@ pub enum BarrierKind {
 fn blatt_weisskopf_polynomial(z: Complex64, l: usize) -> Complex64 {
     match l {
         0 => Complex64::ONE,
-        1 => ((2.0 * z) / (z + 1.0)).sqrt(),
-        2 => ((13.0 * z.powi(2)) / ((z - 3.0).powi(2) + 9.0 * z)).sqrt(),
-        3 => {
-            ((277.0 * z.powi(3)) / (z * (z - 15.0).powi(2) + 9.0 * (2.0 * z - 5.0).powi(2))).sqrt()
+        1 => (2.0 * z) / (z + 1.0),
+        2 => (13.0 * z.powu(2)) / ((z - 3.0).powu(2) + 9.0 * z),
+        3 => (277.0 * z.powu(3)) / (z.powu(3) + 6.0 * z.powu(2) + 45.0 * z + 225.0),
+        4 => {
+            (12746.0 * z.powu(4))
+                / (z.powu(4) + 10.0 * z.powu(3) + 135.0 * z.powu(2) + 1575.0 * z + 11025.0)
         }
-        4 => ((12746.0 * z.powi(4))
-            / ((z.powi(2) - 45.0 * z + 105.0).powi(2) + 25.0 * z * (2.0 * z - 21.0).powi(2)))
-        .sqrt(),
+        5 => {
+            (998881.0 * z.powu(5))
+                / (z.powu(5)
+                    + 15.0 * z.powu(4)
+                    + 315.0 * z.powu(3)
+                    + 6300.0 * z.powu(2)
+                    + 99225.0 * z
+                    + 893025.0)
+        }
+        6 => {
+            (118394977.0 * z.powu(6))
+                / (z.powu(6)
+                    + 21.0 * z.powu(5)
+                    + 630.0 * z.powu(4)
+                    + 18900.0 * z.powu(3)
+                    + 496125.0 * z.powu(2)
+                    + 9823275.0 * z
+                    + 18261468225.0)
+        }
+        7 => {
+            (19727003738.0 * z.powu(7))
+                / (z.powu(7)
+                    + 28.0 * z.powu(6)
+                    + 1134.0 * z.powu(5)
+                    + 47250.0 * z.powu(4)
+                    + 1819125.0 * z.powu(3)
+                    + 58939650.0 * z.powu(2)
+                    + 1404728325.0 * z
+                    + 18261468225.0)
+        }
+        8 => {
+            (4392846440677.0 * z.powu(8))
+                / (z.powu(8)
+                    + 36.0 * z.powu(7)
+                    + 1890.0 * z.powu(6)
+                    + 103950.0 * z.powu(5)
+                    + 5457375.0 * z.powu(4)
+                    + 255405150.0 * z.powu(3)
+                    + 9833098275.0 * z.powu(2)
+                    + 273922023375.0 * z
+                    + 4108830350625.0)
+        }
         l => panic!("L = {l} is not yet implemented"),
     }
+    .sqrt()
 }
 
 /// Default Blatt-Weisskopf radius parameter `q_R` in GeV.
@@ -308,7 +349,7 @@ pub const QR_DEFAULT: f64 = 0.1973;
 ///
 /// # Panics
 ///
-/// Panics if `l > 4`.
+/// Panics if `l > 8`.
 pub fn blatt_weisskopf_s(
     s: Complex64,
     m1: f64,
@@ -352,6 +393,10 @@ pub fn blatt_weisskopf_s(
 /// On the unphysical sheet, it can be used in analytically continued amplitudes or pole studies.
 ///
 /// As with [`blatt_weisskopf_s`], the returned value may be complex below threshold.
+///
+/// # Panics
+///
+/// Panics if `l > 8`.
 pub fn blatt_weisskopf_m(
     m0: f64,
     m1: f64,
@@ -567,8 +612,52 @@ mod test {
             Sheet::Physical,
             BarrierKind::Full,
         );
-        assert_relative_eq!(w4im.re, 124.0525841825899);
+        assert_relative_eq!(w4im.re, 124.05258418258987);
         assert_relative_eq!(w4im.im, 0.0, epsilon = f64::EPSILON.sqrt());
+        let w5im = blatt_weisskopf_m(
+            1.2,
+            1.4,
+            1.5,
+            5,
+            QR_DEFAULT,
+            Sheet::Physical,
+            BarrierKind::Full,
+        );
+        assert_relative_eq!(w5im.re, 1138.5868292398761);
+        assert_relative_eq!(w5im.im, 0.0, epsilon = f64::EPSILON.sqrt());
+        let w6im = blatt_weisskopf_m(
+            1.2,
+            1.4,
+            1.5,
+            6,
+            QR_DEFAULT,
+            Sheet::Physical,
+            BarrierKind::Full,
+        );
+        assert_relative_eq!(w6im.re, 6211.480561374802);
+        assert_relative_eq!(w6im.im, 0.0, epsilon = f64::EPSILON.sqrt());
+        let w7im = blatt_weisskopf_m(
+            1.2,
+            1.4,
+            1.5,
+            7,
+            QR_DEFAULT,
+            Sheet::Physical,
+            BarrierKind::Full,
+        );
+        assert_relative_eq!(w7im.re, 172727.17381791578);
+        assert_relative_eq!(w5im.im, 0.0, epsilon = f64::EPSILON.sqrt());
+        let w8im = blatt_weisskopf_m(
+            1.2,
+            1.4,
+            1.5,
+            8,
+            QR_DEFAULT,
+            Sheet::Physical,
+            BarrierKind::Full,
+        );
+        assert_relative_eq!(w8im.re, 2630882.804294494);
+        assert_relative_eq!(w5im.im, 0.0, epsilon = f64::EPSILON.sqrt());
     }
     #[test]
     #[should_panic]
@@ -577,7 +666,7 @@ mod test {
             1.2,
             0.4,
             0.5,
-            5,
+            9,
             QR_DEFAULT,
             Sheet::Physical,
             BarrierKind::Full,

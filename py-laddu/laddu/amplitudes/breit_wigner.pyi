@@ -8,7 +8,7 @@ def BreitWigner(
     name: str,
     mass: ParameterLike,
     width: ParameterLike,
-    l: Literal[0, 1, 2, 3, 4],
+    l: Literal[0, 1, 2, 3, 4, 5, 6, 7, 8],
     daughter_1_mass: Mass,
     daughter_2_mass: Mass,
     resonance_mass: Mass,
