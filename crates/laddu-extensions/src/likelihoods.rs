@@ -828,7 +828,7 @@ impl NLL {
         Ok(())
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event (non-MPI version).
     ///
@@ -857,7 +857,7 @@ impl NLL {
         }
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event (MPI-compatible version).
     ///
@@ -889,7 +889,7 @@ impl NLL {
         Ok(buffer)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each
     /// Monte-Carlo event. This method takes the real part of the given expression (discarding
     /// the imaginary part entirely, which does not matter if expressions are coherent sums
@@ -916,7 +916,7 @@ impl NLL {
         self.project_weights_local(parameters, mc_evaluator)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event (non-MPI version).
     ///
@@ -945,7 +945,7 @@ impl NLL {
         }
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event (MPI-compatible version).
     ///
@@ -994,7 +994,7 @@ impl NLL {
             .collect();
         Ok((projection_result, gradient_projection_result))
     }
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method takes the real part of the given
     /// expression (discarding the imaginary part entirely, which does not matter if expressions
@@ -1021,7 +1021,7 @@ impl NLL {
         self.project_weights_and_gradients_local(parameters, mc_evaluator)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (non-MPI version).
@@ -1080,7 +1080,7 @@ impl NLL {
         self.project_weights_subset_local_with_strict(parameters, names, mc_evaluator, true)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation (MPI-compatible version).
@@ -1141,7 +1141,7 @@ impl NLL {
         self.project_weights_subset_mpi_with_strict(parameters, names, mc_evaluator, world, true)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
     /// by name, but returns the [`NLL`] to its prior state after calculation.
@@ -1384,7 +1384,7 @@ impl NLL {
         self.project_weights_subsets_with_strict(parameters, subsets, mc_evaluator, true)
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
@@ -1476,7 +1476,7 @@ impl NLL {
         )
     }
 
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each Monte-Carlo event. This method differs from the standard
     /// [`NLL::project_weights_and_gradients`] in that it first isolates the selected [`Amplitude`](`laddu_core::amplitudes::Amplitude`)s
@@ -1572,7 +1572,7 @@ impl NLL {
             true,
         )
     }
-    /// Project the stored [`Model`] over the events in the [`Dataset`] stored by the
+    /// Project the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters to obtain weights and gradients of
     /// those weights for each
     /// Monte-Carlo event. This method differs from the standard [`NLL::project_weights_and_gradients`] in that it first
@@ -2176,8 +2176,8 @@ impl StochasticNLL {
 ///
 /// Parameters
 /// ----------
-/// model: Model
-///     The Model to evaluate
+/// expression: Expression
+///     The Expression to evaluate
 /// ds_data : Dataset
 ///     A Dataset representing true signal data
 /// ds_accmc : Dataset

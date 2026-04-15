@@ -55,11 +55,14 @@ pub struct Resources {
     pub active: Vec<bool>,
     #[serde(default)]
     active_indices: Vec<usize>,
-    /// The set of all registered free parameter names across registered [`Amplitude`]s
+    /// The set of all registered free parameter names across registered
+    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
     pub free_parameters: IndexSet<String>,
-    /// The set of all registered fixed parameter names across registered [`Amplitude`]s
+    /// The set of all registered fixed parameter names across registered
+    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
     pub fixed_parameters: IndexSet<String>,
-    /// Values of all constants/fixed parameters across registered [`Amplitude`]s
+    /// Values of all constants/fixed parameters across registered
+    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
     pub constants: Vec<f64>,
     /// The [`Cache`] for each [`EventData`](`crate::data::EventData`)
     pub caches: Vec<Cache>,
@@ -386,7 +389,7 @@ impl Resources {
                 None => {
                     return Err(LadduError::AmplitudeNotFoundError {
                         name: name_ref.to_string(),
-                    })
+                    });
                 }
             }
         }
@@ -461,7 +464,7 @@ impl Resources {
                 None => {
                     return Err(LadduError::AmplitudeNotFoundError {
                         name: name_ref.to_string(),
-                    })
+                    });
                 }
             }
         }
@@ -572,19 +575,19 @@ impl Resources {
                     return Err(LadduError::ParameterConflict {
                         name: final_name,
                         reason: "conflicting fixed values for the same parameter name".to_string(),
-                    })
+                    });
                 }
                 (Some(_), None) => {
                     return Err(LadduError::ParameterConflict {
                         name: final_name,
                         reason: "attempted to use a fixed parameter name as free".to_string(),
-                    })
+                    });
                 }
                 (None, Some(_)) => {
                     return Err(LadduError::ParameterConflict {
                         name: final_name,
                         reason: "attempted to use a free parameter name as fixed".to_string(),
-                    })
+                    });
                 }
                 _ => return Ok(existing.id),
             }

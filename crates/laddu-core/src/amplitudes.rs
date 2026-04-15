@@ -301,8 +301,8 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
     ///
-    /// [`register`](Amplitude::register) is invoked once when an amplitude is first added to a
-    /// [`Manager`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
+    /// [`register`](Amplitude::register) is invoked once when an amplitude is first converted into
+    /// an [`Expression`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
     /// any dataset context.
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID>;
     /// Optional semantic identity key for same-name deduplication.
@@ -316,7 +316,7 @@ pub trait Amplitude: DynClone + Send + Sync {
     }
     /// Bind this [`Amplitude`] to a concrete [`Dataset`] by using the provided metadata to wire up
     /// [`Variable`](crate::utils::variables::Variable)s or other dataset-specific state. This will
-    /// be invoked when a [`Model`] is loaded with data, after [`register`](Amplitude::register)
+    /// be invoked when a [`Expression`] is loaded with data, after [`register`](Amplitude::register)
     /// has already succeeded. The default implementation is a no-op for amplitudes that do not
     /// depend on metadata.
     fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -470,7 +470,7 @@ pub struct AmplitudeValues(pub Vec<Complex64>);
 pub struct GradientValues(pub usize, pub Vec<DVector<Complex64>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
-/// build [`Expression`]s and should be obtained from the [`Resources::register`] method.
+/// build [`Expression`]s and should be obtained from the [`Resources::register_amplitude`] method.
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
@@ -1401,15 +1401,11 @@ impl ExpressionNode {
     }
 
     /// Evaluate an [`ExpressionNode`] by compiling it to bytecode on the fly.
-    ///
-    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
     pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
         self.program().evaluate(amplitude_values)
     }
 
     /// Evaluate the gradient of an [`ExpressionNode`].
-    ///
-    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
     pub fn evaluate_gradient(
         &self,
         amplitude_values: &[Complex64],
@@ -4094,7 +4090,7 @@ impl Evaluator {
     }
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. See also [`Expression::evaluate`].
+    /// [`Evaluator`] with the given values for free parameters. See also [`Evaluator::evaluate`].
     pub fn evaluate_batch(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
@@ -4441,7 +4437,7 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over a subset of the
     /// events in the [`Dataset`] stored by the [`Evaluator`] with the given values
-    /// for free parameters. See also [`Expression::evaluate_gradient`].
+    /// for free parameters. See also [`Evaluator::evaluate_gradient`].
     pub fn evaluate_gradient_batch(
         &self,
         parameters: &[f64],

@@ -347,6 +347,7 @@ impl PyEvent {
     }
 }
 
+#[doc(hidden)]
 /// A set of Events
 ///
 /// Datasets can be created from lists of Events or by using the constructor helpers
@@ -1084,6 +1085,7 @@ pub fn write_root(
     core_write_root(dataset.0.as_ref(), &path_str, &write_options).map_err(PyErr::from)
 }
 
+#[doc(hidden)]
 /// Build a Dataset from columnar arrays.
 ///
 /// This is the canonical high-throughput ingestion path used by Python reader helpers.

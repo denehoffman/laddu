@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::semantic_key::{debug_key, display_key};
 
-/// An [`Amplitude`] representing an extension of the [`Ylm`]
+/// An [`Amplitude`] representing an extension of the [`Ylm`](`crate::ylm::Ylm`)
 /// [`Amplitude`] assuming a linearly polarized beam as described in Equation (D13)
 /// [here](https://arxiv.org/abs/1906.04841)[^1]
 ///
