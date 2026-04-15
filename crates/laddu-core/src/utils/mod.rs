@@ -9,6 +9,9 @@ pub mod variables;
 /// particular, to treat the latter as a four-momentum).
 pub mod vectors;
 
+/// Methods for calculating Wigner 3-j symbols, Clebsch-Gordan coefficients, and Wigner small-d and full-D matrix elements.
+pub mod wigner;
+
 /// A helper method to get histogram edges from evenly-spaced `bins` over a given `range`
 ///
 /// # See Also

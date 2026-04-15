@@ -28,10 +28,44 @@ fn alp_pos_m(l: usize, m: usize, x: f64) -> f64 {
     p
 }
 
-/// Computes the spherical harmonic $`Y_{\ell}^m(\theta, \phi)`$ (given $`\cos\theta`$). Note that
-/// this formulation includes the Condon-Shortley phase.
+/// Computes the spherical harmonic $`Y_\ell^m(\theta, \phi)`$ given $`\cos\theta`$ and $`\phi`$.
+///
+/// The implementation follows
+///
+/// $`Y_\ell^m(\theta, \phi) = \sqrt{\frac{2\ell + 1}{4\pi} \frac{(\ell - m)!}{(\ell + m)!}} \, P_\ell^m(\cos\theta)\, e^{i m \phi}`$
+///
+/// where $`P_\ell^m`$ includes the Condon–Shortley phase.
+///
+/// # Arguments
+///
+/// - `l`: orbital angular momentum $`\ell \ge 0`$
+/// - `m`: magnetic quantum number $`-\ell \le m \le \ell`$
+/// - `costheta`: $`\cos\theta`$
+/// - `phi`: azimuthal angle (radians)
+///
+/// # Returns
+///
+/// The complex spherical harmonic $`Y_\ell^m(\theta, \phi)`$.
+///
+/// # Notes
+///
+/// For negative $`m`$,
+///
+/// $`Y_\ell^{-m} = (-1)^m (Y_\ell^m)^*`$
+///
+/// is applied explicitly.
+///
+/// # Panics
+///
+/// Panics if $`|m| > l`$.
 pub fn spherical_harmonic(l: usize, m: isize, costheta: f64, phi: f64) -> Complex64 {
     let abs_m = isize::abs(m) as usize;
+    assert!(
+        l >= abs_m,
+        "|m| must be less than l! (l = {}, m = {})",
+        l,
+        m
+    );
     let mut res = alp_pos_m(l, abs_m, costheta); // Includes Condon-Shortley phase already
     res *= f64::sqrt(
         (2 * l + 1) as f64 / (4.0 * PI) * ((l - abs_m).factorial()) as f64
@@ -61,15 +95,15 @@ pub fn chi_minus(s: f64, m1: f64, m2: f64) -> f64 {
 /// Selects the Riemann sheet used for analytic continuation of two-body kinematic functions.
 ///
 /// For a two-body channel, the breakup momentum
-/// `q(s) = sqrt((s - s_+)(s - s_-)) / (2 sqrt(s))`
+/// $`q(s) = \sqrt{(s - s_+)(s - s_-)} / (2 \sqrt{s})`$
 /// is a square-root-valued function and therefore lives on two sheets.
 ///
 /// Conventions used here:
 ///
 /// - `Physical`: the principal branch, chosen so that just above threshold on the real axis,
-///   `q` is real and positive.
+///   $`q`$ is real and positive.
 /// - `Unphysical`: the branch reached by crossing the channel cut once, implemented here
-///   by flipping the sign of `q`.
+///   by flipping the sign of $`q`$.
 ///
 /// This distinction matters for:
 ///
@@ -87,29 +121,16 @@ pub enum Sheet {
     Unphysical,
 }
 
-/// Computes the complex breakup momentum `q(s)` for a two-body channel on a chosen Riemann sheet.
+/// Computes the complex breakup momentum $`q(s)`$ for a two-body channel on a chosen Riemann sheet.
 ///
 /// The definition used is
 ///
-/// `q(s, m1, m2) = sqrt((s - s_+)(s - s_-)) / (2 sqrt(s))`,
+/// $`q(s) = \frac{\sqrt{(s - s_+)(s - s_-)}}{2\sqrt{s}}`$
 ///
-/// where
-///
-/// - `s_+ = (m1 + m2)^2`,
-/// - `s_- = (m1 - m2)^2`.
-///
-/// On the physical sheet:
-///
-/// - above threshold, `q` is real and positive,
-/// - below threshold, `q` is purely imaginary,
-/// - for complex `s`, this gives the analytic continuation of the physical branch.
-///
-/// On the unphysical sheet, the sign of the result is flipped:
-///
-/// `q_unphysical(s) = -q_physical(s)`.
+/// with $`s_\pm = (m_1 \pm m_2)^2`$.
 ///
 /// This function is the canonical analytic object from which the phase-space factor
-/// `rho(s) = 2 q(s) / sqrt(s)` is constructed.
+/// $`\rho(s) = 2 q(s) / \sqrt{s}`$ is constructed.
 ///
 /// # Arguments
 ///
@@ -121,6 +142,16 @@ pub enum Sheet {
 /// # Returns
 ///
 /// The complex breakup momentum on the requested sheet.
+///
+/// # Notes
+///
+/// On the physical sheet:
+///
+/// - above threshold, $`q`$ is real and positive,
+/// - below threshold, $`q`$ is purely imaginary,
+/// - for complex $`s`$, this gives the analytic continuation of the physical branch.
+///
+/// On the unphysical sheet, the sign of the result is flipped.
 pub fn q_s(s: Complex64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
     let sp = Complex64::from((m1 + m2).powi(2));
     let sm = Complex64::from((m1 - m2).powi(2));
@@ -131,18 +162,9 @@ pub fn q_s(s: Complex64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
     }
 }
 
-/// Computes the complex breakup momentum `q(m)` for a real mass `m` on a chosen Riemann sheet.
+/// Computes the complex breakup momentum $`q(m)`$ for a real mass $`m`$ on a chosen Riemann sheet.
 ///
-/// This is a convenience wrapper around [`q_s`], using `s = m^2`.
-///
-/// The definition is
-///
-/// `q(m, m1, m2) = q_s(m^2, m1, m2, sheet)`.
-///
-/// On the physical sheet:
-///
-/// - for `m > m1 + m2`, the result is real and positive,
-/// - for `m < m1 + m2`, the result is purely imaginary.
+/// This is a convenience wrapper around [`q_s`], using $`s = m^2`$.
 ///
 /// # Arguments
 ///
@@ -153,27 +175,29 @@ pub fn q_s(s: Complex64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
 ///
 /// # Returns
 ///
-/// The complex breakup momentum evaluated at `s = m^2`.
+/// The complex breakup momentum evaluated at $`s = m^2`$.
+///
+/// # Notes
+///
+/// On the physical sheet:
+///
+/// - for `m > m1 + m2`, the result is real and positive,
+/// - for `m < m1 + m2`, the result is purely imaginary.
 pub fn q_m(m: f64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
     q_s(m.powi(2).into(), m1, m2, sheet)
 }
 
-/// Computes the complex two-body phase-space factor `rho(s)` on a chosen Riemann sheet.
+/// Computes the complex two-body phase-space factor $`\rho(s)`$ on a chosen Riemann sheet.
 ///
 /// The definition used is
 ///
-/// `rho(s, m1, m2) = 2 q(s, m1, m2) / sqrt(s)`.
+/// $`\rho(s, m_1, m_2) = 2 q(s, m_1, m_2) / \sqrt{s}`$.
 ///
 /// Equivalently,
 ///
-/// `rho(s, m1, m2) = sqrt((1 - (m1 + m2)^2 / s) (1 - (m1 - m2)^2 / s))`,
+/// $`\rho(s, m_1, m_2) = \sqrt{(1 - (m_1 + m_2)^2 / s) (1 - (m_1 - m_2)^2 / s)}`$,
 ///
 /// with the branch determined by the choice of [`Sheet`].
-///
-/// On the physical sheet:
-///
-/// - above threshold, `rho` is real and positive,
-/// - below threshold, `rho` is purely imaginary.
 ///
 /// # Arguments
 ///
@@ -185,14 +209,21 @@ pub fn q_m(m: f64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
 /// # Returns
 ///
 /// The complex phase-space factor on the requested sheet.
+///
+/// # Notes
+///
+/// On the physical sheet:
+///
+/// - above threshold, $`\rho`$ is real and positive,
+/// - below threshold, $`\rho`$ is purely imaginary.
 pub fn rho_s(s: Complex64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
     2.0 * q_s(s, m1, m2, sheet) / s.sqrt()
 }
 
-/// Computes the complex two-body phase-space factor `rho(m)` for a real mass `m` on a chosen
+/// Computes the complex two-body phase-space factor $`\rho(m)`$ for a real mass $`m`$ on a chosen
 /// Riemann sheet.
 ///
-/// This is a convenience wrapper around [`rho_s`], using `s = m^2`.
+/// This is a convenience wrapper around [`rho_s`], using $`s = m^2`$.
 ///
 /// # Arguments
 ///
@@ -203,7 +234,7 @@ pub fn rho_s(s: Complex64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
 ///
 /// # Returns
 ///
-/// The complex phase-space factor evaluated at `s = m^2`.
+/// The complex phase-space factor evaluated at $`s = m^2`$.
 ///
 /// # Notes
 ///
@@ -220,26 +251,18 @@ pub fn rho_m(m: f64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
 /// Two related conventions are supported:
 ///
 /// - `Full`: the full barrier factor, which includes the threshold behavior
-///   proportional to `q^L`.
+///   proportional to $`q^\ell`$.
 /// - `Tensor`: the corresponding smooth "tensor" barrier factor, obtained by dividing the
-///   full factor by `q^L`.
-///
-/// In other words, schematically,
-///
-/// `Full ~ q^L F_L(q)`,
-///
-/// while
-///
-/// `Tensor ~ F_L(q)`.
+///   full factor by $`q^\ell`$.
 ///
 /// The tensor form is often useful when the explicit threshold dependence already appears in
 /// a covariant tensor amplitude or elsewhere in the model, and one only wants the smooth
 /// finite-size suppression factor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BarrierKind {
-    /// The full barrier factor, including threshold powers of `q`.
+    /// The full barrier factor, including threshold powers of $`q`$.
     Full,
-    /// The tensor barrier factor, with the explicit `q^L` dependence removed.
+    /// The tensor barrier factor, with the explicit $`q^\ell`$ dependence removed.
     Tensor,
 }
 
@@ -300,21 +323,21 @@ fn blatt_weisskopf_polynomial(z: Complex64, l: usize) -> Complex64 {
     .sqrt()
 }
 
-/// Default Blatt-Weisskopf radius parameter `q_R` in GeV.
+/// Default Blatt-Weisskopf radius parameter $`q_R`$ in GeV.
 ///
-/// Since the barrier factor depends on the dimensionless combination `z = q^2 / q_R^2`,
-/// changing `q_R` changes the scale at which centrifugal suppression becomes important.
+/// Since the barrier factor depends on the dimensionless combination $`z = q^2 / q_R^2`$,
+/// changing $`q_R`$ changes the scale at which centrifugal suppression becomes important.
 pub const QR_DEFAULT: f64 = 0.1973;
 
 /// Computes the Blatt-Weisskopf centrifugal barrier factor in terms of the squared invariant mass
-/// `s`, on a chosen Riemann sheet.
+/// $`s`$, on a chosen Riemann sheet.
 ///
 /// The computation proceeds by:
 ///
-/// 1. evaluating the complex breakup momentum `q(s)` on the chosen sheet,
-/// 2. forming `z = q^2 / q_R^2`,
-/// 3. evaluating the typical Blatt-Weisskopf polynomial in `z`,
-/// 4. optionally dividing by `q^L` if [`BarrierKind::Tensor`] is requested.
+/// 1. evaluating the complex breakup momentum $`q(s)`$ on the chosen sheet,
+/// 2. forming $`z = q^2 / q_R^2`$,
+/// 3. evaluating the typical Blatt-Weisskopf polynomial in $`z`$,
+/// 4. optionally dividing by $`q^\ell`$ if [`BarrierKind::Tensor`] is requested.
 ///
 /// # Arguments
 ///
@@ -330,16 +353,10 @@ pub const QR_DEFAULT: f64 = 0.1973;
 ///
 /// The requested complex barrier factor.
 ///
-/// # Conventions
-///
-/// - `BarrierKind::Full` returns the full factor, which includes threshold powers
-///   of `q`.
-/// - `BarrierKind::Tensor` returns the smooth factor with those powers removed.
-///
 /// # Notes
 ///
 /// This function uses the fully analytic complex momentum. As a result, the barrier factor can
-/// become complex below threshold or when evaluated at complex `s`.
+/// become complex below threshold or when evaluated at complex $`s`$.
 ///
 /// This behavior is appropriate for:
 ///
@@ -368,10 +385,10 @@ pub fn blatt_weisskopf_s(
     }
 }
 
-/// Computes the Blatt-Weisskopf centrifugal barrier factor for a real parent mass `m0`,
+/// Computes the Blatt-Weisskopf centrifugal barrier factor for a real parent mass $`m_0`$,
 /// on a chosen Riemann sheet.
 ///
-/// This is a convenience wrapper around [`blatt_weisskopf_s`], using `s = m0^2`.
+/// This is a convenience wrapper around [`blatt_weisskopf_s`], using $`s = m_0^2`$.
 ///
 /// # Arguments
 ///
@@ -385,7 +402,7 @@ pub fn blatt_weisskopf_s(
 ///
 /// # Returns
 ///
-/// The requested complex barrier factor evaluated at `s = m0^2`.
+/// The requested complex barrier factor evaluated at $`s = m_0^2`$.
 ///
 /// # Notes
 ///
