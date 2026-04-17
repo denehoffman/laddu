@@ -946,6 +946,7 @@ impl Variable for CosTheta {
                 (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => beam.boost(&-resonance.beta()).vec3().unit(),
+            Frame::Adair => beam.vec3().unit(),
         };
         let x = plane_normal.cross(&z).unit();
         let y = z.cross(&x).unit();
@@ -1054,6 +1055,7 @@ impl Variable for Phi {
                 (-recoil_res.vec3()).unit()
             }
             Frame::GottfriedJackson => beam.boost(&-resonance.beta()).vec3().unit(),
+            Frame::Adair => beam.vec3().unit(),
         };
         let x = plane_normal.cross(&z).unit();
         let y = z.cross(&x).unit();

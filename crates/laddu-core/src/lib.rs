@@ -559,7 +559,15 @@ pub use crate::resources::{
     Resources, ScalarID, VectorID,
 };
 pub use crate::thread_pool::ThreadPoolManager;
+pub use crate::utils::angular_momentum::{
+    AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum, Parity, SpinState,
+};
 pub use crate::utils::enums::{Channel, Frame, Sign};
+pub use crate::utils::kinematics::{DecayAngles, FrameAxes, RestFrame};
+pub use crate::utils::reaction::{
+    DecayChain, KinematicRef, ParticleHandle, Reaction, ReactionSlot, ReactionTopology,
+    ResolvedTwoToTwo, TwoToTwoReaction,
+};
 pub use crate::utils::variables::{
     Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };

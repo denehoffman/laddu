@@ -1,7 +1,13 @@
+/// Angular-momentum and parity quantum-number helpers.
+pub mod angular_momentum;
 /// Useful enumerations for various frames and variables common in particle physics analyses.
 pub mod enums;
 /// Standard special functions like spherical harmonics and momentum definitions.
 pub mod functions;
+/// Kinematic frame and rest-frame helpers.
+pub mod kinematics;
+/// Reaction and decay-chain topology helpers.
+pub mod reaction;
 /// Traits and structs which can be used to extract complex information from
 /// [`EventData`](crate::data::EventData)s.
 pub mod variables;
