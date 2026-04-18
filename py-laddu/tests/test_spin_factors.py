@@ -120,3 +120,35 @@ def test_quantum_number_inputs_reject_invalid_values() -> None:
 
     with pytest.raises(ValueError, match='orbital angular momentum must be an integer'):
         BlattWeisskopf('bad_l', rxn.decay(x), 1.5, 1.5)
+
+
+def test_decay_helicity_factor_matches_explicit_wigner_d() -> None:
+    dataset = make_test_dataset()
+    rxn, x, ks1, _ = reaction()
+    decay = rxn.decay(x)
+    factor = decay.helicity_factor('h', 2, 1, ks1, 1, 0)
+    explicit = WignerD('d', 2, 1, 1, decay.angles(ks1, 'Helicity')).conj()
+
+    factor_value = factor.load(dataset).evaluate([])[0]
+    explicit_value = explicit.load(dataset).evaluate([])[0]
+
+    assert factor_value.real == pytest.approx(explicit_value.real)
+    assert factor_value.imag == pytest.approx(explicit_value.imag)
+
+
+def test_decay_canonical_factor_matches_explicit_product() -> None:
+    dataset = make_test_dataset()
+    rxn, x, ks1, _ = reaction()
+    decay = rxn.decay(x)
+    factor = decay.canonical_factor('c', 2, 0, 2, 0, ks1, 0, 0, 0, 0)
+    explicit = (
+        ClebschGordan('ls_cg', 2, 0, 0, 0, 2, 0)
+        * ClebschGordan('spin_cg', 0, 0, 0, 0, 0, 0)
+        * WignerD('d', 2, 0, 0, decay.angles(ks1, 'Helicity')).conj()
+    )
+
+    factor_value = factor.load(dataset).evaluate([])[0]
+    explicit_value = explicit.load(dataset).evaluate([])[0] * (5.0**0.5)
+
+    assert factor_value.real == pytest.approx(explicit_value.real)
+    assert factor_value.imag == pytest.approx(explicit_value.imag)

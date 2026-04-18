@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import Literal, TypeAlias
 
 import numpy as np
@@ -9,6 +10,7 @@ from laddu.data import Dataset, Event
 from laddu.utils.vectors import Vec4
 
 _P4Selection: TypeAlias = str | Sequence[str]
+_QuantumNumber: TypeAlias = int | float | Fraction
 _Frame: TypeAlias = Literal[
     'Helicity',
     'HX',
@@ -55,6 +57,30 @@ class Decay:
     def costheta(self, daughter: Particle, frame: _Frame = 'Helicity') -> CosTheta: ...
     def phi(self, daughter: Particle, frame: _Frame = 'Helicity') -> Phi: ...
     def angles(self, daughter: Particle, frame: _Frame = 'Helicity') -> Angles: ...
+    def helicity_factor(
+        self,
+        name: str,
+        spin: _QuantumNumber,
+        projection: _QuantumNumber,
+        daughter: Particle,
+        lambda_1: _QuantumNumber,
+        lambda_2: _QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
+    def canonical_factor(
+        self,
+        name: str,
+        spin: _QuantumNumber,
+        projection: _QuantumNumber,
+        orbital_l: int,
+        coupled_spin: _QuantumNumber,
+        daughter: Particle,
+        daughter_1_spin: _QuantumNumber,
+        daughter_2_spin: _QuantumNumber,
+        lambda_1: _QuantumNumber,
+        lambda_2: _QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
 
 class Reaction:
     @staticmethod

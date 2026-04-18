@@ -1,15 +1,25 @@
 use std::{borrow::Borrow, fmt::Display};
 
+use nalgebra::DVector;
+use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    amplitudes::{Amplitude, AmplitudeID, Expression},
     data::NamedEventView,
+    resources::{Cache, ComplexScalarID, Parameters, Resources},
+    traits::Variable,
     utils::{
+        angular_momentum::{
+            AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum, SpinState,
+        },
         enums::{Channel, Frame},
         kinematics::{DecayAngles, FrameAxes, RestFrame},
         variables::{
-            Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, Phi, PolAngle, Polarization,
+            AngleVariables, Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, Phi, PolAngle,
+            Polarization,
         },
+        wigner::{clebsch_gordon, WignerDMatrix},
     },
     LadduError, LadduResult, Vec3, Vec4,
 };
@@ -601,6 +611,86 @@ impl Decay {
         ))
     }
 
+    /// Construct the helicity-basis angular factor for one explicit helicity term.
+    ///
+    /// The returned expression is `$D^{J*}_{M,\lambda}(\phi,\theta,0)$`, where
+    /// `$\lambda = \lambda_1 - \lambda_2$`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn helicity_factor(
+        &self,
+        name: &str,
+        spin: AngularMomentum,
+        projection: AngularMomentumProjection,
+        daughter: &Particle,
+        lambda_1: AngularMomentumProjection,
+        lambda_2: AngularMomentumProjection,
+        frame: Frame,
+    ) -> LadduResult<Expression> {
+        let lambda = AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value());
+        let angles = self.angles(daughter, frame)?;
+        Ok(DecayWignerD::expression(name, spin, projection, lambda, &angles)?.conj())
+    }
+
+    /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
+    ///
+    /// The returned expression is
+    /// `$\sqrt{2L+1}\langle L0;S\lambda|J\lambda\rangle
+    /// \langle J_1\lambda_1;J_2-\lambda_2|S\lambda\rangle
+    /// D^{J*}_{M,\lambda}(\phi,\theta,0)$`, where
+    /// `$\lambda = \lambda_1 - \lambda_2$`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn canonical_factor(
+        &self,
+        name: &str,
+        spin: AngularMomentum,
+        projection: AngularMomentumProjection,
+        orbital_l: OrbitalAngularMomentum,
+        coupled_spin: AngularMomentum,
+        daughter: &Particle,
+        daughter_1_spin: AngularMomentum,
+        daughter_2_spin: AngularMomentum,
+        lambda_1: AngularMomentumProjection,
+        lambda_2: AngularMomentumProjection,
+        frame: Frame,
+    ) -> LadduResult<Expression> {
+        let lambda = AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value());
+        let minus_lambda_2 = AngularMomentumProjection::from_twice(-lambda_2.value());
+        let norm = FixedScalar::expression(
+            &format!("{name}.norm"),
+            f64::from(2 * orbital_l.value() + 1).sqrt(),
+        )?;
+        let orbital_spin_cg = ClebschGordanFactor::expression(
+            &format!("{name}.orbital_spin_cg"),
+            orbital_l.angular_momentum(),
+            AngularMomentumProjection::integer(0),
+            coupled_spin,
+            lambda,
+            spin,
+            lambda,
+        )?;
+        let daughter_spin_cg = ClebschGordanFactor::expression(
+            &format!("{name}.daughter_spin_cg"),
+            daughter_1_spin,
+            lambda_1,
+            daughter_2_spin,
+            minus_lambda_2,
+            coupled_spin,
+            lambda,
+        )?;
+        Ok(norm
+            * orbital_spin_cg
+            * daughter_spin_cg
+            * self.helicity_factor(
+                &format!("{name}.wigner_d"),
+                spin,
+                projection,
+                daughter,
+                lambda_1,
+                lambda_2,
+                frame,
+            )?)
+    }
+
     fn validate_daughter(&self, daughter: &Particle) -> LadduResult<()> {
         if daughter == &self.daughter_1 || daughter == &self.daughter_2 {
             Ok(())
@@ -611,6 +701,144 @@ impl Decay {
                 self.parent.label()
             )))
         }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct FixedScalar {
+    name: String,
+    value: f64,
+}
+
+impl FixedScalar {
+    fn expression(name: &str, value: f64) -> LadduResult<Expression> {
+        Self {
+            name: name.to_string(),
+            value,
+        }
+        .into_expression()
+    }
+}
+
+#[typetag::serde]
+impl Amplitude for FixedScalar {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+        resources.register_amplitude(&self.name)
+    }
+
+    fn real_valued_hint(&self) -> bool {
+        true
+    }
+
+    fn compute(&self, _parameters: &Parameters, _cache: &Cache) -> Complex64 {
+        Complex64::new(self.value, 0.0)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex64>,
+    ) {
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ClebschGordanFactor;
+
+impl ClebschGordanFactor {
+    fn expression(
+        name: &str,
+        j1: AngularMomentum,
+        m1: AngularMomentumProjection,
+        j2: AngularMomentum,
+        m2: AngularMomentumProjection,
+        j: AngularMomentum,
+        m: AngularMomentumProjection,
+    ) -> LadduResult<Expression> {
+        let value = clebsch_gordon(
+            j1.value() as u64,
+            j2.value() as u64,
+            j.value() as u64,
+            m1.value() as i64,
+            m2.value() as i64,
+            m.value() as i64,
+        );
+        FixedScalar::expression(name, value)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct DecayWignerD {
+    name: String,
+    spin: AngularMomentum,
+    row_projection: AngularMomentumProjection,
+    column_projection: AngularMomentumProjection,
+    costheta: Box<dyn Variable>,
+    phi: Box<dyn Variable>,
+    value_id: ComplexScalarID,
+}
+
+impl DecayWignerD {
+    fn expression<A>(
+        name: &str,
+        spin: AngularMomentum,
+        row_projection: AngularMomentumProjection,
+        column_projection: AngularMomentumProjection,
+        angles: &A,
+    ) -> LadduResult<Expression>
+    where
+        A: AngleVariables,
+    {
+        SpinState::new(spin, row_projection)?;
+        SpinState::new(spin, column_projection)?;
+        Self {
+            name: name.to_string(),
+            spin,
+            row_projection,
+            column_projection,
+            costheta: angles.costheta_variable(),
+            phi: angles.phi_variable(),
+            value_id: ComplexScalarID::default(),
+        }
+        .into_expression()
+    }
+}
+
+#[typetag::serde]
+impl Amplitude for DecayWignerD {
+    fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
+        self.value_id = resources.register_complex_scalar(None);
+        resources.register_amplitude(&self.name)
+    }
+
+    fn bind(&mut self, metadata: &crate::data::DatasetMetadata) -> LadduResult<()> {
+        self.costheta.bind(metadata)?;
+        self.phi.bind(metadata)
+    }
+
+    fn precompute(&self, event: &NamedEventView<'_>, cache: &mut Cache) {
+        let costheta = self.costheta.value(event).clamp(-1.0, 1.0);
+        let theta = costheta.acos();
+        let phi = self.phi.value(event);
+        let d_matrix = WignerDMatrix::new(
+            self.spin.value() as u64,
+            self.row_projection.value() as i64,
+            self.column_projection.value() as i64,
+        );
+        cache.store_complex_scalar(self.value_id, d_matrix.D(phi, theta, 0.0));
+    }
+
+    fn compute(&self, _parameters: &Parameters, cache: &Cache) -> Complex64 {
+        cache.get_complex_scalar(self.value_id)
+    }
+
+    fn compute_gradient(
+        &self,
+        _parameters: &Parameters,
+        _cache: &Cache,
+        _gradient: &mut DVector<Complex64>,
+    ) {
     }
 }
 

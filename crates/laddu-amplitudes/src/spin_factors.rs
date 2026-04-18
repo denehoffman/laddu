@@ -778,4 +778,98 @@ mod tests {
         assert_relative_eq!(value.re, expected.re);
         assert_relative_eq!(value.im, expected.im);
     }
+
+    #[test]
+    fn helicity_factor_matches_conjugated_wigner_d() {
+        let dataset = Arc::new(test_dataset());
+        let (reaction, kk, kshort1) = reaction_context();
+        let decay = reaction.decay(&kk).unwrap();
+        let factor = decay
+            .helicity_factor(
+                "h",
+                AngularMomentum::integer(2),
+                AngularMomentumProjection::integer(1),
+                &kshort1,
+                AngularMomentumProjection::integer(1),
+                AngularMomentumProjection::integer(0),
+                Frame::Helicity,
+            )
+            .unwrap();
+        let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+        let explicit = WignerD::new(
+            "d",
+            AngularMomentum::integer(2),
+            AngularMomentumProjection::integer(1),
+            AngularMomentumProjection::integer(1),
+            &angles,
+        )
+        .unwrap()
+        .conj();
+
+        let factor_value = factor.load(&dataset).unwrap().evaluate(&[])[0];
+        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[])[0];
+
+        assert_relative_eq!(factor_value.re, explicit_value.re);
+        assert_relative_eq!(factor_value.im, explicit_value.im);
+    }
+
+    #[test]
+    fn canonical_factor_matches_explicit_product() {
+        let dataset = Arc::new(test_dataset());
+        let (reaction, kk, kshort1) = reaction_context();
+        let decay = reaction.decay(&kk).unwrap();
+        let factor = decay
+            .canonical_factor(
+                "c",
+                AngularMomentum::integer(2),
+                AngularMomentumProjection::integer(0),
+                OrbitalAngularMomentum::integer(2),
+                AngularMomentum::integer(0),
+                &kshort1,
+                AngularMomentum::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentumProjection::integer(0),
+                Frame::Helicity,
+            )
+            .unwrap();
+        let explicit = Scalar::new("norm", constant("norm.value", 5.0_f64.sqrt())).unwrap()
+            * ClebschGordan::new(
+                "orbital_spin",
+                AngularMomentum::integer(2),
+                AngularMomentumProjection::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentum::integer(2),
+                AngularMomentumProjection::integer(0),
+            )
+            .unwrap()
+            * ClebschGordan::new(
+                "daughter_spin",
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+            )
+            .unwrap()
+            * decay
+                .helicity_factor(
+                    "d",
+                    AngularMomentum::integer(2),
+                    AngularMomentumProjection::integer(0),
+                    &kshort1,
+                    AngularMomentumProjection::integer(0),
+                    AngularMomentumProjection::integer(0),
+                    Frame::Helicity,
+                )
+                .unwrap();
+
+        let factor_value = factor.load(&dataset).unwrap().evaluate(&[])[0];
+        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[])[0];
+
+        assert_relative_eq!(factor_value.re, explicit_value.re);
+        assert_relative_eq!(factor_value.im, explicit_value.im);
+    }
 }

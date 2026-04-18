@@ -1,19 +1,22 @@
 use crate::{
+    amplitudes::PyExpression,
     data::{PyDataset, PyEvent},
     utils::vectors::PyVec4,
 };
 use laddu_core::{
     data::{Dataset, DatasetMetadata, Event, NamedEventView},
     traits::Variable,
+    utils::angular_momentum::{AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum},
     utils::reaction::{Decay, Particle, Reaction},
     utils::variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
         PolMagnitude, Polarization, VariableExpression,
     },
-    LadduResult,
+    LadduError, LadduResult,
 };
+use num::rational::Ratio;
 use numpy::PyArray1;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyBool};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 
@@ -302,9 +305,119 @@ impl PyDecay {
         Ok(PyAngles(self.0.angles(&daughter.0, frame.parse()?)?))
     }
 
+    /// Construct the helicity-basis angular factor for one explicit helicity term.
+    #[pyo3(signature=(name, spin, projection, daughter, lambda_1, lambda_2, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn helicity_factor(
+        &self,
+        name: &str,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        daughter: &PyParticle,
+        lambda_1: &Bound<'_, PyAny>,
+        lambda_2: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.helicity_factor(
+            name,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            &daughter.0,
+            parse_projection(lambda_1)?,
+            parse_projection(lambda_2)?,
+            frame.parse()?,
+        )?))
+    }
+
+    /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
+    #[pyo3(signature=(name, spin, projection, orbital_l, coupled_spin, daughter, daughter_1_spin, daughter_2_spin, lambda_1, lambda_2, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn canonical_factor(
+        &self,
+        name: &str,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        orbital_l: &Bound<'_, PyAny>,
+        coupled_spin: &Bound<'_, PyAny>,
+        daughter: &PyParticle,
+        daughter_1_spin: &Bound<'_, PyAny>,
+        daughter_2_spin: &Bound<'_, PyAny>,
+        lambda_1: &Bound<'_, PyAny>,
+        lambda_2: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.canonical_factor(
+            name,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            parse_orbital_angular_momentum(orbital_l)?,
+            parse_angular_momentum(coupled_spin)?,
+            &daughter.0,
+            parse_angular_momentum(daughter_1_spin)?,
+            parse_angular_momentum(daughter_2_spin)?,
+            parse_projection(lambda_1)?,
+            parse_projection(lambda_2)?,
+            frame.parse()?,
+        )?))
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+}
+
+fn parse_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentum> {
+    parse_ratio_like(input)
+        .and_then(AngularMomentum::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentumProjection> {
+    parse_ratio_like(input)
+        .and_then(AngularMomentumProjection::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_orbital_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<OrbitalAngularMomentum> {
+    parse_ratio_like(input)
+        .and_then(OrbitalAngularMomentum::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_ratio_like(input: &Bound<'_, PyAny>) -> LadduResult<Ratio<i32>> {
+    if input.is_instance_of::<PyBool>() {
+        return Err(LadduError::Custom(
+            "quantum number cannot be a bool".to_string(),
+        ));
+    }
+    if let Ok(value) = input.extract::<i32>() {
+        return Ok(Ratio::from_integer(value));
+    }
+    if let Ok(value) = input.extract::<f64>() {
+        let twice = AngularMomentumProjection::from_f64(value)?.value();
+        return Ok(Ratio::new(twice, 2));
+    }
+    let numerator = input
+        .getattr("numerator")
+        .and_then(|value| value.extract::<i32>());
+    let denominator = input
+        .getattr("denominator")
+        .and_then(|value| value.extract::<i32>());
+    if let (Ok(numerator), Ok(denominator)) = (numerator, denominator) {
+        if denominator == 0 {
+            return Err(LadduError::Custom(
+                "quantum number denominator cannot be zero".to_string(),
+            ));
+        }
+        return Ok(Ratio::new(numerator, denominator));
+    }
+    Err(LadduError::Custom(
+        "quantum number must be an int, float, or fractions.Fraction".to_string(),
+    ))
+}
+
+fn py_value_error(err: LadduError) -> PyErr {
+    PyValueError::new_err(err.to_string())
 }
 /// The invariant mass of an arbitrary combination of constituent particles in an Event
 ///
