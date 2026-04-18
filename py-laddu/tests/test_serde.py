@@ -4,7 +4,9 @@ import pytest
 from laddu import Dataset, Event, Mass, Scalar, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixF0,
+    KopfKMatrixF0Channel,
     KopfKMatrixF2,
+    KopfKMatrixF2Channel,
 )
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
@@ -42,7 +44,7 @@ def test_serde() -> None:
             (parameter('p6'), parameter('p7')),
             (parameter('p8'), parameter('p9')),
         ),
-        1,
+        KopfKMatrixF0Channel.FourPi,
         res_mass,
     )
     f2 = KopfKMatrixF2(
@@ -53,7 +55,7 @@ def test_serde() -> None:
             (parameter('g4'), parameter('g5')),
             (parameter('g6'), parameter('g7')),
         ),
-        1,
+        KopfKMatrixF2Channel.FourPi,
         res_mass,
     )
     s = Scalar('s', parameter('s'))

@@ -8,7 +8,10 @@ use laddu::{
         breit_wigner::BreitWigner,
         common::ComplexScalar,
         common::Scalar,
-        kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
+        kmatrix::{
+            KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
+            KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
+        },
         parameter,
         ylm::Ylm,
         zlm::Zlm,
@@ -559,7 +562,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
             [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -570,7 +573,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
             [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -590,7 +593,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
             [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -601,7 +604,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a0(980)- re"), parameter("a0(980)- im")],
             [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -614,7 +617,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f2(1850) re"), parameter("f2(1850) im")],
             [parameter("f2(1910) re"), parameter("f2(1910) im")],
         ],
-        2,
+        KopfKMatrixF2Channel::KKbar,
         &resonance_mass,
         None,
     )
@@ -625,7 +628,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a2(1320) re"), parameter("a2(1320) im")],
             [parameter("a2(1700) re"), parameter("a2(1700) im")],
         ],
-        2,
+        KopfKMatrixA2Channel::PiEtaPrime,
         &resonance_mass,
         None,
     )

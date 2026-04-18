@@ -36,7 +36,9 @@ mod laddu {
         flatte::py_flatte,
         kmatrix::{
             py_kopf_kmatrix_a0, py_kopf_kmatrix_a2, py_kopf_kmatrix_f0, py_kopf_kmatrix_f2,
-            py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho,
+            py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho, KopfKMatrixA0Channel, KopfKMatrixA2Channel,
+            KopfKMatrixF0Channel, KopfKMatrixF2Channel, KopfKMatrixPi1Channel,
+            KopfKMatrixRhoChannel,
         },
         lookup_table::{
             py_lookup_table, py_lookup_table_complex, py_lookup_table_polar, py_lookup_table_scalar,

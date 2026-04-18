@@ -1,4 +1,4 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixA2Channel};
 use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
@@ -59,7 +59,7 @@ const COV_A2: SMatrix<f64, 17, 17> = matrix![
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixA2 {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixA2Channel,
     mass: Mass,
     constants: FixedKMatrix<3, 2>,
     couplings_real: [ParameterLike; 2],
@@ -88,7 +88,7 @@ impl KopfKMatrixA2 {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 2],
-        channel: usize,
+        channel: KopfKMatrixA2Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
@@ -162,7 +162,7 @@ impl Amplitude for KopfKMatrixA2 {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -208,7 +208,7 @@ impl Amplitude for KopfKMatrixA2 {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixA2Channel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -250,7 +250,7 @@ impl Amplitude for KopfKMatrixA2 {
 pub fn py_kopf_kmatrix_a2(
     name: &str,
     couplings: [[PyParameterLike; 2]; 2],
-    channel: usize,
+    channel: KopfKMatrixA2Channel,
     mass: PyMass,
     seed: Option<usize>,
 ) -> PyResult<PyExpression> {
@@ -282,7 +282,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA2Channel::KKbar,
             &res_mass,
             None,
         )
@@ -305,7 +305,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA2Channel::KKbar,
             &res_mass,
             None,
         )
@@ -333,7 +333,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA2Channel::KKbar,
             &res_mass,
             Some(1),
         )

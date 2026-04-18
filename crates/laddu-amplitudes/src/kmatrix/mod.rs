@@ -245,6 +245,12 @@ impl<const CHANNELS: usize, const RESONANCES: usize> FixedKMatrix<CHANNELS, RESO
     }
 }
 
+mod channel;
+pub use channel::{
+    KopfKMatrixA0Channel, KopfKMatrixA2Channel, KopfKMatrixF0Channel, KopfKMatrixF2Channel,
+    KopfKMatrixPi1Channel, KopfKMatrixRhoChannel,
+};
+
 /// Module containing the $`f_0`$ K-matrix.
 pub mod f0;
 pub use f0::KopfKMatrixF0;
@@ -300,7 +306,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA0Channel::KKbar,
             &res_mass,
             Some(1),
         )
@@ -324,7 +330,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA0Channel::KKbar,
             &res_mass,
             Some(1),
         )

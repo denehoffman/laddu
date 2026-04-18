@@ -2,11 +2,17 @@ import pytest
 from laddu import Dataset, Event, Mass, Particle, Reaction, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
+    KopfKMatrixA0Channel,
     KopfKMatrixA2,
+    KopfKMatrixA2Channel,
     KopfKMatrixF0,
+    KopfKMatrixF0Channel,
     KopfKMatrixF2,
+    KopfKMatrixF2Channel,
     KopfKMatrixPi1,
+    KopfKMatrixPi1Channel,
     KopfKMatrixRho,
+    KopfKMatrixRhoChannel,
 )
 
 P4_NAMES = ['beam', 'proton', 'kshort1', 'kshort2']
@@ -55,7 +61,7 @@ def test_f0_evaluation() -> None:
             (parameter('p6'), parameter('p7')),
             (parameter('p8'), parameter('p9')),
         ),
-        1,
+        KopfKMatrixF0Channel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -75,7 +81,7 @@ def test_f0_accepts_reaction_mass_variable() -> None:
             (parameter('p6'), parameter('p7')),
             (parameter('p8'), parameter('p9')),
         ),
-        1,
+        KopfKMatrixF0Channel.FourPi,
         make_reaction_mass(),
     )
     dataset = make_test_dataset()
@@ -98,7 +104,7 @@ def test_f0_gradient() -> None:
             (parameter('p6'), parameter('p7')),
             (parameter('p8'), parameter('p9')),
         ),
-        1,
+        KopfKMatrixF0Channel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -128,6 +134,23 @@ def test_f0_gradient() -> None:
     assert pytest.approx(result[0][9].imag) == pytest.approx(result[0][8].real)
 
 
+def test_f0_rejects_integer_channel() -> None:
+    res_mass = Mass(['kshort1', 'kshort2'])
+    with pytest.raises(TypeError):
+        KopfKMatrixF0(
+            'f0',
+            (
+                (parameter('p0'), parameter('p1')),
+                (parameter('p2'), parameter('p3')),
+                (parameter('p4'), parameter('p5')),
+                (parameter('p6'), parameter('p7')),
+                (parameter('p8'), parameter('p9')),
+            ),
+            1,  # ty: ignore[invalid-argument-type]
+            res_mass,
+        )
+
+
 def test_f2_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF2(
@@ -138,7 +161,7 @@ def test_f2_evaluation() -> None:
             (parameter('p4'), parameter('p5')),
             (parameter('p6'), parameter('p7')),
         ),
-        1,
+        KopfKMatrixF2Channel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -158,7 +181,7 @@ def test_f2_gradient() -> None:
             (parameter('p4'), parameter('p5')),
             (parameter('p6'), parameter('p7')),
         ),
-        1,
+        KopfKMatrixF2Channel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -190,7 +213,7 @@ def test_a0_evaluation() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixA0Channel.KKbar,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -208,7 +231,7 @@ def test_a0_gradient() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixA0Channel.KKbar,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -232,7 +255,7 @@ def test_a2_evaluation() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixA2Channel.KKbar,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -250,7 +273,7 @@ def test_a2_gradient() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixA2Channel.KKbar,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -274,7 +297,7 @@ def test_rho_evaluation() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixRhoChannel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -292,7 +315,7 @@ def test_rho_gradient() -> None:
             (parameter('p0'), parameter('p1')),
             (parameter('p2'), parameter('p3')),
         ),
-        1,
+        KopfKMatrixRhoChannel.FourPi,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -313,7 +336,7 @@ def test_pi1_evaluation() -> None:
     amp = KopfKMatrixPi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
-        1,
+        KopfKMatrixPi1Channel.PiEtaPrime,
         res_mass,
     )
     dataset = make_test_dataset()
@@ -328,7 +351,7 @@ def test_pi1_gradient() -> None:
     amp = KopfKMatrixPi1(
         'pi1',
         ((parameter('p0'), parameter('p1')),),
-        1,
+        KopfKMatrixPi1Channel.PiEtaPrime,
         res_mass,
     )
     dataset = make_test_dataset()

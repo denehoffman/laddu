@@ -1,4 +1,4 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixRhoChannel};
 use crate::semantic_key::{debug_key, display_key, parameter_array_key};
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
@@ -27,7 +27,7 @@ use std::array;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixRho {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixRhoChannel,
     mass: Mass,
     constants: FixedKMatrix<3, 2>,
     couplings_real: [ParameterLike; 2],
@@ -55,7 +55,7 @@ impl KopfKMatrixRho {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 2],
-        channel: usize,
+        channel: KopfKMatrixRhoChannel,
         mass: &Mass,
     ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 2] = array::from_fn(|_| ParameterLike::default());
@@ -132,7 +132,7 @@ impl Amplitude for KopfKMatrixRho {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -175,7 +175,7 @@ impl Amplitude for KopfKMatrixRho {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixRhoChannel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -217,7 +217,7 @@ impl Amplitude for KopfKMatrixRho {
 pub fn py_kopf_kmatrix_rho(
     name: &str,
     couplings: [[PyParameterLike; 2]; 2],
-    channel: usize,
+    channel: KopfKMatrixRhoChannel,
     mass: PyMass,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(KopfKMatrixRho::new(
@@ -247,7 +247,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixRhoChannel::FourPi,
             &res_mass,
         )
         .unwrap();
@@ -269,7 +269,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixRhoChannel::FourPi,
             &res_mass,
         )
         .unwrap();

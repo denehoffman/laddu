@@ -11,6 +11,20 @@ from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.flatte import Flatte
+from .amplitudes.kmatrix import (
+    KopfKMatrixA0,
+    KopfKMatrixA0Channel,
+    KopfKMatrixA2,
+    KopfKMatrixA2Channel,
+    KopfKMatrixF0,
+    KopfKMatrixF0Channel,
+    KopfKMatrixF2,
+    KopfKMatrixF2Channel,
+    KopfKMatrixPi1,
+    KopfKMatrixPi1Channel,
+    KopfKMatrixRho,
+    KopfKMatrixRhoChannel,
+)
 from .amplitudes.phase_space import PhaseSpaceFactor
 from .amplitudes.spin_factors import (
     BlattWeisskopf,
@@ -115,6 +129,18 @@ __all__ = [
     'Flatte',
     'GradientFreeStatus',
     'GradientStatus',
+    'KopfKMatrixA0',
+    'KopfKMatrixA0Channel',
+    'KopfKMatrixA2',
+    'KopfKMatrixA2Channel',
+    'KopfKMatrixF0',
+    'KopfKMatrixF0Channel',
+    'KopfKMatrixF2',
+    'KopfKMatrixF2Channel',
+    'KopfKMatrixPi1',
+    'KopfKMatrixPi1Channel',
+    'KopfKMatrixRho',
+    'KopfKMatrixRhoChannel',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
