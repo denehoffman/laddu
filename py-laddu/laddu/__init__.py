@@ -61,6 +61,7 @@ from .extensions import (
     likelihood_sum,
 )
 from .laddu import Evaluator, Expression, ParameterLike
+from .utils.angular_momentum import allowed_projections, helicity_combinations
 from .utils.variables import (
     Angles,
     CosTheta,
@@ -179,6 +180,7 @@ __all__ = [
     'Zero',
     'Zlm',
     '__version__',
+    'allowed_projections',
     'amplitudes',
     'constant',
     'data',
@@ -187,6 +189,7 @@ __all__ = [
     'expr_sum',
     'extensions',
     'get_threads',
+    'helicity_combinations',
     'integrated_autocorrelation_times',
     'io',
     'likelihood_product',

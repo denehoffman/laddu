@@ -150,6 +150,66 @@ impl SpinState {
     }
 }
 
+/// A two-particle helicity combination.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct HelicityCombination {
+    lambda_1: AngularMomentumProjection,
+    lambda_2: AngularMomentumProjection,
+    helicity: AngularMomentumProjection,
+}
+
+impl HelicityCombination {
+    /// Construct a helicity combination from two daughter spin projections.
+    pub fn new(lambda_1: AngularMomentumProjection, lambda_2: AngularMomentumProjection) -> Self {
+        Self {
+            lambda_1,
+            lambda_2,
+            helicity: AngularMomentumProjection::from_twice(lambda_1.value() - lambda_2.value()),
+        }
+    }
+
+    /// Return the first daughter projection.
+    pub const fn lambda_1(self) -> AngularMomentumProjection {
+        self.lambda_1
+    }
+
+    /// Return the second daughter projection.
+    pub const fn lambda_2(self) -> AngularMomentumProjection {
+        self.lambda_2
+    }
+
+    /// Return `lambda_1 - lambda_2`.
+    pub const fn helicity(self) -> AngularMomentumProjection {
+        self.helicity
+    }
+}
+
+/// Enumerate allowed projections for a spin.
+pub fn allowed_projections(spin: AngularMomentum) -> Vec<AngularMomentumProjection> {
+    SpinState::allowed_projections(spin)
+        .into_iter()
+        .map(SpinState::projection)
+        .collect()
+}
+
+/// Enumerate all daughter helicity combinations for two spins.
+pub fn helicity_combinations(
+    spin_1: AngularMomentum,
+    spin_2: AngularMomentum,
+) -> Vec<HelicityCombination> {
+    let projections_1 = allowed_projections(spin_1);
+    let projections_2 = allowed_projections(spin_2);
+    projections_1
+        .into_iter()
+        .flat_map(|lambda_1| {
+            projections_2
+                .iter()
+                .copied()
+                .map(move |lambda_2| HelicityCombination::new(lambda_1, lambda_2))
+        })
+        .collect()
+}
+
 /// A non-negative integer orbital angular momentum.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct OrbitalAngularMomentum(u32);
@@ -354,6 +414,54 @@ mod tests {
                 .map(|state| state.projection().value())
                 .collect::<Vec<_>>(),
             vec![-3, -1, 1, 3]
+        );
+    }
+
+    #[test]
+    fn allowed_projection_helper_returns_projection_values() {
+        assert_eq!(
+            allowed_projections(AngularMomentum::integer(1)),
+            vec![
+                AngularMomentumProjection::integer(-1),
+                AngularMomentumProjection::integer(0),
+                AngularMomentumProjection::integer(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn helicity_combinations_enumerate_daughter_projection_products() {
+        let spin_half = AngularMomentum::from_half(1);
+        let combinations = helicity_combinations(spin_half, spin_half);
+
+        assert_eq!(
+            combinations,
+            vec![
+                HelicityCombination::new(
+                    AngularMomentumProjection::from_half(-1),
+                    AngularMomentumProjection::from_half(-1),
+                ),
+                HelicityCombination::new(
+                    AngularMomentumProjection::from_half(-1),
+                    AngularMomentumProjection::from_half(1),
+                ),
+                HelicityCombination::new(
+                    AngularMomentumProjection::from_half(1),
+                    AngularMomentumProjection::from_half(-1),
+                ),
+                HelicityCombination::new(
+                    AngularMomentumProjection::from_half(1),
+                    AngularMomentumProjection::from_half(1),
+                ),
+            ]
+        );
+        assert_eq!(
+            combinations[1].helicity(),
+            AngularMomentumProjection::integer(-1)
+        );
+        assert_eq!(
+            combinations[2].helicity(),
+            AngularMomentumProjection::integer(1)
         );
     }
 

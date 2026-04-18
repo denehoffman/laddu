@@ -1,3 +1,3 @@
-from laddu.utils import variables, vectors
+from laddu.utils import angular_momentum, variables, vectors
 
-__all__ = ['variables', 'vectors']
+__all__ = ['angular_momentum', 'variables', 'vectors']

@@ -21,6 +21,7 @@ mod laddu {
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         set_threads,
         utils::{
+            angular_momentum::{py_allowed_projections, py_helicity_combinations},
             variables::{
                 PyAngles, PyCosTheta, PyDecay, PyMandelstam, PyMass, PyParticle, PyPhi, PyPolAngle,
                 PyPolMagnitude, PyPolarization, PyReaction, PyVariableExpression,

@@ -560,7 +560,8 @@ pub use crate::resources::{
 };
 pub use crate::thread_pool::ThreadPoolManager;
 pub use crate::utils::angular_momentum::{
-    AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum, Parity, SpinState,
+    allowed_projections, helicity_combinations, AngularMomentum, AngularMomentumProjection,
+    HelicityCombination, OrbitalAngularMomentum, Parity, SpinState,
 };
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::kinematics::{DecayAngles, FrameAxes, RestFrame};

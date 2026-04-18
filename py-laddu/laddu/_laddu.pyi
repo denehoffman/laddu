@@ -78,6 +78,7 @@ from laddu.extensions import (
     likelihood_product,
     likelihood_sum,
 )
+from laddu.utils.angular_momentum import allowed_projections, helicity_combinations
 from laddu.utils.variables import (
     Angles,
     CosTheta,
@@ -169,6 +170,7 @@ __all__ = [
     'Ylm',
     'Zero',
     'Zlm',
+    'allowed_projections',
     'available_parallelism',
     'constant',
     'expr_product',
@@ -178,6 +180,7 @@ __all__ = [
     'get_rank',
     'get_size',
     'get_threads',
+    'helicity_combinations',
     'integrated_autocorrelation_times',
     'is_mpi_available',
     'is_root',
