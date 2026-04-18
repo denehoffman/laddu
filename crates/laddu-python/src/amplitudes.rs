@@ -388,12 +388,12 @@ impl PyEvaluator {
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyEvaluator> {
         Ok(PyEvaluator(self.0.rename_parameters(&mapping)?))
     }
-    /// Activates Amplitudes in the Expression by name
+    /// Activates Amplitudes in the Expression by name or glob selector
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be activated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be activated
     ///
     /// Raises
     /// ------
@@ -402,8 +402,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn activate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
@@ -431,14 +431,14 @@ impl PyEvaluator {
     fn activate_all(&self) {
         self.0.activate_all();
     }
-    /// Deactivates Amplitudes in the Expression by name
+    /// Deactivates Amplitudes in the Expression by name or glob selector
     ///
     /// Deactivated Amplitudes act as zeros in the Expression
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be deactivated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be deactivated
     ///
     /// Raises
     /// ------
@@ -447,8 +447,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn deactivate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
@@ -476,14 +476,14 @@ impl PyEvaluator {
     fn deactivate_all(&self) {
         self.0.deactivate_all();
     }
-    /// Isolates Amplitudes in the Expression by name
+    /// Isolates Amplitudes in the Expression by name or glob selector
     ///
     /// Activates the Amplitudes given in `arg` and deactivates the rest
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be isolated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be isolated
     ///
     /// Raises
     /// ------
@@ -492,8 +492,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn isolate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {

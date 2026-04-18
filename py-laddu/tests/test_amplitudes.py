@@ -225,6 +225,43 @@ def test_amplitude_activation() -> None:
     assert result[0] == 3.0 + 0.0j
 
 
+def test_amplitude_activation_globs() -> None:
+    amp1 = ComplexScalar(
+        'signal.s', constant('signal_s_re', 1.0), constant('signal_s_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'signal.d', constant('signal_d_re', 2.0), constant('signal_d_im', 0.0)
+    )
+    amp3 = ComplexScalar(
+        'background', constant('background_re', 4.0), constant('background_im', 0.0)
+    )
+    evaluator = (amp1 + amp2 + amp3).load(make_test_dataset())
+
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.deactivate('signal.*')
+    assert evaluator.evaluate([])[0] == 4.0 + 0.0j
+
+    evaluator.activate('signal.?')
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.isolate('signal.*')
+    assert evaluator.evaluate([])[0] == 3.0 + 0.0j
+
+    evaluator.isolate(['signal.s', 'back*'])
+    assert evaluator.evaluate([])[0] == 5.0 + 0.0j
+
+    with pytest.raises(ValueError):
+        evaluator.activate('missing*')
+
+    evaluator.activate_all()
+    evaluator.deactivate('missing*', strict=False)
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.isolate('missing*', strict=False)
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+
 def test_evaluator_active_mask_roundtrip() -> None:
     amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
     amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
