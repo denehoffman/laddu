@@ -4,7 +4,8 @@ use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     LadduResult,
 };
 #[cfg(feature = "python")]

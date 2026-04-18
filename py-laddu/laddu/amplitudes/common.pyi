@@ -1,5 +1,12 @@
 from laddu.amplitudes import Expression, ParameterLike
-from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
+from laddu.utils.variables import (
+    CosTheta,
+    Mandelstam,
+    Mass,
+    Phi,
+    PolAngle,
+    PolMagnitude,
+)
 
 def Scalar(name: str, value: ParameterLike) -> Expression: ...
 def VariableScalar(

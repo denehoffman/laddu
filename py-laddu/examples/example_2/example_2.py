@@ -33,12 +33,22 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
+def reaction_variables() -> tuple[ld.Angles, ld.Polarization]:
+    beam = ld.Particle.measured('beam', 'beam')
+    target = ld.Particle.missing('target')
+    kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+    kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+    kk = ld.Particle.composite('KK', [kshort1, kshort2])
+    proton = ld.Particle.measured('proton', 'proton')
+    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+    angles = reaction.decay(kk).angles(kshort1)
+    polarization = reaction.polarization('pol_magnitude', 'pol_angle')
+    return angles, polarization
+
+
 def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
     const = 2 * np.sqrt((4 * np.pi) / (2 * l + 1)) * (1 / 2 if i == 0 else 1)
-    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    polarization = ld.Polarization(
-        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
-    )
+    angles, polarization = reaction_variables()
     big_phi = data[polarization.pol_angle]
     p_gamma = data[polarization.pol_magnitude]
     pol_term = np.ones(data.n_events)
@@ -46,14 +56,7 @@ def get_measured_moment(data: ld.Dataset, *, i: int, l: int, m: int) -> complex:
         pol_term = np.cos(2 * big_phi) / p_gamma
     elif i == 2:
         pol_term = np.sin(2 * big_phi) / p_gamma
-    ylm = ld.Ylm(
-        'ylm',
-        l,
-        m,
-        ld.Angles(
-            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
-        ),
-    )
+    ylm = ld.Ylm('ylm', l, m, angles)
     model = ylm.conj()
     evaluator = model.load(data)
     values = evaluator.evaluate([])
@@ -75,10 +78,7 @@ def get_norm_int_term(
     const = (
         8.0 * np.pi / n_gen * np.sqrt((2 * lp + 1) / (2 * l + 1)) * (1j if ip == 2 else 1)
     )
-    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    polarization = ld.Polarization(
-        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
-    )
+    angles, polarization = reaction_variables()
     big_phi = accmc[polarization.pol_angle]
     p_gamma = accmc[polarization.pol_magnitude]
     pol_term = np.ones(accmc.n_events)
@@ -90,22 +90,8 @@ def get_norm_int_term(
         pol_term *= np.cos(2 * big_phi) * p_gamma
     elif ip == 2:
         pol_term *= np.sin(2 * big_phi) * p_gamma
-    ylm = ld.Ylm(
-        'ylm',
-        l,
-        m,
-        ld.Angles(
-            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
-        ),
-    )
-    ylpmp = ld.Ylm(
-        'ylpmp',
-        lp,
-        mp,
-        ld.Angles(
-            ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'
-        ),
-    )
+    ylm = ld.Ylm('ylm', l, m, angles)
+    ylpmp = ld.Ylm('ylpmp', lp, mp, angles)
     model = ylm.conj() * (ylpmp.imag() if ip == 2 else ylpmp.real())
     evaluator = model.load(accmc)
     values = evaluator.evaluate([])

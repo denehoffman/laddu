@@ -40,6 +40,13 @@ pub use ylm::Ylm;
 pub mod zlm;
 pub use zlm::Zlm;
 
+/// Spin, angular, barrier, and density-matrix factor amplitudes.
+pub mod spin_factors;
+pub use spin_factors::{
+    BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, Wigner3j,
+    WignerD,
+};
+
 /// A phase space factor for `$a+b\to c+d$` with `$c\to 1+2$`.
 pub mod phase_space;
 pub use phase_space::PhaseSpaceFactor;

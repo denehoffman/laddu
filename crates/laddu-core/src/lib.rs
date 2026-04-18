@@ -565,11 +565,10 @@ pub use crate::utils::angular_momentum::{
 pub use crate::utils::enums::{Channel, Frame, Sign};
 pub use crate::utils::kinematics::{DecayAngles, FrameAxes, RestFrame};
 pub use crate::utils::reaction::{
-    DecayChain, KinematicRef, ParticleHandle, Reaction, ReactionSlot, ReactionTopology,
-    ResolvedTwoToTwo, TwoToTwoReaction,
+    Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,
 };
 pub use crate::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
+    AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use crate::utils::vectors::{Vec3, Vec4};
 pub use amplitudes::{constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike};

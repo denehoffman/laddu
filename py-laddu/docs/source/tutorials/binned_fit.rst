@@ -46,9 +46,16 @@ where the terms with particle names in square brackets still represent the produ
 
 .. code-block:: python
 
-   topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-   angles = ld.Angles(topology, 'kshort1')
-   polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
+   beam = ld.Particle.measured('beam', 'beam')
+   target = ld.Particle.missing('target')
+   kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+   kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+   kk = ld.Particle.composite('KK', [kshort1, kshort2])
+   proton = ld.Particle.measured('proton', 'proton')
+   reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+   decay = reaction.decay(kk)
+   angles = decay.angles(kshort1)
+   polarization = reaction.polarization('pol_magnitude', 'pol_angle')
 
    z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
    z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)

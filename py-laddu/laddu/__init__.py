@@ -12,6 +12,13 @@ from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.flatte import Flatte
 from .amplitudes.phase_space import PhaseSpaceFactor
+from .amplitudes.spin_factors import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    Wigner3j,
+    WignerD,
+)
 from .amplitudes.voigt import Voigt
 from .amplitudes.ylm import Ylm
 from .amplitudes.zlm import PolPhase, Zlm
@@ -43,13 +50,15 @@ from .laddu import Evaluator, Expression, ParameterLike
 from .utils.variables import (
     Angles,
     CosTheta,
+    Decay,
     Mandelstam,
     Mass,
+    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Topology,
+    Reaction,
 )
 from .utils.vectors import Vec3, Vec4
 
@@ -90,12 +99,15 @@ __all__ = [
     'NLL',
     'Angles',
     'BinnedDataset',
+    'BlattWeisskopf',
     'BreitWigner',
     'BreitWignerNonRelativistic',
+    'ClebschGordan',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',
     'Dataset',
+    'Decay',
     'EnsembleStatus',
     'Evaluator',
     'Event',
@@ -119,20 +131,24 @@ __all__ = [
     'MinimizationTerminator',
     'One',
     'ParameterLike',
+    'Particle',
     'PhaseSpaceFactor',
     'Phi',
+    'PhotonSDME',
     'PolAngle',
     'PolMagnitude',
     'PolPhase',
     'PolarComplexScalar',
     'Polarization',
+    'Reaction',
     'Scalar',
     'StochasticNLL',
-    'Topology',
     'VariableScalar',
     'Vec3',
     'Vec4',
     'Voigt',
+    'Wigner3j',
+    'WignerD',
     'Ylm',
     'Zero',
     'Zlm',

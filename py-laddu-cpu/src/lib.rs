@@ -22,8 +22,8 @@ mod laddu {
         set_threads,
         utils::{
             variables::{
-                PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
-                PyPolarization, PyTopology, PyVariableExpression,
+                PyAngles, PyCosTheta, PyDecay, PyMandelstam, PyMass, PyParticle, PyPhi, PyPolAngle,
+                PyPolMagnitude, PyPolarization, PyReaction, PyVariableExpression,
             },
             vectors::{PyVec3, PyVec4},
         },
@@ -42,6 +42,9 @@ mod laddu {
             py_lookup_table, py_lookup_table_complex, py_lookup_table_polar, py_lookup_table_scalar,
         },
         phase_space::py_phase_space_factor,
+        spin_factors::{
+            py_blatt_weisskopf, py_clebsch_gordan, py_photon_sdme, py_wigner_3j, py_wigner_d,
+        },
         voigt::py_voigt,
         ylm::py_ylm,
         zlm::{py_polphase, py_zlm},

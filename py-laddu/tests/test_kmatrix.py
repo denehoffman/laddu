@@ -1,5 +1,5 @@
 import pytest
-from laddu import Dataset, Event, Mass, Vec3, parameter
+from laddu import Dataset, Event, Mass, Particle, Reaction, Vec3, parameter
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA2,
@@ -33,6 +33,17 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
+def make_reaction_mass() -> Mass:
+    beam = Particle.measured('beam', 'beam')
+    target = Particle.missing('target')
+    recoil = Particle.measured('recoil', 'proton')
+    ks1 = Particle.measured('K_S1', 'kshort1')
+    ks2 = Particle.measured('K_S2', 'kshort2')
+    x = Particle.composite('X', [ks1, ks2])
+    reaction = Reaction.two_to_two(beam, target, x, recoil)
+    return reaction.mass(x)
+
+
 def test_f0_evaluation() -> None:
     res_mass = Mass(['kshort1', 'kshort2'])
     amp = KopfKMatrixF0(
@@ -50,6 +61,28 @@ def test_f0_evaluation() -> None:
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    assert pytest.approx(result[0].real) == 0.2674945594859745
+    assert pytest.approx(result[0].imag) == 0.7289451151846622
+
+
+def test_f0_accepts_reaction_mass_variable() -> None:
+    amp = KopfKMatrixF0(
+        'f0',
+        (
+            (parameter('p0'), parameter('p1')),
+            (parameter('p2'), parameter('p3')),
+            (parameter('p4'), parameter('p5')),
+            (parameter('p6'), parameter('p7')),
+            (parameter('p8'), parameter('p9')),
+        ),
+        1,
+        make_reaction_mass(),
+    )
+    dataset = make_test_dataset()
+    result = amp.load(dataset).evaluate(
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    )
+
     assert pytest.approx(result[0].real) == 0.2674945594859745
     assert pytest.approx(result[0].imag) == 0.7289451151846622
 

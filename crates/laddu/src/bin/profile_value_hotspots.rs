@@ -14,7 +14,7 @@ use laddu::{
     traits::LikelihoodTerm,
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, Polarization, Topology},
+        variables::Mass,
     },
     Evaluator, Expression, RngSubsetExtension,
 };
@@ -32,6 +32,29 @@ const PARTIAL_WAVE_GENMC_SEED: u64 = 23;
 const KMATRIX_DATASET_SEED: u64 = 71;
 const DEFAULT_WARMUP_ITERS: usize = 64;
 const DEFAULT_ITERS: usize = 4096;
+
+fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass, Mass, Mass) {
+    let beam = laddu::Particle::measured("beam", "beam");
+    let target = laddu::Particle::missing("target");
+    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
+    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
+    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+    let proton = laddu::Particle::measured("proton", "proton");
+    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+    let decay = reaction.decay(&kk).unwrap();
+    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+    let resonance_mass = decay.parent_mass();
+    let daughter_1_mass = decay.daughter_1_mass();
+    let daughter_2_mass = decay.daughter_2_mass();
+    (
+        angles,
+        polarization,
+        resonance_mass,
+        daughter_1_mass,
+        daughter_2_mass,
+    )
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
@@ -266,12 +289,8 @@ fn deterministic_parameter_vector(n_free: usize, offset: f64) -> Vec<f64> {
 }
 
 fn build_breit_wigner_partial_wave_model() -> Expression {
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-    let daughter_1_mass = Mass::new(["kshort1"]);
-    let daughter_2_mass = Mass::new(["kshort2"]);
+    let (angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
+        reaction_variables();
 
     let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
         .expect("z00 should construct");
@@ -348,10 +367,7 @@ fn build_kmatrix_nll(dataset_path: &str, max_events: Option<usize>) -> Box<NLL> 
     } else {
         (dataset.clone(), dataset)
     };
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let (angles, polarization, resonance_mass, _, _) = reaction_variables();
     let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
         .expect("z00+ should construct");
     let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)

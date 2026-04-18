@@ -1,415 +1,241 @@
+use std::{borrow::Borrow, fmt::Display};
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
     data::NamedEventView,
     utils::{
-        enums::Frame,
+        enums::{Channel, Frame},
         kinematics::{DecayAngles, FrameAxes, RestFrame},
-        variables::IntoP4Selection,
+        variables::{
+            Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, Phi, PolAngle, Polarization,
+        },
     },
     LadduError, LadduResult, Vec3, Vec4,
 };
 
-/// A stable handle to a particle in a [`DecayChain`].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct ParticleHandle(usize);
-
-impl ParticleHandle {
-    /// Return the zero-based particle index in its decay chain.
-    pub const fn index(self) -> usize {
-        self.0
-    }
-}
-
-/// A handle-based decay tree whose leaves resolve from p4 columns.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct DecayChain {
-    nodes: Vec<ParticleNode>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ParticleNode {
+/// A kinematic particle or composite system used to define a reaction.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Particle {
     label: String,
-    kind: ParticleNodeKind,
+    source: ParticleSource,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-enum ParticleNodeKind {
-    Stable { p4_names: Vec<String> },
-    Composite { daughters: Vec<ParticleHandle> },
+/// Source of a particle four-momentum.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ParticleSource {
+    /// The four-momentum is read from one or more dataset p4 columns.
+    Measured {
+        /// Dataset p4 column names whose momenta are summed.
+        p4_names: Vec<String>,
+    },
+    /// The four-momentum is fixed for every event.
+    Fixed {
+        /// Fixed four-momentum.
+        p4: Vec4,
+    },
+    /// The four-momentum is solved from reaction-level four-momentum conservation.
+    Missing,
+    /// The four-momentum is the sum of daughter particles.
+    Composite {
+        /// Daughter particles whose momenta are summed.
+        daughters: Vec<Particle>,
+    },
 }
 
-impl DecayChain {
-    /// Construct an empty decay chain.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add a stable final-state particle backed by one or more p4 names.
-    pub fn stable<S>(&mut self, label: impl Into<String>, p4: S) -> ParticleHandle
+impl Particle {
+    /// Construct a measured particle backed by one or more p4 column names.
+    pub fn measured<S>(label: impl Into<String>, p4: S) -> Self
     where
         S: IntoP4Selection,
     {
-        let selection = p4.into_selection();
-        self.push_node(ParticleNode {
+        Self {
             label: label.into(),
-            kind: ParticleNodeKind::Stable {
-                p4_names: selection.names().to_vec(),
+            source: ParticleSource::Measured {
+                p4_names: p4.into_selection().names().to_vec(),
             },
-        })
+        }
     }
 
-    /// Add a composite particle whose four-momentum is the sum of its daughters.
-    pub fn composite<I>(
-        &mut self,
-        label: impl Into<String>,
-        daughters: I,
-    ) -> LadduResult<ParticleHandle>
+    /// Construct a particle with a fixed four-momentum.
+    pub fn fixed(label: impl Into<String>, p4: Vec4) -> Self {
+        Self {
+            label: label.into(),
+            source: ParticleSource::Fixed { p4 },
+        }
+    }
+
+    /// Construct a missing particle solved by the enclosing reaction topology.
+    pub fn missing(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            source: ParticleSource::Missing,
+        }
+    }
+
+    /// Construct a composite particle from daughter particles.
+    pub fn composite<I, P>(label: impl Into<String>, daughters: I) -> LadduResult<Self>
     where
-        I: IntoIterator<Item = ParticleHandle>,
+        I: IntoIterator<Item = P>,
+        P: Borrow<Particle>,
     {
-        let daughters = daughters.into_iter().collect::<Vec<_>>();
+        let daughters = daughters
+            .into_iter()
+            .map(|daughter| daughter.borrow().clone())
+            .collect::<Vec<_>>();
         if daughters.is_empty() {
             return Err(LadduError::Custom(
                 "composite particle must contain at least one daughter".to_string(),
             ));
         }
-        for daughter in &daughters {
-            self.node(*daughter)?;
+        if daughters.iter().any(Self::contains_missing) {
+            return Err(LadduError::Custom(
+                "missing particles cannot be used as composite daughters".to_string(),
+            ));
         }
-        Ok(self.push_node(ParticleNode {
+        Ok(Self {
             label: label.into(),
-            kind: ParticleNodeKind::Composite { daughters },
-        }))
-    }
-
-    /// Return the number of particles in the chain.
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Return whether this chain contains no particles.
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// Return a particle label.
-    pub fn label(&self, handle: ParticleHandle) -> LadduResult<&str> {
-        Ok(&self.node(handle)?.label)
-    }
-
-    /// Resolve a particle four-momentum from an event.
-    pub fn p4(&self, event: &NamedEventView<'_>, handle: ParticleHandle) -> LadduResult<Vec4> {
-        match &self.node(handle)?.kind {
-            ParticleNodeKind::Stable { p4_names } => {
-                if p4_names.is_empty() {
-                    return Err(LadduError::Custom(
-                        "p4 reference must contain at least one name".to_string(),
-                    ));
-                }
-                event
-                    .get_p4_sum(p4_names.iter().map(String::as_str))
-                    .ok_or_else(|| {
-                        LadduError::Custom(format!(
-                            "unknown p4 selection '{}'",
-                            p4_names.join(", ")
-                        ))
-                    })
-            }
-            ParticleNodeKind::Composite { daughters } => daughters
-                .iter()
-                .map(|daughter| self.p4(event, *daughter))
-                .try_fold(Vec4::new(0.0, 0.0, 0.0, 0.0), |acc, value| {
-                    value.map(|value| acc + value)
-                }),
-        }
-    }
-
-    fn node(&self, handle: ParticleHandle) -> LadduResult<&ParticleNode> {
-        self.nodes.get(handle.index()).ok_or_else(|| {
-            LadduError::Custom(format!(
-                "particle handle {} is not present in this decay chain",
-                handle.index()
-            ))
+            source: ParticleSource::Composite { daughters },
         })
     }
 
-    fn parent_of(&self, child: ParticleHandle) -> LadduResult<Option<ParticleHandle>> {
-        self.node(child)?;
-        Ok(self
-            .nodes
+    /// Return the particle label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Return the particle four-momentum source.
+    pub const fn source(&self) -> &ParticleSource {
+        &self.source
+    }
+
+    /// Return whether this particle is missing.
+    pub const fn is_missing(&self) -> bool {
+        matches!(self.source, ParticleSource::Missing)
+    }
+
+    fn contains_missing(&self) -> bool {
+        self.is_missing() || self.daughters().iter().any(Self::contains_missing)
+    }
+
+    /// Return the daughters if this particle is composite.
+    pub fn daughters(&self) -> &[Particle] {
+        match &self.source {
+            ParticleSource::Composite { daughters } => daughters,
+            _ => &[],
+        }
+    }
+
+    fn contains(&self, particle: &Particle) -> bool {
+        if self == particle {
+            return true;
+        }
+        self.daughters()
             .iter()
-            .enumerate()
-            .find_map(|(index, node)| match &node.kind {
-                ParticleNodeKind::Stable { .. } => None,
-                ParticleNodeKind::Composite { daughters } if daughters.contains(&child) => {
-                    Some(ParticleHandle(index))
-                }
-                ParticleNodeKind::Composite { .. } => None,
-            }))
+            .any(|daughter| daughter.contains(particle))
     }
 
-    fn contains(&self, root: ParticleHandle, particle: ParticleHandle) -> LadduResult<bool> {
-        if root == particle {
-            return Ok(true);
+    fn parent_of(&self, child: &Particle) -> Option<&Particle> {
+        if self.daughters().iter().any(|daughter| daughter == child) {
+            return Some(self);
         }
-        match &self.node(root)?.kind {
-            ParticleNodeKind::Stable { .. } => Ok(false),
-            ParticleNodeKind::Composite { daughters } => {
-                for daughter in daughters {
-                    if self.contains(*daughter, particle)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-        }
-    }
-
-    fn push_node(&mut self, node: ParticleNode) -> ParticleHandle {
-        let handle = ParticleHandle(self.nodes.len());
-        self.nodes.push(node);
-        handle
+        self.daughters()
+            .iter()
+            .find_map(|daughter| daughter.parent_of(child))
     }
 }
 
-/// A four-momentum reference used by reaction slots.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum KinematicRef {
-    /// A p4 column name or alias selection.
-    P4(Vec<String>),
-    /// A handle into the reaction decay chain.
-    Particle(ParticleHandle),
-}
-
-impl KinematicRef {
-    /// Construct a p4 reference from a selection.
-    pub fn p4<S>(selection: S) -> Self
-    where
-        S: IntoP4Selection,
-    {
-        Self::P4(selection.into_selection().names().to_vec())
-    }
-
-    /// Construct a particle reference.
-    pub const fn particle(handle: ParticleHandle) -> Self {
-        Self::Particle(handle)
+impl Display for Particle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
     }
 }
 
-impl From<&str> for KinematicRef {
-    fn from(value: &str) -> Self {
-        Self::p4(value)
-    }
-}
-
-impl From<String> for KinematicRef {
-    fn from(value: String) -> Self {
-        Self::p4(value)
-    }
-}
-
-impl<const N: usize> From<[&str; N]> for KinematicRef {
-    fn from(value: [&str; N]) -> Self {
-        Self::p4(value)
-    }
-}
-
-impl From<ParticleHandle> for KinematicRef {
-    fn from(value: ParticleHandle) -> Self {
-        Self::particle(value)
-    }
-}
-
-/// A two-to-two reaction slot.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ReactionSlot {
-    /// A known four-momentum source.
-    Known(KinematicRef),
-    /// A missing slot inferred by four-momentum conservation.
-    Missing,
-}
-
-impl ReactionSlot {
-    /// Construct a known slot.
-    pub fn known(value: impl Into<KinematicRef>) -> Self {
-        Self::Known(value.into())
-    }
-
-    /// Construct a missing slot.
-    pub const fn missing() -> Self {
-        Self::Missing
-    }
-}
-
-impl<T> From<T> for ReactionSlot
-where
-    T: Into<KinematicRef>,
-{
-    fn from(value: T) -> Self {
-        Self::known(value)
-    }
-}
-
-/// A slot-based two-to-two reaction preserving `p1 + p2 -> p3 + p4` semantics.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// A direct two-to-two reaction preserving `p1 + p2 -> p3 + p4` semantics.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TwoToTwoReaction {
-    p1: ReactionSlot,
-    p2: ReactionSlot,
-    p3: ReactionSlot,
-    p4: ReactionSlot,
+    p1: Particle,
+    p2: Particle,
+    p3: Particle,
+    p4: Particle,
     missing_index: Option<usize>,
 }
 
 impl TwoToTwoReaction {
-    /// Construct a fully specified two-to-two reaction.
-    pub fn new(
-        p1: impl Into<ReactionSlot>,
-        p2: impl Into<ReactionSlot>,
-        p3: impl Into<ReactionSlot>,
-        p4: impl Into<ReactionSlot>,
-    ) -> LadduResult<Self> {
-        Self::from_slots(p1.into(), p2.into(), p3.into(), p4.into())
+    /// Construct a two-to-two reaction.
+    pub fn new(p1: &Particle, p2: &Particle, p3: &Particle, p4: &Particle) -> LadduResult<Self> {
+        let particles = [p1, p2, p3, p4];
+        let missing = particles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, particle)| particle.is_missing().then_some(index))
+            .collect::<Vec<_>>();
+        if missing.len() > 1 {
+            return Err(LadduError::Custom(
+                "two-to-two reaction can contain at most one missing particle".to_string(),
+            ));
+        }
+        Ok(Self {
+            p1: p1.clone(),
+            p2: p2.clone(),
+            p3: p3.clone(),
+            p4: p4.clone(),
+            missing_index: missing.first().copied(),
+        })
     }
 
-    /// Construct a two-to-two reaction with `p1` inferred by conservation.
-    pub fn missing_p1(
-        p2: impl Into<KinematicRef>,
-        p3: impl Into<KinematicRef>,
-        p4: impl Into<KinematicRef>,
-    ) -> LadduResult<Self> {
-        Self::from_slots(
-            ReactionSlot::Missing,
-            ReactionSlot::known(p2),
-            ReactionSlot::known(p3),
-            ReactionSlot::known(p4),
-        )
+    /// Return `p1`.
+    pub const fn p1(&self) -> &Particle {
+        &self.p1
     }
 
-    /// Construct a two-to-two reaction with `p2` inferred by conservation.
-    pub fn missing_p2(
-        p1: impl Into<KinematicRef>,
-        p3: impl Into<KinematicRef>,
-        p4: impl Into<KinematicRef>,
-    ) -> LadduResult<Self> {
-        Self::from_slots(
-            ReactionSlot::known(p1),
-            ReactionSlot::Missing,
-            ReactionSlot::known(p3),
-            ReactionSlot::known(p4),
-        )
+    /// Return `p2`.
+    pub const fn p2(&self) -> &Particle {
+        &self.p2
     }
 
-    /// Construct a two-to-two reaction with `p3` inferred by conservation.
-    pub fn missing_p3(
-        p1: impl Into<KinematicRef>,
-        p2: impl Into<KinematicRef>,
-        p4: impl Into<KinematicRef>,
-    ) -> LadduResult<Self> {
-        Self::from_slots(
-            ReactionSlot::known(p1),
-            ReactionSlot::known(p2),
-            ReactionSlot::Missing,
-            ReactionSlot::known(p4),
-        )
+    /// Return `p3`.
+    pub const fn p3(&self) -> &Particle {
+        &self.p3
     }
 
-    /// Construct a two-to-two reaction with `p4` inferred by conservation.
-    pub fn missing_p4(
-        p1: impl Into<KinematicRef>,
-        p2: impl Into<KinematicRef>,
-        p3: impl Into<KinematicRef>,
-    ) -> LadduResult<Self> {
-        Self::from_slots(
-            ReactionSlot::known(p1),
-            ReactionSlot::known(p2),
-            ReactionSlot::known(p3),
-            ReactionSlot::Missing,
-        )
+    /// Return `p4`.
+    pub const fn p4(&self) -> &Particle {
+        &self.p4
+    }
+
+    /// Return the zero-based missing particle index, if any.
+    pub const fn missing_index(&self) -> Option<usize> {
+        self.missing_index
     }
 
     /// Resolve all four reaction momenta for one event.
-    pub fn resolve(
-        &self,
-        event: &NamedEventView<'_>,
-        chain: &DecayChain,
-    ) -> LadduResult<ResolvedTwoToTwo> {
+    pub fn resolve(&self, event: &NamedEventView<'_>) -> LadduResult<ResolvedTwoToTwo> {
         let mut momenta = [
-            self.resolve_known_slot(event, chain, 0)?,
-            self.resolve_known_slot(event, chain, 1)?,
-            self.resolve_known_slot(event, chain, 2)?,
-            self.resolve_known_slot(event, chain, 3)?,
+            resolve_particle_direct(event, &self.p1)?,
+            resolve_particle_direct(event, &self.p2)?,
+            resolve_particle_direct(event, &self.p3)?,
+            resolve_particle_direct(event, &self.p4)?,
         ];
         if let Some(index) = self.missing_index {
-            let inferred = match index {
+            let missing = match index {
                 0 => momenta[2].unwrap() + momenta[3].unwrap() - momenta[1].unwrap(),
                 1 => momenta[2].unwrap() + momenta[3].unwrap() - momenta[0].unwrap(),
                 2 => momenta[0].unwrap() + momenta[1].unwrap() - momenta[3].unwrap(),
                 3 => momenta[0].unwrap() + momenta[1].unwrap() - momenta[2].unwrap(),
                 _ => unreachable!("validated two-to-two slot index"),
             };
-            momenta[index] = Some(inferred);
+            momenta[index] = Some(missing);
         }
-        let p1 = momenta[0].unwrap();
-        let p2 = momenta[1].unwrap();
-        let p3 = momenta[2].unwrap();
-        let p4 = momenta[3].unwrap();
-        Ok(ResolvedTwoToTwo { p1, p2, p3, p4 })
-    }
-
-    /// Return the zero-based missing slot index, if any.
-    pub const fn missing_index(&self) -> Option<usize> {
-        self.missing_index
-    }
-
-    /// Return the `p3` slot.
-    pub const fn p3_slot(&self) -> &ReactionSlot {
-        &self.p3
-    }
-
-    /// Return the `p4` slot.
-    pub const fn p4_slot(&self) -> &ReactionSlot {
-        &self.p4
-    }
-
-    fn from_slots(
-        p1: ReactionSlot,
-        p2: ReactionSlot,
-        p3: ReactionSlot,
-        p4: ReactionSlot,
-    ) -> LadduResult<Self> {
-        let missing = [&p1, &p2, &p3, &p4]
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| matches!(slot, ReactionSlot::Missing).then_some(index))
-            .collect::<Vec<_>>();
-        if missing.len() > 1 {
-            return Err(LadduError::Custom(
-                "two-to-two reaction can infer at most one missing slot".to_string(),
-            ));
-        }
-        Ok(Self {
-            p1,
-            p2,
-            p3,
-            p4,
-            missing_index: missing.first().copied(),
+        Ok(ResolvedTwoToTwo {
+            p1: momenta[0].unwrap(),
+            p2: momenta[1].unwrap(),
+            p3: momenta[2].unwrap(),
+            p4: momenta[3].unwrap(),
         })
     }
 
-    fn resolve_known_slot(
-        &self,
-        event: &NamedEventView<'_>,
-        chain: &DecayChain,
-        index: usize,
-    ) -> LadduResult<Option<Vec4>> {
-        match self.slot(index) {
-            ReactionSlot::Known(reference) => resolve_ref(event, chain, reference).map(Some),
-            ReactionSlot::Missing => Ok(None),
-        }
-    }
-
-    fn slot(&self, index: usize) -> &ReactionSlot {
+    fn particle_at(&self, index: usize) -> &Particle {
         match index {
             0 => &self.p1,
             1 => &self.p2,
@@ -421,16 +247,10 @@ impl TwoToTwoReaction {
 }
 
 /// A reaction topology.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ReactionTopology {
     /// A two-to-two reaction with `p1 + p2 -> p3 + p4` semantics.
     TwoToTwo(TwoToTwoReaction),
-}
-
-impl From<TwoToTwoReaction> for ReactionTopology {
-    fn from(value: TwoToTwoReaction) -> Self {
-        Self::TwoToTwo(value)
-    }
 }
 
 /// Resolved event-level momenta for a two-to-two reaction.
@@ -484,25 +304,23 @@ impl ResolvedTwoToTwo {
     }
 }
 
-/// A handle-based sequential reaction.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// A reaction with direct particle definitions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Reaction {
-    chain: DecayChain,
     topology: ReactionTopology,
 }
 
 impl Reaction {
-    /// Construct a reaction from a decay chain and topology.
-    pub fn new(chain: DecayChain, topology: impl Into<ReactionTopology>) -> Self {
-        Self {
-            chain,
-            topology: topology.into(),
-        }
-    }
-
-    /// Return the decay chain.
-    pub const fn chain(&self) -> &DecayChain {
-        &self.chain
+    /// Construct a two-to-two reaction.
+    pub fn two_to_two(
+        p1: &Particle,
+        p2: &Particle,
+        p3: &Particle,
+        p4: &Particle,
+    ) -> LadduResult<Self> {
+        Ok(Self {
+            topology: ReactionTopology::TwoToTwo(TwoToTwoReaction::new(p1, p2, p3, p4)?),
+        })
     }
 
     /// Return the reaction topology.
@@ -511,22 +329,86 @@ impl Reaction {
     }
 
     /// Resolve a particle p4 from an event.
-    pub fn p4(&self, event: &NamedEventView<'_>, particle: ParticleHandle) -> LadduResult<Vec4> {
-        self.chain.p4(event, particle)
+    pub fn p4(&self, event: &NamedEventView<'_>, particle: &Particle) -> LadduResult<Vec4> {
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => {
+                if let Some(index) = topology.missing_index() {
+                    if topology.particle_at(index) == particle {
+                        return Ok(match index {
+                            0 => topology.resolve(event)?.p1(),
+                            1 => topology.resolve(event)?.p2(),
+                            2 => topology.resolve(event)?.p3(),
+                            3 => topology.resolve(event)?.p4(),
+                            _ => unreachable!("validated two-to-two slot index"),
+                        });
+                    }
+                }
+                resolve_particle_direct(event, particle)?.ok_or_else(|| {
+                    LadduError::Custom(format!(
+                        "missing particle '{}' is not a missing role in this reaction",
+                        particle.label()
+                    ))
+                })
+            }
+        }
     }
 
     /// Resolve the two-to-two topology momenta from an event.
     pub fn resolve_two_to_two(&self, event: &NamedEventView<'_>) -> LadduResult<ResolvedTwoToTwo> {
         match &self.topology {
-            ReactionTopology::TwoToTwo(topology) => topology.resolve(event, &self.chain),
+            ReactionTopology::TwoToTwo(topology) => topology.resolve(event),
         }
+    }
+
+    /// Construct a mass variable for a particle.
+    pub fn mass(&self, particle: &Particle) -> Mass {
+        Mass::from_reaction(self.clone(), particle.clone())
+    }
+
+    /// Construct an isobar decay view from a composite parent.
+    pub fn decay(&self, parent: &Particle) -> LadduResult<Decay> {
+        self.root_particle_for(parent)?;
+        let daughters = parent.daughters();
+        if daughters.len() != 2 {
+            return Err(LadduError::Custom(
+                "isobar decays must contain exactly two ordered daughters".to_string(),
+            ));
+        }
+        Ok(Decay {
+            reaction: self.clone(),
+            parent: parent.clone(),
+            daughter_1: daughters[0].clone(),
+            daughter_2: daughters[1].clone(),
+        })
+    }
+
+    /// Construct a Mandelstam variable for this reaction.
+    pub fn mandelstam(&self, channel: Channel) -> Mandelstam {
+        Mandelstam::new(self.clone(), channel)
+    }
+
+    /// Construct a polarization-angle variable for this reaction.
+    pub fn pol_angle<A>(&self, angle_aux: A) -> PolAngle
+    where
+        A: Into<String>,
+    {
+        PolAngle::new(self.clone(), angle_aux)
+    }
+
+    /// Construct polarization variables for this reaction.
+    pub fn polarization<M, A>(&self, magnitude_aux: M, angle_aux: A) -> Polarization
+    where
+        M: Into<String>,
+        A: Into<String>,
+    {
+        Polarization::new(self.clone(), magnitude_aux, angle_aux)
     }
 
     /// Compute axes for a particle in this reaction.
     pub fn axes(
         &self,
         event: &NamedEventView<'_>,
-        particle: ParticleHandle,
+        particle: &Particle,
         frame: Frame,
     ) -> LadduResult<FrameAxes> {
         let (root_index, root) = self.root_particle_for(particle)?;
@@ -549,25 +431,29 @@ impl Reaction {
                 resolved.com_boost(),
             );
         }
-        let parent = self.chain.parent_of(particle)?.ok_or_else(|| {
+        let parent = self.parent_of(particle).ok_or_else(|| {
             LadduError::Custom(format!(
-                "particle {} is not connected to the reaction root",
-                particle.index()
+                "particle '{}' is not connected to the reaction root",
+                particle.label()
             ))
         })?;
-        let parent_axes = self.axes(event, parent, frame)?;
-        parent_axes.for_daughter(self.p4_in_rest_frame_of(event, parent, particle)?.vec3())
+        let parent_axes = self.axes(event, &parent, frame)?;
+        parent_axes.for_daughter(self.p4_in_rest_frame_of(event, &parent, particle)?.vec3())
     }
 
     /// Compute a daughter's decay angles in its parent rest frame.
-    pub fn angles(
+    pub fn angles_value(
         &self,
         event: &NamedEventView<'_>,
-        parent: ParticleHandle,
-        daughter: ParticleHandle,
+        parent: &Particle,
+        daughter: &Particle,
         frame: Frame,
     ) -> LadduResult<DecayAngles> {
-        if self.chain.parent_of(daughter)? != Some(parent) {
+        if !parent
+            .daughters()
+            .iter()
+            .any(|candidate| candidate == daughter)
+        {
             return Err(LadduError::Custom(
                 "daughter is not an immediate child of parent".to_string(),
             ));
@@ -576,62 +462,193 @@ impl Reaction {
         axes.angles(self.p4_in_rest_frame_of(event, parent, daughter)?.vec3())
     }
 
-    fn root_particle_for(&self, particle: ParticleHandle) -> LadduResult<(usize, ParticleHandle)> {
+    fn root_particle_for(&self, particle: &Particle) -> LadduResult<(usize, &Particle)> {
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
-                for (index, slot) in [(2, topology.p3_slot()), (3, topology.p4_slot())] {
-                    if let ReactionSlot::Known(KinematicRef::Particle(root)) = slot {
-                        if self.chain.contains(*root, particle)? {
-                            return Ok((index, *root));
-                        }
+                for (index, root) in [(2, topology.p3()), (3, topology.p4())] {
+                    if root.contains(particle) {
+                        return Ok((index, root));
                     }
                 }
             }
         }
         Err(LadduError::Custom(
-            "particle is not contained in an outgoing decay-chain root".to_string(),
+            "particle is not contained in an outgoing reaction root".to_string(),
         ))
+    }
+
+    fn parent_of(&self, child: &Particle) -> Option<Particle> {
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => [topology.p3(), topology.p4()]
+                .into_iter()
+                .find_map(|root| root.parent_of(child).cloned()),
+        }
     }
 
     fn p4_in_rest_frame_of(
         &self,
         event: &NamedEventView<'_>,
-        frame_particle: ParticleHandle,
-        target: ParticleHandle,
+        frame_particle: &Particle,
+        target: &Particle,
     ) -> LadduResult<Vec4> {
         let (_, root) = self.root_particle_for(frame_particle)?;
         if frame_particle == root {
-            let root_rest = RestFrame::new(self.chain.p4(event, root)?)?;
-            return Ok(root_rest.transform(self.chain.p4(event, target)?));
+            let resolved = self.resolve_two_to_two(event)?;
+            let com_boost = resolved.com_boost();
+            let root_rest = RestFrame::new(self.p4(event, root)?.boost(&com_boost))?;
+            return Ok(root_rest.transform(self.p4(event, target)?.boost(&com_boost)));
         }
-        let parent = self.chain.parent_of(frame_particle)?.ok_or_else(|| {
+        let parent = self.parent_of(frame_particle).ok_or_else(|| {
             LadduError::Custom("frame particle is not connected to root".to_string())
         })?;
-        let frame_particle_in_parent = self.p4_in_rest_frame_of(event, parent, frame_particle)?;
-        let target_in_parent = self.p4_in_rest_frame_of(event, parent, target)?;
+        let frame_particle_in_parent = self.p4_in_rest_frame_of(event, &parent, frame_particle)?;
+        let target_in_parent = self.p4_in_rest_frame_of(event, &parent, target)?;
         Ok(RestFrame::new(frame_particle_in_parent)?.transform(target_in_parent))
     }
 }
 
-fn resolve_ref(
+/// An isobar decay view used to derive variables and decay-local amplitudes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Decay {
+    reaction: Reaction,
+    parent: Particle,
+    daughter_1: Particle,
+    daughter_2: Particle,
+}
+
+impl Decay {
+    /// Return the enclosing reaction.
+    pub const fn reaction(&self) -> &Reaction {
+        &self.reaction
+    }
+
+    /// Return the parent particle.
+    pub const fn parent(&self) -> &Particle {
+        &self.parent
+    }
+
+    /// Return the first daughter particle.
+    pub const fn daughter_1(&self) -> &Particle {
+        &self.daughter_1
+    }
+
+    /// Return the second daughter particle.
+    pub const fn daughter_2(&self) -> &Particle {
+        &self.daughter_2
+    }
+
+    /// Return the ordered daughter particles.
+    pub fn daughters(&self) -> [&Particle; 2] {
+        [&self.daughter_1, &self.daughter_2]
+    }
+
+    /// Return the parent mass variable.
+    pub fn mass(&self) -> Mass {
+        self.reaction.mass(&self.parent)
+    }
+
+    /// Return the parent mass variable.
+    pub fn parent_mass(&self) -> Mass {
+        self.mass()
+    }
+
+    /// Return the first daughter mass variable.
+    pub fn daughter_1_mass(&self) -> Mass {
+        self.reaction.mass(&self.daughter_1)
+    }
+
+    /// Return the second daughter mass variable.
+    pub fn daughter_2_mass(&self) -> Mass {
+        self.reaction.mass(&self.daughter_2)
+    }
+
+    /// Return the mass variable for one of the ordered daughters.
+    pub fn daughter_mass(&self, daughter: &Particle) -> LadduResult<Mass> {
+        self.validate_daughter(daughter)?;
+        Ok(self.reaction.mass(daughter))
+    }
+
+    /// Return the decay costheta variable.
+    pub fn costheta(&self, daughter: &Particle, frame: Frame) -> LadduResult<CosTheta> {
+        self.validate_daughter(daughter)?;
+        Ok(CosTheta::from_reaction(
+            self.reaction.clone(),
+            self.parent.clone(),
+            daughter.clone(),
+            frame,
+        ))
+    }
+
+    /// Return the decay phi variable.
+    pub fn phi(&self, daughter: &Particle, frame: Frame) -> LadduResult<Phi> {
+        self.validate_daughter(daughter)?;
+        Ok(Phi::from_reaction(
+            self.reaction.clone(),
+            self.parent.clone(),
+            daughter.clone(),
+            frame,
+        ))
+    }
+
+    /// Return both decay angle variables.
+    pub fn angles(&self, daughter: &Particle, frame: Frame) -> LadduResult<Angles> {
+        self.validate_daughter(daughter)?;
+        Ok(Angles::from_reaction(
+            self.reaction.clone(),
+            self.parent.clone(),
+            daughter.clone(),
+            frame,
+        ))
+    }
+
+    fn validate_daughter(&self, daughter: &Particle) -> LadduResult<()> {
+        if daughter == &self.daughter_1 || daughter == &self.daughter_2 {
+            Ok(())
+        } else {
+            Err(LadduError::Custom(format!(
+                "particle '{}' is not an immediate daughter of '{}'",
+                daughter.label(),
+                self.parent.label()
+            )))
+        }
+    }
+}
+
+fn resolve_particle_direct(
     event: &NamedEventView<'_>,
-    chain: &DecayChain,
-    reference: &KinematicRef,
-) -> LadduResult<Vec4> {
-    match reference {
-        KinematicRef::P4(names) => {
-            if names.is_empty() {
+    particle: &Particle,
+) -> LadduResult<Option<Vec4>> {
+    match particle.source() {
+        ParticleSource::Measured { p4_names } => {
+            if p4_names.is_empty() {
                 return Err(LadduError::Custom(
-                    "p4 reference must contain at least one name".to_string(),
+                    "measured particle must contain at least one p4 name".to_string(),
                 ));
             }
             event
-                .get_p4_sum(names.iter().map(String::as_str))
+                .get_p4_sum(p4_names.iter().map(String::as_str))
                 .ok_or_else(|| {
-                    LadduError::Custom(format!("unknown p4 selection '{}'", names.join(", ")))
+                    LadduError::Custom(format!("unknown p4 selection '{}'", p4_names.join(", ")))
                 })
+                .map(Some)
         }
-        KinematicRef::Particle(handle) => chain.p4(event, *handle),
+        ParticleSource::Fixed { p4 } => Ok(Some(*p4)),
+        ParticleSource::Missing => Ok(None),
+        ParticleSource::Composite { daughters } => daughters
+            .iter()
+            .map(|daughter| {
+                resolve_particle_direct(event, daughter)?.ok_or_else(|| {
+                    LadduError::Custom(format!(
+                        "missing daughter '{}' cannot be resolved inside composite '{}'",
+                        daughter.label(),
+                        particle.label()
+                    ))
+                })
+            })
+            .try_fold(Vec4::new(0.0, 0.0, 0.0, 0.0), |acc, value| {
+                value.map(|value| acc + value)
+            })
+            .map(Some),
     }
 }
 
@@ -639,7 +656,7 @@ fn resolve_ref(
 mod tests {
     use std::sync::Arc;
 
-    use crate::{Dataset, DatasetMetadata, EventData, Vec3};
+    use crate::{traits::Variable, Dataset, DatasetMetadata, EventData, Vec3};
     use approx::assert_relative_eq;
 
     use super::*;
@@ -653,13 +670,7 @@ mod tests {
             / (2.0 * parent_mass)
     }
 
-    fn pion_cascade_dataset() -> (
-        Dataset,
-        Reaction,
-        ParticleHandle,
-        ParticleHandle,
-        ParticleHandle,
-    ) {
+    fn pion_cascade_dataset() -> (Dataset, Reaction, Particle, Particle, Particle) {
         let pion_mass = 0.139570000000000;
         let rho_mass = 0.775260000000000;
         let rho_momentum_in_x_rest = 0.450000000000000;
@@ -720,78 +731,79 @@ mod tests {
             })],
             metadata,
         );
-        let mut chain = DecayChain::new();
-        let pi_plus = chain.stable("pi+", "pi_plus");
-        let pi_minus = chain.stable("pi-", "pi_minus");
-        let pi0 = chain.stable("pi0", "pi0");
-        let rho = chain.composite("rho", [pi_plus, pi_minus]).unwrap();
-        let x = chain.composite("x", [rho, pi0]).unwrap();
-        let topology = TwoToTwoReaction::new("beam", "target", x, "recoil").unwrap();
-        let reaction = Reaction::new(chain, topology);
+        let pi_plus = Particle::measured("pi+", "pi_plus");
+        let pi_minus = Particle::measured("pi-", "pi_minus");
+        let pi0 = Particle::measured("pi0", "pi0");
+        let rho = Particle::composite("rho", [&pi_plus, &pi_minus]).unwrap();
+        let x = Particle::composite("x", [&rho, &pi0]).unwrap();
+        let beam = Particle::measured("beam", "beam");
+        let target = Particle::measured("target", "target");
+        let recoil = Particle::measured("recoil", "recoil");
+        let reaction = Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
         (dataset, reaction, rho, pi_plus, x)
     }
 
     #[test]
-    fn decay_chain_reconstructs_composites_from_lab_final_state() {
+    fn reaction_reconstructs_composites_from_lab_final_state() {
         let (dataset, reaction, rho, _, x) = pion_cascade_dataset();
         let event = dataset.event_view(0);
-        let rho_p4 = reaction.p4(&event, rho).unwrap();
-        let x_p4 = reaction.p4(&event, x).unwrap();
+        let rho_p4 = reaction.p4(&event, &rho).unwrap();
+        let x_p4 = reaction.p4(&event, &x).unwrap();
 
         assert_relative_eq!(rho_p4.m(), 0.775260000000000);
         assert!(x_p4.m() > rho_p4.m());
     }
 
     #[test]
-    fn reaction_angles_use_handles_not_paths() {
+    fn reaction_angle_variables_use_particles_not_paths() {
         let (dataset, reaction, rho, pi_plus, _) = pion_cascade_dataset();
         let event = dataset.event_view(0);
-        let angles = reaction
-            .angles(&event, rho, pi_plus, Frame::Helicity)
-            .unwrap();
+        let decay = reaction.decay(&rho);
+        assert!(decay.is_ok());
+        let angles = decay.unwrap().angles(&pi_plus, Frame::Helicity).unwrap();
 
-        assert_relative_eq!(angles.costheta(), 0.500000000000000);
-        assert_relative_eq!(angles.phi(), 0.700000000000000);
+        assert_relative_eq!(angles.costheta.value(&event), 0.500000000000000);
+        assert_relative_eq!(angles.phi.value(&event), 0.700000000000000);
     }
 
     #[test]
-    fn decay_chain_can_back_both_outgoing_two_to_two_slots() {
-        let (dataset, _, _, _, _) = pion_cascade_dataset();
-        let event = dataset.event_view(0);
-        let mut chain = DecayChain::new();
-        let pi_plus = chain.stable("pi+", "pi_plus");
-        let pi_minus = chain.stable("pi-", "pi_minus");
-        let pi0 = chain.stable("pi0", "pi0");
-        let rho = chain.composite("rho", [pi_plus, pi_minus]).unwrap();
-        let x = chain.composite("x", [rho, pi0]).unwrap();
-        let recoil = chain.stable("recoil", "recoil");
-        let recoil_system = chain.composite("recoil_system", [recoil]).unwrap();
-        let topology = TwoToTwoReaction::new("beam", "target", x, recoil_system).unwrap();
-        let reaction = Reaction::new(chain, topology);
-        let resolved = reaction.resolve_two_to_two(&event).unwrap();
-        let recoil_p4 = event.p4("recoil").unwrap();
-
-        assert_relative_eq!(resolved.p4().px(), recoil_p4.px());
-        assert_relative_eq!(resolved.p4().py(), recoil_p4.py());
-        assert_relative_eq!(resolved.p4().pz(), recoil_p4.pz());
-        assert_relative_eq!(resolved.p4().e(), recoil_p4.e());
-        assert!(reaction
-            .axes(&event, recoil_system, Frame::Helicity)
-            .is_ok());
-    }
-
-    #[test]
-    fn two_to_two_reaction_infers_any_single_missing_slot() {
+    fn two_to_two_reaction_solves_missing_particle() {
         let (dataset, reaction, _, _, x) = pion_cascade_dataset();
         let event = dataset.event_view(0);
         let full = reaction.resolve_two_to_two(&event).unwrap();
-        let missing_p2 =
-            TwoToTwoReaction::missing_p2("beam", KinematicRef::particle(x), "recoil").unwrap();
-        let resolved = missing_p2.resolve(&event, reaction.chain()).unwrap();
+        let beam = Particle::measured("beam", "beam");
+        let target = Particle::missing("target");
+        let recoil = Particle::measured("recoil", "recoil");
+        let missing_reaction = Reaction::two_to_two(&beam, &target, &x, &recoil).unwrap();
+        let resolved = missing_reaction.resolve_two_to_two(&event).unwrap();
 
         assert_relative_eq!(resolved.p2().px(), full.p2().px());
         assert_relative_eq!(resolved.p2().py(), full.p2().py());
         assert_relative_eq!(resolved.p2().pz(), full.p2().pz());
         assert_relative_eq!(resolved.p2().e(), full.p2().e());
+    }
+
+    #[test]
+    fn fixed_particle_can_define_a_reaction_role() {
+        let (dataset, _, _, _, x) = pion_cascade_dataset();
+        let event = dataset.event_view(0);
+        let beam = Particle::measured("beam", "beam");
+        let fixed_target = Particle::fixed("target", event.p4("target").unwrap());
+        let recoil = Particle::measured("recoil", "recoil");
+        let reaction = Reaction::two_to_two(&beam, &fixed_target, &x, &recoil).unwrap();
+        let resolved = reaction.resolve_two_to_two(&event).unwrap();
+
+        assert_relative_eq!(resolved.p2().e(), event.p4("target").unwrap().e());
+    }
+
+    #[test]
+    fn reaction_mandelstam_variables_match_resolved_values() {
+        let (dataset, reaction, _, _, _) = pion_cascade_dataset();
+        let event = dataset.event_view(0);
+        let resolved = reaction.resolve_two_to_two(&event).unwrap();
+
+        assert_relative_eq!(reaction.mandelstam(Channel::S).value(&event), resolved.s());
+        assert_relative_eq!(reaction.mandelstam(Channel::T).value(&event), resolved.t());
+        assert_relative_eq!(reaction.mandelstam(Channel::U).value(&event), resolved.u());
     }
 }

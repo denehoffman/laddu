@@ -1,5 +1,6 @@
 use factorial::Factorial;
 use num::{complex::Complex64, Integer};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 fn alp_pos_m(l: usize, m: usize, x: f64) -> f64 {
@@ -113,7 +114,7 @@ pub fn chi_minus(s: f64, m1: f64, m2: f64) -> f64 {
 ///
 /// For ordinary evaluation of amplitudes on the real mass axis, `Physical` is usually the
 /// appropriate choice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sheet {
     /// The physical sheet of the complex energy plane.
     Physical,
@@ -258,7 +259,7 @@ pub fn rho_m(m: f64, m1: f64, m2: f64, sheet: Sheet) -> Complex64 {
 /// The tensor form is often useful when the explicit threshold dependence already appears in
 /// a covariant tensor amplitude or elsewhere in the model, and one only wants the smooth
 /// finite-size suppression factor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BarrierKind {
     /// The full barrier factor, including threshold powers of $`q`$.
     Full,

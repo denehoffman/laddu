@@ -16,7 +16,7 @@ Examples
 >>> dataset = ld.io.from_dict(columns)
 >>> mass = Mass(['kshort1', 'kshort2'])
 >>> mass
-Mass { constituents: P4Selection { names: ["kshort1", "kshort2"], indices: [] } }
+Mass { source: Selection(P4Selection { names: ["kshort1", "kshort2"], indices: [] }) }
 """
 
 from __future__ import annotations
@@ -26,13 +26,15 @@ from typing import TYPE_CHECKING
 from laddu.laddu import (
     Angles,
     CosTheta,
+    Decay,
     Mandelstam,
     Mass,
+    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Topology,
+    Reaction,
     VariableExpression,
 )
 
@@ -51,7 +53,14 @@ def _as_expression(self: _ScalarVariable, name: str) -> Expression:
 
 _AS_EXPRESSION_NAME = 'as_expression'
 
-for _VariableType in (Mass, CosTheta, Phi, PolAngle, PolMagnitude, Mandelstam):
+for _VariableType in (
+    Mass,
+    CosTheta,
+    Phi,
+    PolAngle,
+    PolMagnitude,
+    Mandelstam,
+):
     setattr(_VariableType, _AS_EXPRESSION_NAME, _as_expression)
 
 del _AS_EXPRESSION_NAME, _VariableType
@@ -60,12 +69,14 @@ del _AS_EXPRESSION_NAME, _VariableType
 __all__ = [
     'Angles',
     'CosTheta',
+    'Decay',
     'Mandelstam',
     'Mass',
+    'Particle',
     'Phi',
     'PolAngle',
     'PolMagnitude',
     'Polarization',
-    'Topology',
+    'Reaction',
     'VariableExpression',
 ]

@@ -16,7 +16,7 @@ mod mpi_benches {
         traits::LikelihoodTerm,
         utils::{
             enums::{Frame, Sign},
-            variables::{Angles, Mass, Polarization, Topology},
+            variables::Mass,
         },
         RngSubsetExtension,
     };
@@ -27,6 +27,24 @@ mod mpi_benches {
     const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];
     const AUX_NAMES: [&str; 2] = ["pol_magnitude", "pol_angle"];
     const KMATRIX_DATASET_SEED: u64 = 71;
+
+    fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
+        let beam = laddu::Particle::measured("beam", "beam");
+        let target = laddu::Particle::missing("target");
+        let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
+        let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
+        let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+        let proton = laddu::Particle::measured("proton", "proton");
+        let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+        let angles = reaction
+            .decay(&kk)
+            .unwrap()
+            .angles(&kshort1, Frame::Helicity)
+            .unwrap();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+        let resonance_mass = reaction.mass(&kk);
+        (angles, polarization, resonance_mass)
+    }
 
     fn read_benchmark_dataset() -> Arc<Dataset> {
         let options = DatasetReadOptions::default()
@@ -77,10 +95,7 @@ mod mpi_benches {
         } else {
             (dataset.clone(), dataset)
         };
-        let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-        let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
-        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+        let (angles, polarization, resonance_mass) = reaction_variables();
         let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
             .expect("z00+ should construct");
         let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)

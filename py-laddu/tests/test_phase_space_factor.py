@@ -2,10 +2,9 @@ import pytest
 from laddu import (
     Dataset,
     Event,
-    Mandelstam,
-    Mass,
+    Particle,
     PhaseSpaceFactor,
-    Topology,
+    Reaction,
     Vec3,
 )
 
@@ -33,16 +32,24 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
-def reaction_topology() -> Topology:
-    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+def reaction_context() -> tuple[Reaction, Particle, Particle, Particle, Particle]:
+    beam = Particle.measured('beam', 'beam')
+    target = Particle.missing('target')
+    kshort1 = Particle.measured('K_S1', 'kshort1')
+    kshort2 = Particle.measured('K_S2', 'kshort2')
+    kk = Particle.composite('KK', [kshort1, kshort2])
+    proton = Particle.measured('proton', 'proton')
+    return Reaction.two_to_two(beam, target, kk, proton), kk, kshort1, kshort2, proton
 
 
 def test_phase_space_factor_evaluation() -> None:
-    recoil_mass = Mass(['proton'])
-    daughter_1_mass = Mass(['kshort1'])
-    daughter_2_mass = Mass(['kshort2'])
-    resonance_mass = Mass(['kshort1', 'kshort2'])
-    mandelstam_s = Mandelstam(reaction_topology(), 's')
+    reaction, kk, _, _, proton = reaction_context()
+    decay = reaction.decay(kk)
+    recoil_mass = reaction.mass(proton)
+    daughter_1_mass = decay.daughter_1_mass()
+    daughter_2_mass = decay.daughter_2_mass()
+    resonance_mass = decay.parent_mass()
+    mandelstam_s = reaction.mandelstam('s')
     amp = PhaseSpaceFactor(
         'kappa',
         recoil_mass,
@@ -59,11 +66,13 @@ def test_phase_space_factor_evaluation() -> None:
 
 
 def test_phase_space_factor_gradient() -> None:
-    recoil_mass = Mass(['proton'])
-    daughter_1_mass = Mass(['kshort1'])
-    daughter_2_mass = Mass(['kshort2'])
-    resonance_mass = Mass(['kshort1', 'kshort2'])
-    mandelstam_s = Mandelstam(reaction_topology(), 's')
+    reaction, kk, _, _, proton = reaction_context()
+    decay = reaction.decay(kk)
+    recoil_mass = reaction.mass(proton)
+    daughter_1_mass = decay.daughter_1_mass()
+    daughter_2_mass = decay.daughter_2_mass()
+    resonance_mass = decay.parent_mass()
+    mandelstam_s = reaction.mandelstam('s')
     amp = PhaseSpaceFactor(
         'kappa',
         recoil_mass,

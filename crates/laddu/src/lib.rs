@@ -402,8 +402,11 @@ pub use laddu_core::data::{
     EventData, NamedEventView,
 };
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
+pub use laddu_core::utils::reaction::{
+    Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,
+};
 pub use laddu_core::utils::variables::{
-    Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization, Topology,
+    AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use laddu_core::utils::vectors::{Vec3, Vec4};
 pub use laddu_core::PI;

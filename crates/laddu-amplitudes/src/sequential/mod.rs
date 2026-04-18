@@ -245,21 +245,27 @@ mod tests {
 
     #[test]
     fn particle_definition_validates_spin_parity_and_name() {
-        let pion = ParticleDef::with_parity("pi0", AngularMomentum::new(0), Some(Parity::Negative))
-            .unwrap();
+        let pion = ParticleDef::with_parity(
+            "pi0",
+            AngularMomentum::from_twice(0),
+            Some(Parity::Negative),
+        )
+        .unwrap();
         assert_eq!(pion.name(), "pi0");
         assert_eq!(pion.spin().value(), 0);
         assert_eq!(pion.parity(), Some(Parity::Negative));
         assert_eq!(pion.parity().unwrap().value(), -1);
 
-        assert!(ParticleDef::new("", AngularMomentum::new(0)).is_err());
+        assert!(ParticleDef::new("", AngularMomentum::from_twice(0)).is_err());
     }
 
     #[test]
     fn decay_tree_nodes_store_structure_and_bases() {
-        let parent = ParticleDef::new("x", AngularMomentum::new(0)).unwrap();
-        let daughter_1 = DecayNode::stable(ParticleDef::new("a", AngularMomentum::new(0)).unwrap());
-        let daughter_2 = DecayNode::stable(ParticleDef::new("b", AngularMomentum::new(0)).unwrap());
+        let parent = ParticleDef::new("x", AngularMomentum::from_twice(0)).unwrap();
+        let daughter_1 =
+            DecayNode::stable(ParticleDef::new("a", AngularMomentum::from_twice(0)).unwrap());
+        let daughter_2 =
+            DecayNode::stable(ParticleDef::new("b", AngularMomentum::from_twice(0)).unwrap());
         let node = DecayNode::two_body(parent, daughter_1, daughter_2)
             .with_coupling_basis(CouplingBasis::Canonical);
 
@@ -271,12 +277,12 @@ mod tests {
     #[test]
     fn production_node_requires_initial_particles() {
         let final_state =
-            DecayNode::stable(ParticleDef::new("x", AngularMomentum::new(0)).unwrap());
+            DecayNode::stable(ParticleDef::new("x", AngularMomentum::from_twice(0)).unwrap());
         assert!(
             ProductionNode::new(vec![], final_state.clone(), ProductionBasis::helicity()).is_err()
         );
 
-        let beam = ParticleDef::new("beam", AngularMomentum::new(2)).unwrap();
+        let beam = ParticleDef::new("beam", AngularMomentum::from_twice(2)).unwrap();
         let production = ProductionNode::new(
             vec![beam],
             final_state,

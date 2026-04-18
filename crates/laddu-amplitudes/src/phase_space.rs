@@ -181,17 +181,26 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Channel};
+    use laddu_core::{
+        data::test_dataset,
+        utils::reaction::{Particle, Reaction},
+        Channel,
+    };
 
     fn test_phase_space_expression(name: &str, channel: Channel) -> Expression {
-        let recoil_mass = Mass::new(["proton"]);
-        let daughter_1_mass = Mass::new(["kshort1"]);
-        let daughter_2_mass = Mass::new(["kshort2"]);
-        let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-        let mandelstam_s = Mandelstam::new(
-            Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton"),
-            channel,
-        );
+        let beam = Particle::measured("beam", "beam");
+        let target = Particle::missing("target");
+        let kshort1 = Particle::measured("K_S1", "kshort1");
+        let kshort2 = Particle::measured("K_S2", "kshort2");
+        let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+        let proton = Particle::measured("proton", "proton");
+        let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+        let decay = reaction.decay(&kk).unwrap();
+        let recoil_mass = reaction.mass(&proton);
+        let daughter_1_mass = decay.daughter_1_mass();
+        let daughter_2_mass = decay.daughter_2_mass();
+        let resonance_mass = decay.parent_mass();
+        let mandelstam_s = reaction.mandelstam(channel);
         PhaseSpaceFactor::new(
             name,
             &recoil_mass,

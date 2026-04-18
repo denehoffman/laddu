@@ -286,18 +286,33 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame};
+    use laddu_core::{
+        data::test_dataset,
+        utils::reaction::{Particle, Reaction},
+        Frame,
+    };
 
-    fn reaction_topology() -> Topology {
-        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    fn reaction_context() -> (Reaction, Angles) {
+        let beam = Particle::measured("beam", "beam");
+        let target = Particle::missing("target");
+        let kshort1 = Particle::measured("K_S1", "kshort1");
+        let kshort2 = Particle::measured("K_S2", "kshort2");
+        let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+        let proton = Particle::measured("proton", "proton");
+        let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+        let angles = reaction
+            .decay(&kk)
+            .unwrap()
+            .angles(&kshort1, Frame::Helicity)
+            .unwrap();
+        (reaction, angles)
     }
 
     #[test]
     fn test_zlm_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let topology = reaction_topology();
-        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
+        let (reaction, angles) = reaction_context();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -310,9 +325,8 @@ mod tests {
     #[test]
     fn test_zlm_gradient() {
         let dataset = Arc::new(test_dataset());
-        let topology = reaction_topology();
-        let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-        let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
+        let (reaction, angles) = reaction_context();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -323,7 +337,8 @@ mod tests {
     #[test]
     fn test_polphase_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
+        let (reaction, _) = reaction_context();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = PolPhase::new("polphase", &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -336,7 +351,8 @@ mod tests {
     #[test]
     fn test_polphase_gradient() {
         let dataset = Arc::new(test_dataset());
-        let polarization = Polarization::new(reaction_topology(), "pol_magnitude", "pol_angle");
+        let (reaction, _) = reaction_context();
+        let polarization = reaction.polarization("pol_magnitude", "pol_angle");
         let expr = PolPhase::new("polphase", &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
