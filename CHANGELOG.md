@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.0](https://github.com/denehoffman/laddu/compare/v0.16.1...v0.17.0) (2026-04-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* the normalization of standard relativistic Breit-Wigner amplitude is now unity.
+
+### Features
+
+* Rework kinematics API to allow for full Helicity/Canonical coupling terms, and other changes and improvements ([d6d49a5](https://github.com/denehoffman/laddu/commit/d6d49a5a66da6119b286c73637951954d77c2efb))
+
 ## [0.16.1](https://github.com/denehoffman/laddu/compare/v0.16.0...v0.16.1) (2026-04-10)
 
 
