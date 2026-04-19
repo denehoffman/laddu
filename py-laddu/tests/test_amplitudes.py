@@ -195,6 +195,31 @@ def test_expression_operations() -> None:
     assert result_mul2_norm[0] == 20.0 + 0.0j
 
 
+def test_compiled_expression_display() -> None:
+    amp1 = TestAmplitude('a', parameter('ar'), parameter('ai'))
+    amp2 = TestAmplitude('b', parameter('br'), parameter('bi'))
+    term = amp1 * amp2
+    expression = term + term
+
+    expression_compiled = expression.compiled_expression()
+    assert '#' in expression_compiled
+    assert '+' in expression_compiled
+    assert '\u00d7' in expression_compiled
+    assert 'a(id=0)' in expression_compiled
+    assert 'b(id=1)' in expression_compiled
+    assert '(ref)' in expression_compiled
+
+    evaluator = expression.load(make_test_dataset())
+    compiled = evaluator.compiled_expression()
+
+    assert '#' in compiled
+    assert '+' in compiled
+    assert '\u00d7' in compiled
+    assert 'a(id=0)' in compiled
+    assert 'b(id=1)' in compiled
+    assert '(ref)' in compiled
+
+
 def test_amplitude_activation() -> None:
     amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
     amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))

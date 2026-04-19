@@ -1496,6 +1496,34 @@ impl Expression {
         self.registry.resources.n_parameters()
     }
 
+    /// Returns a tree-like diagnostic snapshot of this expression's compiled form.
+    ///
+    /// This compiles the expression on each call with every registered amplitude active. Use
+    /// [`Evaluator::compiled_expression`] when you need the compiled form for a loaded evaluator's
+    /// current active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        let active_amplitudes = vec![true; self.registry.amplitudes.len()];
+        let amplitude_dependencies = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .collect::<Vec<_>>();
+        let amplitude_realness = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| amp.real_valued_hint())
+            .collect::<Vec<_>>();
+        let expression_ir = ir::compile_expression_ir_with_real_hints(
+            &self.tree,
+            &active_amplitudes,
+            &amplitude_dependencies,
+            &amplitude_realness,
+        );
+        CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
+    }
+
     fn with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
         let merged = self
             .registry
@@ -1860,6 +1888,186 @@ impl_op_ex!(- |a: &Expression| -> Expression {
 pub struct ExpressionValueProgramSnapshot {
     lowered_program: lowered::LoweredProgram,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+/// A node in a compiled expression diagnostic snapshot.
+pub enum CompiledExpressionNode {
+    /// A complex constant.
+    Constant(Complex64),
+    /// A registered amplitude by index and display name.
+    Amplitude {
+        /// The amplitude index used by the compiled evaluator.
+        index: usize,
+        /// The registered amplitude name.
+        name: String,
+    },
+    /// A unary operation and its input node.
+    Unary {
+        /// The display label for the operation.
+        op: String,
+        /// The input node index.
+        input: usize,
+    },
+    /// A binary operation and its input nodes.
+    Binary {
+        /// The display label for the operation.
+        op: String,
+        /// The left input node index.
+        left: usize,
+        /// The right input node index.
+        right: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Tree-like diagnostic view of the compiled expression DAG.
+///
+/// The compiled expression is a directed acyclic graph because common subexpressions can be
+/// deduplicated during compilation. The display format expands the graph from the root once and
+/// marks later visits to the same node with `(ref)`.
+pub struct CompiledExpression {
+    nodes: Vec<CompiledExpressionNode>,
+    root: usize,
+}
+
+impl CompiledExpression {
+    fn from_ir(ir: &ir::ExpressionIR, amplitude_names: &[String]) -> Self {
+        let nodes = ir
+            .nodes()
+            .iter()
+            .map(|node| match node {
+                ir::IrNode::Constant(value) => CompiledExpressionNode::Constant(*value),
+                ir::IrNode::Amp(index) => CompiledExpressionNode::Amplitude {
+                    index: *index,
+                    name: amplitude_names
+                        .get(*index)
+                        .cloned()
+                        .unwrap_or_else(|| "<unregistered>".to_string()),
+                },
+                ir::IrNode::Unary { op, input } => CompiledExpressionNode::Unary {
+                    op: compiled_unary_op_label(*op),
+                    input: *input,
+                },
+                ir::IrNode::Binary { op, left, right } => CompiledExpressionNode::Binary {
+                    op: compiled_binary_op_label(*op),
+                    left: *left,
+                    right: *right,
+                },
+            })
+            .collect();
+        Self {
+            nodes,
+            root: ir.root(),
+        }
+    }
+
+    /// Returns the compiled expression node list in evaluator execution order.
+    pub fn nodes(&self) -> &[CompiledExpressionNode] {
+        &self.nodes
+    }
+
+    /// Returns the root node index.
+    pub fn root(&self) -> usize {
+        self.root
+    }
+
+    fn node_label(&self, index: usize) -> String {
+        let Some(node) = self.nodes.get(index) else {
+            return format!("#{index} <missing>");
+        };
+        let label = match node {
+            CompiledExpressionNode::Constant(value) => format!("const {value}"),
+            CompiledExpressionNode::Amplitude { index, name } => {
+                format!("{name}(id={index})")
+            }
+            CompiledExpressionNode::Unary { op, .. }
+            | CompiledExpressionNode::Binary { op, .. } => op.clone(),
+        };
+        format!("#{index} {label}")
+    }
+
+    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
+    fn write_tree(
+        &self,
+        index: usize,
+        f: &mut std::fmt::Formatter<'_>,
+        parent_prefix: &str,
+        immediate_prefix: &str,
+        parent_suffix: &str,
+        expanded: &mut [bool],
+    ) -> std::fmt::Result {
+        let already_expanded = expanded.get(index).copied().unwrap_or(false);
+        if let Some(slot) = expanded.get_mut(index) {
+            *slot = true;
+        }
+        let ref_suffix = if already_expanded { " (ref)" } else { "" };
+        writeln!(
+            f,
+            "{}{}{}{}",
+            parent_prefix,
+            immediate_prefix,
+            self.node_label(index),
+            ref_suffix
+        )?;
+        if already_expanded {
+            return Ok(());
+        }
+        let Some(node) = self.nodes.get(index) else {
+            return Ok(());
+        };
+        match node {
+            CompiledExpressionNode::Constant(_) | CompiledExpressionNode::Amplitude { .. } => {}
+            CompiledExpressionNode::Unary { input, .. } => {
+                let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
+                self.write_tree(*input, f, &child_prefix, "└─ ", "   ", expanded)?;
+            }
+            CompiledExpressionNode::Binary { left, right, .. } => {
+                let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
+                self.write_tree(*left, f, &child_prefix, "├─ ", "│  ", expanded)?;
+                self.write_tree(*right, f, &child_prefix, "└─ ", "   ", expanded)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Display for CompiledExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.nodes.is_empty() {
+            return writeln!(f, "<empty>");
+        }
+        let mut expanded = vec![false; self.nodes.len()];
+        self.write_tree(self.root, f, "", "", "", &mut expanded)
+    }
+}
+
+fn compiled_unary_op_label(op: ir::IrUnaryOp) -> String {
+    match op {
+        ir::IrUnaryOp::Neg => "-".to_string(),
+        ir::IrUnaryOp::Real => "Re".to_string(),
+        ir::IrUnaryOp::Imag => "Im".to_string(),
+        ir::IrUnaryOp::Conj => "*".to_string(),
+        ir::IrUnaryOp::NormSqr => "NormSqr".to_string(),
+        ir::IrUnaryOp::Sqrt => "Sqrt".to_string(),
+        ir::IrUnaryOp::PowI(power) => format!("PowI({power})"),
+        ir::IrUnaryOp::PowF(bits) => format!("PowF({})", f64::from_bits(bits)),
+        ir::IrUnaryOp::Exp => "Exp".to_string(),
+        ir::IrUnaryOp::Sin => "Sin".to_string(),
+        ir::IrUnaryOp::Cos => "Cos".to_string(),
+        ir::IrUnaryOp::Log => "Log".to_string(),
+        ir::IrUnaryOp::Cis => "Cis".to_string(),
+    }
+}
+
+fn compiled_binary_op_label(op: ir::IrBinaryOp) -> String {
+    match op {
+        ir::IrBinaryOp::Add => "+".to_string(),
+        ir::IrBinaryOp::Sub => "-".to_string(),
+        ir::IrBinaryOp::Mul => "×".to_string(),
+        ir::IrBinaryOp::Div => "÷".to_string(),
+        ir::IrBinaryOp::Pow => "Pow".to_string(),
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Origin of the currently installed expression specialization.
 pub enum ExpressionSpecializationOrigin {
@@ -2056,6 +2264,33 @@ impl Evaluator {
     ) -> usize {
         let _ = self;
         snapshot.lowered_program.scratch_slots()
+    }
+
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for the current
+    /// active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        self.compiled_expression_for_active_mask(&self.active_mask())
+            .expect("current active mask should match evaluator amplitude count")
+    }
+
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for an explicit
+    /// active-amplitude mask.
+    pub fn compiled_expression_for_active_mask(
+        &self,
+        active_mask: &[bool],
+    ) -> LadduResult<CompiledExpression> {
+        if active_mask.len() != self.amplitudes.len() {
+            return Err(LadduError::Custom(format!(
+                "Active mask length {} does not match amplitude count {}",
+                active_mask.len(),
+                self.amplitudes.len()
+            )));
+        }
+        let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
+        Ok(CompiledExpression::from_ir(
+            &expression_ir,
+            &self.registry.amplitude_names,
+        ))
     }
     fn lowered_gradient_runtime_slot_count(&self) -> usize {
         self.lowered_runtime().gradient_program().scratch_slots()
@@ -5472,6 +5707,74 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn test_compiled_expression_display_reports_dag_refs() {
+        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let term = &a * &b;
+        let expr = &term + &term;
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let compiled = evaluator.compiled_expression();
+        let display = compiled.to_string();
+
+        assert_eq!(compiled.root(), compiled.nodes().len() - 1);
+        assert!(display.contains("#"));
+        assert!(display.contains("+"));
+        assert!(display.contains("×"));
+        assert!(display.contains("a(id=0)"));
+        assert!(display.contains("b(id=1)"));
+        assert!(display.contains("(ref)"));
+    }
+
+    #[test]
+    fn test_expression_compiled_expression_display_reports_dag_refs_without_loading() {
+        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let term = &a * &b;
+        let expr = &term + &term;
+
+        let compiled = expr.compiled_expression();
+        let display = compiled.to_string();
+
+        assert_eq!(compiled.root(), compiled.nodes().len() - 1);
+        assert!(display.contains("#"));
+        assert!(display.contains("+"));
+        assert!(display.contains("×"));
+        assert!(display.contains("a(id=0)"));
+        assert!(display.contains("b(id=1)"));
+        assert!(display.contains("(ref)"));
+    }
+
+    #[test]
+    fn test_compiled_expression_active_mask_display_zeroes_inactive_amplitudes() {
+        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let compiled = evaluator
+            .compiled_expression_for_active_mask(&[true, false])
+            .unwrap()
+            .to_string();
+
+        assert!(compiled.contains("a(id=0)"));
+        assert!(!compiled.contains("b(id=1)"));
+        assert!(compiled.contains("const 0"));
+    }
+
+    #[test]
+    fn test_compiled_expression_active_mask_validates_length() {
+        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert!(evaluator
+            .compiled_expression_for_active_mask(&[true, false])
+            .is_err());
+    }
+
     #[test]
     fn test_active_mask_override_ignores_current_ir_specialization() {
         let expr = ComplexScalar::new("amp", parameter("scale"), constant("amp_im", 0.0))

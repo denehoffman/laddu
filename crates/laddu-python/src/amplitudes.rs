@@ -221,6 +221,10 @@ impl PyExpression {
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.rename_parameters(&mapping)?))
     }
+    /// Return a tree-like diagnostic view of the compiled Expression.
+    fn compiled_expression(&self) -> String {
+        self.0.compiled_expression().to_string()
+    }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
             Ok(PyExpression(self.0.clone() + other_expr.0))
@@ -527,6 +531,11 @@ impl PyEvaluator {
     fn set_active_mask(&self, mask: Vec<bool>) -> PyResult<()> {
         self.0.set_active_mask(&mask)?;
         Ok(())
+    }
+
+    /// Return a tree-like diagnostic view of the compiled Expression.
+    fn compiled_expression(&self) -> String {
+        self.0.compiled_expression().to_string()
     }
 
     /// Evaluate the stored Expression over the stored Dataset
