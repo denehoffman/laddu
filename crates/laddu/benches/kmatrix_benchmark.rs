@@ -3,7 +3,10 @@ use fastrand_contrib::RngExt;
 use laddu::{
     amplitudes::{
         constant,
-        kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
+        kmatrix::{
+            KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
+            KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
+        },
         parameter,
         zlm::Zlm,
     },
@@ -13,11 +16,29 @@ use laddu::{
     traits::LikelihoodTerm,
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, Polarization, Topology},
+        variables::Mass,
     },
 };
 
 use rayon::ThreadPoolBuilder;
+
+fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
+    let beam = laddu::Particle::measured("beam", "beam");
+    let target = laddu::Particle::missing("target");
+    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
+    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
+    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+    let proton = laddu::Particle::measured("proton", "proton");
+    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+    let angles = reaction
+        .decay(&kk)
+        .unwrap()
+        .angles(&kshort1, Frame::Helicity)
+        .unwrap();
+    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+    let resonance_mass = reaction.mass(&kk);
+    (angles, polarization, resonance_mass)
+}
 
 fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let p4_names = ["beam", "proton", "kshort1", "kshort2"];
@@ -28,10 +49,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let ds_data = io::read_parquet("benches/bench.parquet", &options).unwrap();
     let ds_mc = io::read_parquet("benches/bench.parquet", &options).unwrap();
 
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let (angles, polarization, resonance_mass) = reaction_variables();
     let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).unwrap();
     let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization).unwrap();
     let z22p = Zlm::new("Z22+", 2, 2, Sign::Positive, &angles, &polarization).unwrap();
@@ -44,7 +62,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
             [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -55,7 +73,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
             [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -69,7 +87,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
             [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -80,7 +98,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("a0(980)- re"), parameter("a0(980)- im")],
             [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -93,7 +111,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("f2(1850) re"), parameter("f2(1850) im")],
             [parameter("f2(1910) re"), parameter("f2(1910) im")],
         ],
-        2,
+        KopfKMatrixF2Channel::KKbar,
         &resonance_mass,
         None,
     )
@@ -104,7 +122,7 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
             [parameter("a2(1320) re"), parameter("a2(1320) im")],
             [parameter("a2(1700) re"), parameter("a2(1700) im")],
         ],
-        2,
+        KopfKMatrixA2Channel::PiEtaPrime,
         &resonance_mass,
         None,
     )

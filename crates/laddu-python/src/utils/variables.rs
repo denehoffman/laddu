@@ -1,18 +1,22 @@
 use crate::{
+    amplitudes::PyExpression,
     data::{PyDataset, PyEvent},
-    utils::vectors::{PyVec3, PyVec4},
+    utils::vectors::PyVec4,
 };
 use laddu_core::{
-    data::{Dataset, DatasetMetadata, Event, EventData, NamedEventView},
+    data::{Dataset, DatasetMetadata, Event, NamedEventView},
     traits::Variable,
+    utils::angular_momentum::{AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum},
+    utils::reaction::{Decay, Particle, Reaction},
     utils::variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
-        PolMagnitude, Polarization, Topology, VariableExpression,
+        PolMagnitude, Polarization, VariableExpression,
     },
-    LadduResult,
+    LadduError, LadduResult,
 };
+use num::rational::Ratio;
 use numpy::PyArray1;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyBool};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 
@@ -120,149 +124,301 @@ impl PyP4SelectionInput {
     }
 }
 
-/// A reusable 2-to-2 reaction description shared by multiple Variables.
-#[pyclass(name = "Topology", module = "laddu", from_py_object)]
+/// A kinematic particle used to define reaction-aware variables.
+#[pyclass(name = "Particle", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PyTopology(pub Topology);
+pub struct PyParticle(pub Particle);
 
 #[pymethods]
-impl PyTopology {
-    #[new]
-    fn new(
-        k1: PyP4SelectionInput,
-        k2: PyP4SelectionInput,
-        k3: PyP4SelectionInput,
-        k4: PyP4SelectionInput,
-    ) -> Self {
-        Self(Topology::new(
-            k1.into_selection(),
-            k2.into_selection(),
-            k3.into_selection(),
-            k4.into_selection(),
-        ))
-    }
-
+impl PyParticle {
+    /// Construct a measured particle from one or more p4 column names.
     #[staticmethod]
-    fn missing_k1(k2: PyP4SelectionInput, k3: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
-        Self(Topology::missing_k1(
-            k2.into_selection(),
-            k3.into_selection(),
-            k4.into_selection(),
-        ))
+    fn measured(label: &str, p4: PyP4SelectionInput) -> Self {
+        Self(Particle::measured(label, p4.into_selection()))
     }
 
+    /// Construct a particle with fixed event-independent four-momentum.
     #[staticmethod]
-    fn missing_k2(k1: PyP4SelectionInput, k3: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
-        Self(Topology::missing_k2(
-            k1.into_selection(),
-            k3.into_selection(),
-            k4.into_selection(),
-        ))
+    fn fixed(label: &str, p4: &PyVec4) -> Self {
+        Self(Particle::fixed(label, p4.0))
     }
 
+    /// Construct a missing particle solved by the reaction topology.
     #[staticmethod]
-    fn missing_k3(k1: PyP4SelectionInput, k2: PyP4SelectionInput, k4: PyP4SelectionInput) -> Self {
-        Self(Topology::missing_k3(
-            k1.into_selection(),
-            k2.into_selection(),
-            k4.into_selection(),
-        ))
+    fn missing(label: &str) -> Self {
+        Self(Particle::missing(label))
     }
 
+    /// Construct a composite particle from daughter particles.
     #[staticmethod]
-    fn missing_k4(k1: PyP4SelectionInput, k2: PyP4SelectionInput, k3: PyP4SelectionInput) -> Self {
-        Self(Topology::missing_k4(
-            k1.into_selection(),
-            k2.into_selection(),
-            k3.into_selection(),
-        ))
+    fn composite(label: &str, daughters: Vec<PyParticle>) -> PyResult<Self> {
+        Ok(Self(Particle::composite(
+            label,
+            daughters.iter().map(|daughter| &daughter.0),
+        )?))
     }
 
-    fn k1_names(&self) -> Option<Vec<String>> {
-        self.0.k1_names().map(|names| names.to_vec())
-    }
-
-    fn k2_names(&self) -> Option<Vec<String>> {
-        self.0.k2_names().map(|names| names.to_vec())
-    }
-
-    fn k3_names(&self) -> Option<Vec<String>> {
-        self.0.k3_names().map(|names| names.to_vec())
-    }
-
-    fn k4_names(&self) -> Option<Vec<String>> {
-        self.0.k4_names().map(|names| names.to_vec())
-    }
-
-    fn com_boost_vector(&self, event: &PyEvent) -> PyResult<PyVec3> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec3(topology.com_boost_vector(event_data)))
-    }
-
-    fn k1(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k1(event_data)))
-    }
-
-    fn k2(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k2(event_data)))
-    }
-
-    fn k3(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k3(event_data)))
-    }
-
-    fn k4(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k4(event_data)))
-    }
-
-    fn k1_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k1_com(event_data)))
-    }
-
-    fn k2_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k2_com(event_data)))
-    }
-
-    fn k3_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k3_com(event_data)))
-    }
-
-    fn k4_com(&self, event: &PyEvent) -> PyResult<PyVec4> {
-        let (topology, event_data) = self.topology_for_event(event)?;
-        Ok(PyVec4(topology.k4_com(event_data)))
+    /// The particle label.
+    #[getter]
+    fn label(&self) -> String {
+        self.0.label().to_string()
     }
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+
     fn __str__(&self) -> String {
-        format!("{}", self.0)
+        self.0.to_string()
     }
 }
 
-impl PyTopology {
-    fn topology_for_event<'event>(
+/// A reaction topology with direct particle definitions.
+#[pyclass(name = "Reaction", module = "laddu", from_py_object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyReaction(pub Reaction);
+
+#[pymethods]
+impl PyReaction {
+    /// Construct a two-to-two reaction from `p1, p2, p3, p4`.
+    #[staticmethod]
+    fn two_to_two(
+        p1: &PyParticle,
+        p2: &PyParticle,
+        p3: &PyParticle,
+        p4: &PyParticle,
+    ) -> PyResult<Self> {
+        Ok(Self(Reaction::two_to_two(&p1.0, &p2.0, &p3.0, &p4.0)?))
+    }
+
+    /// Construct a particle mass variable.
+    fn mass(&self, particle: &PyParticle) -> PyMass {
+        PyMass(self.0.mass(&particle.0))
+    }
+
+    /// Construct an isobar decay view.
+    fn decay(&self, parent: &PyParticle) -> PyResult<PyDecay> {
+        Ok(PyDecay(self.0.decay(&parent.0)?))
+    }
+
+    /// Construct a Mandelstam variable.
+    fn mandelstam(&self, channel: &str) -> PyResult<PyMandelstam> {
+        Ok(PyMandelstam(self.0.mandelstam(channel.parse()?)))
+    }
+
+    /// Construct a polarization-angle variable.
+    fn pol_angle(&self, angle_aux: String) -> PyPolAngle {
+        PyPolAngle(self.0.pol_angle(angle_aux))
+    }
+
+    /// Construct polarization variables.
+    fn polarization(&self, pol_magnitude: String, pol_angle: String) -> PyResult<PyPolarization> {
+        if pol_magnitude == pol_angle {
+            return Err(PyValueError::new_err(
+                "`pol_magnitude` and `pol_angle` must reference distinct auxiliary columns",
+            ));
+        }
+        Ok(PyPolarization(
+            self.0.polarization(pol_magnitude, pol_angle),
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// A reaction-aware isobar decay view.
+#[pyclass(name = "Decay", module = "laddu", from_py_object)]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PyDecay(pub Decay);
+
+#[pymethods]
+impl PyDecay {
+    /// The parent particle.
+    #[getter]
+    fn parent(&self) -> PyParticle {
+        PyParticle(self.0.parent().clone())
+    }
+
+    /// The first daughter particle.
+    #[getter]
+    fn daughter_1(&self) -> PyParticle {
+        PyParticle(self.0.daughter_1().clone())
+    }
+
+    /// The second daughter particle.
+    #[getter]
+    fn daughter_2(&self) -> PyParticle {
+        PyParticle(self.0.daughter_2().clone())
+    }
+
+    /// Ordered daughter particles.
+    fn daughters(&self) -> Vec<PyParticle> {
+        self.0
+            .daughters()
+            .into_iter()
+            .map(|daughter| PyParticle(daughter.clone()))
+            .collect()
+    }
+
+    /// Parent mass variable.
+    fn mass(&self) -> PyMass {
+        PyMass(self.0.mass())
+    }
+
+    /// Parent mass variable.
+    fn parent_mass(&self) -> PyMass {
+        PyMass(self.0.parent_mass())
+    }
+
+    /// First daughter mass variable.
+    fn daughter_1_mass(&self) -> PyMass {
+        PyMass(self.0.daughter_1_mass())
+    }
+
+    /// Second daughter mass variable.
+    fn daughter_2_mass(&self) -> PyMass {
+        PyMass(self.0.daughter_2_mass())
+    }
+
+    /// Mass variable for a selected daughter.
+    fn daughter_mass(&self, daughter: &PyParticle) -> PyResult<PyMass> {
+        Ok(PyMass(self.0.daughter_mass(&daughter.0)?))
+    }
+
+    /// Decay costheta variable for the selected frame.
+    #[pyo3(signature=(daughter, frame="Helicity"))]
+    fn costheta(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyCosTheta> {
+        Ok(PyCosTheta(self.0.costheta(&daughter.0, frame.parse()?)?))
+    }
+
+    /// Decay phi variable for the selected frame.
+    #[pyo3(signature=(daughter, frame="Helicity"))]
+    fn phi(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyPhi> {
+        Ok(PyPhi(self.0.phi(&daughter.0, frame.parse()?)?))
+    }
+
+    /// Decay angle variables for the selected frame.
+    #[pyo3(signature=(daughter, frame="Helicity"))]
+    fn angles(&self, daughter: &PyParticle, frame: &str) -> PyResult<PyAngles> {
+        Ok(PyAngles(self.0.angles(&daughter.0, frame.parse()?)?))
+    }
+
+    /// Construct the helicity-basis angular factor for one explicit helicity term.
+    #[pyo3(signature=(name, spin, projection, daughter, lambda_1, lambda_2, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn helicity_factor(
         &self,
-        event: &'event PyEvent,
-    ) -> PyResult<(Topology, &'event EventData)> {
-        let metadata = event.metadata_opt().ok_or_else(|| {
-            PyValueError::new_err(
-                "This event is not associated with metadata; supply `p4_names`/`aux_names` when constructing it or evaluate via a Dataset.",
-            )
-        })?;
-        let mut topology = self.0.clone();
-        topology.bind(metadata).map_err(PyErr::from)?;
-        Ok((topology, event.event.data()))
+        name: &str,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        daughter: &PyParticle,
+        lambda_1: &Bound<'_, PyAny>,
+        lambda_2: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.helicity_factor(
+            name,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            &daughter.0,
+            parse_projection(lambda_1)?,
+            parse_projection(lambda_2)?,
+            frame.parse()?,
+        )?))
+    }
+
+    /// Construct the canonical-basis spin-angular factor for one explicit LS/helicity term.
+    #[pyo3(signature=(name, spin, projection, orbital_l, coupled_spin, daughter, daughter_1_spin, daughter_2_spin, lambda_1, lambda_2, frame="Helicity"))]
+    #[allow(clippy::too_many_arguments)]
+    fn canonical_factor(
+        &self,
+        name: &str,
+        spin: &Bound<'_, PyAny>,
+        projection: &Bound<'_, PyAny>,
+        orbital_l: &Bound<'_, PyAny>,
+        coupled_spin: &Bound<'_, PyAny>,
+        daughter: &PyParticle,
+        daughter_1_spin: &Bound<'_, PyAny>,
+        daughter_2_spin: &Bound<'_, PyAny>,
+        lambda_1: &Bound<'_, PyAny>,
+        lambda_2: &Bound<'_, PyAny>,
+        frame: &str,
+    ) -> PyResult<PyExpression> {
+        Ok(PyExpression(self.0.canonical_factor(
+            name,
+            parse_angular_momentum(spin)?,
+            parse_projection(projection)?,
+            parse_orbital_angular_momentum(orbital_l)?,
+            parse_angular_momentum(coupled_spin)?,
+            &daughter.0,
+            parse_angular_momentum(daughter_1_spin)?,
+            parse_angular_momentum(daughter_2_spin)?,
+            parse_projection(lambda_1)?,
+            parse_projection(lambda_2)?,
+            frame.parse()?,
+        )?))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
+fn parse_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentum> {
+    parse_ratio_like(input)
+        .and_then(AngularMomentum::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_projection(input: &Bound<'_, PyAny>) -> PyResult<AngularMomentumProjection> {
+    parse_ratio_like(input)
+        .and_then(AngularMomentumProjection::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_orbital_angular_momentum(input: &Bound<'_, PyAny>) -> PyResult<OrbitalAngularMomentum> {
+    parse_ratio_like(input)
+        .and_then(OrbitalAngularMomentum::from_ratio)
+        .map_err(py_value_error)
+}
+
+fn parse_ratio_like(input: &Bound<'_, PyAny>) -> LadduResult<Ratio<i32>> {
+    if input.is_instance_of::<PyBool>() {
+        return Err(LadduError::Custom(
+            "quantum number cannot be a bool".to_string(),
+        ));
+    }
+    if let Ok(value) = input.extract::<i32>() {
+        return Ok(Ratio::from_integer(value));
+    }
+    if let Ok(value) = input.extract::<f64>() {
+        let twice = AngularMomentumProjection::from_f64(value)?.value();
+        return Ok(Ratio::new(twice, 2));
+    }
+    let numerator = input
+        .getattr("numerator")
+        .and_then(|value| value.extract::<i32>());
+    let denominator = input
+        .getattr("denominator")
+        .and_then(|value| value.extract::<i32>());
+    if let (Ok(numerator), Ok(denominator)) = (numerator, denominator) {
+        if denominator == 0 {
+            return Err(LadduError::Custom(
+                "quantum number denominator cannot be zero".to_string(),
+            ));
+        }
+        return Ok(Ratio::new(numerator, denominator));
+    }
+    Err(LadduError::Custom(
+        "quantum number must be an int, float, or fractions.Fraction".to_string(),
+    ))
+}
+
+fn py_value_error(err: LadduError) -> PyErr {
+    PyValueError::new_err(err.to_string())
+}
 /// The invariant mass of an arbitrary combination of constituent particles in an Event
 ///
 /// This variable is calculated by summing up the 4-momenta of each particle listed by index in
@@ -376,11 +532,11 @@ impl PyMass {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
+/// reaction : laddu.Reaction
+///     Reaction describing the production kinematics and decay roots.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with ``k3`` of the topology.
+///     resonance associated with the decay parent.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -399,15 +555,6 @@ pub struct PyCosTheta(pub CosTheta);
 
 #[pymethods]
 impl PyCosTheta {
-    #[new]
-    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
-        Ok(Self(CosTheta::new(
-            topology.0.clone(),
-            daughter.into_selection(),
-            frame.parse()?,
-        )))
-    }
     /// The value of this Variable for the given Event
     ///
     /// Parameters
@@ -497,11 +644,11 @@ impl PyCosTheta {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
+/// reaction : laddu.Reaction
+///     Reaction describing the production kinematics and decay roots.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with ``k3`` of the topology.
+///     resonance associated with the decay parent.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -521,15 +668,6 @@ pub struct PyPhi(pub Phi);
 
 #[pymethods]
 impl PyPhi {
-    #[new]
-    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
-        Ok(Self(Phi::new(
-            topology.0.clone(),
-            daughter.into_selection(),
-            frame.parse()?,
-        )))
-    }
     /// The value of this Variable for the given Event
     ///
     /// Parameters
@@ -605,11 +743,11 @@ impl PyPhi {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
+/// reaction : laddu.Reaction
+///     Reaction describing the production kinematics and decay roots.
 /// daughter : list of str
 ///     Names of particles which are combined to form one of the decay products of the
-///     resonance associated with ``k3`` of the topology.
+///     resonance associated with the decay parent.
 /// frame : {'Helicity', 'HX', 'HEL', 'GottfriedJackson', 'Gottfried Jackson', 'GJ', 'Gottfried-Jackson'}
 ///     The frame to use in the  calculation
 ///
@@ -628,15 +766,6 @@ impl PyPhi {
 pub struct PyAngles(pub Angles);
 #[pymethods]
 impl PyAngles {
-    #[new]
-    #[pyo3(signature=(topology, daughter, frame="Helicity"))]
-    fn new(topology: PyTopology, daughter: PyP4SelectionInput, frame: &str) -> PyResult<Self> {
-        Ok(Self(Angles::new(
-            topology.0.clone(),
-            daughter.into_selection(),
-            frame.parse()?,
-        )))
-    }
     /// The Variable representing the cosine of the polar spherical decay angle
     ///
     /// Returns
@@ -672,8 +801,8 @@ impl PyAngles {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
+/// reaction : laddu.Reaction
+///     Reaction describing the production kinematics and decay roots.
 /// pol_angle : str
 ///     Name of the auxiliary scalar column storing the polarization angle in radians
 ///
@@ -684,8 +813,8 @@ pub struct PyPolAngle(pub PolAngle);
 #[pymethods]
 impl PyPolAngle {
     #[new]
-    fn new(topology: PyTopology, pol_angle: String) -> Self {
-        Self(PolAngle::new(topology.0.clone(), pol_angle))
+    fn new(reaction: PyReaction, pol_angle: String) -> Self {
+        Self(PolAngle::new(reaction.0.clone(), pol_angle))
     }
     /// The value of this Variable for the given Event
     ///
@@ -854,8 +983,8 @@ impl PyPolMagnitude {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 production kinematics in the center-of-momentum frame.
+/// reaction : laddu.Reaction
+///     Reaction describing the production kinematics and decay roots.
 /// pol_magnitude : str
 ///     Name of the auxiliary scalar storing the polarization magnitude
 /// pol_angle : str
@@ -872,14 +1001,14 @@ pub struct PyPolarization(pub Polarization);
 #[pymethods]
 impl PyPolarization {
     #[new]
-    #[pyo3(signature=(topology, *, pol_magnitude, pol_angle))]
-    fn new(topology: PyTopology, pol_magnitude: String, pol_angle: String) -> PyResult<Self> {
+    #[pyo3(signature=(reaction, *, pol_magnitude, pol_angle))]
+    fn new(reaction: PyReaction, pol_magnitude: String, pol_angle: String) -> PyResult<Self> {
         if pol_magnitude == pol_angle {
             return Err(PyValueError::new_err(
                 "`pol_magnitude` and `pol_angle` must reference distinct auxiliary columns",
             ));
         }
-        let polarization = Polarization::new(topology.0.clone(), pol_magnitude, pol_angle);
+        let polarization = Polarization::new(reaction.0.clone(), pol_magnitude, pol_angle);
         Ok(PyPolarization(polarization))
     }
     /// The Variable representing the magnitude of the polarization vector
@@ -923,8 +1052,8 @@ impl PyPolarization {
 ///
 /// Parameters
 /// ----------
-/// topology : laddu.Topology
-///     Topology describing the 2-to-2 kinematics whose Mandelstam channels should be evaluated.
+/// reaction : laddu.Reaction
+///     Reaction describing the two-to-two kinematics whose Mandelstam channels should be evaluated.
 /// channel: {'s', 't', 'u', 'S', 'T', 'U'}
 ///     The Mandelstam channel to calculate
 ///
@@ -937,11 +1066,7 @@ impl PyPolarization {
 ///
 /// Notes
 /// -----
-/// At most one of the input particles may be omitted by using an empty list. This will cause
-/// the calculation to use whichever equality listed above does not contain that particle.
-///
-/// By default, the first equality is used if no particle lists are empty.
-///
+/// ///
 #[pyclass(name = "Mandelstam", module = "laddu", from_py_object)]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PyMandelstam(pub Mandelstam);
@@ -949,8 +1074,8 @@ pub struct PyMandelstam(pub Mandelstam);
 #[pymethods]
 impl PyMandelstam {
     #[new]
-    fn new(topology: PyTopology, channel: &str) -> PyResult<Self> {
-        Ok(Self(Mandelstam::new(topology.0.clone(), channel.parse()?)))
+    fn new(reaction: PyReaction, channel: &str) -> PyResult<Self> {
+        Ok(Self(Mandelstam::new(reaction.0.clone(), channel.parse()?)))
     }
     /// The value of this Variable for the given Event
     ///

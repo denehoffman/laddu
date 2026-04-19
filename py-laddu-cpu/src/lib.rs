@@ -13,7 +13,7 @@ mod laddu {
     use laddu_python::{
         amplitudes::{
             py_constant, py_expr_one, py_expr_product, py_expr_sum, py_expr_zero, py_parameter,
-            py_test_amplitude, PyEvaluator, PyExpression, PyParameterLike,
+            py_test_amplitude, PyCompiledExpression, PyEvaluator, PyExpression, PyParameterLike,
         },
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
@@ -21,9 +21,10 @@ mod laddu {
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
         set_threads,
         utils::{
+            angular_momentum::{py_allowed_projections, py_helicity_combinations},
             variables::{
-                PyAngles, PyCosTheta, PyMandelstam, PyMass, PyPhi, PyPolAngle, PyPolMagnitude,
-                PyPolarization, PyTopology, PyVariableExpression,
+                PyAngles, PyCosTheta, PyDecay, PyMandelstam, PyMass, PyParticle, PyPhi, PyPolAngle,
+                PyPolMagnitude, PyPolarization, PyReaction, PyVariableExpression,
             },
             vectors::{PyVec3, PyVec4},
         },
@@ -31,16 +32,23 @@ mod laddu {
 
     #[pymodule_export]
     use laddu_amplitudes::{
-        breit_wigner::py_breit_wigner,
-        common::{py_complex_scalar, py_polar_complex_scalar, py_scalar},
+        breit_wigner::{py_breit_wigner, py_breit_wigner_non_relativistic},
+        common::{py_complex_scalar, py_polar_complex_scalar, py_scalar, py_variable_scalar},
+        flatte::py_flatte,
         kmatrix::{
             py_kopf_kmatrix_a0, py_kopf_kmatrix_a2, py_kopf_kmatrix_f0, py_kopf_kmatrix_f2,
-            py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho,
+            py_kopf_kmatrix_pi1, py_kopf_kmatrix_rho, KopfKMatrixA0Channel, KopfKMatrixA2Channel,
+            KopfKMatrixF0Channel, KopfKMatrixF2Channel, KopfKMatrixPi1Channel,
+            KopfKMatrixRhoChannel,
+        },
+        lookup_table::{
+            py_lookup_table, py_lookup_table_complex, py_lookup_table_polar, py_lookup_table_scalar,
         },
         phase_space::py_phase_space_factor,
-        piecewise::{
-            py_piecewise_complex_scalar, py_piecewise_polar_complex_scalar, py_piecewise_scalar,
+        spin_factors::{
+            py_blatt_weisskopf, py_clebsch_gordan, py_photon_sdme, py_wigner_3j, py_wigner_d,
         },
+        voigt::py_voigt,
         ylm::py_ylm,
         zlm::{py_polphase, py_zlm},
     };

@@ -38,6 +38,8 @@ fn unary_output_is_real(op: IrUnaryOp, input_is_real: bool) -> bool {
         IrUnaryOp::Neg => input_is_real,
         IrUnaryOp::Real | IrUnaryOp::Imag | IrUnaryOp::NormSqr => true,
         IrUnaryOp::Conj => input_is_real,
+        IrUnaryOp::Exp | IrUnaryOp::PowI(_) | IrUnaryOp::Sin | IrUnaryOp::Cos => input_is_real,
+        IrUnaryOp::Sqrt | IrUnaryOp::PowF(_) | IrUnaryOp::Log | IrUnaryOp::Cis => false,
     }
 }
 
@@ -45,6 +47,195 @@ fn binary_output_is_real(op: IrBinaryOp, left_is_real: bool, right_is_real: bool
     match op {
         IrBinaryOp::Add | IrBinaryOp::Sub | IrBinaryOp::Mul | IrBinaryOp::Div => {
             left_is_real && right_is_real
+        }
+        IrBinaryOp::Pow => false,
+    }
+}
+
+fn apply_unary_op(op: IrUnaryOp, value: Complex64) -> Complex64 {
+    match op {
+        IrUnaryOp::Neg => -value,
+        IrUnaryOp::Real => Complex64::new(value.re, 0.0),
+        IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
+        IrUnaryOp::Conj => value.conj(),
+        IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+        IrUnaryOp::Sqrt => value.sqrt(),
+        IrUnaryOp::PowI(power) => value.powi(power),
+        IrUnaryOp::PowF(power) => value.powc(Complex64::new(f64::from_bits(power), 0.0)),
+        IrUnaryOp::Exp => value.exp(),
+        IrUnaryOp::Sin => value.sin(),
+        IrUnaryOp::Cos => value.cos(),
+        IrUnaryOp::Log => value.ln(),
+        IrUnaryOp::Cis => (Complex64::new(0.0, 1.0) * value).exp(),
+    }
+}
+
+fn apply_binary_op(op: IrBinaryOp, left_value: Complex64, right_value: Complex64) -> Complex64 {
+    match op {
+        IrBinaryOp::Add => left_value + right_value,
+        IrBinaryOp::Sub => left_value - right_value,
+        IrBinaryOp::Mul => left_value * right_value,
+        IrBinaryOp::Div => left_value / right_value,
+        IrBinaryOp::Pow => left_value.powc(right_value),
+    }
+}
+
+fn apply_unary_gradient_op(
+    op: IrUnaryOp,
+    value: Complex64,
+    input_grad: &DVector<Complex64>,
+    dst_grad: &mut DVector<Complex64>,
+) {
+    match op {
+        IrUnaryOp::Neg => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = -*input_item;
+            }
+        }
+        IrUnaryOp::Real => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(input_item.re, 0.0);
+            }
+        }
+        IrUnaryOp::Imag => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(input_item.im, 0.0);
+            }
+        }
+        IrUnaryOp::Conj => {
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = input_item.conj();
+            }
+        }
+        IrUnaryOp::NormSqr => {
+            let conj_input = value.conj();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
+            }
+        }
+        IrUnaryOp::Sqrt => {
+            let factor = Complex64::new(0.5, 0.0) / value.sqrt();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::PowI(power) => {
+            let factor = match power {
+                0 => Complex64::ZERO,
+                1 => Complex64::ONE,
+                _ => {
+                    let multiplier = Complex64::new(power as f64, 0.0);
+                    if let Some(derivative_power) = power.checked_sub(1) {
+                        multiplier * value.powi(derivative_power)
+                    } else {
+                        multiplier * value.powi(power) / value
+                    }
+                }
+            };
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::PowF(power) => {
+            let power = f64::from_bits(power);
+            let factor = if power == 0.0 {
+                Complex64::ZERO
+            } else {
+                Complex64::new(power, 0.0) * value.powc(Complex64::new(power - 1.0, 0.0))
+            };
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::Exp => {
+            let factor = value.exp();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::Sin => {
+            let factor = value.cos();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::Cis => {
+            let factor = Complex64::new(0.0, 1.0) * apply_unary_op(IrUnaryOp::Cis, value);
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::Cos => {
+            let factor = -value.sin();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        IrUnaryOp::Log => {
+            let factor = Complex64::ONE / value;
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+    }
+}
+
+fn apply_binary_gradient_op(
+    op: IrBinaryOp,
+    left_value: Complex64,
+    right_value: Complex64,
+    output_value: Complex64,
+    left_grad: &DVector<Complex64>,
+    right_grad: &DVector<Complex64>,
+    dst_grad: &mut DVector<Complex64>,
+) {
+    match op {
+        IrBinaryOp::Add => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item + *right_item;
+            }
+        }
+        IrBinaryOp::Sub => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item - *right_item;
+            }
+        }
+        IrBinaryOp::Mul => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = *left_item * right_value + *right_item * left_value;
+            }
+        }
+        IrBinaryOp::Div => {
+            let denom = right_value * right_value;
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = (*left_item * right_value - *right_item * left_value) / denom;
+            }
+        }
+        IrBinaryOp::Pow => {
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = output_value
+                    * (*right_item * left_value.ln() + right_value * *left_item / left_value);
+            }
         }
     }
 }
@@ -56,6 +247,14 @@ pub(super) enum IrUnaryOp {
     Imag,
     Conj,
     NormSqr,
+    Sqrt,
+    PowI(i32),
+    PowF(u64),
+    Exp,
+    Sin,
+    Cos,
+    Log,
+    Cis,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -64,6 +263,7 @@ pub(super) enum IrBinaryOp {
     Sub,
     Mul,
     Div,
+    Pow,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -333,6 +533,89 @@ impl ExpressionIR {
                     });
                     id
                 }
+                ExpressionNode::Sqrt(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Sqrt,
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Pow(a, b) => {
+                    let value = lower(a, nodes);
+                    let power = lower(b, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Binary {
+                        op: IrBinaryOp::Pow,
+                        left: value,
+                        right: power,
+                    });
+                    id
+                }
+                ExpressionNode::PowI(a, power) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::PowI(*power),
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::PowF(a, power) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::PowF(power.to_bits()),
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Exp(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Exp,
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Sin(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Sin,
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Cos(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Cos,
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Log(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Log,
+                        input,
+                    });
+                    id
+                }
+                ExpressionNode::Cis(a) => {
+                    let input = lower(a, nodes);
+                    let id = nodes.len();
+                    nodes.push(IrNode::Unary {
+                        op: IrUnaryOp::Cis,
+                        input,
+                    });
+                    id
+                }
             }
         }
 
@@ -436,23 +719,12 @@ impl ExpressionIR {
                 IrNode::Amp(amp_idx) => amplitude_values.get(amp_idx).copied().unwrap_or_default(),
                 IrNode::Unary { op, input } => {
                     let value = slots[input];
-                    match op {
-                        IrUnaryOp::Neg => -value,
-                        IrUnaryOp::Real => Complex64::new(value.re, 0.0),
-                        IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
-                        IrUnaryOp::Conj => value.conj(),
-                        IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
-                    }
+                    apply_unary_op(op, value)
                 }
                 IrNode::Binary { op, left, right } => {
                     let left_value = slots[left];
                     let right_value = slots[right];
-                    match op {
-                        IrBinaryOp::Add => left_value + right_value,
-                        IrBinaryOp::Sub => left_value - right_value,
-                        IrBinaryOp::Mul => left_value * right_value,
-                        IrBinaryOp::Div => left_value / right_value,
-                    }
+                    apply_binary_op(op, left_value, right_value)
                 }
             };
         }
@@ -475,23 +747,12 @@ impl ExpressionIR {
                 IrNode::Amp(amp_idx) => amplitude_values.get(amp_idx).copied().unwrap_or_default(),
                 IrNode::Unary { op, input } => {
                     let value = slots[input];
-                    match op {
-                        IrUnaryOp::Neg => -value,
-                        IrUnaryOp::Real => Complex64::new(value.re, 0.0),
-                        IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
-                        IrUnaryOp::Conj => value.conj(),
-                        IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
-                    }
+                    apply_unary_op(op, value)
                 }
                 IrNode::Binary { op, left, right } => {
                     let left_value = slots[left];
                     let right_value = slots[right];
-                    match op {
-                        IrBinaryOp::Add => left_value + right_value,
-                        IrBinaryOp::Sub => left_value - right_value,
-                        IrBinaryOp::Mul => left_value * right_value,
-                        IrBinaryOp::Div => left_value / right_value,
-                    }
+                    apply_binary_op(op, left_value, right_value)
                 }
             };
         }
@@ -561,88 +822,20 @@ impl ExpressionIR {
                 }
                 IrNode::Unary { op, input } => {
                     let input_grad = &before[input];
-                    match op {
-                        IrUnaryOp::Neg => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = -*input_item;
-                            }
-                        }
-                        IrUnaryOp::Real => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.re, 0.0);
-                            }
-                        }
-                        IrUnaryOp::Imag => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.im, 0.0);
-                            }
-                        }
-                        IrUnaryOp::Conj => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = input_item.conj();
-                            }
-                        }
-                        IrUnaryOp::NormSqr => {
-                            let conj_input = value_slots[input].conj();
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item =
-                                    Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
-                            }
-                        }
-                    }
+                    apply_unary_gradient_op(op, value_slots[input], input_grad, dst_grad);
                 }
                 IrNode::Binary { op, left, right } => {
                     let left_grad = &before[left];
                     let right_grad = &before[right];
-                    match op {
-                        IrBinaryOp::Add => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item + *right_item;
-                            }
-                        }
-                        IrBinaryOp::Sub => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item - *right_item;
-                            }
-                        }
-                        IrBinaryOp::Mul => {
-                            let left_value = value_slots[left];
-                            let right_value = value_slots[right];
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item * right_value + *right_item * left_value;
-                            }
-                        }
-                        IrBinaryOp::Div => {
-                            let left_value = value_slots[left];
-                            let right_value = value_slots[right];
-                            let denom = right_value * right_value;
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item =
-                                    (*left_item * right_value - *right_item * left_value) / denom;
-                            }
-                        }
-                    }
+                    apply_binary_gradient_op(
+                        op,
+                        value_slots[left],
+                        value_slots[right],
+                        value_slots[node_index],
+                        left_grad,
+                        right_grad,
+                        dst_grad,
+                    );
                 }
             }
         }
@@ -718,88 +911,20 @@ impl ExpressionIR {
                 }
                 IrNode::Unary { op, input } => {
                     let input_grad = &before[input];
-                    match op {
-                        IrUnaryOp::Neg => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = -*input_item;
-                            }
-                        }
-                        IrUnaryOp::Real => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.re, 0.0);
-                            }
-                        }
-                        IrUnaryOp::Imag => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = Complex64::new(input_item.im, 0.0);
-                            }
-                        }
-                        IrUnaryOp::Conj => {
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item = input_item.conj();
-                            }
-                        }
-                        IrUnaryOp::NormSqr => {
-                            let conj_input = value_slots[input].conj();
-                            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter())
-                            {
-                                *dst_item =
-                                    Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
-                            }
-                        }
-                    }
+                    apply_unary_gradient_op(op, value_slots[input], input_grad, dst_grad);
                 }
                 IrNode::Binary { op, left, right } => {
                     let left_grad = &before[left];
                     let right_grad = &before[right];
-                    match op {
-                        IrBinaryOp::Add => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item + *right_item;
-                            }
-                        }
-                        IrBinaryOp::Sub => {
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item - *right_item;
-                            }
-                        }
-                        IrBinaryOp::Mul => {
-                            let left_value = value_slots[left];
-                            let right_value = value_slots[right];
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item = *left_item * right_value + *right_item * left_value;
-                            }
-                        }
-                        IrBinaryOp::Div => {
-                            let left_value = value_slots[left];
-                            let right_value = value_slots[right];
-                            let denom = right_value * right_value;
-                            for ((dst_item, left_item), right_item) in dst_grad
-                                .iter_mut()
-                                .zip(left_grad.iter())
-                                .zip(right_grad.iter())
-                            {
-                                *dst_item =
-                                    (*left_item * right_value - *right_item * left_value) / denom;
-                            }
-                        }
-                    }
+                    apply_binary_gradient_op(
+                        op,
+                        value_slots[left],
+                        value_slots[right],
+                        value_slots[node_index],
+                        left_grad,
+                        right_grad,
+                        dst_grad,
+                    );
                 }
             }
         }
@@ -1836,20 +1961,11 @@ impl ConstantFoldPass {
             let folded = match ir.nodes[index].clone() {
                 IrNode::Constant(value) => Some(value),
                 IrNode::Amp(_) => None,
-                IrNode::Unary { op, input } => constants[input].map(|value| match op {
-                    IrUnaryOp::Neg => -value,
-                    IrUnaryOp::Real => Complex64::new(value.re, 0.0),
-                    IrUnaryOp::Imag => Complex64::new(value.im, 0.0),
-                    IrUnaryOp::Conj => value.conj(),
-                    IrUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
-                }),
+                IrNode::Unary { op, input } => {
+                    constants[input].map(|value| apply_unary_op(op, value))
+                }
                 IrNode::Binary { op, left, right } => match (constants[left], constants[right]) {
-                    (Some(a), Some(b)) => Some(match op {
-                        IrBinaryOp::Add => a + b,
-                        IrBinaryOp::Sub => a - b,
-                        IrBinaryOp::Mul => a * b,
-                        IrBinaryOp::Div => a / b,
-                    }),
+                    (Some(a), Some(b)) => Some(apply_binary_op(op, a, b)),
                     _ => None,
                 },
             };

@@ -1,16 +1,13 @@
 import pytest
 from laddu import (
-    Angles,
-    CosTheta,
     Dataset,
     Event,
-    Mandelstam,
     Mass,
-    Phi,
+    Particle,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Topology,
+    Reaction,
     Vec3,
 )
 
@@ -38,8 +35,14 @@ def make_test_dataset() -> Dataset:
     return Dataset([make_test_event()], p4_names=P4_NAMES, aux_names=AUX_NAMES)
 
 
-def reaction_topology() -> Topology:
-    return Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
+def reaction_context() -> tuple[Reaction, Particle, Particle, Particle, Particle]:
+    beam = Particle.measured('beam', 'beam')
+    target = Particle.missing('target')
+    kshort1 = Particle.measured('K_S1', 'kshort1')
+    kshort2 = Particle.measured('K_S2', 'kshort2')
+    kk = Particle.composite('KK', [kshort1, kshort2])
+    proton = Particle.measured('proton', 'proton')
+    return Reaction.two_to_two(beam, target, kk, proton), kk, kshort1, kshort2, proton
 
 
 def test_mass_single_particle() -> None:
@@ -56,38 +59,44 @@ def test_mass_multiple_particles() -> None:
 
 def test_costheta_helicity() -> None:
     event = make_test_event()
-    costheta = CosTheta(reaction_topology(), 'kshort1', 'Helicity')
+    reaction, kk, kshort1, _, _ = reaction_context()
+    costheta = reaction.decay(kk).costheta(kshort1, 'Helicity')
     assert pytest.approx(costheta.value(event)) == -0.4611175068834238
 
 
 def test_phi_helicity() -> None:
     event = make_test_event()
-    phi = Phi(reaction_topology(), 'kshort1', 'Helicity')
+    reaction, kk, kshort1, _, _ = reaction_context()
+    phi = reaction.decay(kk).phi(kshort1, 'Helicity')
     assert pytest.approx(phi.value(event)) == -2.657462587335066
 
 
 def test_costheta_gottfried_jackson() -> None:
     event = make_test_event()
-    costheta = CosTheta(reaction_topology(), 'kshort1', 'Gottfried-Jackson')
+    reaction, kk, kshort1, _, _ = reaction_context()
+    costheta = reaction.decay(kk).costheta(kshort1, 'Gottfried-Jackson')
     assert pytest.approx(costheta.value(event)) == 0.09198832278031577
 
 
 def test_phi_gottfried_jackson() -> None:
     event = make_test_event()
-    phi = Phi(reaction_topology(), 'kshort1', 'Gottfried-Jackson')
+    reaction, kk, kshort1, _, _ = reaction_context()
+    phi = reaction.decay(kk).phi(kshort1, 'Gottfried-Jackson')
     assert pytest.approx(phi.value(event)) == -2.713913199133907
 
 
 def test_angles() -> None:
     event = make_test_event()
-    angles = Angles(reaction_topology(), 'kshort1', 'Helicity')
+    reaction, kk, kshort1, _, _ = reaction_context()
+    angles = reaction.decay(kk).angles(kshort1, 'Helicity')
     assert pytest.approx(angles.costheta.value(event)) == -0.4611175068834238
     assert pytest.approx(angles.phi.value(event)) == -2.657462587335066
 
 
 def test_pol_angle() -> None:
     event = make_test_event()
-    pol_angle = PolAngle(reaction_topology(), 'pol_angle')
+    reaction, _, _, _, _ = reaction_context()
+    pol_angle = PolAngle(reaction, 'pol_angle')
     assert pytest.approx(pol_angle.value(event)) == 1.93592989
 
 
@@ -99,8 +108,9 @@ def test_pol_magnitude() -> None:
 
 def test_polarization() -> None:
     event = make_test_event()
+    reaction, _, _, _, _ = reaction_context()
     polarization = Polarization(
-        reaction_topology(), pol_magnitude='pol_magnitude', pol_angle='pol_angle'
+        reaction, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
     )
     assert pytest.approx(polarization.pol_angle.value(event)) == 1.93592989
     assert pytest.approx(polarization.pol_magnitude.value(event)) == 0.38562805
@@ -108,20 +118,13 @@ def test_polarization() -> None:
 
 def test_mandelstam() -> None:
     event = make_test_event()
-    base = reaction_topology()
-    s = Mandelstam(base, 's')
-    t = Mandelstam(reaction_topology(), 't')
-    u = Mandelstam(reaction_topology(), 'u')
-    alt = Topology.missing_k1('beam', 'proton', ['kshort1', 'kshort2'])
-    sp = Mandelstam(alt, 's')
-    tp = Mandelstam(alt, 't')
-    up = Mandelstam(alt, 'u')
+    reaction, _, _, _, _ = reaction_context()
+    s = reaction.mandelstam('s')
+    t = reaction.mandelstam('t')
+    u = reaction.mandelstam('u')
     assert pytest.approx(s.value(event)) == 18.504011052120063
-    assert pytest.approx(s.value(event)) == pytest.approx(sp.value(event))
     assert pytest.approx(t.value(event)) == -0.19222859969898076
-    assert pytest.approx(t.value(event)) == pytest.approx(tp.value(event))
     assert pytest.approx(u.value(event)) == -14.404198931464428
-    assert pytest.approx(u.value(event)) == pytest.approx(up.value(event))
     m2_beam = event.get_p4_sum(['beam']).m2
     m2_recoil = event.get_p4_sum(['proton']).m2
     m2_res = event.get_p4_sum(['kshort1', 'kshort2']).m2
@@ -145,3 +148,16 @@ def test_variable_value_on() -> None:
     values = mass.value_on(dataset)
     assert len(values) == 1
     assert pytest.approx(values[0]) == 1.3743786309153077
+
+
+def test_variable_as_expression() -> None:
+    dataset = make_test_dataset()
+    mass = Mass(['kshort1', 'kshort2'])
+
+    evaluator = mass.as_expression('mass').load(dataset)
+    values = evaluator.evaluate([])
+
+    assert len(values) == 1
+    assert pytest.approx(values[0].real) == mass.value(make_test_event())
+    assert pytest.approx(values[0].imag) == 0.0
+    assert evaluator.parameters == []

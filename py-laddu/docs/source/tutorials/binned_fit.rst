@@ -13,7 +13,7 @@ Despite these downsides, it can still be advantageous to calculate binned fits, 
 Example
 -------
 
-We could approach a binned fit in one of two ways. First, we could use a piecewise amplitude to describe a number of parameters over the entire dataset. This means the minimization procedure will have many free parameters, one or two per wave per bin, and this might slow down the actual minimization process. The other way would be to make a simple model that works for one bin, then split the data up into bins and fit each one separately. We will do the latter here.
+We could approach a binned fit in one of two ways. First, we could use a nearest-bin lookup-table amplitude to describe a number of parameters over the entire dataset. This means the minimization procedure will have many free parameters, one or two per wave per bin, and this might slow down the actual minimization process. The other way would be to make a simple model that works for one bin, then split the data up into bins and fit each one separately. We will do the latter here.
 
 Like before, we begin by loading each dataset, but this time we can chain a method that will generate a ``BinnedDataset`` instead. This will contain all of the same events as the original ``Dataset``, but acts as a list where each element is a ``Dataset`` that only contains events in a particular bin:
 
@@ -46,9 +46,16 @@ where the terms with particle names in square brackets still represent the produ
 
 .. code-block:: python
 
-   topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-   angles = ld.Angles(topology, 'kshort1')
-   polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
+   beam = ld.Particle.measured('beam', 'beam')
+   target = ld.Particle.missing('target')
+   kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+   kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+   kk = ld.Particle.composite('KK', [kshort1, kshort2])
+   proton = ld.Particle.measured('proton', 'proton')
+   reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+   decay = reaction.decay(kk)
+   angles = decay.angles(kshort1)
+   polarization = reaction.polarization('pol_magnitude', 'pol_angle')
 
    z00p = ld.Zlm("Z00+", 0, 0, "+", angles, polarization)
    z22p = ld.Zlm("Z22+", 2, 2, "+", angles, polarization)

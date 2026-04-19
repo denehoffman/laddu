@@ -1,9 +1,39 @@
-from typing import Literal, overload
+from enum import Enum
 
 from laddu.amplitudes import Expression, ParameterLike
 from laddu.utils.variables import Mass
 
-@overload
+class KopfKMatrixF0Channel(Enum):
+    PiPi: KopfKMatrixF0Channel
+    FourPi: KopfKMatrixF0Channel
+    KKbar: KopfKMatrixF0Channel
+    EtaEta: KopfKMatrixF0Channel
+    EtaEtaPrime: KopfKMatrixF0Channel
+
+class KopfKMatrixF2Channel(Enum):
+    PiPi: KopfKMatrixF2Channel
+    FourPi: KopfKMatrixF2Channel
+    KKbar: KopfKMatrixF2Channel
+    EtaEta: KopfKMatrixF2Channel
+
+class KopfKMatrixA0Channel(Enum):
+    PiEta: KopfKMatrixA0Channel
+    KKbar: KopfKMatrixA0Channel
+
+class KopfKMatrixA2Channel(Enum):
+    PiEta: KopfKMatrixA2Channel
+    KKbar: KopfKMatrixA2Channel
+    PiEtaPrime: KopfKMatrixA2Channel
+
+class KopfKMatrixRhoChannel(Enum):
+    PiPi: KopfKMatrixRhoChannel
+    FourPi: KopfKMatrixRhoChannel
+    KKbar: KopfKMatrixRhoChannel
+
+class KopfKMatrixPi1Channel(Enum):
+    PiEta: KopfKMatrixPi1Channel
+    PiEtaPrime: KopfKMatrixPi1Channel
+
 def KopfKMatrixF0(
     name: str,
     couplings: tuple[
@@ -13,27 +43,11 @@ def KopfKMatrixF0(
         tuple[ParameterLike, ParameterLike],
         tuple[ParameterLike, ParameterLike],
     ],
-    channel: Literal[0, 1, 2, 3, 4],
+    channel: KopfKMatrixF0Channel,
     mass: Mass,
     *,
     seed: int | None = None,
 ) -> Expression: ...
-@overload
-def KopfKMatrixF0(
-    name: str,
-    couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-    ],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
 def KopfKMatrixF2(
     name: str,
     couplings: tuple[
@@ -42,112 +56,45 @@ def KopfKMatrixF2(
         tuple[ParameterLike, ParameterLike],
         tuple[ParameterLike, ParameterLike],
     ],
-    channel: Literal[0, 1, 2, 3],
+    channel: KopfKMatrixF2Channel,
     mass: Mass,
     *,
     seed: int | None = None,
 ) -> Expression: ...
-@overload
-def KopfKMatrixF2(
-    name: str,
-    couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-    ],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
 def KopfKMatrixA0(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
         tuple[ParameterLike, ParameterLike],
     ],
-    channel: Literal[0, 1],
+    channel: KopfKMatrixA0Channel,
     mass: Mass,
     *,
     seed: int | None = None,
 ) -> Expression: ...
-@overload
-def KopfKMatrixA0(
-    name: str,
-    couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-    ],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
 def KopfKMatrixA2(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
         tuple[ParameterLike, ParameterLike],
     ],
-    channel: Literal[0, 1, 2],
+    channel: KopfKMatrixA2Channel,
     mass: Mass,
     *,
     seed: int | None = None,
 ) -> Expression: ...
-@overload
-def KopfKMatrixA2(
-    name: str,
-    couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-    ],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
 def KopfKMatrixRho(
     name: str,
     couplings: tuple[
         tuple[ParameterLike, ParameterLike],
         tuple[ParameterLike, ParameterLike],
     ],
-    channel: Literal[0, 1, 2],
+    channel: KopfKMatrixRhoChannel,
     mass: Mass,
-    *,
-    seed: int | None = None,
 ) -> Expression: ...
-@overload
-def KopfKMatrixRho(
-    name: str,
-    couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-    ],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
 def KopfKMatrixPi1(
     name: str,
     couplings: tuple[tuple[ParameterLike, ParameterLike],],
-    channel: Literal[0, 1],
+    channel: KopfKMatrixPi1Channel,
     mass: Mass,
-    *,
-    seed: int | None = None,
-) -> Expression: ...
-@overload
-def KopfKMatrixPi1(
-    name: str,
-    couplings: tuple[tuple[ParameterLike, ParameterLike],],
-    channel: int,
-    mass: Mass,
-    *,
-    seed: int | None = None,
 ) -> Expression: ...

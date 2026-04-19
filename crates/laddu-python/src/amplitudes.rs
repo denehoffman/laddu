@@ -1,7 +1,7 @@
 use crate::data::PyDataset;
 use laddu_core::{
     amplitudes::{constant, parameter, Evaluator, Expression, ParameterLike, TestAmplitude},
-    f64, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
+    f64, CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -167,6 +167,44 @@ impl PyExpression {
     fn norm_sqr(&self) -> PyExpression {
         PyExpression(self.0.norm_sqr())
     }
+    /// The square root of an Expression
+    fn sqrt(&self) -> PyExpression {
+        PyExpression(self.0.sqrt())
+    }
+    /// Raise an Expression to an int, float, or Expression power
+    fn power(&self, power: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
+        if let Ok(expression) = power.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.pow(&expression.0)))
+        } else if let Ok(value) = power.extract::<i32>() {
+            Ok(PyExpression(self.0.powi(value)))
+        } else if let Ok(value) = power.extract::<f64>() {
+            Ok(PyExpression(self.0.powf(value)))
+        } else {
+            Err(PyTypeError::new_err(
+                "power must be an int, float, or Expression",
+            ))
+        }
+    }
+    /// The exponential of an Expression
+    fn exp(&self) -> PyExpression {
+        PyExpression(self.0.exp())
+    }
+    /// The sine of an Expression
+    fn sin(&self) -> PyExpression {
+        PyExpression(self.0.sin())
+    }
+    /// The cosine of an Expression
+    fn cos(&self) -> PyExpression {
+        PyExpression(self.0.cos())
+    }
+    /// The natural logarithm of an Expression
+    fn log(&self) -> PyExpression {
+        PyExpression(self.0.log())
+    }
+    /// The complex phase factor exp(i * expression)
+    fn cis(&self) -> PyExpression {
+        PyExpression(self.0.cis())
+    }
     /// Return a new Expression with the given parameter fixed
     fn fix(&self, name: &str, value: f64) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.fix(name, value)?))
@@ -182,6 +220,11 @@ impl PyExpression {
     /// Return a new Expression with several parameters renamed
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyExpression> {
         Ok(PyExpression(self.0.rename_parameters(&mapping)?))
+    }
+    /// Return a tree-like diagnostic view of the compiled Expression.
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
@@ -350,12 +393,12 @@ impl PyEvaluator {
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyEvaluator> {
         Ok(PyEvaluator(self.0.rename_parameters(&mapping)?))
     }
-    /// Activates Amplitudes in the Expression by name
+    /// Activates Amplitudes in the Expression by name or glob selector
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be activated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be activated
     ///
     /// Raises
     /// ------
@@ -364,8 +407,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn activate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
@@ -393,14 +436,14 @@ impl PyEvaluator {
     fn activate_all(&self) {
         self.0.activate_all();
     }
-    /// Deactivates Amplitudes in the Expression by name
+    /// Deactivates Amplitudes in the Expression by name or glob selector
     ///
     /// Deactivated Amplitudes act as zeros in the Expression
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be deactivated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be deactivated
     ///
     /// Raises
     /// ------
@@ -409,8 +452,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn deactivate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
@@ -438,14 +481,14 @@ impl PyEvaluator {
     fn deactivate_all(&self) {
         self.0.deactivate_all();
     }
-    /// Isolates Amplitudes in the Expression by name
+    /// Isolates Amplitudes in the Expression by name or glob selector
     ///
     /// Activates the Amplitudes given in `arg` and deactivates the rest
     ///
     /// Parameters
     /// ----------
     /// arg : str or list of str
-    ///     Names of Amplitudes to be isolated
+    ///     Names or ``*``/``?`` glob selectors of Amplitudes to be isolated
     ///
     /// Raises
     /// ------
@@ -454,8 +497,8 @@ impl PyEvaluator {
     /// ValueError
     ///     If `arg` or any items of `arg` are not registered Amplitudes
     /// strict : bool, default=True
-    ///     When ``True``, raise an error if any amplitude is missing. When ``False``,
-    ///     silently skip missing amplitudes.
+    ///     When ``True``, raise an error if any selector matches no amplitudes. When
+    ///     ``False``, silently skip selectors with no matches.
     #[pyo3(signature = (arg, *, strict=true))]
     fn isolate(&self, arg: &Bound<'_, PyAny>, strict: bool) -> PyResult<()> {
         if let Ok(string_arg) = arg.extract::<String>() {
@@ -489,6 +532,18 @@ impl PyEvaluator {
     fn set_active_mask(&self, mask: Vec<bool>) -> PyResult<()> {
         self.0.set_active_mask(&mask)?;
         Ok(())
+    }
+
+    /// Return a tree-like diagnostic view of the compiled Expression.
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
+    }
+
+    /// Return the Expression represented by this Evaluator.
+    #[getter]
+    fn expression(&self) -> PyExpression {
+        PyExpression(self.0.expression())
     }
 
     /// Evaluate the stored Expression over the stored Dataset
@@ -635,6 +690,26 @@ impl PyEvaluator {
                 .collect::<Vec<Vec<Complex64>>>()
         })?;
         Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
+    }
+}
+
+/// A class which can be used to display the compiled form of an Expression
+///
+/// Notes
+/// -----
+/// This should not be used for anything other than diagnostic purposes.
+///
+#[pyclass(name = "CompiledExpression", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyCompiledExpression(pub CompiledExpression);
+
+#[pymethods]
+impl PyCompiledExpression {
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 

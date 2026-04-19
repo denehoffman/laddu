@@ -301,13 +301,22 @@ pub trait Amplitude: DynClone + Send + Sync {
     /// returning an [`AmplitudeID`], which can be obtained from the
     /// [`Resources::register_amplitude`] method.
     ///
-    /// [`register`](Amplitude::register) is invoked once when an amplitude is first added to a
-    /// [`Manager`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
+    /// [`register`](Amplitude::register) is invoked once when an amplitude is first converted into
+    /// an [`Expression`]. Use it to allocate parameter/cache state within [`Resources`] without assuming
     /// any dataset context.
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID>;
+    /// Optional semantic identity key for same-name deduplication.
+    ///
+    /// Return `Some` only when two independently constructed instances with equal keys are
+    /// interchangeable after registration, binding, precomputation, value evaluation, and gradient
+    /// evaluation. The key should include the concrete amplitude type and all user-facing
+    /// configuration, but must ignore registration-assigned IDs like [`ParameterID`]s and cache IDs.
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        None
+    }
     /// Bind this [`Amplitude`] to a concrete [`Dataset`] by using the provided metadata to wire up
     /// [`Variable`](crate::utils::variables::Variable)s or other dataset-specific state. This will
-    /// be invoked when a [`Model`] is loaded with data, after [`register`](Amplitude::register)
+    /// be invoked when a [`Expression`] is loaded with data, after [`register`](Amplitude::register)
     /// has already succeeded. The default implementation is a no-op for amplitudes that do not
     /// depend on metadata.
     fn bind(&mut self, _metadata: &DatasetMetadata) -> LadduResult<()> {
@@ -461,13 +470,99 @@ pub struct AmplitudeValues(pub Vec<Complex64>);
 pub struct GradientValues(pub usize, pub Vec<DVector<Complex64>>);
 
 /// A tag which refers to a registered [`Amplitude`]. This is the base object which can be used to
-/// build [`Expression`]s and should be obtained from the [`Resources::register`] method.
+/// build [`Expression`]s and should be obtained from the [`Resources::register_amplitude`] method.
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct AmplitudeID(pub(crate) String, pub(crate) usize);
 
 impl Display for AmplitudeID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}(id={})", self.0, self.1)
+    }
+}
+
+/// A single named field in an [`AmplitudeSemanticKey`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmplitudeSemanticField {
+    name: String,
+    value: String,
+}
+
+impl AmplitudeSemanticField {
+    /// Construct a semantic key field.
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// A semantic identity key used to opt into deduplicating same-name amplitude instances.
+///
+/// The key must include enough type/configuration information to prove that two independently
+/// constructed amplitudes with the same public name can safely share one registered amplitude.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmplitudeSemanticKey {
+    kind: String,
+    fields: Vec<AmplitudeSemanticField>,
+}
+
+impl AmplitudeSemanticKey {
+    /// Construct a semantic key for the given amplitude kind.
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// Add a named field to this semantic key.
+    pub fn with_field(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push(AmplitudeSemanticField::new(name, value));
+        self
+    }
+
+    fn field_value(&self, name: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|field| field.name == name)
+            .map(|field| field.value.as_str())
+    }
+
+    fn mismatch_summary(&self, other: &Self) -> String {
+        let mut mismatches = Vec::new();
+        if self.kind != other.kind {
+            mismatches.push(format!(
+                "kind differs (existing: {:?}, incoming: {:?})",
+                self.kind, other.kind
+            ));
+        }
+        for field in &self.fields {
+            match other.field_value(&field.name) {
+                Some(value) if value == field.value => {}
+                Some(value) => mismatches.push(format!(
+                    "{} differs (existing: {}, incoming: {})",
+                    field.name, field.value, value
+                )),
+                None => mismatches.push(format!(
+                    "{} is missing from the incoming key (existing: {})",
+                    field.name, field.value
+                )),
+            }
+        }
+        for field in &other.fields {
+            if self.field_value(&field.name).is_none() {
+                mismatches.push(format!(
+                    "{} is missing from the existing key (incoming: {})",
+                    field.name, field.value
+                ));
+            }
+        }
+        if mismatches.is_empty() {
+            "semantic keys differ".to_string()
+        } else {
+            mismatches.join("; ")
+        }
     }
 }
 
@@ -516,6 +611,7 @@ impl ExpressionRegistry {
         let mut amplitudes = Vec::new();
         let mut amplitude_names = Vec::new();
         let mut amplitude_ids = Vec::new();
+        let mut amplitude_semantic_keys = Vec::new();
         let mut name_to_index = std::collections::HashMap::new();
 
         let mut left_map = Vec::with_capacity(self.amplitudes.len());
@@ -525,11 +621,13 @@ impl ExpressionRegistry {
             .zip(&self.amplitude_names)
             .zip(&self.amplitude_ids)
         {
+            let semantic_key = amp.semantic_key();
             let mut cloned_amp = dyn_clone::clone_box(&**amp);
             let aid = cloned_amp.register(&mut resources)?;
             amplitudes.push(cloned_amp);
             amplitude_names.push(name.clone());
             amplitude_ids.push(*amp_id);
+            amplitude_semantic_keys.push(semantic_key);
             name_to_index.insert(name.clone(), aid.1);
             left_map.push(aid.1);
         }
@@ -543,19 +641,34 @@ impl ExpressionRegistry {
         {
             if let Some(existing) = name_to_index.get(name) {
                 let existing_amp_id = amplitude_ids[*existing];
+                let incoming_semantic_key = amp.semantic_key();
                 if existing_amp_id != *amp_id {
-                    return Err(LadduError::Custom(format!(
-                        "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
-                    )));
+                    match (&amplitude_semantic_keys[*existing], &incoming_semantic_key) {
+                        (Some(existing_key), Some(incoming_key))
+                            if existing_key == incoming_key => {}
+                        (Some(existing_key), Some(incoming_key)) => {
+                            return Err(LadduError::Custom(format!(
+                                "Amplitude name \"{name}\" refers to different underlying amplitudes; semantic keys differ: {}",
+                                existing_key.mismatch_summary(incoming_key)
+                            )));
+                        }
+                        _ => {
+                            return Err(LadduError::Custom(format!(
+                                "Amplitude name \"{name}\" refers to different underlying amplitudes; rename to avoid conflicts"
+                            )));
+                        }
+                    }
                 }
                 right_map.push(*existing);
                 continue;
             }
+            let semantic_key = amp.semantic_key();
             let mut cloned_amp = dyn_clone::clone_box(&**amp);
             let aid = cloned_amp.register(&mut resources)?;
             amplitudes.push(cloned_amp);
             amplitude_names.push(name.clone());
             amplitude_ids.push(*amp_id);
+            amplitude_semantic_keys.push(semantic_key);
             name_to_index.insert(name.clone(), aid.1);
             right_map.push(aid.1);
         }
@@ -633,6 +746,15 @@ pub enum ExpressionNode {
     Conj(Box<ExpressionNode>),
     /// The absolute square of an [`ExpressionNode`].
     NormSqr(Box<ExpressionNode>),
+    Sqrt(Box<ExpressionNode>),
+    Pow(Box<ExpressionNode>, Box<ExpressionNode>),
+    PowI(Box<ExpressionNode>, i32),
+    PowF(Box<ExpressionNode>, f64),
+    Exp(Box<ExpressionNode>),
+    Sin(Box<ExpressionNode>),
+    Cos(Box<ExpressionNode>),
+    Log(Box<ExpressionNode>),
+    Cis(Box<ExpressionNode>),
 }
 
 #[derive(Clone, Debug)]
@@ -697,6 +819,45 @@ enum ExpressionOp {
         input: usize,
     },
     NormSqr {
+        dst: usize,
+        input: usize,
+    },
+    Sqrt {
+        dst: usize,
+        input: usize,
+    },
+    Pow {
+        dst: usize,
+        value: usize,
+        power: usize,
+    },
+    PowI {
+        dst: usize,
+        input: usize,
+        power: i32,
+    },
+    PowF {
+        dst: usize,
+        input: usize,
+        power: f64,
+    },
+    Exp {
+        dst: usize,
+        input: usize,
+    },
+    Sin {
+        dst: usize,
+        input: usize,
+    },
+    Cos {
+        dst: usize,
+        input: usize,
+    },
+    Log {
+        dst: usize,
+        input: usize,
+    },
+    Cis {
         dst: usize,
         input: usize,
     },
@@ -802,6 +963,69 @@ impl ExpressionProgramBuilder {
                 self.emit(ExpressionOp::NormSqr { dst, input });
                 dst
             }
+            ExpressionNode::Sqrt(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Sqrt { dst, input });
+                dst
+            }
+            ExpressionNode::Pow(a, b) => {
+                let value = self.compile(a);
+                let power = self.compile(b);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Pow { dst, value, power });
+                dst
+            }
+            ExpressionNode::PowI(a, power) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::PowI {
+                    dst,
+                    input,
+                    power: *power,
+                });
+                dst
+            }
+            ExpressionNode::PowF(a, power) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::PowF {
+                    dst,
+                    input,
+                    power: *power,
+                });
+                dst
+            }
+            ExpressionNode::Exp(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Exp { dst, input });
+                dst
+            }
+            ExpressionNode::Sin(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Sin { dst, input });
+                dst
+            }
+            ExpressionNode::Cos(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Cos { dst, input });
+                dst
+            }
+            ExpressionNode::Log(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Log { dst, input });
+                dst
+            }
+            ExpressionNode::Cis(a) => {
+                let input = self.compile(a);
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::Cis { dst, input });
+                dst
+            }
         }
     }
 }
@@ -848,6 +1072,33 @@ impl ExpressionProgram {
                 }
                 ExpressionOp::NormSqr { dst, input } => {
                     slots[dst] = Complex64::new(slots[input].norm_sqr(), 0.0);
+                }
+                ExpressionOp::Sqrt { dst, input } => {
+                    slots[dst] = slots[input].sqrt();
+                }
+                ExpressionOp::Pow { dst, value, power } => {
+                    slots[dst] = slots[value].powc(slots[power]);
+                }
+                ExpressionOp::PowI { dst, input, power } => {
+                    slots[dst] = slots[input].powi(power);
+                }
+                ExpressionOp::PowF { dst, input, power } => {
+                    slots[dst] = slots[input].powc(Complex64::new(power, 0.0));
+                }
+                ExpressionOp::Exp { dst, input } => {
+                    slots[dst] = slots[input].exp();
+                }
+                ExpressionOp::Sin { dst, input } => {
+                    slots[dst] = slots[input].sin();
+                }
+                ExpressionOp::Cos { dst, input } => {
+                    slots[dst] = slots[input].cos();
+                }
+                ExpressionOp::Log { dst, input } => {
+                    slots[dst] = slots[input].ln();
+                }
+                ExpressionOp::Cis { dst, input } => {
+                    slots[dst] = (Complex64::new(0.0, 1.0) * slots[input]).exp();
                 }
             }
         }
@@ -1018,6 +1269,101 @@ impl ExpressionProgram {
                         *dst_item = Complex64::new(2.0 * (*input_item * conj_value).re, 0.0);
                     }
                 }
+                ExpressionOp::Sqrt { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::new(0.5, 0.0) / values[input].sqrt();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Pow { dst, value, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let base = values[value];
+                    let exponent = values[power];
+                    let output = values[dst];
+                    for ((dst_item, value_item), power_item) in dst_grad
+                        .iter_mut()
+                        .zip(before_dst[value].iter())
+                        .zip(before_dst[power].iter())
+                    {
+                        *dst_item =
+                            output * (*power_item * base.ln() + exponent * *value_item / base);
+                    }
+                }
+                ExpressionOp::PowI { dst, input, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = match power {
+                        0 => Complex64::ZERO,
+                        1 => Complex64::ONE,
+                        _ => {
+                            let base = values[input];
+                            let multiplier = Complex64::new(power as f64, 0.0);
+                            if let Some(derivative_power) = power.checked_sub(1) {
+                                multiplier * base.powi(derivative_power)
+                            } else {
+                                multiplier * base.powi(power) / base
+                            }
+                        }
+                    };
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::PowF { dst, input, power } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = if power == 0.0 {
+                        Complex64::ZERO
+                    } else {
+                        Complex64::new(power, 0.0)
+                            * values[input].powc(Complex64::new(power - 1.0, 0.0))
+                    };
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Exp { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let output = values[dst];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * output;
+                    }
+                }
+                ExpressionOp::Sin { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = values[input].cos();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Cos { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = -values[input].sin();
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Log { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::ONE / values[input];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
+                ExpressionOp::Cis { dst, input } => {
+                    let (before_dst, dst_grad) = borrow_dst(gradients, dst);
+                    let factor = Complex64::new(0.0, 1.0) * values[dst];
+                    for (dst_item, input_item) in dst_grad.iter_mut().zip(before_dst[input].iter())
+                    {
+                        *dst_item = *input_item * factor;
+                    }
+                }
             }
         }
     }
@@ -1038,6 +1384,15 @@ impl ExpressionNode {
             Self::NormSqr(a) => Self::NormSqr(Box::new(a.remap(mapping))),
             Self::Zero => Self::Zero,
             Self::One => Self::One,
+            Self::Sqrt(a) => Self::Sqrt(Box::new(a.remap(mapping))),
+            Self::Pow(a, b) => Self::Pow(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
+            Self::PowI(a, power) => Self::PowI(Box::new(a.remap(mapping)), *power),
+            Self::PowF(a, power) => Self::PowF(Box::new(a.remap(mapping)), *power),
+            Self::Exp(a) => Self::Exp(Box::new(a.remap(mapping))),
+            Self::Sin(a) => Self::Sin(Box::new(a.remap(mapping))),
+            Self::Cos(a) => Self::Cos(Box::new(a.remap(mapping))),
+            Self::Log(a) => Self::Log(Box::new(a.remap(mapping))),
+            Self::Cis(a) => Self::Cis(Box::new(a.remap(mapping))),
         }
     }
 
@@ -1046,15 +1401,11 @@ impl ExpressionNode {
     }
 
     /// Evaluate an [`ExpressionNode`] by compiling it to bytecode on the fly.
-    ///
-    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
     pub fn evaluate(&self, amplitude_values: &[Complex64]) -> Complex64 {
         self.program().evaluate(amplitude_values)
     }
 
     /// Evaluate the gradient of an [`ExpressionNode`].
-    ///
-    /// For repeated evaluations prefer [`ExpressionProgram`] to avoid recompilation.
     pub fn evaluate_gradient(
         &self,
         amplitude_values: &[Complex64],
@@ -1143,6 +1494,34 @@ impl Expression {
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
         self.registry.resources.n_parameters()
+    }
+
+    /// Returns a tree-like diagnostic snapshot of this expression's compiled form.
+    ///
+    /// This compiles the expression on each call with every registered amplitude active. Use
+    /// [`Evaluator::compiled_expression`] when you need the compiled form for a loaded evaluator's
+    /// current active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        let active_amplitudes = vec![true; self.registry.amplitudes.len()];
+        let amplitude_dependencies = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| ir::DependenceClass::from(amp.dependence_hint()))
+            .collect::<Vec<_>>();
+        let amplitude_realness = self
+            .registry
+            .amplitudes
+            .iter()
+            .map(|amp| amp.real_valued_hint())
+            .collect::<Vec<_>>();
+        let expression_ir = ir::compile_expression_ir_with_real_hints(
+            &self.tree,
+            &active_amplitudes,
+            &amplitude_dependencies,
+            &amplitude_realness,
+        );
+        CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
     }
 
     fn with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
@@ -1355,6 +1734,42 @@ impl Expression {
     pub fn norm_sqr(&self) -> Self {
         Self::unary_op(self, ExpressionNode::NormSqr)
     }
+    /// Takes the square root of the given [`Expression`].
+    pub fn sqrt(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Sqrt)
+    }
+    /// Raises the given [`Expression`] to an expression-valued power.
+    pub fn pow(&self, power: &Expression) -> Self {
+        Self::binary_op(self, power, ExpressionNode::Pow)
+    }
+    /// Raises the given [`Expression`] to an integer power.
+    pub fn powi(&self, power: i32) -> Self {
+        Self::unary_op(self, |input| ExpressionNode::PowI(input, power))
+    }
+    /// Raises the given [`Expression`] to a real-valued power.
+    pub fn powf(&self, power: f64) -> Self {
+        Self::unary_op(self, |input| ExpressionNode::PowF(input, power))
+    }
+    /// Takes the exponential of the given [`Expression`].
+    pub fn exp(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Exp)
+    }
+    /// Takes the sine of the given [`Expression`].
+    pub fn sin(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Sin)
+    }
+    /// Takes the cosine of the given [`Expression`].
+    pub fn cos(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Cos)
+    }
+    /// Takes the natural logarithm of the given [`Expression`].
+    pub fn log(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Log)
+    }
+    /// Takes the complex phase factor exp(i * expression).
+    pub fn cis(&self) -> Self {
+        Self::unary_op(self, ExpressionNode::Cis)
+    }
 
     /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
     fn write_tree(
@@ -1386,6 +1801,15 @@ impl Expression {
             ExpressionNode::NormSqr(_) => "NormSqr".to_string(),
             ExpressionNode::Zero => "0".to_string(),
             ExpressionNode::One => "1".to_string(),
+            ExpressionNode::Sqrt(_) => "Sqrt".to_string(),
+            ExpressionNode::Pow(_, _) => "Pow".to_string(),
+            ExpressionNode::PowI(_, power) => format!("PowI({power})"),
+            ExpressionNode::PowF(_, power) => format!("PowF({power})"),
+            ExpressionNode::Exp(_) => "Exp".to_string(),
+            ExpressionNode::Sin(_) => "Sin".to_string(),
+            ExpressionNode::Cos(_) => "Cos".to_string(),
+            ExpressionNode::Log(_) => "Log".to_string(),
+            ExpressionNode::Cis(_) => "Cis".to_string(),
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match t {
@@ -1393,7 +1817,8 @@ impl Expression {
             ExpressionNode::Add(a, b)
             | ExpressionNode::Sub(a, b)
             | ExpressionNode::Mul(a, b)
-            | ExpressionNode::Div(a, b) => {
+            | ExpressionNode::Div(a, b)
+            | ExpressionNode::Pow(a, b) => {
                 let terms = [a, b];
                 let mut it = terms.iter().peekable();
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
@@ -1408,7 +1833,15 @@ impl Expression {
             | ExpressionNode::Real(a)
             | ExpressionNode::Imag(a)
             | ExpressionNode::Conj(a)
-            | ExpressionNode::NormSqr(a) => {
+            | ExpressionNode::NormSqr(a)
+            | ExpressionNode::Sqrt(a)
+            | ExpressionNode::PowI(a, _)
+            | ExpressionNode::PowF(a, _)
+            | ExpressionNode::Exp(a)
+            | ExpressionNode::Sin(a)
+            | ExpressionNode::Cos(a)
+            | ExpressionNode::Log(a)
+            | ExpressionNode::Cis(a) => {
                 let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
                 self.write_tree(a, f, &child_prefix, "└─ ", "   ")?;
             }
@@ -1454,6 +1887,186 @@ impl_op_ex!(- |a: &Expression| -> Expression {
 #[doc(hidden)]
 pub struct ExpressionValueProgramSnapshot {
     lowered_program: lowered::LoweredProgram,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// A node in a compiled expression diagnostic snapshot.
+pub enum CompiledExpressionNode {
+    /// A complex constant.
+    Constant(Complex64),
+    /// A registered amplitude by index and display name.
+    Amplitude {
+        /// The amplitude index used by the compiled evaluator.
+        index: usize,
+        /// The registered amplitude name.
+        name: String,
+    },
+    /// A unary operation and its input node.
+    Unary {
+        /// The display label for the operation.
+        op: String,
+        /// The input node index.
+        input: usize,
+    },
+    /// A binary operation and its input nodes.
+    Binary {
+        /// The display label for the operation.
+        op: String,
+        /// The left input node index.
+        left: usize,
+        /// The right input node index.
+        right: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Tree-like diagnostic view of the compiled expression DAG.
+///
+/// The compiled expression is a directed acyclic graph because common subexpressions can be
+/// deduplicated during compilation. The display format expands the graph from the root once and
+/// marks later visits to the same node with `(ref)`.
+pub struct CompiledExpression {
+    nodes: Vec<CompiledExpressionNode>,
+    root: usize,
+}
+
+impl CompiledExpression {
+    fn from_ir(ir: &ir::ExpressionIR, amplitude_names: &[String]) -> Self {
+        let nodes = ir
+            .nodes()
+            .iter()
+            .map(|node| match node {
+                ir::IrNode::Constant(value) => CompiledExpressionNode::Constant(*value),
+                ir::IrNode::Amp(index) => CompiledExpressionNode::Amplitude {
+                    index: *index,
+                    name: amplitude_names
+                        .get(*index)
+                        .cloned()
+                        .unwrap_or_else(|| "<unregistered>".to_string()),
+                },
+                ir::IrNode::Unary { op, input } => CompiledExpressionNode::Unary {
+                    op: compiled_unary_op_label(*op),
+                    input: *input,
+                },
+                ir::IrNode::Binary { op, left, right } => CompiledExpressionNode::Binary {
+                    op: compiled_binary_op_label(*op),
+                    left: *left,
+                    right: *right,
+                },
+            })
+            .collect();
+        Self {
+            nodes,
+            root: ir.root(),
+        }
+    }
+
+    /// Returns the compiled expression node list in evaluator execution order.
+    pub fn nodes(&self) -> &[CompiledExpressionNode] {
+        &self.nodes
+    }
+
+    /// Returns the root node index.
+    pub fn root(&self) -> usize {
+        self.root
+    }
+
+    fn node_label(&self, index: usize) -> String {
+        let Some(node) = self.nodes.get(index) else {
+            return format!("#{index} <missing>");
+        };
+        let label = match node {
+            CompiledExpressionNode::Constant(value) => format!("const {value}"),
+            CompiledExpressionNode::Amplitude { index, name } => {
+                format!("{name}(id={index})")
+            }
+            CompiledExpressionNode::Unary { op, .. }
+            | CompiledExpressionNode::Binary { op, .. } => op.clone(),
+        };
+        format!("#{index} {label}")
+    }
+
+    /// Credit to Daniel Janus: <https://blog.danieljanus.pl/2023/07/20/iterating-trees/>
+    fn write_tree(
+        &self,
+        index: usize,
+        f: &mut std::fmt::Formatter<'_>,
+        parent_prefix: &str,
+        immediate_prefix: &str,
+        parent_suffix: &str,
+        expanded: &mut [bool],
+    ) -> std::fmt::Result {
+        let already_expanded = expanded.get(index).copied().unwrap_or(false);
+        if let Some(slot) = expanded.get_mut(index) {
+            *slot = true;
+        }
+        let ref_suffix = if already_expanded { " (ref)" } else { "" };
+        writeln!(
+            f,
+            "{}{}{}{}",
+            parent_prefix,
+            immediate_prefix,
+            self.node_label(index),
+            ref_suffix
+        )?;
+        if already_expanded {
+            return Ok(());
+        }
+        let Some(node) = self.nodes.get(index) else {
+            return Ok(());
+        };
+        match node {
+            CompiledExpressionNode::Constant(_) | CompiledExpressionNode::Amplitude { .. } => {}
+            CompiledExpressionNode::Unary { input, .. } => {
+                let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
+                self.write_tree(*input, f, &child_prefix, "└─ ", "   ", expanded)?;
+            }
+            CompiledExpressionNode::Binary { left, right, .. } => {
+                let child_prefix = format!("{}{}", parent_prefix, parent_suffix);
+                self.write_tree(*left, f, &child_prefix, "├─ ", "│  ", expanded)?;
+                self.write_tree(*right, f, &child_prefix, "└─ ", "   ", expanded)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Display for CompiledExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.nodes.is_empty() {
+            return writeln!(f, "<empty>");
+        }
+        let mut expanded = vec![false; self.nodes.len()];
+        self.write_tree(self.root, f, "", "", "", &mut expanded)
+    }
+}
+
+fn compiled_unary_op_label(op: ir::IrUnaryOp) -> String {
+    match op {
+        ir::IrUnaryOp::Neg => "-".to_string(),
+        ir::IrUnaryOp::Real => "Re".to_string(),
+        ir::IrUnaryOp::Imag => "Im".to_string(),
+        ir::IrUnaryOp::Conj => "*".to_string(),
+        ir::IrUnaryOp::NormSqr => "NormSqr".to_string(),
+        ir::IrUnaryOp::Sqrt => "Sqrt".to_string(),
+        ir::IrUnaryOp::PowI(power) => format!("PowI({power})"),
+        ir::IrUnaryOp::PowF(bits) => format!("PowF({})", f64::from_bits(bits)),
+        ir::IrUnaryOp::Exp => "Exp".to_string(),
+        ir::IrUnaryOp::Sin => "Sin".to_string(),
+        ir::IrUnaryOp::Cos => "Cos".to_string(),
+        ir::IrUnaryOp::Log => "Log".to_string(),
+        ir::IrUnaryOp::Cis => "Cis".to_string(),
+    }
+}
+
+fn compiled_binary_op_label(op: ir::IrBinaryOp) -> String {
+    match op {
+        ir::IrBinaryOp::Add => "+".to_string(),
+        ir::IrBinaryOp::Sub => "-".to_string(),
+        ir::IrBinaryOp::Mul => "×".to_string(),
+        ir::IrBinaryOp::Div => "÷".to_string(),
+        ir::IrBinaryOp::Pow => "Pow".to_string(),
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Origin of the currently installed expression specialization.
@@ -1651,6 +2264,21 @@ impl Evaluator {
     ) -> usize {
         let _ = self;
         snapshot.lowered_program.scratch_slots()
+    }
+
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for the evaluator's
+    /// current active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        let expression_ir = self.compile_expression_ir_for_active_mask(&self.active_mask());
+        CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
+    }
+
+    /// Returns the expression represented by this evaluator.
+    pub fn expression(&self) -> Expression {
+        Expression {
+            tree: self.expression.clone(),
+            registry: self.registry.clone(),
+        }
     }
     fn lowered_gradient_runtime_slot_count(&self) -> usize {
         self.lowered_runtime().gradient_program().scratch_slots()
@@ -2089,66 +2717,6 @@ impl Evaluator {
             gradient_slots,
         )
     }
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn evaluate_cache_gradient_with_flat_scratch(
-        &self,
-        amplitude_values: &mut [Complex64],
-        gradient_values: &mut [DVector<Complex64>],
-        value_slots: &mut [Complex64],
-        gradient_slots: &mut [Complex64],
-        grad_dim: usize,
-        active_indices: &[usize],
-        active_mask: &[bool],
-        parameters: &Parameters,
-        cache: &Cache,
-    ) -> DVector<Complex64> {
-        self.fill_amplitude_values_and_gradients(
-            amplitude_values,
-            gradient_values,
-            active_indices,
-            active_mask,
-            parameters,
-            cache,
-        );
-        self.evaluate_expression_runtime_gradient_with_flat_scratch(
-            amplitude_values,
-            gradient_values,
-            value_slots,
-            gradient_slots,
-            grad_dim,
-        )
-    }
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn evaluate_cache_value_gradient_with_flat_scratch(
-        &self,
-        amplitude_values: &mut [Complex64],
-        gradient_values: &mut [DVector<Complex64>],
-        value_slots: &mut [Complex64],
-        gradient_slots: &mut [Complex64],
-        grad_dim: usize,
-        active_indices: &[usize],
-        active_mask: &[bool],
-        parameters: &Parameters,
-        cache: &Cache,
-    ) -> (Complex64, DVector<Complex64>) {
-        self.fill_amplitude_values_and_gradients(
-            amplitude_values,
-            gradient_values,
-            active_indices,
-            active_mask,
-            parameters,
-            cache,
-        );
-        self.evaluate_expression_runtime_value_gradient_with_flat_scratch(
-            amplitude_values,
-            gradient_values,
-            value_slots,
-            gradient_slots,
-            grad_dim,
-        )
-    }
 
     pub fn expression_slot_count(&self) -> usize {
         self.lowered_runtime_slot_count()
@@ -2244,44 +2812,6 @@ impl Evaluator {
                 gradient_values,
                 value_scratch,
                 gradient_scratch,
-            )
-    }
-    fn evaluate_expression_runtime_gradient_with_flat_scratch(
-        &self,
-        amplitude_values: &[Complex64],
-        gradient_values: &[DVector<Complex64>],
-        value_scratch: &mut [Complex64],
-        gradient_scratch: &mut [Complex64],
-        grad_dim: usize,
-    ) -> DVector<Complex64> {
-        let lowered_runtime = self.lowered_runtime();
-        lowered_runtime
-            .gradient_program()
-            .evaluate_gradient_into_flat(
-                amplitude_values,
-                gradient_values,
-                value_scratch,
-                gradient_scratch,
-                grad_dim,
-            )
-    }
-    fn evaluate_expression_runtime_value_gradient_with_flat_scratch(
-        &self,
-        amplitude_values: &[Complex64],
-        gradient_values: &[DVector<Complex64>],
-        value_scratch: &mut [Complex64],
-        gradient_scratch: &mut [Complex64],
-        grad_dim: usize,
-    ) -> (Complex64, DVector<Complex64>) {
-        let lowered_runtime = self.lowered_runtime();
-        lowered_runtime
-            .value_gradient_program()
-            .evaluate_value_gradient_into_flat(
-                amplitude_values,
-                gradient_values,
-                value_scratch,
-                gradient_scratch,
-                grad_dim,
             )
     }
 
@@ -2677,28 +3207,6 @@ impl Evaluator {
                 &zeroed_nodes,
             )
     }
-    fn evaluate_residual_gradient_lowered(
-        &self,
-        _state: &CachedIntegralCacheState,
-        lowered_artifacts: &LoweredArtifactCacheState,
-        amplitude_values: &[Complex64],
-        amplitude_gradients: &[DVector<Complex64>],
-        grad_dim: usize,
-    ) -> Option<DVector<Complex64>> {
-        let program = lowered_artifacts
-            .residual_runtime
-            .as_ref()
-            .map(|runtime| runtime.gradient_program())?;
-        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
-        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
-        Some(program.evaluate_gradient_into_flat(
-            amplitude_values,
-            amplitude_gradients,
-            &mut value_slots,
-            &mut gradient_slots,
-            grad_dim,
-        ))
-    }
 
     fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
         let resources = self.resources.read();
@@ -2903,6 +3411,14 @@ impl Evaluator {
         for &index in &residual_active_indices {
             residual_active_mask[index] = true;
         }
+        let residual_gradient_program = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .map(|runtime| runtime.gradient_program());
+        let residual_gradient_slot_count = residual_gradient_program
+            .as_ref()
+            .map(|program| program.scratch_slots())
+            .unwrap_or_else(|| state.expression_ir.node_count());
         let cached_term_sum = {
             if let Some(cache) = resources.caches.first() {
                 let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
@@ -2956,17 +3472,12 @@ impl Evaluator {
                         (
                             vec![Complex64::ZERO; amplitude_len],
                             vec![DVector::zeros(grad_dim); amplitude_len],
-                            vec![Complex64::ZERO; self.expression_slot_count()],
-                            vec![
-                                DVector::<Complex64>::zeros(grad_dim);
-                                self.expression_slot_count()
-                            ],
+                            vec![Complex64::ZERO; residual_gradient_slot_count],
+                            vec![Complex64::ZERO; residual_gradient_slot_count * grad_dim],
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots),
                      (cache, event)| {
-                        let _ = value_slots;
-                        let _ = gradient_slots;
                         self.fill_amplitude_values_and_gradients(
                             amplitude_values,
                             gradient_values,
@@ -2975,15 +3486,14 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        let gradient = self
-                            .active_lowered_artifacts()
+                        let gradient = residual_gradient_program
                             .as_ref()
-                            .and_then(|artifacts| {
-                                self.evaluate_residual_gradient_lowered(
-                                    &state,
-                                    artifacts,
+                            .map(|program| {
+                                program.evaluate_gradient_into_flat(
                                     amplitude_values,
                                     gradient_values,
+                                    value_slots,
+                                    gradient_slots,
                                     grad_dim,
                                 )
                             })
@@ -3011,6 +3521,8 @@ impl Evaluator {
         let residual_sum = {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; residual_gradient_slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; residual_gradient_slot_count * grad_dim];
             resources
                 .caches
                 .iter()
@@ -3024,15 +3536,14 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    let gradient = self
-                        .active_lowered_artifacts()
+                    let gradient = residual_gradient_program
                         .as_ref()
-                        .and_then(|artifacts| {
-                            self.evaluate_residual_gradient_lowered(
-                                &state,
-                                artifacts,
+                        .map(|program| {
+                            program.evaluate_gradient_into_flat(
                                 &amplitude_values,
                                 &gradient_values,
+                                &mut value_slots,
+                                &mut gradient_slots,
                                 grad_dim,
                             )
                         })
@@ -3685,7 +4196,7 @@ impl Evaluator {
     }
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
-    /// [`Evaluator`] with the given values for free parameters. See also [`Expression::evaluate`].
+    /// [`Evaluator`] with the given values for free parameters. See also [`Evaluator::evaluate`].
     pub fn evaluate_batch(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
         #[cfg(feature = "mpi")]
         {
@@ -3709,6 +4220,8 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        let lowered_runtime = self.lowered_runtime();
+        let gradient_program = lowered_runtime.gradient_program();
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -3725,16 +4238,20 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.evaluate_cache_gradient_with_flat_scratch(
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        gradient_program.evaluate_gradient_into_flat(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
                             grad_dim,
-                            &active_indices,
-                            &resources.active,
-                            &parameters,
-                            cache,
                         )
                     },
                 )
@@ -3750,16 +4267,20 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.evaluate_cache_gradient_with_flat_scratch(
+                    self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                        grad_dim,
                         &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
+                    );
+                    gradient_program.evaluate_gradient_into_flat(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
                     )
                 })
                 .collect()
@@ -3945,6 +4466,8 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        let lowered_runtime = self.lowered_runtime();
+        let gradient_program = lowered_runtime.gradient_program();
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -3961,16 +4484,20 @@ impl Evaluator {
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
                         let cache = &resources.caches[idx];
-                        self.evaluate_cache_gradient_with_flat_scratch(
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        gradient_program.evaluate_gradient_into_flat(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
                             grad_dim,
-                            &active_indices,
-                            &resources.active,
-                            &parameters,
-                            cache,
                         )
                     },
                 )
@@ -3986,16 +4513,20 @@ impl Evaluator {
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
-                    self.evaluate_cache_gradient_with_flat_scratch(
+                    self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                        grad_dim,
                         &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
+                    );
+                    gradient_program.evaluate_gradient_into_flat(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
                     )
                 })
                 .collect()
@@ -4032,7 +4563,7 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over a subset of the
     /// events in the [`Dataset`] stored by the [`Evaluator`] with the given values
-    /// for free parameters. See also [`Expression::evaluate_gradient`].
+    /// for free parameters. See also [`Evaluator::evaluate_gradient`].
     pub fn evaluate_gradient_batch(
         &self,
         parameters: &[f64],
@@ -4057,6 +4588,8 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        let lowered_runtime = self.lowered_runtime();
+        let value_gradient_program = lowered_runtime.value_gradient_program();
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -4073,16 +4606,20 @@ impl Evaluator {
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), cache| {
-                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        value_gradient_program.evaluate_value_gradient_into_flat(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
                             grad_dim,
-                            &active_indices,
-                            &resources.active,
-                            &parameters,
-                            cache,
                         )
                     },
                 )
@@ -4098,16 +4635,20 @@ impl Evaluator {
                 .caches
                 .iter()
                 .map(|cache| {
-                    self.evaluate_cache_value_gradient_with_flat_scratch(
+                    self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                        grad_dim,
                         &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
+                    );
+                    value_gradient_program.evaluate_value_gradient_into_flat(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
                     )
                 })
                 .collect()
@@ -4217,6 +4758,8 @@ impl Evaluator {
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
+        let lowered_runtime = self.lowered_runtime();
+        let value_gradient_program = lowered_runtime.value_gradient_program();
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
@@ -4233,16 +4776,20 @@ impl Evaluator {
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots), &idx| {
                         let cache = &resources.caches[idx];
-                        self.evaluate_cache_value_gradient_with_flat_scratch(
+                        self.fill_amplitude_values_and_gradients(
+                            amplitude_values,
+                            gradient_values,
+                            &active_indices,
+                            &resources.active,
+                            &parameters,
+                            cache,
+                        );
+                        value_gradient_program.evaluate_value_gradient_into_flat(
                             amplitude_values,
                             gradient_values,
                             value_slots,
                             gradient_slots,
                             grad_dim,
-                            &active_indices,
-                            &resources.active,
-                            &parameters,
-                            cache,
                         )
                     },
                 )
@@ -4258,16 +4805,20 @@ impl Evaluator {
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
-                    self.evaluate_cache_value_gradient_with_flat_scratch(
+                    self.fill_amplitude_values_and_gradients(
                         &mut amplitude_values,
                         &mut gradient_values,
-                        &mut value_slots,
-                        &mut gradient_slots,
-                        grad_dim,
                         &active_indices,
                         &resources.active,
                         &parameters,
                         cache,
+                    );
+                    value_gradient_program.evaluate_value_gradient_into_flat(
+                        &amplitude_values,
+                        &gradient_values,
+                        &mut value_slots,
+                        &mut gradient_slots,
+                        grad_dim,
                     )
                 })
                 .collect()
@@ -5068,6 +5619,73 @@ mod tests {
         );
     }
     #[test]
+    fn test_compiled_expression_display_reports_dag_refs() {
+        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let term = &a * &b;
+        let expr = &term + &term;
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        let compiled = evaluator.compiled_expression();
+        let display = compiled.to_string();
+
+        assert_eq!(compiled.root(), compiled.nodes().len() - 1);
+        assert!(display.contains("#"));
+        assert!(display.contains("+"));
+        assert!(display.contains("×"));
+        assert!(display.contains("a(id=0)"));
+        assert!(display.contains("b(id=1)"));
+        assert!(display.contains("(ref)"));
+    }
+
+    #[test]
+    fn test_expression_compiled_expression_display_reports_dag_refs_without_loading() {
+        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let term = &a * &b;
+        let expr = &term + &term;
+
+        let compiled = expr.compiled_expression();
+        let display = compiled.to_string();
+
+        assert_eq!(compiled.root(), compiled.nodes().len() - 1);
+        assert!(display.contains("#"));
+        assert!(display.contains("+"));
+        assert!(display.contains("×"));
+        assert!(display.contains("a(id=0)"));
+        assert!(display.contains("b(id=1)"));
+        assert!(display.contains("(ref)"));
+    }
+
+    #[test]
+    fn test_compiled_expression_display_uses_current_active_mask() {
+        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
+            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+        evaluator.deactivate("b");
+
+        let compiled = evaluator.compiled_expression().to_string();
+
+        assert!(compiled.contains("a(id=0)"));
+        assert!(!compiled.contains("b(id=1)"));
+        assert!(compiled.contains("const 0"));
+    }
+
+    #[test]
+    fn test_evaluator_expression_reconstructs_expression() {
+        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(
+            evaluator.expression().compiled_expression(),
+            expr.compiled_expression()
+        );
+    }
+
+    #[test]
     fn test_active_mask_override_ignores_current_ir_specialization() {
         let expr = ComplexScalar::new("amp", parameter("scale"), constant("amp_im", 0.0))
             .unwrap()
@@ -5446,15 +6064,22 @@ mod tests {
             &amplitude_gradients,
             parameters.len(),
         );
-        let residual_gradient_lowered = evaluator
-            .evaluate_residual_gradient_lowered(
-                &state,
-                lowered_artifacts.as_ref(),
-                &amplitude_values,
-                &amplitude_gradients,
-                parameters.len(),
-            )
-            .expect("residual gradient lowering should succeed");
+
+        let program = lowered_artifacts
+            .residual_runtime
+            .as_ref()
+            .map(|runtime| runtime.gradient_program())
+            .expect("gradient lowering should succeed");
+        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * parameters.len()];
+        let residual_gradient_lowered = program.evaluate_gradient_into_flat(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+            parameters.len(),
+        );
+
         for (lowered, ir) in residual_gradient_lowered
             .iter()
             .zip(residual_gradient_ir.iter())
@@ -6520,6 +7145,63 @@ mod tests {
         assert_relative_eq!(gradient[0][2].im, 0.0);
         assert_relative_eq!(gradient[0][3].re, 130.0);
         assert_relative_eq!(gradient[0][3].im, 0.0);
+    }
+
+    #[test]
+    fn test_expression_function_gradients() {
+        let expr1 = ComplexScalar::new(
+            "function_parametric_1",
+            parameter("function_test_param_re_1"),
+            parameter("function_test_param_im_1"),
+        )
+        .unwrap();
+        let expr2 = ComplexScalar::new(
+            "function_parametric_2",
+            parameter("function_test_param_re_2"),
+            parameter("function_test_param_im_2"),
+        )
+        .unwrap();
+
+        let sin = expr1.sin();
+        let cos = expr1.cos();
+        let trig = &sin * &cos;
+        let pow = expr1.pow(&expr2);
+        let mut expr = expr1.sqrt();
+        expr = &expr + &expr1.exp();
+        expr = &expr + &expr1.powi(2);
+        expr = &expr + &expr1.powf(1.7);
+        expr = &expr + &trig;
+        expr = &expr + &expr1.log();
+        expr = &expr + &expr1.cis();
+        expr = &expr + &pow;
+
+        let dataset = Arc::new(test_dataset());
+        let evaluator = expr.load(&dataset).unwrap();
+        let params = vec![2.0, 0.5, 1.2, -0.3];
+        let gradient = evaluator.evaluate_gradient(&params);
+        let eps = 1e-6;
+
+        for param_index in 0..params.len() {
+            let mut plus = params.clone();
+            plus[param_index] += eps;
+            let mut minus = params.clone();
+            minus[param_index] -= eps;
+            let finite_diff = (evaluator.evaluate(&plus)[0] - evaluator.evaluate(&minus)[0])
+                / Complex64::new(2.0 * eps, 0.0);
+
+            assert_relative_eq!(
+                gradient[0][param_index].re,
+                finite_diff.re,
+                epsilon = 1e-6,
+                max_relative = 1e-6
+            );
+            assert_relative_eq!(
+                gradient[0][param_index].im,
+                finite_diff.im,
+                epsilon = 1e-6,
+                max_relative = 1e-6
+            );
+        }
     }
 
     #[test]

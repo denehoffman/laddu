@@ -1,5 +1,5 @@
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     utils::{
@@ -15,6 +15,8 @@ use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::semantic_key::{debug_key, display_key};
 
 /// An [`Amplitude`] for the spherical harmonic function $`Y_\ell^m(\theta, \phi)`$.
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,6 +48,16 @@ impl Amplitude for Ylm {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.csid = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("Ylm")
+                .with_field("name", debug_key(&self.name))
+                .with_field("l", self.l.to_string())
+                .with_field("m", self.m.to_string())
+                .with_field("angles", display_key(&self.angles)),
+        )
     }
 
     fn real_valued_hint(&self) -> bool {
@@ -114,16 +126,31 @@ mod tests {
 
     use super::*;
     use approx::assert_relative_eq;
-    use laddu_core::{data::test_dataset, utils::variables::Topology, Frame};
+    use laddu_core::{
+        data::test_dataset,
+        utils::reaction::{Particle, Reaction},
+        Frame,
+    };
 
-    fn reaction_topology() -> Topology {
-        Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton")
+    fn angles() -> Angles {
+        let beam = Particle::measured("beam", "beam");
+        let target = Particle::missing("target");
+        let kshort1 = Particle::measured("K_S1", "kshort1");
+        let kshort2 = Particle::measured("K_S2", "kshort2");
+        let kk = Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+        let proton = Particle::measured("proton", "proton");
+        let reaction = Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+        reaction
+            .decay(&kk)
+            .unwrap()
+            .angles(&kshort1, Frame::Helicity)
+            .unwrap()
     }
 
     #[test]
     fn test_ylm_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        let angles = angles();
         let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -136,7 +163,7 @@ mod tests {
     #[test]
     fn test_ylm_gradient() {
         let dataset = Arc::new(test_dataset());
-        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        let angles = angles();
         let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -146,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_ylm_m_zero_reports_real_valued_hint() {
-        let angles = Angles::new(reaction_topology(), "kshort1", Frame::Helicity);
+        let angles = angles();
         let real_ylm = Ylm {
             name: "ylm0".to_string(),
             l: 1,

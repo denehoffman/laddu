@@ -1,13 +1,22 @@
+/// Angular-momentum and parity quantum-number helpers.
+pub mod angular_momentum;
 /// Useful enumerations for various frames and variables common in particle physics analyses.
 pub mod enums;
 /// Standard special functions like spherical harmonics and momentum definitions.
 pub mod functions;
+/// Kinematic frame and rest-frame helpers.
+pub mod kinematics;
+/// Reaction and decay-chain topology helpers.
+pub mod reaction;
 /// Traits and structs which can be used to extract complex information from
 /// [`EventData`](crate::data::EventData)s.
 pub mod variables;
 /// Traits to give additional functionality to [`nalgebra::Vector3`] and [`nalgebra::Vector4`] (in
 /// particular, to treat the latter as a four-momentum).
 pub mod vectors;
+
+/// Methods for calculating Wigner 3-j symbols, Clebsch-Gordan coefficients, and Wigner small-d and full-D matrix elements.
+pub mod wigner;
 
 /// A helper method to get histogram edges from evenly-spaced `bins` over a given `range`
 ///

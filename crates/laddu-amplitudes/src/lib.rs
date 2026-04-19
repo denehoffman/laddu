@@ -7,18 +7,30 @@
 
 /// The Breit-Wigner amplitude.
 pub mod breit_wigner;
-pub use breit_wigner::BreitWigner;
+pub use breit_wigner::{BreitWigner, BreitWignerNonRelativistic};
+
+/// The Flatte amplitude.
+pub mod flatte;
+pub use flatte::Flatte;
+
+/// The Voigt amplitude.
+pub mod voigt;
+pub use voigt::Voigt;
+
+mod semantic_key;
 
 /// Common amplitudes (like a scalar value which just contains a single free parameter).
 pub mod common;
-pub use common::{ComplexScalar, PolarComplexScalar, Scalar};
+pub use common::{
+    ComplexScalar, PolarComplexScalar, Scalar, VariableExpressionExt, VariableScalar,
+};
 
 /// Amplitudes related to the K-Matrix formalism.
 pub mod kmatrix;
 
-/// Piecewise functions as amplitudes.
-pub mod piecewise;
-pub use piecewise::{PiecewiseComplexScalar, PiecewisePolarComplexScalar, PiecewiseScalar};
+/// Lookup-table amplitudes.
+pub mod lookup_table;
+pub use lookup_table::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTable};
 
 /// A spherical harmonic amplitude.
 pub mod ylm;
@@ -27,6 +39,13 @@ pub use ylm::Ylm;
 /// A polarized spherical harmonic amplitude.
 pub mod zlm;
 pub use zlm::Zlm;
+
+/// Spin, angular, barrier, and density-matrix factor amplitudes.
+pub mod spin_factors;
+pub use spin_factors::{
+    BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, Wigner3j,
+    WignerD,
+};
 
 /// A phase space factor for `$a+b\to c+d$` with `$c\to 1+2$`.
 pub mod phase_space;

@@ -465,6 +465,14 @@ pub(crate) enum LoweredUnaryOp {
     Imag,
     Conj,
     NormSqr,
+    Sqrt,
+    PowI(i32),
+    PowF(u64),
+    Exp,
+    Sin,
+    Cos,
+    Log,
+    Cis,
 }
 
 impl LoweredUnaryOp {
@@ -485,6 +493,7 @@ pub(crate) enum LoweredBinaryOp {
     Sub,
     Mul,
     Div,
+    Pow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -518,6 +527,14 @@ fn apply_unary_op(op: LoweredUnaryOp, value: Complex64) -> Complex64 {
         LoweredUnaryOp::Imag => Complex64::new(value.im, 0.0),
         LoweredUnaryOp::Conj => value.conj(),
         LoweredUnaryOp::NormSqr => Complex64::new(value.norm_sqr(), 0.0),
+        LoweredUnaryOp::Sqrt => value.sqrt(),
+        LoweredUnaryOp::PowI(power) => value.powi(power),
+        LoweredUnaryOp::PowF(power) => value.powc(Complex64::new(f64::from_bits(power), 0.0)),
+        LoweredUnaryOp::Exp => value.exp(),
+        LoweredUnaryOp::Sin => value.sin(),
+        LoweredUnaryOp::Cos => value.cos(),
+        LoweredUnaryOp::Log => value.ln(),
+        LoweredUnaryOp::Cis => (Complex64::new(0.0, 1.0) * value).exp(),
     }
 }
 
@@ -535,6 +552,14 @@ fn apply_unary_op_real(op: LoweredUnaryOp, value: Complex64) -> Option<f64> {
         LoweredUnaryOp::NormSqr => Some(value.norm_sqr()),
         LoweredUnaryOp::Neg => None,
         LoweredUnaryOp::Conj => None,
+        LoweredUnaryOp::Sqrt
+        | LoweredUnaryOp::PowI(_)
+        | LoweredUnaryOp::PowF(_)
+        | LoweredUnaryOp::Exp
+        | LoweredUnaryOp::Sin
+        | LoweredUnaryOp::Cos
+        | LoweredUnaryOp::Log
+        | LoweredUnaryOp::Cis => None,
     }
 }
 
@@ -548,6 +573,7 @@ fn apply_binary_op(
         LoweredBinaryOp::Sub => left_value - right_value,
         LoweredBinaryOp::Mul => left_value * right_value,
         LoweredBinaryOp::Div => left_value / right_value,
+        LoweredBinaryOp::Pow => left_value.powc(right_value),
     }
 }
 
@@ -587,6 +613,70 @@ fn apply_unary_gradient_op(
             let conj_input = value.conj();
             for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
                 *dst_item = Complex64::new(2.0 * (*input_item * conj_input).re, 0.0);
+            }
+        }
+        LoweredUnaryOp::Sqrt => {
+            let factor = Complex64::new(0.5, 0.0) / value.sqrt();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::PowI(power) => {
+            let factor = match power {
+                0 => Complex64::ZERO,
+                1 => Complex64::ONE,
+                _ => {
+                    let multiplier = Complex64::new(power as f64, 0.0);
+                    if let Some(derivative_power) = power.checked_sub(1) {
+                        multiplier * value.powi(derivative_power)
+                    } else {
+                        multiplier * value.powi(power) / value
+                    }
+                }
+            };
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::PowF(power) => {
+            let power = f64::from_bits(power);
+            let factor = if power == 0.0 {
+                Complex64::ZERO
+            } else {
+                Complex64::new(power, 0.0) * value.powc(Complex64::new(power - 1.0, 0.0))
+            };
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::Exp => {
+            let factor = value.exp();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::Sin => {
+            let factor = value.cos();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::Cis => {
+            let factor = Complex64::new(0.0, 1.0) * apply_unary_op(LoweredUnaryOp::Cis, value);
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::Cos => {
+            let factor = -value.sin();
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
+            }
+        }
+        LoweredUnaryOp::Log => {
+            let factor = Complex64::ONE / value;
+            for (dst_item, input_item) in dst_grad.iter_mut().zip(input_grad.iter()) {
+                *dst_item = *input_item * factor;
             }
         }
     }
@@ -638,6 +728,46 @@ fn apply_binary_gradient_op(
                 *dst_item = (*left_item * right_value - *right_item * left_value) / denom;
             }
         }
+        LoweredBinaryOp::Pow => {
+            let output_value = left_value.powc(right_value);
+            for ((dst_item, left_item), right_item) in dst_grad
+                .iter_mut()
+                .zip(left_grad.iter())
+                .zip(right_grad.iter())
+            {
+                *dst_item = output_value
+                    * (*right_item * left_value.ln() + right_value * *left_item / left_value);
+            }
+        }
+    }
+}
+
+fn lower_unary_op(op: IrUnaryOp) -> LoweredUnaryOp {
+    match op {
+        // IR never emits identity directly; lowering adds it during peephole specialization.
+        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
+        IrUnaryOp::Real => LoweredUnaryOp::Real,
+        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
+        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
+        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
+        IrUnaryOp::Sqrt => LoweredUnaryOp::Sqrt,
+        IrUnaryOp::PowI(power) => LoweredUnaryOp::PowI(power),
+        IrUnaryOp::PowF(power) => LoweredUnaryOp::PowF(power),
+        IrUnaryOp::Exp => LoweredUnaryOp::Exp,
+        IrUnaryOp::Sin => LoweredUnaryOp::Sin,
+        IrUnaryOp::Cos => LoweredUnaryOp::Cos,
+        IrUnaryOp::Log => LoweredUnaryOp::Log,
+        IrUnaryOp::Cis => LoweredUnaryOp::Cis,
+    }
+}
+
+fn lower_binary_op(op: IrBinaryOp) -> LoweredBinaryOp {
+    match op {
+        IrBinaryOp::Add => LoweredBinaryOp::Add,
+        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
+        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
+        IrBinaryOp::Div => LoweredBinaryOp::Div,
+        IrBinaryOp::Pow => LoweredBinaryOp::Pow,
     }
 }
 
@@ -1267,25 +1397,13 @@ impl LoweredProgram {
                 IrNode::Unary { op, input } => LoweredInstruction::Unary {
                     dst: remap[old_index],
                     input: remap[input],
-                    op: match op {
-                        // IR never emits identity directly; lowering adds it during peephole specialization.
-                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
-                        IrUnaryOp::Real => LoweredUnaryOp::Real,
-                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
-                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
-                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
-                    },
+                    op: lower_unary_op(op),
                 },
                 IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
                     dst: remap[old_index],
                     left: remap[left],
                     right: remap[right],
-                    op: match op {
-                        IrBinaryOp::Add => LoweredBinaryOp::Add,
-                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
-                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
-                        IrBinaryOp::Div => LoweredBinaryOp::Div,
-                    },
+                    op: lower_binary_op(op),
                 },
             })
             .collect::<Vec<_>>();
@@ -1339,25 +1457,13 @@ impl LoweredProgram {
                         IrNode::Unary { op, input } => LoweredInstruction::Unary {
                             dst: remap[old_index],
                             input: remap[input],
-                            op: match op {
-                                // IR never emits identity directly; lowering adds it during peephole specialization.
-                                IrUnaryOp::Neg => LoweredUnaryOp::Neg,
-                                IrUnaryOp::Real => LoweredUnaryOp::Real,
-                                IrUnaryOp::Imag => LoweredUnaryOp::Imag,
-                                IrUnaryOp::Conj => LoweredUnaryOp::Conj,
-                                IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
-                            },
+                            op: lower_unary_op(op),
                         },
                         IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
                             dst: remap[old_index],
                             left: remap[left],
                             right: remap[right],
-                            op: match op {
-                                IrBinaryOp::Add => LoweredBinaryOp::Add,
-                                IrBinaryOp::Sub => LoweredBinaryOp::Sub,
-                                IrBinaryOp::Mul => LoweredBinaryOp::Mul,
-                                IrBinaryOp::Div => LoweredBinaryOp::Div,
-                            },
+                            op: lower_binary_op(op),
                         },
                     }
                 }
@@ -1400,25 +1506,13 @@ impl LoweredProgram {
                 IrNode::Unary { op, input } => LoweredInstruction::Unary {
                     dst: remap[old_index],
                     input: remap[input],
-                    op: match op {
-                        // IR never emits identity directly; lowering adds it during peephole specialization.
-                        IrUnaryOp::Neg => LoweredUnaryOp::Neg,
-                        IrUnaryOp::Real => LoweredUnaryOp::Real,
-                        IrUnaryOp::Imag => LoweredUnaryOp::Imag,
-                        IrUnaryOp::Conj => LoweredUnaryOp::Conj,
-                        IrUnaryOp::NormSqr => LoweredUnaryOp::NormSqr,
-                    },
+                    op: lower_unary_op(op),
                 },
                 IrNode::Binary { op, left, right } => LoweredInstruction::Binary {
                     dst: remap[old_index],
                     left: remap[left],
                     right: remap[right],
-                    op: match op {
-                        IrBinaryOp::Add => LoweredBinaryOp::Add,
-                        IrBinaryOp::Sub => LoweredBinaryOp::Sub,
-                        IrBinaryOp::Mul => LoweredBinaryOp::Mul,
-                        IrBinaryOp::Div => LoweredBinaryOp::Div,
-                    },
+                    op: lower_binary_op(op),
                 },
             })
             .collect::<Vec<_>>();
@@ -1428,8 +1522,7 @@ impl LoweredProgram {
             remapped_roots[0]
         } else {
             let mut accumulator = remapped_roots.remove(0);
-            let mut next_dst = instructions.len();
-            for root in remapped_roots {
+            for (next_dst, root) in (instructions.len()..).zip(remapped_roots) {
                 instructions.push(LoweredInstruction::Binary {
                     dst: next_dst,
                     left: accumulator,
@@ -1437,7 +1530,6 @@ impl LoweredProgram {
                     op: LoweredBinaryOp::Add,
                 });
                 accumulator = next_dst;
-                next_dst += 1;
             }
             accumulator
         };

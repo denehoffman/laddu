@@ -52,8 +52,15 @@ To implement this in code, we could imagine a function like
 
    def get_moment(data: ld.Dataset, *, l: int, m: int) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
-       topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-       ylm = ld.Ylm('ylm', l, m, ld.Angles(topology, 'kshort1'))
+       beam = ld.Particle.measured('beam', 'beam')
+       target = ld.Particle.missing('target')
+       kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+       kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+       kk = ld.Particle.composite('KK', [kshort1, kshort2])
+       proton = ld.Particle.measured('proton', 'proton')
+       reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+       angles = reaction.decay(kk).angles(kshort1)
+       ylm = ld.Ylm('ylm', l, m, angles)
        model = ylm.conj() # take the conjugate
        evaluator = model.load(data)
        values = evaluator.evaluate([]) # no free parameters
@@ -122,9 +129,16 @@ Again, we can write this in code in a rather simple way:
    ) -> complex:
        n_l = np.sqrt((2 * l + 1) / (4 * np.pi))
        n_l_prime = np.sqrt((2 * l_prime + 1) / (4 * np.pi))
-       topo = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-       ylm = ld.Ylm('ylm', l, m, ld.Angles(topo, 'kshort1'))
-       ylm_prime = ld.Ylm('ylm_prime', l_prime, m_prime, ld.Angles(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'kshort1'))
+       beam = ld.Particle.measured('beam', 'beam')
+       target = ld.Particle.missing('target')
+       kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+       kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+       kk = ld.Particle.composite('KK', [kshort1, kshort2])
+       proton = ld.Particle.measured('proton', 'proton')
+       reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+       angles = reaction.decay(kk).angles(kshort1)
+       ylm = ld.Ylm('ylm', l, m, angles)
+       ylm_prime = ld.Ylm('ylm_prime', l_prime, m_prime, angles)
        model = ylm.conj() * ylm_prime.real()
        evaluator = model.load(accmc)
        values = evaluator.evaluate([]) # no free parameters

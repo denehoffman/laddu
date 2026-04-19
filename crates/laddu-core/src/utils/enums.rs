@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::LadduError;
 
 /// Standard reference frames for angular analyses.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Frame {
     /// The helicity frame, obtained by setting the $`z`$-axis equal to the boost direction from
     /// the center-of-momentum to the rest frame of the resonance in question and the $`y`$-axis
@@ -15,12 +15,15 @@ pub enum Frame {
     /// direction in the rest frame of the resonance in question and the $`y`$-axis perpendicular
     /// to the production plane.
     GottfriedJackson,
+    /// The Adair frame.
+    Adair,
 }
 impl Display for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Frame::Helicity => write!(f, "Helicity"),
             Frame::GottfriedJackson => write!(f, "Gottfried-Jackson"),
+            Frame::Adair => write!(f, "Adair"),
         }
     }
 }
@@ -33,6 +36,7 @@ impl FromStr for Frame {
             "gottfriedjackson" | "gottfried jackson" | "gj" | "gottfried-jackson" => {
                 Ok(Self::GottfriedJackson)
             }
+            "adair" => Ok(Self::Adair),
             _ => Err(LadduError::ParseError {
                 name: s.to_string(),
                 object: "Frame".to_string(),
@@ -119,6 +123,7 @@ mod tests {
     fn enum_displays() {
         assert_eq!(format!("{}", Frame::Helicity), "Helicity");
         assert_eq!(format!("{}", Frame::GottfriedJackson), "Gottfried-Jackson");
+        assert_eq!(format!("{}", Frame::Adair), "Adair");
         assert_eq!(format!("{}", Sign::Positive), "+");
         assert_eq!(format!("{}", Sign::Negative), "-");
         assert_eq!(format!("{}", Channel::S), "s");
@@ -144,6 +149,7 @@ mod tests {
             Frame::from_str("Gottfried Jackson").unwrap(),
             Frame::GottfriedJackson
         );
+        assert_eq!(Frame::from_str("Adair").unwrap(), Frame::Adair);
         assert_eq!(Sign::from_str("+").unwrap(), Sign::Positive);
         assert_eq!(Sign::from_str("pos").unwrap(), Sign::Positive);
         assert_eq!(Sign::from_str("plus").unwrap(), Sign::Positive);

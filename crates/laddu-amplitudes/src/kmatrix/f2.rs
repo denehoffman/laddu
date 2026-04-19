@@ -1,9 +1,11 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixF2Channel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     Expression, LadduResult,
 };
 #[cfg(feature = "python")]
@@ -80,13 +82,14 @@ const COV_F2: SMatrix<f64, 36, 36> = matrix![
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixF2 {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixF2Channel,
     mass: Mass,
     constants: FixedKMatrix<4, 4>,
     couplings_real: [ParameterLike; 4],
     couplings_imag: [ParameterLike; 4],
     couplings_indices_real: [ParameterID; 4],
     couplings_indices_imag: [ParameterID; 4],
+    seed: Option<usize>,
     ikc_cache_index: ComplexVectorID<4>,
     p_vec_cache_index: MatrixID<4, 4>,
 }
@@ -111,7 +114,7 @@ impl KopfKMatrixF2 {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 4],
-        channel: usize,
+        channel: KopfKMatrixF2Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
@@ -140,6 +143,7 @@ impl KopfKMatrixF2 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 4],
             couplings_indices_imag: [ParameterID::default(); 4],
+            seed,
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
@@ -163,6 +167,18 @@ impl Amplitude for KopfKMatrixF2 {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixF2")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag))
+                .with_field("seed", seed_key(self.seed)),
+        )
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
@@ -172,7 +188,7 @@ impl Amplitude for KopfKMatrixF2 {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -215,7 +231,7 @@ impl Amplitude for KopfKMatrixF2 {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixF2Channel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -266,7 +282,7 @@ impl Amplitude for KopfKMatrixF2 {
 pub fn py_kopf_kmatrix_f2(
     name: &str,
     couplings: [[PyParameterLike; 2]; 4],
-    channel: usize,
+    channel: KopfKMatrixF2Channel,
     mass: PyMass,
     seed: Option<usize>,
 ) -> PyResult<PyExpression> {
@@ -299,7 +315,7 @@ mod tests {
                 [parameter("p4"), parameter("p5")],
                 [parameter("p6"), parameter("p7")],
             ],
-            1,
+            KopfKMatrixF2Channel::FourPi,
             &res_mass,
             None,
         )
@@ -308,7 +324,7 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0].re, 0.025233045240226293);
+        assert_relative_eq!(result[0].re, 0.025233045240226043);
         assert_relative_eq!(result[0].im, 0.39712393858386263);
     }
 
@@ -324,7 +340,7 @@ mod tests {
                 [parameter("p4"), parameter("p5")],
                 [parameter("p6"), parameter("p7")],
             ],
-            1,
+            KopfKMatrixF2Channel::FourPi,
             &res_mass,
             None,
         )
@@ -333,8 +349,8 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
 
-        assert_relative_eq!(result[0][0].re, -0.3078948637910409);
-        assert_relative_eq!(result[0][0].im, 0.38086899234534155);
+        assert_relative_eq!(result[0][0].re, -0.3078948637910404);
+        assert_relative_eq!(result[0][0].im, 0.3808689923453422);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
         assert_relative_eq!(result[0][2].re, 0.42900856602686843);
@@ -362,7 +378,7 @@ mod tests {
                 [parameter("p4"), parameter("p5")],
                 [parameter("p6"), parameter("p7")],
             ],
-            1,
+            KopfKMatrixF2Channel::FourPi,
             &res_mass,
             Some(1),
         )

@@ -1,9 +1,11 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixPi1Channel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     Expression, LadduResult,
 };
 #[cfg(feature = "python")]
@@ -25,7 +27,7 @@ use std::array;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixPi1 {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixPi1Channel,
     mass: Mass,
     constants: FixedKMatrix<2, 1>,
     couplings_real: [ParameterLike; 1],
@@ -51,7 +53,7 @@ impl KopfKMatrixPi1 {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 1],
-        channel: usize,
+        channel: KopfKMatrixPi1Channel,
         mass: &Mass,
     ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 1] = array::from_fn(|_| ParameterLike::default());
@@ -106,6 +108,17 @@ impl Amplitude for KopfKMatrixPi1 {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixPi1")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag)),
+        )
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
@@ -115,7 +128,7 @@ impl Amplitude for KopfKMatrixPi1 {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -156,7 +169,7 @@ impl Amplitude for KopfKMatrixPi1 {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixPi1Channel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -194,7 +207,7 @@ impl Amplitude for KopfKMatrixPi1 {
 pub fn py_kopf_kmatrix_pi1(
     name: &str,
     couplings: [[PyParameterLike; 2]; 1],
-    channel: usize,
+    channel: KopfKMatrixPi1Channel,
     mass: PyMass,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(KopfKMatrixPi1::new(
@@ -218,28 +231,38 @@ mod tests {
     fn test_pi1_evaluation() {
         let dataset = Arc::new(test_dataset());
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let expr =
-            KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass).unwrap();
+        let expr = KopfKMatrixPi1::new(
+            "pi1",
+            [[parameter("p0"), parameter("p1")]],
+            KopfKMatrixPi1Channel::PiEtaPrime,
+            &res_mass,
+        )
+        .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[0.1, 0.2]);
 
         assert_relative_eq!(result[0].re, -0.11017586807747382);
-        assert_relative_eq!(result[0].im, 0.2638717244927622);
+        assert_relative_eq!(result[0].im, 0.2638717244927635);
     }
 
     #[test]
     fn test_pi1_gradient() {
         let dataset = Arc::new(test_dataset());
         let res_mass = Mass::new(["kshort1", "kshort2"]);
-        let expr =
-            KopfKMatrixPi1::new("pi1", [[parameter("p0"), parameter("p1")]], 1, &res_mass).unwrap();
+        let expr = KopfKMatrixPi1::new(
+            "pi1",
+            [[parameter("p0"), parameter("p1")]],
+            KopfKMatrixPi1Channel::PiEtaPrime,
+            &res_mass,
+        )
+        .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2]);
 
-        assert_relative_eq!(result[0][0].re, -14.798717468937502);
-        assert_relative_eq!(result[0][0].im, -5.843009428873981);
+        assert_relative_eq!(result[0][0].re, -14.79871746893747);
+        assert_relative_eq!(result[0][0].im, -5.843009428873964);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
     }

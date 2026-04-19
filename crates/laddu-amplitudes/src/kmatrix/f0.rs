@@ -1,9 +1,11 @@
-use super::{AdlerZero, FixedKMatrix};
+use super::{AdlerZero, FixedKMatrix, KopfKMatrixF0Channel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     LadduResult,
 };
 #[cfg(feature = "python")]
@@ -103,13 +105,14 @@ const COV_F0: SMatrix<f64, 56, 56> = matrix![
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixF0 {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixF0Channel,
     mass: Mass,
     constants: super::FixedKMatrix<5, 5>,
     couplings_real: [ParameterLike; 5],
     couplings_imag: [ParameterLike; 5],
     couplings_indices_real: [ParameterID; 5],
     couplings_indices_imag: [ParameterID; 5],
+    seed: Option<usize>,
     ikc_cache_index: ComplexVectorID<5>,
     p_vec_cache_index: MatrixID<5, 5>,
 }
@@ -136,7 +139,7 @@ impl KopfKMatrixF0 {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 5],
-        channel: usize,
+        channel: KopfKMatrixF0Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
@@ -168,6 +171,7 @@ impl KopfKMatrixF0 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 5],
             couplings_indices_imag: [ParameterID::default(); 5],
+            seed,
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
@@ -191,6 +195,18 @@ impl Amplitude for KopfKMatrixF0 {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixF0")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag))
+                .with_field("seed", seed_key(self.seed)),
+        )
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
@@ -200,7 +216,7 @@ impl Amplitude for KopfKMatrixF0 {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -243,7 +259,7 @@ impl Amplitude for KopfKMatrixF0 {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixF0Channel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -300,7 +316,7 @@ impl Amplitude for KopfKMatrixF0 {
 pub fn py_kopf_kmatrix_f0(
     name: &str,
     couplings: [[PyParameterLike; 2]; 5],
-    channel: usize,
+    channel: KopfKMatrixF0Channel,
     mass: PyMass,
     seed: Option<usize>,
 ) -> PyResult<PyExpression> {
@@ -335,7 +351,7 @@ mod tests {
                 [parameter("p6"), parameter("p7")],
                 [parameter("p8"), parameter("p9")],
             ],
-            1,
+            KopfKMatrixF0Channel::FourPi,
             &res_mass,
             None,
         )
@@ -361,7 +377,7 @@ mod tests {
                 [parameter("p6"), parameter("p7")],
                 [parameter("p8"), parameter("p9")],
             ],
-            1,
+            KopfKMatrixF0Channel::FourPi,
             &res_mass,
             None,
         )
@@ -404,7 +420,7 @@ mod tests {
                 [parameter("p6"), parameter("p7")],
                 [parameter("p8"), parameter("p9")],
             ],
-            1,
+            KopfKMatrixF0Channel::FourPi,
             &res_mass,
             Some(1),
         )

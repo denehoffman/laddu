@@ -1,9 +1,11 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixRhoChannel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     LadduResult,
 };
 #[cfg(feature = "python")]
@@ -25,7 +27,7 @@ use std::array;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixRho {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixRhoChannel,
     mass: Mass,
     constants: FixedKMatrix<3, 2>,
     couplings_real: [ParameterLike; 2],
@@ -53,7 +55,7 @@ impl KopfKMatrixRho {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 2],
-        channel: usize,
+        channel: KopfKMatrixRhoChannel,
         mass: &Mass,
     ) -> LadduResult<Expression> {
         let mut couplings_real: [ParameterLike; 2] = array::from_fn(|_| ParameterLike::default());
@@ -110,6 +112,17 @@ impl Amplitude for KopfKMatrixRho {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixRho")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag)),
+        )
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
@@ -119,7 +132,7 @@ impl Amplitude for KopfKMatrixRho {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -162,7 +175,7 @@ impl Amplitude for KopfKMatrixRho {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixRhoChannel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -204,7 +217,7 @@ impl Amplitude for KopfKMatrixRho {
 pub fn py_kopf_kmatrix_rho(
     name: &str,
     couplings: [[PyParameterLike; 2]; 2],
-    channel: usize,
+    channel: KopfKMatrixRhoChannel,
     mass: PyMass,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(KopfKMatrixRho::new(
@@ -234,7 +247,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixRhoChannel::FourPi,
             &res_mass,
         )
         .unwrap();
@@ -242,8 +255,8 @@ mod tests {
 
         let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0].re, 0.09483558754117698);
-        assert_relative_eq!(result[0].im, 0.2609183741271106);
+        assert_relative_eq!(result[0].re, 0.09484736010326478);
+        assert_relative_eq!(result[0].im, 0.260866462141048);
     }
 
     #[test]
@@ -256,7 +269,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixRhoChannel::FourPi,
             &res_mass,
         )
         .unwrap();
@@ -264,12 +277,12 @@ mod tests {
 
         let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
 
-        assert_relative_eq!(result[0][0].re, 0.026520319348816407);
-        assert_relative_eq!(result[0][0].im, -0.026602652559793133);
+        assert_relative_eq!(result[0][0].re, 0.02643853899309215);
+        assert_relative_eq!(result[0][0].im, -0.02656332811034412);
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
-        assert_relative_eq!(result[0][2].re, 0.5172379289201292);
-        assert_relative_eq!(result[0][2].im, 0.17073733305788397);
+        assert_relative_eq!(result[0][2].re, 0.517314417778249);
+        assert_relative_eq!(result[0][2].im, 0.17072387301811015);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }

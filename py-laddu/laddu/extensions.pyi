@@ -7,7 +7,7 @@ import ganesh
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Evaluator, Expression
+from laddu.amplitudes import CompiledExpression, Evaluator, Expression
 from laddu.data import Dataset
 
 def likelihood_sum(
@@ -158,6 +158,8 @@ class LikelihoodEvaluator:
 
 class StochasticNLL:
     nll: NLL
+    expression: Expression
+    compiled_expression: CompiledExpression
 
     def minimize(
         self,
@@ -202,6 +204,10 @@ class NLL:
     n_parameters: int
     data: Dataset
     accmc: Dataset
+    data_evaluator: Evaluator
+    accmc_evaluator: Evaluator
+    expression: Expression
+    compiled_expression: CompiledExpression
 
     def __init__(
         self,

@@ -1,9 +1,11 @@
-use super::FixedKMatrix;
+use super::{FixedKMatrix, KopfKMatrixA0Channel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
-    utils::variables::{Mass, Variable},
+    traits::Variable,
+    utils::variables::Mass,
     LadduResult,
 };
 #[cfg(feature = "python")]
@@ -47,13 +49,14 @@ const COV_A0: SMatrix<f64, 10, 10> = matrix![
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KopfKMatrixA0 {
     name: String,
-    channel: usize,
+    channel: KopfKMatrixA0Channel,
     mass: Mass,
     constants: FixedKMatrix<2, 2>,
     couplings_real: [ParameterLike; 2],
     couplings_imag: [ParameterLike; 2],
     couplings_indices_real: [ParameterID; 2],
     couplings_indices_imag: [ParameterID; 2],
+    seed: Option<usize>,
     ikc_cache_index: ComplexVectorID<2>,
     p_vec_cache_index: MatrixID<2, 2>,
 }
@@ -74,7 +77,7 @@ impl KopfKMatrixA0 {
     pub fn new(
         name: &str,
         couplings: [[ParameterLike; 2]; 2],
-        channel: usize,
+        channel: KopfKMatrixA0Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
@@ -103,6 +106,7 @@ impl KopfKMatrixA0 {
             couplings_imag,
             couplings_indices_real: [ParameterID::default(); 2],
             couplings_indices_imag: [ParameterID::default(); 2],
+            seed,
             ikc_cache_index: ComplexVectorID::default(),
             p_vec_cache_index: MatrixID::default(),
         }
@@ -126,6 +130,18 @@ impl Amplitude for KopfKMatrixA0 {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("KopfKMatrixA0")
+                .with_field("name", debug_key(&self.name))
+                .with_field("channel", self.channel.to_string())
+                .with_field("mass", display_key(&self.mass))
+                .with_field("couplings_real", parameter_array_key(&self.couplings_real))
+                .with_field("couplings_imag", parameter_array_key(&self.couplings_imag))
+                .with_field("seed", seed_key(self.seed)),
+        )
+    }
+
     fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         self.mass.bind(metadata)?;
         Ok(())
@@ -135,7 +151,7 @@ impl Amplitude for KopfKMatrixA0 {
         let s = self.mass.value(event).powi(2);
         cache.store_complex_vector(
             self.ikc_cache_index,
-            self.constants.ikc_inv_vec(s, self.channel),
+            self.constants.ikc_inv_vec(s, self.channel.index()),
         );
         cache.store_matrix(self.p_vec_cache_index, self.constants.p_vec_constants(s));
     }
@@ -178,7 +194,7 @@ impl Amplitude for KopfKMatrixA0 {
 ///     The Amplitude name
 /// couplings : list of list of laddu.ParameterLike
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
-/// channel : int
+/// channel : laddu.KopfKMatrixA0Channel
 ///     The channel onto which the K-Matrix is projected
 /// mass: laddu.Mass
 ///     The total mass of the resonance
@@ -221,7 +237,7 @@ impl Amplitude for KopfKMatrixA0 {
 pub fn py_kopf_kmatrix_a0(
     name: &str,
     couplings: [[PyParameterLike; 2]; 2],
-    channel: usize,
+    channel: KopfKMatrixA0Channel,
     mass: PyMass,
     seed: Option<usize>,
 ) -> PyResult<PyExpression> {
@@ -253,7 +269,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA0Channel::KKbar,
             &res_mass,
             None,
         )
@@ -276,7 +292,7 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA0Channel::KKbar,
             &res_mass,
             None,
         )
@@ -304,10 +320,69 @@ mod tests {
                 [parameter("p0"), parameter("p1")],
                 [parameter("p2"), parameter("p3")],
             ],
-            1,
+            KopfKMatrixA0Channel::KKbar,
             &res_mass,
             Some(1),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn test_a0_semantic_key_deduplicates_matching_seed() {
+        let dataset = Arc::new(test_dataset());
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let expr = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            KopfKMatrixA0Channel::KKbar,
+            &res_mass,
+            Some(1),
+        )
+        .unwrap()
+            + KopfKMatrixA0::new(
+                "a0",
+                [
+                    [parameter("p0"), parameter("p1")],
+                    [parameter("p2"), parameter("p3")],
+                ],
+                KopfKMatrixA0Channel::KKbar,
+                &res_mass,
+                Some(1),
+            )
+            .unwrap();
+        let evaluator = expr.load(&dataset).unwrap();
+
+        assert_eq!(evaluator.amplitudes.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "seed differs")]
+    fn test_a0_semantic_key_reports_mismatched_seed() {
+        let res_mass = Mass::new(["kshort1", "kshort2"]);
+        let _expr = KopfKMatrixA0::new(
+            "a0",
+            [
+                [parameter("p0"), parameter("p1")],
+                [parameter("p2"), parameter("p3")],
+            ],
+            KopfKMatrixA0Channel::KKbar,
+            &res_mass,
+            Some(1),
+        )
+        .unwrap()
+            + KopfKMatrixA0::new(
+                "a0",
+                [
+                    [parameter("p0"), parameter("p1")],
+                    [parameter("p2"), parameter("p3")],
+                ],
+                KopfKMatrixA0Channel::KKbar,
+                &res_mass,
+                Some(2),
+            )
+            .unwrap();
     }
 }

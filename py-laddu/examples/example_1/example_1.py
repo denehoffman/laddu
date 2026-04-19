@@ -40,6 +40,22 @@ from rich.table import Table
 from uncertainties import ufloat
 
 
+def reaction_variables() -> tuple[ld.Mass, ld.Angles, ld.Polarization]:
+    beam = ld.Particle.measured('beam', 'beam')
+    target = ld.Particle.missing('target')
+    kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+    kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+    kk = ld.Particle.composite('KK', [kshort1, kshort2])
+    proton = ld.Particle.measured('proton', 'proton')
+    reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+    decay = reaction.decay(kk)
+    return (
+        decay.parent_mass(),
+        decay.angles(kshort1),
+        reaction.polarization('pol_magnitude', 'pol_angle'),
+    )
+
+
 def main(bins: int, niters: int, nboot: int) -> None:
     script_dir = Path(os.path.realpath(__file__)).parent.resolve()
     data_dir = script_dir.parent / 'data'
@@ -335,12 +351,7 @@ def fit_binned(
     np.ndarray,
 ]:
     logger.info('Starting Binned Fit')
-    res_mass = ld.Mass(['kshort1', 'kshort2'])
-    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    angles = ld.Angles(topology, 'kshort1')
-    polarization = ld.Polarization(
-        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
-    )
+    res_mass, angles, polarization = reaction_variables()
     data_ds_binned = data_ds.bin_by(res_mass, bins, (1.0, 2.0))
     accmc_ds_binned = accmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
     genmc_ds_binned = genmc_ds.bin_by(res_mass, bins, (1.0, 2.0))
@@ -494,12 +505,7 @@ def fit_unbinned(
     list[str],
 ]:
     logger.info('Starting Unbinned Fit')
-    res_mass = ld.Mass(['kshort1', 'kshort2'])
-    topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-    angles = ld.Angles(topology, 'kshort1')
-    polarization = ld.Polarization(
-        topology, pol_magnitude='pol_magnitude', pol_angle='pol_angle'
-    )
+    res_mass, angles, polarization = reaction_variables()
     z00p = ld.Zlm('Z00+', 0, 0, '+', angles, polarization)
     z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
     bw_f01500 = ld.BreitWigner(

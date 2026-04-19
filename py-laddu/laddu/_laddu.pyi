@@ -6,6 +6,7 @@ import numpy as np
 import numpy.typing as npt
 
 from laddu.amplitudes import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
@@ -17,22 +18,43 @@ from laddu.amplitudes import (
     expr_sum,
     parameter,
 )
-from laddu.amplitudes.breit_wigner import BreitWigner
-from laddu.amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar
+from laddu.amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
+from laddu.amplitudes.common import (
+    ComplexScalar,
+    PolarComplexScalar,
+    Scalar,
+    VariableScalar,
+)
+from laddu.amplitudes.flatte import Flatte
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
+    KopfKMatrixA0Channel,
     KopfKMatrixA2,
+    KopfKMatrixA2Channel,
     KopfKMatrixF0,
+    KopfKMatrixF0Channel,
     KopfKMatrixF2,
+    KopfKMatrixF2Channel,
     KopfKMatrixPi1,
+    KopfKMatrixPi1Channel,
     KopfKMatrixRho,
+    KopfKMatrixRhoChannel,
+)
+from laddu.amplitudes.lookup_table import (
+    LookupTable,
+    LookupTableComplex,
+    LookupTablePolar,
+    LookupTableScalar,
 )
 from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.piecewise import (
-    PiecewiseComplexScalar,
-    PiecewisePolarComplexScalar,
-    PiecewiseScalar,
+from laddu.amplitudes.spin_factors import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    Wigner3j,
+    WignerD,
 )
+from laddu.amplitudes.voigt import Voigt
 from laddu.amplitudes.ylm import Ylm
 from laddu.amplitudes.zlm import PolPhase, Zlm
 from laddu.data import BinnedDataset, Dataset, Event
@@ -57,16 +79,19 @@ from laddu.extensions import (
     likelihood_product,
     likelihood_sum,
 )
+from laddu.utils.angular_momentum import allowed_projections, helicity_combinations
 from laddu.utils.variables import (
     Angles,
     CosTheta,
+    Decay,
     Mandelstam,
     Mass,
+    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Topology,
+    Reaction,
     VariableExpression,
 )
 from laddu.utils.vectors import Vec3, Vec4
@@ -76,28 +101,44 @@ __all__ = [
     'Angles',
     'BinnedDataset',
     'BinnedGuideTerm',
+    'BlattWeisskopf',
     'BreitWigner',
+    'BreitWignerNonRelativistic',
+    'ClebschGordan',
+    'CompiledExpression',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',
     'Dataset',
+    'Decay',
     'EnsembleStatus',
     'Evaluator',
     'Event',
     'Expression',
+    'Flatte',
     'GradientFreeStatus',
     'GradientStatus',
     'KopfKMatrixA0',
+    'KopfKMatrixA0Channel',
     'KopfKMatrixA2',
+    'KopfKMatrixA2Channel',
     'KopfKMatrixF0',
+    'KopfKMatrixF0Channel',
     'KopfKMatrixF2',
+    'KopfKMatrixF2Channel',
     'KopfKMatrixPi1',
+    'KopfKMatrixPi1Channel',
     'KopfKMatrixRho',
+    'KopfKMatrixRhoChannel',
     'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',
     'LikelihoodZero',
+    'LookupTable',
+    'LookupTableComplex',
+    'LookupTablePolar',
+    'LookupTableScalar',
     'MCMCSummary',
     'Mandelstam',
     'Mass',
@@ -106,28 +147,32 @@ __all__ = [
     'One',
     'ParameterLike',
     'ParquetChunkIter',
+    'Particle',
     'PhaseSpaceFactor',
     'Phi',
-    'PiecewiseComplexScalar',
-    'PiecewisePolarComplexScalar',
-    'PiecewiseScalar',
+    'PhotonSDME',
     'PolAngle',
     'PolMagnitude',
     'PolPhase',
     'PolarComplexScalar',
     'Polarization',
+    'Reaction',
     'Regularizer',
     'Scalar',
     'StochasticNLL',
     'SwarmStatus',
     'TestAmplitude',
-    'Topology',
     'VariableExpression',
+    'VariableScalar',
     'Vec3',
     'Vec4',
+    'Voigt',
+    'Wigner3j',
+    'WignerD',
     'Ylm',
     'Zero',
     'Zlm',
+    'allowed_projections',
     'available_parallelism',
     'constant',
     'expr_product',
@@ -137,6 +182,7 @@ __all__ = [
     'get_rank',
     'get_size',
     'get_threads',
+    'helicity_combinations',
     'integrated_autocorrelation_times',
     'is_mpi_available',
     'is_root',

@@ -8,7 +8,10 @@ use laddu::{
         breit_wigner::BreitWigner,
         common::ComplexScalar,
         common::Scalar,
-        kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
+        kmatrix::{
+            KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
+            KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
+        },
         parameter,
         ylm::Ylm,
         zlm::Zlm,
@@ -20,7 +23,7 @@ use laddu::{
     traits::{LikelihoodTerm, Variable},
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, PolAngle, PolMagnitude, Polarization, Topology},
+        variables::{Mass, PolMagnitude},
     },
     RngSubsetExtension,
 };
@@ -45,6 +48,37 @@ const MOMENT_ACCMC_SEED: u64 = 53;
 const KMATRIX_DATASET_SEED: u64 = 71;
 const PARTIAL_WAVE_BIN_COUNT: usize = 8;
 const MOMENT_COMPACT_BASIS_MAX_L: usize = 2;
+
+fn reaction_variables() -> (
+    laddu::Reaction,
+    laddu::Angles,
+    laddu::Polarization,
+    Mass,
+    Mass,
+    Mass,
+) {
+    let beam = laddu::Particle::measured("beam", "beam");
+    let target = laddu::Particle::missing("target");
+    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
+    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
+    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+    let proton = laddu::Particle::measured("proton", "proton");
+    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+    let decay = reaction.decay(&kk).unwrap();
+    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+    let resonance_mass = decay.parent_mass();
+    let daughter_1_mass = decay.daughter_1_mass();
+    let daughter_2_mass = decay.daughter_2_mass();
+    (
+        reaction,
+        angles,
+        polarization,
+        resonance_mass,
+        daughter_1_mass,
+        daughter_2_mass,
+    )
+}
 
 fn read_benchmark_dataset() -> Arc<Dataset> {
     let options = DatasetReadOptions::default()
@@ -102,12 +136,8 @@ fn kmatrix_max_events_from_env() -> Option<usize> {
 }
 
 fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = laddu::Polarization::new(topology, "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-    let daughter_1_mass = Mass::new(["kshort1"]);
-    let daughter_2_mass = Mass::new(["kshort2"]);
+    let (_, angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
+        reaction_variables();
 
     let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
         .expect("z00 should construct");
@@ -352,9 +382,8 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
     let dataset = read_benchmark_dataset();
     let ds_data = sample_dataset(&dataset, MOMENT_DATA_SEED, MOMENT_DATA_SAMPLE_EVENTS);
     let ds_accmc = sample_dataset(&dataset, MOMENT_ACCMC_SEED, MOMENT_ACCMC_SAMPLE_EVENTS);
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let pol_angle = PolAngle::new(topology, "pol_angle");
+    let (reaction, angles, _, _, _, _) = reaction_variables();
+    let pol_angle = reaction.pol_angle("pol_angle");
     let pol_magnitude = PolMagnitude::new("pol_magnitude");
     let big_phi = pol_angle
         .value_on(&ds_data)
@@ -511,10 +540,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
     } else {
         (dataset.clone(), dataset)
     };
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let (_, angles, polarization, resonance_mass, _, _) = reaction_variables();
     let z00p = Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization)
         .expect("z00+ should construct");
     let z00n = Zlm::new("Z00-", 0, 0, Sign::Negative, &angles, &polarization)
@@ -536,7 +562,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
             [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -547,7 +573,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
             [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -567,7 +593,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
             [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -578,7 +604,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a0(980)- re"), parameter("a0(980)- im")],
             [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -591,7 +617,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("f2(1850) re"), parameter("f2(1850) im")],
             [parameter("f2(1910) re"), parameter("f2(1910) im")],
         ],
-        2,
+        KopfKMatrixF2Channel::KKbar,
         &resonance_mass,
         None,
     )
@@ -602,7 +628,7 @@ fn build_kmatrix_nll() -> Box<NLL> {
             [parameter("a2(1320) re"), parameter("a2(1320) im")],
             [parameter("a2(1700) re"), parameter("a2(1700) im")],
         ],
-        2,
+        KopfKMatrixA2Channel::PiEtaPrime,
         &resonance_mass,
         None,
     )

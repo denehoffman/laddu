@@ -195,6 +195,31 @@ def test_expression_operations() -> None:
     assert result_mul2_norm[0] == 20.0 + 0.0j
 
 
+def test_compiled_expression_display() -> None:
+    amp1 = TestAmplitude('a', parameter('ar'), parameter('ai'))
+    amp2 = TestAmplitude('b', parameter('br'), parameter('bi'))
+    term = amp1 * amp2
+    expression = term + term
+
+    expression_compiled = str(expression.compiled_expression)
+    assert '#' in expression_compiled
+    assert '+' in expression_compiled
+    assert '\u00d7' in expression_compiled
+    assert 'a(id=0)' in expression_compiled
+    assert 'b(id=1)' in expression_compiled
+    assert '(ref)' in expression_compiled
+
+    evaluator = expression.load(make_test_dataset())
+    compiled = str(evaluator.compiled_expression)
+
+    assert '#' in compiled
+    assert '+' in compiled
+    assert '\u00d7' in compiled
+    assert 'a(id=0)' in compiled
+    assert 'b(id=1)' in compiled
+    assert '(ref)' in compiled
+
+
 def test_amplitude_activation() -> None:
     amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
     amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
@@ -223,6 +248,43 @@ def test_amplitude_activation() -> None:
     evaluator.deactivate(missing, strict=False)
     result = evaluator.evaluate([])
     assert result[0] == 3.0 + 0.0j
+
+
+def test_amplitude_activation_globs() -> None:
+    amp1 = ComplexScalar(
+        'signal.s', constant('signal_s_re', 1.0), constant('signal_s_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'signal.d', constant('signal_d_re', 2.0), constant('signal_d_im', 0.0)
+    )
+    amp3 = ComplexScalar(
+        'background', constant('background_re', 4.0), constant('background_im', 0.0)
+    )
+    evaluator = (amp1 + amp2 + amp3).load(make_test_dataset())
+
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.deactivate('signal.*')
+    assert evaluator.evaluate([])[0] == 4.0 + 0.0j
+
+    evaluator.activate('signal.?')
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.isolate('signal.*')
+    assert evaluator.evaluate([])[0] == 3.0 + 0.0j
+
+    evaluator.isolate(['signal.s', 'back*'])
+    assert evaluator.evaluate([])[0] == 5.0 + 0.0j
+
+    with pytest.raises(ValueError):
+        evaluator.activate('missing*')
+
+    evaluator.activate_all()
+    evaluator.deactivate('missing*', strict=False)
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
+
+    evaluator.isolate('missing*', strict=False)
+    assert evaluator.evaluate([])[0] == 7.0 + 0.0j
 
 
 def test_evaluator_active_mask_roundtrip() -> None:

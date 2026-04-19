@@ -83,8 +83,15 @@ Let's further assume that there are only two resonances present in our data, an 
    res_mass = ld.Mass(['kshort1', 'kshort2'])
 
    # the decay angles in the helicity frame
-   topology = ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton')
-   angles = ld.Angles(topology, 'kshort1')
+   beam = ld.Particle.measured('beam', 'beam')
+   target = ld.Particle.missing('target')
+   kshort1 = ld.Particle.measured('K_S1', 'kshort1')
+   kshort2 = ld.Particle.measured('K_S2', 'kshort2')
+   kk = ld.Particle.composite('KK', [kshort1, kshort2])
+   proton = ld.Particle.measured('proton', 'proton')
+   reaction = ld.Reaction.two_to_two(beam, target, kk, proton)
+   decay = reaction.decay(kk)
+   angles = decay.angles(kshort1)
 
 So far, these angles just represent particles in a generic dataset by index and provide an appropriate method to calculate the corresponding observable. Before we fit anything, we might want to just see what the dataset looks like:
 
@@ -121,7 +128,7 @@ where :math:`BW_{L}(m, m_\alpha, \Gamma_\alpha)` is the Breit-Wigner amplitude f
 
 .. code:: python
 
-   polarization = ld.Polarization(ld.Topology.missing_k2('beam', ['kshort1', 'kshort2'], 'proton'), 'pol_magnitude', 'pol_angle')
+   polarization = reaction.polarization('pol_magnitude', 'pol_angle')
 
 Next, we can create ``Zlm`` amplitudes:
 

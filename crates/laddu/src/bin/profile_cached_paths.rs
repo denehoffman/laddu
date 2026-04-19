@@ -5,7 +5,10 @@ use laddu::{
         breit_wigner::BreitWigner,
         common::ComplexScalar,
         common::Scalar,
-        kmatrix::{KopfKMatrixA0, KopfKMatrixA2, KopfKMatrixF0, KopfKMatrixF2},
+        kmatrix::{
+            KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
+            KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
+        },
         parameter,
         zlm::Zlm,
     },
@@ -14,7 +17,7 @@ use laddu::{
     traits::LikelihoodTerm,
     utils::{
         enums::{Frame, Sign},
-        variables::{Angles, Mass, Polarization, Topology},
+        variables::Mass,
     },
 };
 
@@ -26,6 +29,29 @@ const SAMPLE_EVENTS: usize = 512;
 const SAMPLE_SEED: u64 = 11;
 const WARMUP_ITERS: usize = 64;
 const DEFAULT_ITERS: usize = 4096;
+
+fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass, Mass, Mass) {
+    let beam = laddu::Particle::measured("beam", "beam");
+    let target = laddu::Particle::missing("target");
+    let kshort1 = laddu::Particle::measured("K_S1", "kshort1");
+    let kshort2 = laddu::Particle::measured("K_S2", "kshort2");
+    let kk = laddu::Particle::composite("KK", [&kshort1, &kshort2]).unwrap();
+    let proton = laddu::Particle::measured("proton", "proton");
+    let reaction = laddu::Reaction::two_to_two(&beam, &target, &kk, &proton).unwrap();
+    let decay = reaction.decay(&kk).unwrap();
+    let angles = decay.angles(&kshort1, Frame::Helicity).unwrap();
+    let polarization = reaction.polarization("pol_magnitude", "pol_angle");
+    let resonance_mass = decay.parent_mass();
+    let daughter_1_mass = decay.daughter_1_mass();
+    let daughter_2_mass = decay.daughter_2_mass();
+    (
+        angles,
+        polarization,
+        resonance_mass,
+        daughter_1_mass,
+        daughter_2_mass,
+    )
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Mode {
@@ -85,7 +111,7 @@ fn print_precompute_breakdown_header(mode: &str, iters: usize) {
 
 fn print_precompute_breakdown_rows(totals_ns: &[u128], iters: usize) {
     let mut indexed: Vec<(usize, u128)> = totals_ns.iter().copied().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.cmp(&a.1));
+    indexed.sort_by_key(|b| std::cmp::Reverse(b.1));
     for (rank, (amp_index, total_ns)) in indexed.into_iter().enumerate() {
         let avg_ns = total_ns as f64 / iters as f64;
         eprintln!("{} {} {} {:.3}", rank + 1, amp_index, total_ns, avg_ns);
@@ -133,12 +159,8 @@ fn sample_dataset(dataset: &Arc<Dataset>, seed: u64, max_events: usize) -> Arc<D
 }
 
 fn build_breit_wigner_partial_wave_model() -> laddu::Expression {
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology, "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
-    let daughter_1_mass = Mass::new(["kshort1"]);
-    let daughter_2_mass = Mass::new(["kshort2"]);
+    let (angles, polarization, resonance_mass, daughter_1_mass, daughter_2_mass) =
+        reaction_variables();
 
     let z00p =
         Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).expect("z00 should build");
@@ -183,10 +205,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
     let dataset = read_benchmark_dataset();
     let ds_data = sample_dataset(&dataset, SAMPLE_SEED, SAMPLE_EVENTS);
     let ds_mc = ds_data.clone();
-    let topology = Topology::missing_k2("beam", ["kshort1", "kshort2"], "proton");
-    let angles = Angles::new(topology.clone(), "kshort1", Frame::Helicity);
-    let polarization = Polarization::new(topology.clone(), "pol_magnitude", "pol_angle");
-    let resonance_mass = Mass::new(["kshort1", "kshort2"]);
+    let (angles, polarization, resonance_mass, _, _) = reaction_variables();
     let z00p =
         Zlm::new("Z00+", 0, 0, Sign::Positive, &angles, &polarization).expect("z00+ should build");
     let z00n =
@@ -209,7 +228,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
             [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -220,7 +239,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
             [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -240,7 +259,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
             [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
         ],
-        0,
+        KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
         None,
     )
@@ -251,7 +270,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("a0(980)- re"), parameter("a0(980)- im")],
             [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
         ],
-        0,
+        KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
         None,
     )
@@ -264,7 +283,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("f2(1850) re"), parameter("f2(1850) im")],
             [parameter("f2(1910) re"), parameter("f2(1910) im")],
         ],
-        2,
+        KopfKMatrixF2Channel::KKbar,
         &resonance_mass,
         None,
     )
@@ -275,7 +294,7 @@ fn build_kmatrix_nll() -> (Box<laddu::extensions::NLL>, Vec<f64>) {
             [parameter("a2(1320) re"), parameter("a2(1320) im")],
             [parameter("a2(1700) re"), parameter("a2(1700) im")],
         ],
-        2,
+        KopfKMatrixA2Channel::PiEtaPrime,
         &resonance_mass,
         None,
     )

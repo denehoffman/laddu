@@ -1,57 +1,103 @@
 from collections.abc import Sequence
-from typing import Literal
+from fractions import Fraction
+from typing import Literal, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
+from laddu.amplitudes import Expression
 from laddu.data import Dataset, Event
-from laddu.utils.vectors import Vec3, Vec4
+from laddu.utils.vectors import Vec4
+
+_P4Selection: TypeAlias = str | Sequence[str]
+_QuantumNumber: TypeAlias = int | float | Fraction
+_Frame: TypeAlias = Literal[
+    'Helicity',
+    'HX',
+    'HEL',
+    'GottfriedJackson',
+    'Gottfried Jackson',
+    'GJ',
+    'Gottfried-Jackson',
+    'Canonical',
+    'CanonicalHelicity',
+    'CH',
+    'Adair',
+    'AD',
+]
 
 class VariableExpression:
     def __and__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __or__(self, rhs: VariableExpression) -> VariableExpression: ...
     def __invert__(self) -> VariableExpression: ...
 
-class Topology:
-    def __init__(
+class Particle:
+    label: str
+
+    @staticmethod
+    def measured(label: str, p4: _P4Selection) -> Particle: ...
+    @staticmethod
+    def fixed(label: str, p4: Vec4) -> Particle: ...
+    @staticmethod
+    def missing(label: str) -> Particle: ...
+    @staticmethod
+    def composite(label: str, daughters: Sequence[Particle]) -> Particle: ...
+
+class Decay:
+    parent: Particle
+    daughter_1: Particle
+    daughter_2: Particle
+
+    def daughters(self) -> list[Particle]: ...
+    def mass(self) -> Mass: ...
+    def parent_mass(self) -> Mass: ...
+    def daughter_1_mass(self) -> Mass: ...
+    def daughter_2_mass(self) -> Mass: ...
+    def daughter_mass(self, daughter: Particle) -> Mass: ...
+    def costheta(self, daughter: Particle, frame: _Frame = 'Helicity') -> CosTheta: ...
+    def phi(self, daughter: Particle, frame: _Frame = 'Helicity') -> Phi: ...
+    def angles(self, daughter: Particle, frame: _Frame = 'Helicity') -> Angles: ...
+    def helicity_factor(
         self,
-        k1: str | Sequence[str],
-        k2: str | Sequence[str],
-        k3: str | Sequence[str],
-        k4: str | Sequence[str],
-    ) -> None: ...
+        name: str,
+        spin: _QuantumNumber,
+        projection: _QuantumNumber,
+        daughter: Particle,
+        lambda_1: _QuantumNumber,
+        lambda_2: _QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
+    def canonical_factor(
+        self,
+        name: str,
+        spin: _QuantumNumber,
+        projection: _QuantumNumber,
+        orbital_l: int,
+        coupled_spin: _QuantumNumber,
+        daughter: Particle,
+        daughter_1_spin: _QuantumNumber,
+        daughter_2_spin: _QuantumNumber,
+        lambda_1: _QuantumNumber,
+        lambda_2: _QuantumNumber,
+        frame: _Frame = 'Helicity',
+    ) -> Expression: ...
+
+class Reaction:
     @staticmethod
-    def missing_k1(
-        k2: str | Sequence[str], k3: str | Sequence[str], k4: str | Sequence[str]
-    ) -> Topology: ...
-    @staticmethod
-    def missing_k2(
-        k1: str | Sequence[str], k3: str | Sequence[str], k4: str | Sequence[str]
-    ) -> Topology: ...
-    @staticmethod
-    def missing_k3(
-        k1: str | Sequence[str], k2: str | Sequence[str], k4: str | Sequence[str]
-    ) -> Topology: ...
-    @staticmethod
-    def missing_k4(
-        k1: str | Sequence[str], k2: str | Sequence[str], k3: str | Sequence[str]
-    ) -> Topology: ...
-    def k1_names(self) -> list[str] | None: ...
-    def k2_names(self) -> list[str] | None: ...
-    def k3_names(self) -> list[str] | None: ...
-    def k4_names(self) -> list[str] | None: ...
-    def com_boost_vector(self, event: Event) -> Vec3: ...
-    def k1(self, event: Event) -> Vec4: ...
-    def k2(self, event: Event) -> Vec4: ...
-    def k3(self, event: Event) -> Vec4: ...
-    def k4(self, event: Event) -> Vec4: ...
-    def k1_com(self, event: Event) -> Vec4: ...
-    def k2_com(self, event: Event) -> Vec4: ...
-    def k3_com(self, event: Event) -> Vec4: ...
-    def k4_com(self, event: Event) -> Vec4: ...
+    def two_to_two(
+        p1: Particle, p2: Particle, p3: Particle, p4: Particle
+    ) -> Reaction: ...
+    def mass(self, particle: Particle) -> Mass: ...
+    def decay(self, parent: Particle) -> Decay: ...
+    def mandelstam(
+        self, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
+    ) -> Mandelstam: ...
+    def pol_angle(self, pol_angle: str) -> PolAngle: ...
+    def polarization(self, pol_magnitude: str, pol_angle: str) -> Polarization: ...
 
 class Mass:
-    def __init__(self, constituents: str | Sequence[str]) -> None: ...
+    def __init__(self, constituents: _P4Selection) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -61,20 +107,7 @@ class Mass:
     def __ge__(self, value: float) -> VariableExpression: ...
 
 class CosTheta:
-    def __init__(
-        self,
-        topology: Topology,
-        daughter: str | Sequence[str],
-        frame: Literal[
-            'Helicity',
-            'HX',
-            'HEL',
-            'GottfriedJackson',
-            'Gottfried Jackson',
-            'GJ',
-            'Gottfried-Jackson',
-        ] = 'Helicity',
-    ) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -84,20 +117,7 @@ class CosTheta:
     def __ge__(self, value: float) -> VariableExpression: ...
 
 class Phi:
-    def __init__(
-        self,
-        topology: Topology,
-        daughter: str | Sequence[str],
-        frame: Literal[
-            'Helicity',
-            'HX',
-            'HEL',
-            'GottfriedJackson',
-            'Gottfried Jackson',
-            'GJ',
-            'Gottfried-Jackson',
-        ] = 'Helicity',
-    ) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -110,23 +130,9 @@ class Angles:
     costheta: CosTheta
     phi: Phi
 
-    def __init__(
-        self,
-        topology: Topology,
-        daughter: str | Sequence[str],
-        frame: Literal[
-            'Helicity',
-            'HX',
-            'HEL',
-            'GottfriedJackson',
-            'Gottfried Jackson',
-            'GJ',
-            'Gottfried-Jackson',
-        ] = 'Helicity',
-    ) -> None: ...
-
 class PolAngle:
-    def __init__(self, topology: Topology, pol_angle: str) -> None: ...
+    def __init__(self, reaction: Reaction, pol_angle: str) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -137,6 +143,7 @@ class PolAngle:
 
 class PolMagnitude:
     def __init__(self, pol_magnitude: str) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -151,7 +158,7 @@ class Polarization:
 
     def __init__(
         self,
-        topology: Topology,
+        reaction: Reaction,
         *,
         pol_magnitude: str,
         pol_angle: str,
@@ -159,8 +166,9 @@ class Polarization:
 
 class Mandelstam:
     def __init__(
-        self, topology: Topology, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
+        self, reaction: Reaction, channel: Literal['s', 't', 'u', 'S', 'T', 'U']
     ) -> None: ...
+    def as_expression(self, name: str) -> Expression: ...
     def value(self, event: Event) -> float: ...
     def value_on(self, dataset: Dataset) -> npt.NDArray[np.float64]: ...
     def __eq__(self, value: float) -> VariableExpression: ...  # ty:ignore[invalid-method-override]
@@ -168,3 +176,18 @@ class Mandelstam:
     def __gt__(self, value: float) -> VariableExpression: ...
     def __le__(self, value: float) -> VariableExpression: ...
     def __ge__(self, value: float) -> VariableExpression: ...
+
+__all__ = [
+    'Angles',
+    'CosTheta',
+    'Decay',
+    'Mandelstam',
+    'Mass',
+    'Particle',
+    'Phi',
+    'PolAngle',
+    'PolMagnitude',
+    'Polarization',
+    'Reaction',
+    'VariableExpression',
+]
