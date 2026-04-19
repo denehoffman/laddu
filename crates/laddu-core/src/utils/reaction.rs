@@ -5,7 +5,7 @@ use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    amplitudes::{Amplitude, AmplitudeID, Expression},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::NamedEventView,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
     traits::Variable,
@@ -726,6 +726,14 @@ impl Amplitude for FixedScalar {
         resources.register_amplitude(&self.name)
     }
 
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("FixedScalar")
+                .with_field("name", format!("{:?}", self.name))
+                .with_field("value", f64_key(self.value)),
+        )
+    }
+
     fn real_valued_hint(&self) -> bool {
         true
     }
@@ -776,6 +784,7 @@ struct DecayWignerD {
     column_projection: AngularMomentumProjection,
     costheta: Box<dyn Variable>,
     phi: Box<dyn Variable>,
+    angles_key: String,
     value_id: ComplexScalarID,
 }
 
@@ -799,6 +808,7 @@ impl DecayWignerD {
             column_projection,
             costheta: angles.costheta_variable(),
             phi: angles.phi_variable(),
+            angles_key: angles.to_string(),
             value_id: ComplexScalarID::default(),
         }
         .into_expression()
@@ -810,6 +820,20 @@ impl Amplitude for DecayWignerD {
     fn register(&mut self, resources: &mut Resources) -> LadduResult<AmplitudeID> {
         self.value_id = resources.register_complex_scalar(None);
         resources.register_amplitude(&self.name)
+    }
+
+    fn semantic_key(&self) -> Option<AmplitudeSemanticKey> {
+        Some(
+            AmplitudeSemanticKey::new("DecayWignerD")
+                .with_field("name", format!("{:?}", self.name))
+                .with_field("spin", self.spin.value().to_string())
+                .with_field("row_projection", self.row_projection.value().to_string())
+                .with_field(
+                    "column_projection",
+                    self.column_projection.value().to_string(),
+                )
+                .with_field("angles", format!("{:?}", self.angles_key)),
+        )
     }
 
     fn bind(&mut self, metadata: &crate::data::DatasetMetadata) -> LadduResult<()> {
@@ -839,6 +863,14 @@ impl Amplitude for DecayWignerD {
         _cache: &Cache,
         _gradient: &mut DVector<Complex64>,
     ) {
+    }
+}
+
+fn f64_key(value: f64) -> String {
+    if value == 0.0 {
+        "0".to_string()
+    } else {
+        format!("{:016x}", value.to_bits())
     }
 }
 
@@ -1033,5 +1065,49 @@ mod tests {
         assert_relative_eq!(reaction.mandelstam(Channel::S).value(&event), resolved.s());
         assert_relative_eq!(reaction.mandelstam(Channel::T).value(&event), resolved.t());
         assert_relative_eq!(reaction.mandelstam(Channel::U).value(&event), resolved.u());
+    }
+
+    #[test]
+    fn decay_factors_with_matching_names_deduplicate() {
+        let (dataset, reaction, rho, pi_plus, _) = pion_cascade_dataset();
+        let dataset = Arc::new(dataset);
+        let decay = reaction.decay(&rho).unwrap();
+        let factor_1 = decay
+            .canonical_factor(
+                "rho.factor",
+                AngularMomentum::integer(1),
+                AngularMomentumProjection::integer(0),
+                OrbitalAngularMomentum::integer(1),
+                AngularMomentum::integer(0),
+                &pi_plus,
+                AngularMomentum::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentumProjection::integer(0),
+                Frame::Helicity,
+            )
+            .unwrap();
+        let factor_2 = decay
+            .canonical_factor(
+                "rho.factor",
+                AngularMomentum::integer(1),
+                AngularMomentumProjection::integer(0),
+                OrbitalAngularMomentum::integer(1),
+                AngularMomentum::integer(0),
+                &pi_plus,
+                AngularMomentum::integer(0),
+                AngularMomentum::integer(0),
+                AngularMomentumProjection::integer(0),
+                AngularMomentumProjection::integer(0),
+                Frame::Helicity,
+            )
+            .unwrap();
+
+        let evaluator = (&factor_1 + &factor_2).load(&dataset).unwrap();
+
+        assert_eq!(
+            evaluator.amplitudes.len(),
+            factor_1.load(&dataset).unwrap().amplitudes.len()
+        );
     }
 }
