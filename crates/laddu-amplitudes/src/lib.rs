@@ -50,6 +50,3 @@ pub use spin_factors::{
 /// A phase space factor for `$a+b\to c+d$` with `$c\to 1+2$`.
 pub mod phase_space;
 pub use phase_space::PhaseSpaceFactor;
-
-/// Data structures for sequential-decay expression builders.
-pub mod sequential;
