@@ -111,7 +111,7 @@ fn print_precompute_breakdown_header(mode: &str, iters: usize) {
 
 fn print_precompute_breakdown_rows(totals_ns: &[u128], iters: usize) {
     let mut indexed: Vec<(usize, u128)> = totals_ns.iter().copied().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.cmp(&a.1));
+    indexed.sort_by_key(|b| std::cmp::Reverse(b.1));
     for (rank, (amp_index, total_ns)) in indexed.into_iter().enumerate() {
         let avg_ns = total_ns as f64 / iters as f64;
         eprintln!("{} {} {} {:.3}", rank + 1, amp_index, total_ns, avg_ns);

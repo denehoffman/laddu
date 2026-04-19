@@ -1522,8 +1522,7 @@ impl LoweredProgram {
             remapped_roots[0]
         } else {
             let mut accumulator = remapped_roots.remove(0);
-            let mut next_dst = instructions.len();
-            for root in remapped_roots {
+            for (next_dst, root) in (instructions.len()..).zip(remapped_roots) {
                 instructions.push(LoweredInstruction::Binary {
                     dst: next_dst,
                     left: accumulator,
@@ -1531,7 +1530,6 @@ impl LoweredProgram {
                     op: LoweredBinaryOp::Add,
                 });
                 accumulator = next_dst;
-                next_dst += 1;
             }
             accumulator
         };

@@ -34,7 +34,7 @@ impl FrameAxes {
                 "frame axes must be mutually orthogonal".to_string(),
             ));
         }
-        if (x.cross(&y).dot(&z) - 1.0).abs() > f64::EPSILON {
+        if x.cross(&y).dot(&z) < 0.0 {
             return Err(LadduError::Custom(
                 "frame axes must form a right-handed basis".to_string(),
             ));
