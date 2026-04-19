@@ -3207,28 +3207,6 @@ impl Evaluator {
                 &zeroed_nodes,
             )
     }
-    fn evaluate_residual_gradient_lowered(
-        &self,
-        _state: &CachedIntegralCacheState,
-        lowered_artifacts: &LoweredArtifactCacheState,
-        amplitude_values: &[Complex64],
-        amplitude_gradients: &[DVector<Complex64>],
-        grad_dim: usize,
-    ) -> Option<DVector<Complex64>> {
-        let program = lowered_artifacts
-            .residual_runtime
-            .as_ref()
-            .map(|runtime| runtime.gradient_program())?;
-        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
-        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * grad_dim];
-        Some(program.evaluate_gradient_into_flat(
-            amplitude_values,
-            amplitude_gradients,
-            &mut value_slots,
-            &mut gradient_slots,
-            grad_dim,
-        ))
-    }
 
     fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
         let resources = self.resources.read();
@@ -3433,6 +3411,14 @@ impl Evaluator {
         for &index in &residual_active_indices {
             residual_active_mask[index] = true;
         }
+        let residual_gradient_program = lowered_artifacts
+            .as_ref()
+            .and_then(|artifacts| artifacts.residual_runtime.as_ref())
+            .map(|runtime| runtime.gradient_program());
+        let residual_gradient_slot_count = residual_gradient_program
+            .as_ref()
+            .map(|program| program.scratch_slots())
+            .unwrap_or_else(|| state.expression_ir.node_count());
         let cached_term_sum = {
             if let Some(cache) = resources.caches.first() {
                 let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
@@ -3486,17 +3472,12 @@ impl Evaluator {
                         (
                             vec![Complex64::ZERO; amplitude_len],
                             vec![DVector::zeros(grad_dim); amplitude_len],
-                            vec![Complex64::ZERO; self.expression_slot_count()],
-                            vec![
-                                DVector::<Complex64>::zeros(grad_dim);
-                                self.expression_slot_count()
-                            ],
+                            vec![Complex64::ZERO; residual_gradient_slot_count],
+                            vec![Complex64::ZERO; residual_gradient_slot_count * grad_dim],
                         )
                     },
                     |(amplitude_values, gradient_values, value_slots, gradient_slots),
                      (cache, event)| {
-                        let _ = value_slots;
-                        let _ = gradient_slots;
                         self.fill_amplitude_values_and_gradients(
                             amplitude_values,
                             gradient_values,
@@ -3505,15 +3486,14 @@ impl Evaluator {
                             &parameters,
                             cache,
                         );
-                        let gradient = self
-                            .active_lowered_artifacts()
+                        let gradient = residual_gradient_program
                             .as_ref()
-                            .and_then(|artifacts| {
-                                self.evaluate_residual_gradient_lowered(
-                                    &state,
-                                    artifacts,
+                            .map(|program| {
+                                program.evaluate_gradient_into_flat(
                                     amplitude_values,
                                     gradient_values,
+                                    value_slots,
+                                    gradient_slots,
                                     grad_dim,
                                 )
                             })
@@ -3541,6 +3521,8 @@ impl Evaluator {
         let residual_sum = {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
+            let mut value_slots = vec![Complex64::ZERO; residual_gradient_slot_count];
+            let mut gradient_slots = vec![Complex64::ZERO; residual_gradient_slot_count * grad_dim];
             resources
                 .caches
                 .iter()
@@ -3554,15 +3536,14 @@ impl Evaluator {
                         &parameters,
                         cache,
                     );
-                    let gradient = self
-                        .active_lowered_artifacts()
+                    let gradient = residual_gradient_program
                         .as_ref()
-                        .and_then(|artifacts| {
-                            self.evaluate_residual_gradient_lowered(
-                                &state,
-                                artifacts,
+                        .map(|program| {
+                            program.evaluate_gradient_into_flat(
                                 &amplitude_values,
                                 &gradient_values,
+                                &mut value_slots,
+                                &mut gradient_slots,
                                 grad_dim,
                             )
                         })
@@ -6083,15 +6064,22 @@ mod tests {
             &amplitude_gradients,
             parameters.len(),
         );
-        let residual_gradient_lowered = evaluator
-            .evaluate_residual_gradient_lowered(
-                &state,
-                lowered_artifacts.as_ref(),
-                &amplitude_values,
-                &amplitude_gradients,
-                parameters.len(),
-            )
-            .expect("residual gradient lowering should succeed");
+
+        let program = lowered_artifacts
+            .residual_runtime
+            .as_ref()
+            .map(|runtime| runtime.gradient_program())
+            .expect("gradient lowering should succeed");
+        let mut value_slots = vec![Complex64::ZERO; program.scratch_slots()];
+        let mut gradient_slots = vec![Complex64::ZERO; program.scratch_slots() * parameters.len()];
+        let residual_gradient_lowered = program.evaluate_gradient_into_flat(
+            &amplitude_values,
+            &amplitude_gradients,
+            &mut value_slots,
+            &mut gradient_slots,
+            parameters.len(),
+        );
+
         for (lowered, ir) in residual_gradient_lowered
             .iter()
             .zip(residual_gradient_ir.iter())
