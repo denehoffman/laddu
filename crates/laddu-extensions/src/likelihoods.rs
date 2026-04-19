@@ -15,7 +15,7 @@ use fastrand::Rng;
 #[cfg(feature = "python")]
 use laddu_core::ThreadPoolManager;
 use laddu_core::{
-    amplitudes::{Evaluator, Expression},
+    amplitudes::{CompiledExpression, Evaluator, Expression},
     data::Dataset,
     parameter_manager::ParameterManager,
     resources::Parameters,
@@ -39,7 +39,7 @@ use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
 use ganesh::python::IntoPySummary;
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyEvaluator, PyExpression},
+    amplitudes::{PyCompiledExpression, PyEvaluator, PyExpression},
     data::PyDataset,
 };
 #[cfg(feature = "python")]
@@ -672,6 +672,17 @@ impl NLL {
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
         self.parameter_manager.n_parameters()
+    }
+
+    /// Returns the expression represented by this NLL.
+    pub fn expression(&self) -> Expression {
+        self.data_evaluator.expression()
+    }
+
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for this NLL's current
+    /// active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        self.data_evaluator.compiled_expression()
     }
 
     /// Return a new [`NLL`] with the given parameter fixed to a value.
@@ -1961,6 +1972,18 @@ impl StochasticNLL {
     pub fn n_parameters(&self) -> usize {
         self.nll.n_parameters()
     }
+
+    /// Returns the expression represented by this stochastic NLL.
+    pub fn expression(&self) -> Expression {
+        self.nll.expression()
+    }
+
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for this stochastic
+    /// NLL's current active-amplitude mask.
+    pub fn compiled_expression(&self) -> CompiledExpression {
+        self.nll.compiled_expression()
+    }
+
     #[cfg(feature = "mpi")]
     fn data_batch_weight_local(&self, indices: &[usize]) -> f64 {
         #[cfg(feature = "rayon")]
@@ -2229,6 +2252,26 @@ impl PyNLL {
     #[getter]
     fn accmc(&self) -> PyDataset {
         PyDataset(self.0.accmc_evaluator.dataset.clone())
+    }
+    /// The evaluator for the signal dataset.
+    #[getter]
+    fn data_evaluator(&self) -> PyEvaluator {
+        PyEvaluator(self.0.data_evaluator.clone())
+    }
+    /// The evaluator for the accepted Monte Carlo dataset.
+    #[getter]
+    fn accmc_evaluator(&self) -> PyEvaluator {
+        PyEvaluator(self.0.accmc_evaluator.clone())
+    }
+    /// The expression represented by this NLL.
+    #[getter]
+    fn expression(&self) -> PyExpression {
+        PyExpression(self.0.expression())
+    }
+    /// Return a tree-like diagnostic view of the compiled NLL expression.
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
     }
     /// Turn an ``NLL`` into a ``StochasticNLL``
     ///
@@ -2997,6 +3040,16 @@ impl PyStochasticNLL {
     #[getter]
     fn nll(&self) -> PyNLL {
         PyNLL(Box::new(self.0.nll.clone()))
+    }
+    /// The expression represented by this stochastic NLL.
+    #[getter]
+    fn expression(&self) -> PyExpression {
+        PyExpression(self.0.expression())
+    }
+    /// Return a tree-like diagnostic view of the compiled stochastic NLL expression.
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
     }
     #[cfg_attr(doctest, doc = "```ignore")]
     /// Minimize the StochasticNLL with respect to the free parameters in the model
@@ -4639,6 +4692,39 @@ mod tests {
         let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
         let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         (nll, vec![0.75, -1.25])
+    }
+
+    #[test]
+    fn nll_exposes_expression_and_current_compiled_expression() {
+        let (nll, _) = make_two_parameter_nll();
+
+        let expression_display = nll.expression().compiled_expression().to_string();
+        assert!(expression_display.contains("amp_a(id=0)"));
+        assert!(expression_display.contains("amp_b(id=1)"));
+
+        nll.deactivate("amp_b");
+        let compiled = nll.compiled_expression().to_string();
+        assert!(compiled.contains("amp_a(id=0)"));
+        assert!(!compiled.contains("amp_b(id=1)"));
+        assert!(compiled.contains("const 0"));
+    }
+
+    #[test]
+    fn stochastic_nll_exposes_expression_and_current_compiled_expression() {
+        let (nll, _) = make_two_parameter_nll();
+        let stochastic = nll
+            .to_stochastic(2, Some(0))
+            .expect("stochastic NLL should build");
+
+        assert!(stochastic
+            .expression()
+            .compiled_expression()
+            .to_string()
+            .contains("amp_a(id=0)"));
+        assert!(stochastic
+            .compiled_expression()
+            .to_string()
+            .contains("amp_b(id=1)"));
     }
 
     #[cfg(feature = "python")]

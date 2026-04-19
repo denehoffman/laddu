@@ -166,7 +166,10 @@ impl VariableExpression {
 
     /// Comple the [`VariableExpression`] into a [`CompiledExpression`] bound to the supplied
     /// metadata so that all variable references are resolved.
-    pub(crate) fn compile(&self, metadata: &DatasetMetadata) -> LadduResult<CompiledExpression> {
+    pub(crate) fn compile(
+        &self,
+        metadata: &DatasetMetadata,
+    ) -> LadduResult<CompiledVariableExpression> {
         let mut compiled = compile_expression(self.clone());
         compiled.bind(metadata)?;
         Ok(compiled)
@@ -219,12 +222,12 @@ enum Opcode {
     Not,
 }
 
-pub(crate) struct CompiledExpression {
+pub(crate) struct CompiledVariableExpression {
     bytecode: Vec<Opcode>,
     variables: Vec<Box<dyn Variable>>,
 }
 
-impl CompiledExpression {
+impl CompiledVariableExpression {
     pub fn bind(&mut self, metadata: &DatasetMetadata) -> LadduResult<()> {
         for variable in &mut self.variables {
             variable.bind(metadata)?;
@@ -262,7 +265,7 @@ impl CompiledExpression {
     }
 }
 
-pub(crate) fn compile_expression(expr: VariableExpression) -> CompiledExpression {
+pub(crate) fn compile_expression(expr: VariableExpression) -> CompiledVariableExpression {
     let mut bytecode = Vec::new();
     let mut variables: Vec<Box<dyn Variable>> = Vec::new();
 
@@ -303,7 +306,7 @@ pub(crate) fn compile_expression(expr: VariableExpression) -> CompiledExpression
 
     compile(expr, &mut bytecode, &mut variables);
 
-    CompiledExpression {
+    CompiledVariableExpression {
         bytecode,
         variables,
     }

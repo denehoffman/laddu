@@ -6,6 +6,7 @@ import numpy as np
 import numpy.typing as npt
 
 from laddu.amplitudes import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
@@ -104,6 +105,7 @@ __all__ = [
     'BreitWigner',
     'BreitWignerNonRelativistic',
     'ClebschGordan',
+    'CompiledExpression',
     'ComplexScalar',
     'ControlFlow',
     'CosTheta',

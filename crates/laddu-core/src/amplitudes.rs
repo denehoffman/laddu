@@ -2266,31 +2266,19 @@ impl Evaluator {
         snapshot.lowered_program.scratch_slots()
     }
 
-    /// Returns a tree-like diagnostic snapshot of the compiled expression for the current
-    /// active-amplitude mask.
+    /// Returns a tree-like diagnostic snapshot of the compiled expression for the evaluator's
+    /// current active-amplitude mask.
     pub fn compiled_expression(&self) -> CompiledExpression {
-        self.compiled_expression_for_active_mask(&self.active_mask())
-            .expect("current active mask should match evaluator amplitude count")
+        let expression_ir = self.compile_expression_ir_for_active_mask(&self.active_mask());
+        CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
     }
 
-    /// Returns a tree-like diagnostic snapshot of the compiled expression for an explicit
-    /// active-amplitude mask.
-    pub fn compiled_expression_for_active_mask(
-        &self,
-        active_mask: &[bool],
-    ) -> LadduResult<CompiledExpression> {
-        if active_mask.len() != self.amplitudes.len() {
-            return Err(LadduError::Custom(format!(
-                "Active mask length {} does not match amplitude count {}",
-                active_mask.len(),
-                self.amplitudes.len()
-            )));
+    /// Returns the expression represented by this evaluator.
+    pub fn expression(&self) -> Expression {
+        Expression {
+            tree: self.expression.clone(),
+            registry: self.registry.clone(),
         }
-        let expression_ir = self.compile_expression_ir_for_active_mask(active_mask);
-        Ok(CompiledExpression::from_ir(
-            &expression_ir,
-            &self.registry.amplitude_names,
-        ))
     }
     fn lowered_gradient_runtime_slot_count(&self) -> usize {
         self.lowered_runtime().gradient_program().scratch_slots()
@@ -5748,16 +5736,14 @@ mod tests {
     }
 
     #[test]
-    fn test_compiled_expression_active_mask_display_zeroes_inactive_amplitudes() {
+    fn test_compiled_expression_display_uses_current_active_mask() {
         let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
             + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
+        evaluator.deactivate("b");
 
-        let compiled = evaluator
-            .compiled_expression_for_active_mask(&[true, false])
-            .unwrap()
-            .to_string();
+        let compiled = evaluator.compiled_expression().to_string();
 
         assert!(compiled.contains("a(id=0)"));
         assert!(!compiled.contains("b(id=1)"));
@@ -5765,14 +5751,15 @@ mod tests {
     }
 
     #[test]
-    fn test_compiled_expression_active_mask_validates_length() {
+    fn test_evaluator_expression_reconstructs_expression() {
         let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
-        assert!(evaluator
-            .compiled_expression_for_active_mask(&[true, false])
-            .is_err());
+        assert_eq!(
+            evaluator.expression().compiled_expression(),
+            expr.compiled_expression()
+        );
     }
 
     #[test]

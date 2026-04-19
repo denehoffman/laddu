@@ -63,6 +63,27 @@ def _two_parameter_nll() -> NLL:
     return NLL(expr, data, mc)
 
 
+def test_nll_exposes_evaluators_expression_and_compiled_expression() -> None:
+    nll = _two_parameter_nll()
+
+    assert str(nll.data_evaluator.compiled_expression) == str(nll.compiled_expression)
+    assert 'alpha_amp(id=0)' in str(nll.expression.compiled_expression)
+    assert 'beta_amp(id=1)' in str(nll.accmc_evaluator.expression.compiled_expression)
+
+    nll.deactivate('beta_amp')
+    compiled = str(nll.compiled_expression)
+    assert 'alpha_amp(id=0)' in compiled
+    assert 'beta_amp(id=1)' not in compiled
+    assert 'const 0' in compiled
+
+
+def test_stochastic_nll_exposes_expression_and_compiled_expression() -> None:
+    stochastic = _two_parameter_nll().to_stochastic(1, seed=0)
+
+    assert 'alpha_amp(id=0)' in str(stochastic.expression.compiled_expression)
+    assert 'beta_amp(id=1)' in str(stochastic.compiled_expression)
+
+
 def _assert_ganesh_summary_class(summary: object, expected_name: str) -> None:
     assert summary.__class__.__module__ == 'ganesh'
     assert summary.__class__.__name__ == expected_name

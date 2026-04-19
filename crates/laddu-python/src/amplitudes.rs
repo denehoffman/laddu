@@ -1,7 +1,7 @@
 use crate::data::PyDataset;
 use laddu_core::{
     amplitudes::{constant, parameter, Evaluator, Expression, ParameterLike, TestAmplitude},
-    f64, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
+    f64, CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -222,8 +222,9 @@ impl PyExpression {
         Ok(PyExpression(self.0.rename_parameters(&mapping)?))
     }
     /// Return a tree-like diagnostic view of the compiled Expression.
-    fn compiled_expression(&self) -> String {
-        self.0.compiled_expression().to_string()
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
@@ -534,8 +535,15 @@ impl PyEvaluator {
     }
 
     /// Return a tree-like diagnostic view of the compiled Expression.
-    fn compiled_expression(&self) -> String {
-        self.0.compiled_expression().to_string()
+    #[getter]
+    fn compiled_expression(&self) -> PyCompiledExpression {
+        PyCompiledExpression(self.0.compiled_expression())
+    }
+
+    /// Return the Expression represented by this Evaluator.
+    #[getter]
+    fn expression(&self) -> PyExpression {
+        PyExpression(self.0.expression())
     }
 
     /// Evaluate the stored Expression over the stored Dataset
@@ -682,6 +690,26 @@ impl PyEvaluator {
                 .collect::<Vec<Vec<Complex64>>>()
         })?;
         Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
+    }
+}
+
+/// A class which can be used to display the compiled form of an Expression
+///
+/// Notes
+/// -----
+/// This should not be used for anything other than diagnostic purposes.
+///
+#[pyclass(name = "CompiledExpression", module = "laddu", from_py_object)]
+#[derive(Clone)]
+pub struct PyCompiledExpression(pub CompiledExpression);
+
+#[pymethods]
+impl PyCompiledExpression {
+    fn __str__(&self) -> String {
+        format!("{}", self.0)
+    }
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 

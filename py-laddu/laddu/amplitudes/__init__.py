@@ -19,6 +19,7 @@ Use :mod:`laddu.amplitudes.breit_wigner` or the other submodules for concrete ph
 """
 
 from laddu.laddu import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
@@ -45,6 +46,7 @@ from . import (
 )
 
 __all__ = [
+    'CompiledExpression',
     'Evaluator',
     'Expression',
     'One',

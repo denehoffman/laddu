@@ -201,7 +201,7 @@ def test_compiled_expression_display() -> None:
     term = amp1 * amp2
     expression = term + term
 
-    expression_compiled = expression.compiled_expression()
+    expression_compiled = str(expression.compiled_expression)
     assert '#' in expression_compiled
     assert '+' in expression_compiled
     assert '\u00d7' in expression_compiled
@@ -210,7 +210,7 @@ def test_compiled_expression_display() -> None:
     assert '(ref)' in expression_compiled
 
     evaluator = expression.load(make_test_dataset())
-    compiled = evaluator.compiled_expression()
+    compiled = str(evaluator.compiled_expression)
 
     assert '#' in compiled
     assert '+' in compiled

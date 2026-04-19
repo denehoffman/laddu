@@ -572,7 +572,10 @@ pub use crate::utils::variables::{
     AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
 };
 pub use crate::utils::vectors::{Vec3, Vec4};
-pub use amplitudes::{constant, parameter, AmplitudeID, Evaluator, Expression, ParameterLike};
+pub use amplitudes::{
+    constant, parameter, AmplitudeID, CompiledExpression, CompiledExpressionNode, Evaluator,
+    Expression, ParameterLike,
+};
 
 /// The mathematical constant $`\pi`$.
 pub const PI: f64 = std::f64::consts::PI;
