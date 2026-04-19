@@ -346,7 +346,7 @@ mod tests {
         assert_relative_eq!(result[0][1].re, -result[0][0].im);
         assert_relative_eq!(result[0][1].im, result[0][0].re);
         assert_relative_eq!(result[0][2].re, -1.180383324673402);
-        assert_relative_eq!(result[0][2].im, 1.3227053711279162);
+        assert_relative_eq!(result[0][2].im, 1.3227053711279164);
         assert_relative_eq!(result[0][3].re, -result[0][2].im);
         assert_relative_eq!(result[0][3].im, result[0][2].re);
     }
