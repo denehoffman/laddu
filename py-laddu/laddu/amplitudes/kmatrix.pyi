@@ -1,6 +1,6 @@
 from enum import Enum
 
-from laddu.amplitudes import Expression, ParameterLike
+from laddu.amplitudes import Expression, Parameter
 from laddu.utils.variables import Mass
 
 class KopfKMatrixF0Channel(Enum):
@@ -37,11 +37,11 @@ class KopfKMatrixPi1Channel(Enum):
 def KopfKMatrixF0(
     name: str,
     couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixF0Channel,
     mass: Mass,
@@ -51,10 +51,10 @@ def KopfKMatrixF0(
 def KopfKMatrixF2(
     name: str,
     couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixF2Channel,
     mass: Mass,
@@ -64,8 +64,8 @@ def KopfKMatrixF2(
 def KopfKMatrixA0(
     name: str,
     couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixA0Channel,
     mass: Mass,
@@ -75,8 +75,8 @@ def KopfKMatrixA0(
 def KopfKMatrixA2(
     name: str,
     couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixA2Channel,
     mass: Mass,
@@ -86,15 +86,15 @@ def KopfKMatrixA2(
 def KopfKMatrixRho(
     name: str,
     couplings: tuple[
-        tuple[ParameterLike, ParameterLike],
-        tuple[ParameterLike, ParameterLike],
+        tuple[Parameter, Parameter],
+        tuple[Parameter, Parameter],
     ],
     channel: KopfKMatrixRhoChannel,
     mass: Mass,
 ) -> Expression: ...
 def KopfKMatrixPi1(
     name: str,
-    couplings: tuple[tuple[ParameterLike, ParameterLike],],
+    couplings: tuple[tuple[Parameter, Parameter],],
     channel: KopfKMatrixPi1Channel,
     mass: Mass,
 ) -> Expression: ...

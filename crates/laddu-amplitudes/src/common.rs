@@ -1,7 +1,6 @@
 use laddu_core::{
     amplitudes::{
-        Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence,
-        ParameterLike,
+        Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence, Parameter,
     },
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
@@ -10,7 +9,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyVariable,
 };
 use nalgebra::DVector;
@@ -25,13 +24,13 @@ use crate::semantic_key::{debug_key, display_key, parameter_key};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Scalar {
     name: String,
-    value: ParameterLike,
+    value: Parameter,
     pid: ParameterID,
 }
 
 impl Scalar {
     /// Create a new [`Scalar`] with the given name and parameter value.
-    pub fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
+    pub fn new(name: &str, value: Parameter) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             value,
@@ -78,7 +77,7 @@ impl Amplitude for Scalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// value : laddu.ParameterLike
+/// value : laddu.Parameter
 ///     The scalar parameter contained in the Amplitude
 ///
 /// Returns
@@ -88,7 +87,7 @@ impl Amplitude for Scalar {
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "Scalar")]
-pub fn py_scalar(name: &str, value: PyParameterLike) -> PyResult<PyExpression> {
+pub fn py_scalar(name: &str, value: PyParameter) -> PyResult<PyExpression> {
     Ok(PyExpression(Scalar::new(name, value.0)?))
 }
 
@@ -195,15 +194,15 @@ pub fn py_variable_scalar(name: &str, variable: Bound<'_, PyAny>) -> PyResult<Py
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ComplexScalar {
     name: String,
-    re: ParameterLike,
+    re: Parameter,
     pid_re: ParameterID,
-    im: ParameterLike,
+    im: Parameter,
     pid_im: ParameterID,
 }
 
 impl ComplexScalar {
     /// Create a new [`ComplexScalar`] with the given name, real, and imaginary part.
-    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
+    pub fn new(name: &str, re: Parameter, im: Parameter) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             re,
@@ -254,9 +253,9 @@ impl Amplitude for ComplexScalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// re: laddu.ParameterLike
+/// re: laddu.Parameter
 ///     The real part of the complex value contained in the Amplitude
-/// im: laddu.ParameterLike
+/// im: laddu.Parameter
 ///     The imaginary part of the complex value contained in the Amplitude
 ///
 /// Returns
@@ -266,11 +265,7 @@ impl Amplitude for ComplexScalar {
 ///
 #[cfg(feature = "python")]
 #[pyfunction(name = "ComplexScalar")]
-pub fn py_complex_scalar(
-    name: &str,
-    re: PyParameterLike,
-    im: PyParameterLike,
-) -> PyResult<PyExpression> {
+pub fn py_complex_scalar(name: &str, re: PyParameter, im: PyParameter) -> PyResult<PyExpression> {
     Ok(PyExpression(ComplexScalar::new(name, re.0, im.0)?))
 }
 
@@ -279,15 +274,15 @@ pub fn py_complex_scalar(
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PolarComplexScalar {
     name: String,
-    r: ParameterLike,
+    r: Parameter,
     pid_r: ParameterID,
-    theta: ParameterLike,
+    theta: Parameter,
     pid_theta: ParameterID,
 }
 
 impl PolarComplexScalar {
     /// Create a new [`PolarComplexScalar`] with the given name, magnitude (`r`), and phase (`theta`).
-    pub fn new(name: &str, r: ParameterLike, theta: ParameterLike) -> LadduResult<Expression> {
+    pub fn new(name: &str, r: Parameter, theta: Parameter) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             r,
@@ -340,9 +335,9 @@ impl Amplitude for PolarComplexScalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// r: laddu.ParameterLike
+/// r: laddu.Parameter
 ///     The magnitude of the complex value contained in the Amplitude
-/// theta: laddu.ParameterLike
+/// theta: laddu.Parameter
 ///     The argument of the complex value contained in the Amplitude
 ///
 /// Returns
@@ -354,8 +349,8 @@ impl Amplitude for PolarComplexScalar {
 #[pyfunction(name = "PolarComplexScalar")]
 pub fn py_polar_complex_scalar(
     name: &str,
-    r: PyParameterLike,
-    theta: PyParameterLike,
+    r: PyParameter,
+    theta: PyParameter,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(PolarComplexScalar::new(name, r.0, theta.0)?))
 }

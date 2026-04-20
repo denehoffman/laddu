@@ -219,31 +219,63 @@ pub struct Parameter {
     pub name: String,
     /// If `Some`, this parameter is fixed to the given value. If `None`, it is free.
     pub fixed: Option<f64>,
+    /// If `Some`, this is used for the initial value of the parameter in fits. If `None`, the user
+    /// must provide the initial value on their own.
+    pub initial: Option<f64>,
+    /// Optional bounds which may be automatically used by optimizers. `None` represents no bound
+    /// in the given direction.
+    pub bounds: (Option<f64>, Option<f64>),
+    /// An optional unit string which may be used to annotate the parameter.
+    pub unit: Option<String>,
+    /// Optional LaTeX representation of the parameter.
+    pub latex: Option<String>,
+    /// Optional description of the parameter.
+    pub description: Option<String>,
 }
 
 impl Parameter {
     /// Create a free (floating) parameter with the given name.
-    pub fn free(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            fixed: None,
+            ..Default::default()
         }
     }
 
-    /// Create a fixed parameter with the given name and value.
-    pub fn fixed(name: impl Into<String>, value: f64) -> Self {
-        Self {
-            name: name.into(),
-            fixed: Some(value),
-        }
+    /// Helper method to set the fixed value of a parameter.
+    pub fn with_fixed_value(mut self, value: f64) -> Self {
+        self.fixed = Some(value);
+        self
     }
 
-    /// An uninitialized parameter placeholder.
-    pub fn uninit() -> Self {
-        Self {
-            name: String::new(),
-            fixed: None,
-        }
+    /// Helper method to set the initial value of a parameter.
+    pub fn with_initial(mut self, value: f64) -> Self {
+        self.initial = Some(value);
+        self
+    }
+
+    /// Helper method to set the bounds of a parameter.
+    pub fn with_bounds(mut self, min: Option<f64>, max: Option<f64>) -> Self {
+        self.bounds = (min, max);
+        self
+    }
+
+    /// Helper method to set the unit of a parameter.
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = Some(unit.into());
+        self
+    }
+
+    /// Helper method to set the LaTeX representation of a parameter.
+    pub fn with_latex(mut self, latex: impl Into<String>) -> Self {
+        self.latex = Some(latex.into());
+        self
+    }
+
+    /// Helper method to set the description of a parameter.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     /// Is this parameter free?
@@ -255,24 +287,16 @@ impl Parameter {
     pub fn is_fixed(&self) -> bool {
         self.fixed.is_some()
     }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
 }
-
-/// Maintains naming used across the crate.
-pub type ParameterLike = Parameter;
 
 /// Shorthand for generating a named free parameter.
 pub fn parameter(name: &str) -> Parameter {
-    Parameter::free(name)
+    Parameter::new(name)
 }
 
 /// Shorthand for generating a fixed parameter with the given name and value.
 pub fn constant(name: &str, value: f64) -> Parameter {
-    Parameter::fixed(name, value)
+    Parameter::new(name).with_fixed_value(value)
 }
 
 /// Convenience macro for creating parameters. Usage:
@@ -280,10 +304,10 @@ pub fn constant(name: &str, value: f64) -> Parameter {
 #[macro_export]
 macro_rules! parameter {
     ($name:expr) => {
-        $crate::amplitudes::Parameter::free($name)
+        $crate::amplitudes::Parameter::new($name)
     };
     ($name:expr, $value:expr) => {
-        $crate::amplitudes::Parameter::fixed($name, $value)
+        $crate::amplitudes::Parameter::new($name).with_fixed_value($value)
     };
 }
 
@@ -4985,9 +5009,9 @@ impl Evaluator {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TestAmplitude {
     name: String,
-    re: ParameterLike,
+    re: Parameter,
     pid_re: ParameterID,
-    im: ParameterLike,
+    im: Parameter,
     pid_im: ParameterID,
     beam_energy: crate::ScalarID,
 }
@@ -4995,7 +5019,7 @@ pub struct TestAmplitude {
 impl TestAmplitude {
     /// Create a new testing [`Amplitude`].
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
+    pub fn new(name: &str, re: Parameter, im: Parameter) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             re,
@@ -5058,15 +5082,15 @@ mod tests {
     #[derive(Clone, Serialize, Deserialize)]
     pub struct ComplexScalar {
         name: String,
-        re: ParameterLike,
+        re: Parameter,
         pid_re: ParameterID,
-        im: ParameterLike,
+        im: Parameter,
         pid_im: ParameterID,
     }
 
     impl ComplexScalar {
         #[allow(clippy::new_ret_no_self)]
-        pub fn new(name: &str, re: ParameterLike, im: ParameterLike) -> LadduResult<Expression> {
+        pub fn new(name: &str, re: Parameter, im: Parameter) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 re,
@@ -5108,13 +5132,13 @@ mod tests {
     #[derive(Clone, Serialize, Deserialize)]
     pub struct ParameterOnlyScalar {
         name: String,
-        value: ParameterLike,
+        value: Parameter,
         pid: ParameterID,
     }
 
     impl ParameterOnlyScalar {
         #[allow(clippy::new_ret_no_self)]
-        pub fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
+        pub fn new(name: &str, value: Parameter) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 value,

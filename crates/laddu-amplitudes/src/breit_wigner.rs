@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     utils::{
@@ -12,7 +12,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
@@ -39,8 +39,8 @@ use crate::semantic_key::{debug_key, display_key, parameter_key};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BreitWigner {
     name: String,
-    mass: ParameterLike,
-    width: ParameterLike,
+    mass: Parameter,
+    width: Parameter,
     pid_mass: ParameterID,
     pid_width: ParameterID,
     l: usize,
@@ -58,8 +58,8 @@ impl BreitWigner {
     /// decay products to determine phase-space and Blatt-Weisskopf factors.
     pub fn new(
         name: &str,
-        mass: ParameterLike,
-        width: ParameterLike,
+        mass: Parameter,
+        width: Parameter,
         l: usize,
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
@@ -88,8 +88,8 @@ impl BreitWigner {
     /// not use Blatt-Weisskopf barrier factors.
     pub fn new_without_barrier_factors(
         name: &str,
-        mass: ParameterLike,
-        width: ParameterLike,
+        mass: Parameter,
+        width: Parameter,
         l: usize,
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,
@@ -216,9 +216,9 @@ impl Amplitude for BreitWigner {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// mass : laddu.ParameterLike
+/// mass : laddu.Parameter
 ///     The mass of the resonance
-/// width : laddu.ParameterLike
+/// width : laddu.Parameter
 ///     The (nonrelativistic) width of the resonance
 /// l : int
 ///     The total orbital momentum (:math:`l > 0`)
@@ -240,8 +240,8 @@ impl Amplitude for BreitWigner {
 #[pyfunction(name = "BreitWigner", signature = (name, mass, width, l, daughter_1_mass, daughter_2_mass, resonance_mass, barrier_factors=true))]
 pub fn py_breit_wigner(
     name: &str,
-    mass: PyParameterLike,
-    width: PyParameterLike,
+    mass: PyParameter,
+    width: PyParameter,
     l: usize,
     daughter_1_mass: &PyMass,
     daughter_2_mass: &PyMass,
@@ -279,8 +279,8 @@ pub fn py_breit_wigner(
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BreitWignerNonRelativistic {
     name: String,
-    mass: ParameterLike,
-    width: ParameterLike,
+    mass: Parameter,
+    width: Parameter,
     pid_mass: ParameterID,
     pid_width: ParameterID,
     resonance_mass: Mass,
@@ -292,8 +292,8 @@ impl BreitWignerNonRelativistic {
     /// This uses the given `resonance_mass` as the "input" mass.
     pub fn new(
         name: &str,
-        mass: ParameterLike,
-        width: ParameterLike,
+        mass: Parameter,
+        width: Parameter,
         resonance_mass: &Mass,
     ) -> LadduResult<Expression> {
         Self {
@@ -366,9 +366,9 @@ impl Amplitude for BreitWignerNonRelativistic {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// mass : laddu.ParameterLike
+/// mass : laddu.Parameter
 ///     The mass of the resonance
-/// width : laddu.ParameterLike
+/// width : laddu.Parameter
 ///     The (nonrelativistic) width of the resonance
 /// resonance_mass: laddu.Mass
 ///     The total mass of the resonance
@@ -382,8 +382,8 @@ impl Amplitude for BreitWignerNonRelativistic {
 #[pyfunction(name = "BreitWignerNonRelativistic")]
 pub fn py_breit_wigner_non_relativistic(
     name: &str,
-    mass: PyParameterLike,
-    width: PyParameterLike,
+    mass: PyParameter,
+    width: PyParameter,
     resonance_mass: &PyMass,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(BreitWignerNonRelativistic::new(

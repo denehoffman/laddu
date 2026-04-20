@@ -5,7 +5,7 @@ use criterion::{
 };
 use laddu_core::{
     amplitudes::{
-        parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike, TestAmplitude,
+        parameter, Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude,
     },
     data::{read_parquet, DatasetMetadata, DatasetReadOptions, EventData, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
@@ -29,13 +29,13 @@ const MEMORY_BENCH_GRADIENT_TERMS: usize = 16;
 #[derive(Clone, Serialize, Deserialize)]
 struct ParameterOnlyScalar {
     name: String,
-    value: ParameterLike,
+    value: Parameter,
     pid: ParameterID,
 }
 
 impl ParameterOnlyScalar {
     #[allow(clippy::new_ret_no_self)]
-    fn new(name: &str, value: ParameterLike) -> LadduResult<Expression> {
+    fn new(name: &str, value: Parameter) -> LadduResult<Expression> {
         Self {
             name: name.to_string(),
             value,

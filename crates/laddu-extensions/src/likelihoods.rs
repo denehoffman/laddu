@@ -4434,7 +4434,7 @@ mod tests {
     #[cfg(feature = "mpi")]
     use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
     use laddu_core::{
-        amplitudes::{parameter, Amplitude, AmplitudeID, ExpressionDependence, ParameterLike},
+        amplitudes::{parameter, Amplitude, AmplitudeID, ExpressionDependence, Parameter},
         data::{Dataset, DatasetMetadata, EventData},
         resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
         utils::vectors::Vec4,
@@ -4457,13 +4457,13 @@ mod tests {
     #[derive(Clone, Serialize, Deserialize)]
     struct ConstantAmplitude {
         name: String,
-        parameter: ParameterLike,
+        parameter: Parameter,
         pid: ParameterID,
     }
 
     impl ConstantAmplitude {
         #[allow(clippy::new_ret_no_self)]
-        fn new(name: &str, parameter: ParameterLike) -> LadduResult<Expression> {
+        fn new(name: &str, parameter: Parameter) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 parameter,
@@ -4503,7 +4503,7 @@ mod tests {
     #[derive(Clone, Serialize, Deserialize)]
     struct CachedBeamScaleAmplitude {
         name: String,
-        parameter: ParameterLike,
+        parameter: Parameter,
         pid: ParameterID,
         sid: ScalarID,
         p4_index: usize,
@@ -4511,7 +4511,7 @@ mod tests {
 
     impl CachedBeamScaleAmplitude {
         #[allow(clippy::new_ret_no_self)]
-        fn new(name: &str, parameter: ParameterLike, p4_index: usize) -> LadduResult<Expression> {
+        fn new(name: &str, parameter: Parameter, p4_index: usize) -> LadduResult<Expression> {
             Self {
                 name: name.to_string(),
                 parameter,

@@ -60,7 +60,7 @@ from .extensions import (
     likelihood_product,
     likelihood_sum,
 )
-from .laddu import Evaluator, Expression, ParameterLike
+from .laddu import Evaluator, Expression, Parameter
 from .utils.angular_momentum import allowed_projections, helicity_combinations
 from .utils.variables import (
     Angles,
@@ -157,7 +157,7 @@ __all__ = [
     'MinimizationSummary',
     'MinimizationTerminator',
     'One',
-    'ParameterLike',
+    'Parameter',
     'Particle',
     'PhaseSpaceFactor',
     'Phi',

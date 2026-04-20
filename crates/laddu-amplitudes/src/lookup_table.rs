@@ -2,8 +2,7 @@ use std::str::FromStr;
 
 use laddu_core::{
     amplitudes::{
-        Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence,
-        ParameterLike,
+        Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence, Parameter,
     },
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
@@ -12,7 +11,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyVariable,
 };
 use nalgebra::DVector;
@@ -207,15 +206,15 @@ impl LookupAxis {
 enum LookupValues {
     FixedComplex(Vec<Complex64>),
     Scalar {
-        values: Vec<ParameterLike>,
+        values: Vec<Parameter>,
         pids: Vec<ParameterID>,
     },
     CartesianComplex {
-        values: Vec<(ParameterLike, ParameterLike)>,
+        values: Vec<(Parameter, Parameter)>,
         pids: Vec<(ParameterID, ParameterID)>,
     },
     PolarComplex {
-        values: Vec<(ParameterLike, ParameterLike)>,
+        values: Vec<(Parameter, Parameter)>,
         pids: Vec<(ParameterID, ParameterID)>,
     },
 }
@@ -225,21 +224,21 @@ impl LookupValues {
         Self::FixedComplex(values)
     }
 
-    fn scalar(values: Vec<ParameterLike>) -> Self {
+    fn scalar(values: Vec<Parameter>) -> Self {
         Self::Scalar {
             values,
             pids: Vec::new(),
         }
     }
 
-    fn cartesian_complex(values: Vec<(ParameterLike, ParameterLike)>) -> Self {
+    fn cartesian_complex(values: Vec<(Parameter, Parameter)>) -> Self {
         Self::CartesianComplex {
             values,
             pids: Vec::new(),
         }
     }
 
-    fn polar_complex(values: Vec<(ParameterLike, ParameterLike)>) -> Self {
+    fn polar_complex(values: Vec<(Parameter, Parameter)>) -> Self {
         Self::PolarComplex {
             values,
             pids: Vec::new(),
@@ -392,7 +391,7 @@ impl LookupTable {
         name: &str,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
-        values: Vec<ParameterLike>,
+        values: Vec<Parameter>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
@@ -411,7 +410,7 @@ impl LookupTable {
         name: &str,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
-        values: Vec<(ParameterLike, ParameterLike)>,
+        values: Vec<(Parameter, Parameter)>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
@@ -430,7 +429,7 @@ impl LookupTable {
         name: &str,
         variables: Vec<Box<dyn Variable>>,
         axis_coordinates: Vec<LookupAxis>,
-        values: Vec<(ParameterLike, ParameterLike)>,
+        values: Vec<(Parameter, Parameter)>,
         interpolation: LookupInterpolation,
         boundary_mode: LookupBoundaryMode,
     ) -> LadduResult<Expression> {
@@ -696,7 +695,7 @@ pub fn py_lookup_table(
 /// axis_coordinates : list of list of float
 ///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
 ///     interpolation treats them as grid points.
-/// values : list of laddu.ParameterLike
+/// values : list of laddu.Parameter
 ///     Flattened row-major scalar parameters.
 /// interpolation : str, default: "nearest"
 ///     Interpolation mode. Supports "nearest" and "linear".
@@ -714,7 +713,7 @@ pub fn py_lookup_table_scalar(
     name: &str,
     variables: Vec<PyVariable>,
     axis_coordinates: Vec<Vec<f64>>,
-    values: Vec<PyParameterLike>,
+    values: Vec<PyParameter>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
@@ -740,7 +739,7 @@ pub fn py_lookup_table_scalar(
 /// axis_coordinates : list of list of float
 ///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
 ///     interpolation treats them as grid points.
-/// values : list of tuple of laddu.ParameterLike
+/// values : list of tuple of laddu.Parameter
 ///     Flattened row-major real and imaginary parameter pairs.
 /// interpolation : str, default: "nearest"
 ///     Interpolation mode. Supports "nearest" and "linear".
@@ -758,7 +757,7 @@ pub fn py_lookup_table_complex(
     name: &str,
     variables: Vec<PyVariable>,
     axis_coordinates: Vec<Vec<f64>>,
-    values: Vec<(PyParameterLike, PyParameterLike)>,
+    values: Vec<(PyParameter, PyParameter)>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {
@@ -787,7 +786,7 @@ pub fn py_lookup_table_complex(
 /// axis_coordinates : list of list of float
 ///     Per-variable axis coordinates. Nearest interpolation treats them as bin edges; linear
 ///     interpolation treats them as grid points.
-/// values : list of tuple of laddu.ParameterLike
+/// values : list of tuple of laddu.Parameter
 ///     Flattened row-major magnitude and phase parameter pairs.
 /// interpolation : str, default: "nearest"
 ///     Interpolation mode. Supports "nearest" and "linear".
@@ -805,7 +804,7 @@ pub fn py_lookup_table_polar(
     name: &str,
     variables: Vec<PyVariable>,
     axis_coordinates: Vec<Vec<f64>>,
-    values: Vec<(PyParameterLike, PyParameterLike)>,
+    values: Vec<(PyParameter, PyParameter)>,
     interpolation: &str,
     boundary_mode: &str,
 ) -> PyResult<PyExpression> {

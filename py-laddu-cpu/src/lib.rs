@@ -13,7 +13,7 @@ mod laddu {
     use laddu_python::{
         amplitudes::{
             py_constant, py_expr_one, py_expr_product, py_expr_sum, py_expr_zero, py_parameter,
-            py_test_amplitude, PyCompiledExpression, PyEvaluator, PyExpression, PyParameterLike,
+            py_test_amplitude, PyCompiledExpression, PyEvaluator, PyExpression, PyParameter,
         },
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},

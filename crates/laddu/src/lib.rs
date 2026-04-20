@@ -57,7 +57,7 @@
 //! ```rust,no_run
 //! use laddu::{
 //!    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass,
-//!    ParameterID, ParameterLike, Parameters, Resources,
+//!    ParameterID, Parameter, Parameters, Resources,
 //! };
 //! use laddu::NamedEventView;
 //! use laddu::resources::ScalarID;
@@ -69,8 +69,8 @@
 //! #[derive(Clone, Serialize, Deserialize)]
 //! pub struct MyBreitWigner {
 //!     name: String,
-//!     mass: ParameterLike,
-//!     width: ParameterLike,
+//!     mass: Parameter,
+//!     width: Parameter,
 //!     pid_mass: ParameterID,
 //!     pid_width: ParameterID,
 //!     l: usize,
@@ -84,8 +84,8 @@
 //! impl MyBreitWigner {
 //!     pub fn new(
 //!         name: &str,
-//!         mass: ParameterLike,
-//!         width: ParameterLike,
+//!         mass: Parameter,
+//!         width: Parameter,
 //!         l: usize,
 //!         daughter_1_mass: &Mass,
 //!         daughter_2_mass: &Mass,
@@ -163,7 +163,7 @@
 //! use laddu::{Scalar, Dataset, DatasetReadOptions, Mass, NLL, parameter};
 //! # use laddu::{
 //! #    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult,
-//! #    ParameterID, ParameterLike, Parameters, Resources,
+//! #    ParameterID, Parameter, Parameters, Resources,
 //! # };
 //! # use laddu::NamedEventView;
 //! # use laddu::resources::ScalarID;
@@ -175,8 +175,8 @@
 //! # #[derive(Clone, Serialize, Deserialize)]
 //! # pub struct MyBreitWigner {
 //! #     name: String,
-//! #     mass: ParameterLike,
-//! #     width: ParameterLike,
+//! #     mass: Parameter,
+//! #     width: Parameter,
 //! #     pid_mass: ParameterID,
 //! #     pid_width: ParameterID,
 //! #     l: usize,
@@ -190,8 +190,8 @@
 //! # impl MyBreitWigner {
 //! #     pub fn new(
 //! #         name: &str,
-//! #         mass: ParameterLike,
-//! #         width: ParameterLike,
+//! #         mass: Parameter,
+//! #         width: Parameter,
 //! #         l: usize,
 //! #         daughter_1_mass: &Mass,
 //! #         daughter_2_mass: &Mass,
@@ -378,7 +378,7 @@ pub mod amplitudes {
     pub use laddu_amplitudes::*;
     pub use laddu_core::amplitudes::{
         constant, parameter, Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey,
-        Evaluator, Expression, ParameterLike,
+        Evaluator, Expression, Parameter,
     };
 }
 
@@ -395,7 +395,7 @@ pub mod experimental {
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
     constant, parameter, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
-    Expression, ParameterLike,
+    Expression, Parameter,
 };
 pub use laddu_core::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,

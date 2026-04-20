@@ -2,7 +2,7 @@ use std::f64::consts::SQRT_2;
 
 use errorfunctions::ComplexErrorFunctions;
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -10,7 +10,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
@@ -38,9 +38,9 @@ const SQRT_2PI: f64 = 2.5066282746310002;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Voigt {
     name: String,
-    mass: ParameterLike,
-    width: ParameterLike,
-    sigma: ParameterLike,
+    mass: Parameter,
+    width: Parameter,
+    sigma: Parameter,
     pid_mass: ParameterID,
     pid_width: ParameterID,
     pid_sigma: ParameterID,
@@ -55,9 +55,9 @@ impl Voigt {
     /// width at half maximum and `sigma` is the Gaussian resolution width.
     pub fn new(
         name: &str,
-        mass: ParameterLike,
-        width: ParameterLike,
-        sigma: ParameterLike,
+        mass: Parameter,
+        width: Parameter,
+        sigma: Parameter,
         resonance_mass: &Mass,
     ) -> LadduResult<Expression> {
         Self {
@@ -153,11 +153,11 @@ impl Amplitude for Voigt {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// mass : laddu.ParameterLike
+/// mass : laddu.Parameter
 ///     The central mass of the resonance
-/// width : laddu.ParameterLike
+/// width : laddu.Parameter
 ///     The Lorentzian full width at half maximum
-/// sigma : laddu.ParameterLike
+/// sigma : laddu.Parameter
 ///     The Gaussian resolution width
 /// resonance_mass : laddu.Mass
 ///     The event-dependent input mass
@@ -170,9 +170,9 @@ impl Amplitude for Voigt {
 #[pyfunction(name = "Voigt")]
 pub fn py_voigt(
     name: &str,
-    mass: PyParameterLike,
-    width: PyParameterLike,
-    sigma: PyParameterLike,
+    mass: PyParameter,
+    width: PyParameter,
+    sigma: PyParameter,
     resonance_mass: &PyMass,
 ) -> PyResult<PyExpression> {
     Ok(PyExpression(Voigt::new(

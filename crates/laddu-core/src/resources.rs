@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::{
-    amplitudes::{AmplitudeID, ParameterLike},
+    amplitudes::{AmplitudeID, Parameter},
     parameter_manager::ParameterTransform,
     LadduError, LadduResult,
 };
@@ -629,8 +629,8 @@ impl Resources {
     ///
     /// Returns an error if the parameter is unnamed, if the name is reused with incompatible
     /// fixed/free status or fixed value, or if renaming causes a conflict.
-    pub fn register_parameter(&mut self, p: &ParameterLike) -> LadduResult<ParameterID> {
-        let base_name = p.name();
+    pub fn register_parameter(&mut self, p: &Parameter) -> LadduResult<ParameterID> {
+        let base_name = &p.name;
         if base_name.is_empty() {
             return Err(LadduError::UnregisteredParameter {
                 name: "<unnamed>".to_string(),
@@ -940,10 +940,10 @@ mod tests {
         let mut resources = Resources::default();
 
         let param1 = resources
-            .register_parameter(&ParameterLike::free("param1"))
+            .register_parameter(&Parameter::new("param1"))
             .unwrap();
         let const1 = resources
-            .register_parameter(&ParameterLike::fixed("const1", 1.0))
+            .register_parameter(&Parameter::new("const1").with_fixed_value(1.0))
             .unwrap();
 
         match param1 {
@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn test_uninit_parameter_registration() {
         let mut resources = Resources::default();
-        let result = resources.register_parameter(&ParameterLike::uninit());
+        let result = resources.register_parameter(&Parameter::default());
         assert!(result.is_err());
     }
 

@@ -1,6 +1,6 @@
 use crate::data::PyDataset;
 use laddu_core::{
-    amplitudes::{constant, parameter, Evaluator, Expression, ParameterLike, TestAmplitude},
+    amplitudes::{constant, parameter, Evaluator, Expression, Parameter, TestAmplitude},
     f64, CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
 };
 use num::complex::Complex64;
@@ -721,9 +721,9 @@ impl PyCompiledExpression {
 /// laddu.parameter
 /// laddu.constant
 ///
-#[pyclass(name = "ParameterLike", module = "laddu", from_py_object)]
+#[pyclass(name = "Parameter", module = "laddu", from_py_object)]
 #[derive(Clone)]
-pub struct PyParameterLike(pub ParameterLike);
+pub struct PyParameter(pub Parameter);
 
 /// A free parameter which floats during an optimization
 ///
@@ -734,7 +734,7 @@ pub struct PyParameterLike(pub ParameterLike);
 ///
 /// Returns
 /// -------
-/// laddu.ParameterLike
+/// laddu.Parameter
 ///     An object that can be used as the input for many Amplitude constructors
 ///
 /// Notes
@@ -742,8 +742,8 @@ pub struct PyParameterLike(pub ParameterLike);
 /// Two free parameters with the same name are shared in a fit
 ///
 #[pyfunction(name = "parameter")]
-pub fn py_parameter(name: &str) -> PyParameterLike {
-    PyParameterLike(parameter(name))
+pub fn py_parameter(name: &str) -> PyParameter {
+    PyParameter(parameter(name))
 }
 
 /// A term which stays constant during an optimization
@@ -757,20 +757,16 @@ pub fn py_parameter(name: &str) -> PyParameterLike {
 ///
 /// Returns
 /// -------
-/// laddu.ParameterLike
+/// laddu.Parameter
 ///     An object that can be used as the input for many Amplitude constructors
 ///
 #[pyfunction(name = "constant")]
-pub fn py_constant(name: &str, value: f64) -> PyParameterLike {
-    PyParameterLike(constant(name, value))
+pub fn py_constant(name: &str, value: f64) -> PyParameter {
+    PyParameter(constant(name, value))
 }
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.
 #[pyfunction(name = "TestAmplitude")]
-pub fn py_test_amplitude(
-    name: &str,
-    re: PyParameterLike,
-    im: PyParameterLike,
-) -> PyResult<PyExpression> {
+pub fn py_test_amplitude(name: &str, re: PyParameter, im: PyParameter) -> PyResult<PyExpression> {
     Ok(PyExpression(TestAmplitude::new(name, re.0, im.0)?))
 }

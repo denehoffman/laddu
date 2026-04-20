@@ -98,7 +98,7 @@ Although this particular amplitude is already included in `laddu`, let's assume 
 ```rust
 use laddu::{
    AmplitudeID, Cache, DatasetMetadata, EventData, Expression, LadduError, LadduResult, Mass,
-   ParameterID, ParameterLike, Parameters, Resources, PI,
+   ParameterID, Parameter, Parameters, Resources, PI,
 };
 use laddu::traits::*;
 use laddu::utils::functions::{blatt_weisskopf, breakup_momentum};
@@ -108,8 +108,8 @@ use num::complex::Complex64;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MyBreitWigner {
     name: String,
-    mass: ParameterLike,
-    width: ParameterLike,
+    mass: Parameter,
+    width: Parameter,
     pid_mass: ParameterID,
     pid_width: ParameterID,
     l: usize,
@@ -120,8 +120,8 @@ pub struct MyBreitWigner {
 impl MyBreitWigner {
     pub fn new(
         name: &str,
-        mass: ParameterLike,
-        width: ParameterLike,
+        mass: Parameter,
+        width: Parameter,
         l: usize,
         daughter_1_mass: &Mass,
         daughter_2_mass: &Mass,

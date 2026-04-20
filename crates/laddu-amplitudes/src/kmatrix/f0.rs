@@ -1,7 +1,7 @@
 use super::{AdlerZero, FixedKMatrix, KopfKMatrixF0Channel};
 use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -10,7 +10,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
@@ -108,8 +108,8 @@ pub struct KopfKMatrixF0 {
     channel: KopfKMatrixF0Channel,
     mass: Mass,
     constants: super::FixedKMatrix<5, 5>,
-    couplings_real: [ParameterLike; 5],
-    couplings_imag: [ParameterLike; 5],
+    couplings_real: [Parameter; 5],
+    couplings_imag: [Parameter; 5],
     couplings_indices_real: [ParameterID; 5],
     couplings_indices_imag: [ParameterID; 5],
     seed: Option<usize>,
@@ -138,13 +138,13 @@ impl KopfKMatrixF0 {
     /// | $`f_0(1710)`$ |
     pub fn new(
         name: &str,
-        couplings: [[ParameterLike; 2]; 5],
+        couplings: [[Parameter; 2]; 5],
         channel: KopfKMatrixF0Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
-        let mut couplings_real: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
-        let mut couplings_imag: [ParameterLike; 5] = array::from_fn(|_| ParameterLike::default());
+        let mut couplings_real: [Parameter; 5] = array::from_fn(|_| Parameter::default());
+        let mut couplings_imag: [Parameter; 5] = array::from_fn(|_| Parameter::default());
         for i in 0..5 {
             couplings_real[i] = couplings[i][0].clone();
             couplings_imag[i] = couplings[i][1].clone();
@@ -257,7 +257,7 @@ impl Amplitude for KopfKMatrixF0 {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// couplings : list of list of laddu.ParameterLike
+/// couplings : list of list of laddu.Parameter
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
 /// channel : laddu.KopfKMatrixF0Channel
 ///     The channel onto which the K-Matrix is projected
@@ -315,7 +315,7 @@ impl Amplitude for KopfKMatrixF0 {
 #[pyfunction(name = "KopfKMatrixF0", signature = (name, couplings, channel, mass, seed = None))]
 pub fn py_kopf_kmatrix_f0(
     name: &str,
-    couplings: [[PyParameterLike; 2]; 5],
+    couplings: [[PyParameter; 2]; 5],
     channel: KopfKMatrixF0Channel,
     mass: PyMass,
     seed: Option<usize>,

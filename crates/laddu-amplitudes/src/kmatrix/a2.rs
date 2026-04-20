@@ -1,7 +1,7 @@
 use super::{FixedKMatrix, KopfKMatrixA2Channel};
 use crate::semantic_key::{debug_key, display_key, parameter_array_key, seed_key};
 use laddu_core::{
-    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ParameterLike},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     traits::Variable,
@@ -10,7 +10,7 @@ use laddu_core::{
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyMass,
 };
 use nalgebra::{matrix, vector, DVector, SMatrix, SVector};
@@ -62,8 +62,8 @@ pub struct KopfKMatrixA2 {
     channel: KopfKMatrixA2Channel,
     mass: Mass,
     constants: FixedKMatrix<3, 2>,
-    couplings_real: [ParameterLike; 2],
-    couplings_imag: [ParameterLike; 2],
+    couplings_real: [Parameter; 2],
+    couplings_imag: [Parameter; 2],
     couplings_indices_real: [ParameterID; 2],
     couplings_indices_imag: [ParameterID; 2],
     seed: Option<usize>,
@@ -87,13 +87,13 @@ impl KopfKMatrixA2 {
     /// | $`a_2(1700)`$ |
     pub fn new(
         name: &str,
-        couplings: [[ParameterLike; 2]; 2],
+        couplings: [[Parameter; 2]; 2],
         channel: KopfKMatrixA2Channel,
         mass: &Mass,
         seed: Option<usize>,
     ) -> LadduResult<Expression> {
-        let mut couplings_real: [ParameterLike; 2] = array::from_fn(|_| ParameterLike::default());
-        let mut couplings_imag: [ParameterLike; 2] = array::from_fn(|_| ParameterLike::default());
+        let mut couplings_real: [Parameter; 2] = array::from_fn(|_| Parameter::default());
+        let mut couplings_imag: [Parameter; 2] = array::from_fn(|_| Parameter::default());
         for i in 0..2 {
             couplings_real[i] = couplings[i][0].clone();
             couplings_imag[i] = couplings[i][1].clone();
@@ -206,7 +206,7 @@ impl Amplitude for KopfKMatrixA2 {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// couplings : list of list of laddu.ParameterLike
+/// couplings : list of list of laddu.Parameter
 ///     Each initial-state coupling (as a list of pairs of real and imaginary parts)
 /// channel : laddu.KopfKMatrixA2Channel
 ///     The channel onto which the K-Matrix is projected
@@ -249,7 +249,7 @@ impl Amplitude for KopfKMatrixA2 {
 #[pyfunction(name = "KopfKMatrixA2", signature = (name, couplings, channel, mass, seed = None))]
 pub fn py_kopf_kmatrix_a2(
     name: &str,
-    couplings: [[PyParameterLike; 2]; 2],
+    couplings: [[PyParameter; 2]; 2],
     channel: KopfKMatrixA2Channel,
     mass: PyMass,
     seed: Option<usize>,

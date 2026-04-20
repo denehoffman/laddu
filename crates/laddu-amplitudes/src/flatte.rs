@@ -3,12 +3,12 @@ use laddu_core::{
     data::NamedEventView,
     traits::{Amplitude, Variable},
     utils::functions::{rho_m, Sheet},
-    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass, ParameterID, ParameterLike,
+    AmplitudeID, Cache, DatasetMetadata, Expression, LadduResult, Mass, Parameter, ParameterID,
     Parameters, Resources, ScalarID,
 };
 #[cfg(feature = "python")]
 use laddu_python::{
-    amplitudes::{PyExpression, PyParameterLike},
+    amplitudes::{PyExpression, PyParameter},
     utils::variables::PyMass,
 };
 use nalgebra::DVector;
@@ -27,9 +27,9 @@ use crate::semantic_key::{debug_key, display_key, parameter_key};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Flatte {
     name: String,
-    mass: ParameterLike,
-    observed_channel_coupling: ParameterLike,
-    alternate_channel_coupling: ParameterLike,
+    mass: Parameter,
+    observed_channel_coupling: Parameter,
+    alternate_channel_coupling: Parameter,
     pid_mass: ParameterID,
     pid_observed_channel_coupling: ParameterID,
     pid_alternate_channel_coupling: ParameterID,
@@ -45,9 +45,9 @@ impl Flatte {
     /// masses are event-dependent variables, while the alternate channel daughter masses are fixed.
     pub fn new(
         name: &str,
-        mass: ParameterLike,
-        observed_channel_coupling: ParameterLike,
-        alternate_channel_coupling: ParameterLike,
+        mass: Parameter,
+        observed_channel_coupling: Parameter,
+        alternate_channel_coupling: Parameter,
         observed_channel_daughter_masses: (&Mass, &Mass),
         alternate_channel_daughter_masses: (f64, f64),
         resonance_mass: &Mass,
@@ -192,11 +192,11 @@ impl Amplitude for Flatte {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// mass : laddu.ParameterLike
+/// mass : laddu.Parameter
 ///     The mass of the resonance
-/// observed_channel_coupling : laddu.ParameterLike
+/// observed_channel_coupling : laddu.Parameter
 ///     The coupling to the observed channel
-/// alternate_channel_coupling : laddu.ParameterLike
+/// alternate_channel_coupling : laddu.Parameter
 ///     The coupling to the alternate channel
 /// observed_channel_daughter_masses : tuple[laddu.Mass, laddu.Mass]
 ///     The event-dependent daughter masses of the observed decay channel
@@ -214,9 +214,9 @@ impl Amplitude for Flatte {
 #[pyfunction(name = "Flatte")]
 pub fn py_flatte(
     name: &str,
-    mass: PyParameterLike,
-    observed_channel_coupling: PyParameterLike,
-    alternate_channel_coupling: PyParameterLike,
+    mass: PyParameter,
+    observed_channel_coupling: PyParameter,
+    alternate_channel_coupling: PyParameter,
     observed_channel_daughter_masses: (PyMass, PyMass),
     alternate_channel_daughter_masses: (f64, f64),
     resonance_mass: &PyMass,
