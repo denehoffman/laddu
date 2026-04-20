@@ -87,7 +87,7 @@ class _BackendProtocol(_Protocol):
 
     def get_threads(self) -> int: ...
 
-    def set_threads(self, n_threads: int) -> None: ...
+    def set_threads(self, n_threads: int | None) -> None: ...
 
 
 _laddu = _cast('_BackendProtocol', _backend_module)
@@ -100,7 +100,7 @@ set_threads = _laddu.set_threads
 
 
 @_contextmanager
-def threads(n_threads: int) -> _Iterator[None]:
+def threads(n_threads: int | None) -> _Iterator[None]:
     """Temporarily override the global default thread count within a ``with`` block."""
     previous = get_threads()
     set_threads(n_threads)

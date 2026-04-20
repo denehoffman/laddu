@@ -849,6 +849,17 @@ def test_threads_context_manager_restores_after_exception() -> None:
         set_threads(0)
 
 
+def test_threads_context_manager_handles_none() -> None:
+    try:
+        n_threads = get_threads()
+        with threads(1):
+            assert get_threads() == 1
+            with threads(None):
+                assert get_threads() == n_threads
+    finally:
+        set_threads(0)
+
+
 def test_threads_context_aligns_none_and_zero_requests() -> None:
     amp = Scalar('scale', parameter('scale'))
     expr = amp.norm_sqr()

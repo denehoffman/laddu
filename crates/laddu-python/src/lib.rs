@@ -15,17 +15,17 @@ pub fn available_parallelism() -> usize {
 ///
 /// Parameters
 /// ----------
-/// n_threads : int
+/// n_threads : int, optional
 ///     The default number of threads to use for omitted thread arguments and for ``threads=0``.
-///     Setting this to ``0`` resets the default to "all available CPUs".
+///     Setting this to ``0`` or ``None`` resets the default to "all available CPUs".
 ///
 /// Notes
 /// -----
 /// Explicit positive ``threads=`` arguments on individual calls override this default.
 ///
 #[pyfunction]
-pub fn set_threads(n_threads: usize) {
-    ThreadPoolManager::set_global_thread_count(n_threads);
+pub fn set_threads(n_threads: Option<usize>) {
+    ThreadPoolManager::set_global_thread_count(n_threads.unwrap_or(0));
 }
 
 /// Return the process-global default thread count used by omitted or zero-valued thread requests.

@@ -213,7 +213,7 @@ def available_parallelism() -> int:
 def get_threads() -> int:
     """Return the global default thread count, or ``0`` for the ambient default."""
 
-def set_threads(n_threads: int) -> None:
+def set_threads(n_threads: int | None) -> None:
     """Set the global default thread count for omitted or zero-valued thread arguments."""
 
 def use_mpi(*, trigger: bool = True) -> None:
