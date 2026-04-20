@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/denehoffman/laddu/compare/v0.17.0...v0.17.1) (2026-04-20)
+
+
+### Bug Fixes
+
+* Make orthogonality conditions less strict ([88d1cc7](https://github.com/denehoffman/laddu/commit/88d1cc7c4783c948cddb981eb75af8b1f584a294))
+
 ## [0.17.0](https://github.com/denehoffman/laddu/compare/v0.16.1...v0.17.0) (2026-04-19)
 
 
