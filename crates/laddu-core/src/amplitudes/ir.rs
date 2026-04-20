@@ -439,6 +439,16 @@ impl ExpressionIR {
                     nodes.push(IrNode::Constant(Complex64::ONE));
                     id
                 }
+                ExpressionNode::Constant(value) => {
+                    let id = nodes.len();
+                    nodes.push(IrNode::Constant(Complex64::from(value)));
+                    id
+                }
+                ExpressionNode::ComplexConstant(value) => {
+                    let id = nodes.len();
+                    nodes.push(IrNode::Constant(*value));
+                    id
+                }
                 ExpressionNode::Amp(idx) => {
                     let id = nodes.len();
                     nodes.push(IrNode::Amp(*idx));

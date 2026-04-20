@@ -726,6 +726,10 @@ pub enum ExpressionNode {
     Zero,
     /// A expression equal to one.
     One,
+    /// A real-valued constant.
+    Constant(f64),
+    /// A complex-valued constant.
+    ComplexConstant(Complex64),
     /// A registered [`Amplitude`] referenced by index.
     Amp(usize),
     /// The sum of two [`ExpressionNode`]s.
@@ -777,6 +781,14 @@ enum ExpressionOp {
     },
     LoadOne {
         dst: usize,
+    },
+    LoadConstant {
+        dst: usize,
+        value: f64,
+    },
+    LoadComplexConstant {
+        dst: usize,
+        value: Complex64,
     },
     LoadAmp {
         dst: usize,
@@ -898,6 +910,16 @@ impl ExpressionProgramBuilder {
             ExpressionNode::One => {
                 let dst = self.alloc_slot();
                 self.emit(ExpressionOp::LoadOne { dst });
+                dst
+            }
+            ExpressionNode::Constant(value) => {
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::LoadConstant { dst, value: *value });
+                dst
+            }
+            ExpressionNode::ComplexConstant(value) => {
+                let dst = self.alloc_slot();
+                self.emit(ExpressionOp::LoadComplexConstant { dst, value: *value });
                 dst
             }
             ExpressionNode::Amp(idx) => {
@@ -1043,6 +1065,8 @@ impl ExpressionProgram {
             match *op {
                 ExpressionOp::LoadZero { dst } => slots[dst] = Complex64::ZERO,
                 ExpressionOp::LoadOne { dst } => slots[dst] = Complex64::ONE,
+                ExpressionOp::LoadConstant { dst, value } => slots[dst] = Complex64::from(value),
+                ExpressionOp::LoadComplexConstant { dst, value } => slots[dst] = value,
                 ExpressionOp::LoadAmp { dst, amp_idx } => {
                     slots[dst] = amplitude_values.get(amp_idx).copied().unwrap_or_default();
                 }
@@ -1172,7 +1196,10 @@ impl ExpressionProgram {
         }
         for op in &self.ops {
             match *op {
-                ExpressionOp::LoadZero { dst } | ExpressionOp::LoadOne { dst } => {
+                ExpressionOp::LoadZero { dst }
+                | ExpressionOp::LoadOne { dst }
+                | ExpressionOp::LoadConstant { dst, .. }
+                | ExpressionOp::LoadComplexConstant { dst, .. } => {
                     let (_, dst_grad) = borrow_dst(gradients, dst);
                     for item in dst_grad.iter_mut() {
                         *item = Complex64::ZERO;
@@ -1384,6 +1411,8 @@ impl ExpressionNode {
             Self::NormSqr(a) => Self::NormSqr(Box::new(a.remap(mapping))),
             Self::Zero => Self::Zero,
             Self::One => Self::One,
+            Self::Constant(v) => Self::Constant(*v),
+            Self::ComplexConstant(v) => Self::ComplexConstant(*v),
             Self::Sqrt(a) => Self::Sqrt(Box::new(a.remap(mapping))),
             Self::Pow(a, b) => Self::Pow(Box::new(a.remap(mapping)), Box::new(b.remap(mapping))),
             Self::PowI(a, power) => Self::PowI(Box::new(a.remap(mapping)), *power),
@@ -1413,6 +1442,57 @@ impl ExpressionNode {
     ) -> DVector<Complex64> {
         self.program()
             .evaluate_gradient(amplitude_values, gradient_values)
+    }
+}
+
+impl From<f64> for Expression {
+    fn from(value: f64) -> Self {
+        if value == 0.0 {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::Zero,
+            }
+        } else if value == 1.0 {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::One,
+            }
+        } else {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::Constant(value),
+            }
+        }
+    }
+}
+impl From<&f64> for Expression {
+    fn from(value: &f64) -> Self {
+        (*value).into()
+    }
+}
+impl From<Complex64> for Expression {
+    fn from(value: Complex64) -> Self {
+        if value == Complex64::ZERO {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::Zero,
+            }
+        } else if value == Complex64::ONE {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::One,
+            }
+        } else {
+            Self {
+                registry: ExpressionRegistry::default(),
+                tree: ExpressionNode::ComplexConstant(value),
+            }
+        }
+    }
+}
+impl From<&Complex64> for Expression {
+    fn from(value: &Complex64) -> Self {
+        (*value).into()
     }
 }
 
@@ -1799,8 +1879,10 @@ impl Expression {
             ExpressionNode::Imag(_) => "Im".to_string(),
             ExpressionNode::Conj(_) => "*".to_string(),
             ExpressionNode::NormSqr(_) => "NormSqr".to_string(),
-            ExpressionNode::Zero => "0".to_string(),
-            ExpressionNode::One => "1".to_string(),
+            ExpressionNode::Zero => "0 (exact)".to_string(),
+            ExpressionNode::One => "1 (exact)".to_string(),
+            ExpressionNode::Constant(v) => v.to_string(),
+            ExpressionNode::ComplexConstant(v) => v.to_string(),
             ExpressionNode::Sqrt(_) => "Sqrt".to_string(),
             ExpressionNode::Pow(_, _) => "Pow".to_string(),
             ExpressionNode::PowI(_, power) => format!("PowI({power})"),
@@ -1813,7 +1895,11 @@ impl Expression {
         };
         writeln!(f, "{}{}{}", parent_prefix, immediate_prefix, display_string)?;
         match t {
-            ExpressionNode::Amp(_) | ExpressionNode::Zero | ExpressionNode::One => {}
+            ExpressionNode::Amp(_)
+            | ExpressionNode::Zero
+            | ExpressionNode::One
+            | ExpressionNode::Constant(_)
+            | ExpressionNode::ComplexConstant(_) => {}
             ExpressionNode::Add(a, b)
             | ExpressionNode::Sub(a, b)
             | ExpressionNode::Mul(a, b)
@@ -1867,21 +1953,90 @@ impl_op_ex!(+ |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Add)
 });
 #[rustfmt::skip]
+impl_op_ex!(+ |a: &Expression, b: &f64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &f64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &Expression, b: &Complex64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Add)
+});
+#[rustfmt::skip]
+impl_op_ex!(+ |a: &Complex64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Add)
+});
+
+#[rustfmt::skip]
 impl_op_ex!(- |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Sub)
 });
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression, b: &f64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &f64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Expression, b: &Complex64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Sub)
+});
+#[rustfmt::skip]
+impl_op_ex!(- |a: &Complex64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Sub)
+});
+
 #[rustfmt::skip]
 impl_op_ex!(* |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Mul)
 });
 #[rustfmt::skip]
+impl_op_ex!(* |a: &Expression, b: &f64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &f64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &Expression, b: &Complex64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Mul)
+});
+#[rustfmt::skip]
+impl_op_ex!(* |a: &Complex64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Mul)
+});
+
+#[rustfmt::skip]
 impl_op_ex!(/ |a: &Expression, b: &Expression| -> Expression {
     Expression::binary_op(a, b, ExpressionNode::Div)
 });
 #[rustfmt::skip]
+impl_op_ex!(/ |a: &Expression, b: &f64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Div)
+});
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &f64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Div)
+});
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &Expression, b: &Complex64| -> Expression {
+    Expression::binary_op(a, &Expression::from(b), ExpressionNode::Div)
+});
+#[rustfmt::skip]
+impl_op_ex!(/ |a: &Complex64, b: &Expression| -> Expression {
+    Expression::binary_op(&Expression::from(a), b, ExpressionNode::Div)
+});
+
+#[rustfmt::skip]
 impl_op_ex!(- |a: &Expression| -> Expression {
     Expression::unary_op(a, ExpressionNode::Neg)
 });
+// NOTE: no need to add an impl for negating f64 or complex!
 
 #[derive(Clone, Debug)]
 #[doc(hidden)]
@@ -7293,9 +7448,10 @@ mod tests {
             parameter("test_param_im_2"),
         )
         .unwrap();
-        let expr = &amp1.real() + &amp2.conj().imag() + Expression::one() * -Expression::zero()
-            - Expression::zero() / Expression::one()
-            + (&amp1 * &amp2).norm_sqr();
+        let expr =
+            &amp1.real() + &amp2.conj().imag() + Expression::one() * Complex64::new(-1.4, 2.0)
+                - Expression::zero() / 1.0
+                + (&amp1 * &amp2).norm_sqr();
         assert_eq!(
             expr.to_string(),
             "+
@@ -7308,12 +7464,11 @@ mod tests {
 │  │  │     └─ *
 │  │  │        └─ parametric_2(id=1)
 │  │  └─ ×
-│  │     ├─ 1
-│  │     └─ -
-│  │        └─ 0
+│  │     ├─ 1 (exact)
+│  │     └─ -1.4+2i
 │  └─ ÷
-│     ├─ 0
-│     └─ 1
+│     ├─ 0 (exact)
+│     └─ 1 (exact)
 └─ NormSqr
    └─ ×
       ├─ parametric_1(id=0)

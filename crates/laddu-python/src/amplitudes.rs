@@ -21,9 +21,25 @@ fn install_with_threads<R: Send>(
 
 /// A mathematical expression formed from amplitudes.
 ///
-#[pyclass(name = "Expression", module = "laddu", from_py_object)]
+#[pyclass(name = "Expression", module = "laddu", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyExpression(pub Expression);
+
+impl<'py> FromPyObject<'_, 'py> for PyExpression {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, 'py, PyAny>) -> Result<Self, Self::Error> {
+        if let Ok(obj) = obj.cast::<PyExpression>() {
+            Ok(obj.borrow().clone())
+        } else if let Ok(obj) = obj.extract::<f64>() {
+            Ok(Self(obj.into()))
+        } else if let Ok(obj) = obj.extract::<Complex64>() {
+            Ok(Self(obj.into()))
+        } else {
+            Err(PyTypeError::new_err("Failed to extract Expression"))
+        }
+    }
+}
 
 /// A convenience method to sum sequences of Expressions
 ///
@@ -173,12 +189,12 @@ impl PyExpression {
     }
     /// Raise an Expression to an int, float, or Expression power
     fn power(&self, power: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
-        if let Ok(expression) = power.extract::<PyExpression>() {
-            Ok(PyExpression(self.0.pow(&expression.0)))
-        } else if let Ok(value) = power.extract::<i32>() {
+        if let Ok(value) = power.extract::<i32>() {
             Ok(PyExpression(self.0.powi(value)))
         } else if let Ok(value) = power.extract::<f64>() {
             Ok(PyExpression(self.0.powf(value)))
+        } else if let Ok(expression) = power.extract::<PyExpression>() {
+            Ok(PyExpression(self.0.pow(&expression.0)))
         } else {
             Err(PyTypeError::new_err(
                 "power must be an int, float, or Expression",
@@ -229,14 +245,6 @@ impl PyExpression {
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
             Ok(PyExpression(self.0.clone() + other_expr.0))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(self.0.clone()))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for +"))
         }
@@ -244,14 +252,6 @@ impl PyExpression {
     fn __radd__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyExpression> {
         if let Ok(other_expr) = other.extract::<PyExpression>() {
             Ok(PyExpression(other_expr.0 + self.0.clone()))
-        } else if let Ok(other_int) = other.extract::<usize>() {
-            if other_int == 0 {
-                Ok(PyExpression(self.0.clone()))
-            } else {
-                Err(PyTypeError::new_err(
-                    "Addition with an integer for this type is only defined for 0",
-                ))
-            }
         } else {
             Err(PyTypeError::new_err("Unsupported operand type for +"))
         }

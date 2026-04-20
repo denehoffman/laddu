@@ -535,8 +535,8 @@ def test_tree_printing() -> None:
     expr = (
         amp1.real()
         + amp2.conj().imag()
-        + One() * -Zero()
-        - Zero() / One()
+        + One() * (-1.4 + 2.0j)
+        - Zero() / 1
         + (amp1 * amp2).norm_sqr()
     )
     assert (
@@ -551,12 +551,11 @@ def test_tree_printing() -> None:
 │  │  │     └─ *
 │  │  │        └─ parametric_2(id=1)
 │  │  └─ ×
-│  │     ├─ 1
-│  │     └─ -
-│  │        └─ 0
+│  │     ├─ 1 (exact)
+│  │     └─ -1.4+2i
 │  └─ ÷
-│     ├─ 0
-│     └─ 1
+│     ├─ 0 (exact)
+│     └─ 1 (exact)
 └─ NormSqr
    └─ ×
       ├─ parametric_1(id=0)
