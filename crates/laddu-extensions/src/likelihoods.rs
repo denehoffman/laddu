@@ -48,7 +48,7 @@ use numpy::{PyArray1, PyArray2, PyArray3};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     prelude::*,
-    types::{PyAny, PyList},
+    types::{PyAny, PyList, PyTuple},
     IntoPyObjectExt,
 };
 #[cfg(feature = "rayon")]
@@ -2297,21 +2297,20 @@ impl PyNLL {
     ///
     /// Returns
     /// -------
-    /// parameters : list of str
-    ///
+    /// parameters : tuple of str
     #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
+    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.parameters())
     }
     /// The free parameters used by the NLL
     #[getter]
-    fn free_parameters(&self) -> Vec<String> {
-        self.0.free_parameters()
+    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.free_parameters())
     }
     /// The fixed parameters used by the NLL
     #[getter]
-    fn fixed_parameters(&self) -> Vec<String> {
-        self.0.fixed_parameters()
+    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.fixed_parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -3729,20 +3728,20 @@ pub fn py_likelihood_one() -> PyLikelihoodExpression {
 impl PyLikelihoodExpression {
     /// All parameter names referenced by the expression.
     #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
+    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.parameters())
     }
 
     /// The free parameter names (those requiring optimization inputs).
     #[getter]
-    fn free_parameters(&self) -> Vec<String> {
-        self.0.free_parameters()
+    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.free_parameters())
     }
 
     /// The names of parameters fixed to constant values.
     #[getter]
-    fn fixed_parameters(&self) -> Vec<String> {
-        self.0.fixed_parameters()
+    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.fixed_parameters())
     }
 
     /// Load the expression into a reusable evaluator.
@@ -4052,23 +4051,23 @@ impl PyLikelihoodEvaluator {
     ///
     /// Returns
     /// -------
-    /// parameters : list of str
+    /// parameters : tuple of str
     ///
     #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
+    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.parameters())
     }
 
     /// A list of names of the free parameters.
     #[getter]
-    fn free_parameters(&self) -> Vec<String> {
-        self.0.free_parameters()
+    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.free_parameters())
     }
 
     /// A list of names for parameters fixed to constant values.
     #[getter]
-    fn fixed_parameters(&self) -> Vec<String> {
-        self.0.fixed_parameters()
+    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.fixed_parameters())
     }
 
     /// Number of free parameters in the evaluator.

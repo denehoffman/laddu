@@ -453,7 +453,7 @@ def test_ganesh_sampler_defaults_construct_and_run() -> None:
 def test_regularizer_l1_matches_rust_implementation() -> None:
     expr = Regularizer(['alpha', 'beta'], 2.0, weights=[1.0, 0.5])
     evaluator = likelihood_sum([expr]).load()
-    assert evaluator.parameters == ['alpha', 'beta']
+    assert evaluator.parameters == ('alpha', 'beta')
     params = [1.5, -2.0]
     assert evaluator.evaluate(params) == pytest.approx(7.0)
     grad = evaluator.evaluate_gradient(params).tolist()
@@ -905,18 +905,18 @@ def test_nll_parameter_fix_free_and_rename() -> None:
 
     reference = nll.evaluate([1.7])
     fixed = nll.fix('scale', 1.7)
-    assert fixed.parameters == ['scale']
-    assert fixed.free_parameters == []
-    assert fixed.fixed_parameters == ['scale']
+    assert fixed.parameters == ('scale',)
+    assert fixed.free_parameters == ()
+    assert fixed.fixed_parameters == ('scale',)
     assert fixed.n_free == 0
     assert pytest.approx(fixed.evaluate([])) == reference
 
     renamed = nll.rename_parameter('scale', 'beta')
-    assert renamed.parameters == ['beta']
+    assert renamed.parameters == ('beta',)
     assert pytest.approx(renamed.evaluate([1.7])) == reference
 
     renamed_multi = nll.rename_parameters({'scale': 'gamma'})
-    assert renamed_multi.parameters == ['gamma']
+    assert renamed_multi.parameters == ('gamma',)
 
 
 def test_nll_free_from_fixed_parameter() -> None:
@@ -926,12 +926,12 @@ def test_nll_free_from_fixed_parameter() -> None:
     mc = _dataset_from_weights([1.0])
     nll = NLL(expr, data, mc)
     assert nll.n_free == 0
-    assert nll.fixed_parameters == ['scale']
+    assert nll.fixed_parameters == ('scale',)
 
     freed = nll.free('scale')
     assert freed.n_free == 1
-    assert freed.free_parameters == ['scale']
-    assert freed.fixed_parameters == []
+    assert freed.free_parameters == ('scale',)
+    assert freed.fixed_parameters == ()
 
     reference = NLL(Scalar('scale', parameter('scale')).norm_sqr(), data, mc)
     assert pytest.approx(freed.evaluate([2.5])) == reference.evaluate([2.5])
@@ -941,9 +941,9 @@ def test_evaluator_parameters_include_fixed_entries() -> None:
     expr = likelihood_sum([LikelihoodScalar('alpha'), LikelihoodScalar('beta')])
     expr = expr.fix('alpha', 1.5)
     evaluator = expr.load()
-    assert evaluator.parameters == ['alpha', 'beta']
-    assert evaluator.free_parameters == ['beta']
-    assert evaluator.fixed_parameters == ['alpha']
+    assert evaluator.parameters == ('alpha', 'beta')
+    assert evaluator.free_parameters == ('beta',)
+    assert evaluator.fixed_parameters == ('alpha',)
     assert evaluator.evaluate([2.0]) == pytest.approx(3.5)
     # NOTE: Passing the wrong number of parameters currently panics within Rust,
     # so we skip calling evaluator.evaluate([10.0, 2.0]) here until the API

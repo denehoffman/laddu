@@ -160,4 +160,4 @@ def test_variable_as_expression() -> None:
     assert len(values) == 1
     assert pytest.approx(values[0].real) == mass.value(make_test_event())
     assert pytest.approx(values[0].imag) == 0.0
-    assert evaluator.parameters == []
+    assert evaluator.parameters == ()

@@ -25,9 +25,9 @@ def integrated_autocorrelation_times(
 ) -> npt.NDArray[np.float64]: ...
 
 class LikelihoodExpression:
-    parameters: list[str]
-    free_parameters: list[str]
-    fixed_parameters: list[str]
+    parameters: tuple[str, ...]
+    free_parameters: tuple[str, ...]
+    fixed_parameters: tuple[str, ...]
 
     def fix(self, name: str, value: float) -> LikelihoodExpression: ...
     def free(self, name: str) -> LikelihoodExpression: ...
@@ -105,9 +105,9 @@ SamplerInit: TypeAlias = (
 )
 
 class LikelihoodEvaluator:
-    parameters: list[str]
-    free_parameters: list[str]
-    fixed_parameters: list[str]
+    parameters: tuple[str, ...]
+    free_parameters: tuple[str, ...]
+    fixed_parameters: tuple[str, ...]
     n_free: int
     n_fixed: int
     n_parameters: int
@@ -196,9 +196,9 @@ class StochasticNLL:
     ) -> ganesh.MCMCSummary: ...
 
 class NLL:
-    parameters: list[str]
-    free_parameters: list[str]
-    fixed_parameters: list[str]
+    parameters: tuple[str, ...]
+    free_parameters: tuple[str, ...]
+    fixed_parameters: tuple[str, ...]
     n_free: int
     n_fixed: int
     n_parameters: int

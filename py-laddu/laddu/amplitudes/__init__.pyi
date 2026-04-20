@@ -20,9 +20,9 @@ from laddu.data import Dataset
 class ParameterLike: ...
 
 class Expression:
-    parameters: list[str]
-    free_parameters: list[str]
-    fixed_parameters: list[str]
+    parameters: tuple[str, ...]
+    free_parameters: tuple[str, ...]
+    fixed_parameters: tuple[str, ...]
     n_free: int
     n_fixed: int
     n_parameters: int
@@ -64,9 +64,9 @@ def parameter(name: str) -> ParameterLike: ...
 class CompiledExpression: ...
 
 class Evaluator:
-    parameters: list[str]
-    free_parameters: list[str]
-    fixed_parameters: list[str]
+    parameters: tuple[str, ...]
+    free_parameters: tuple[str, ...]
+    fixed_parameters: tuple[str, ...]
     n_free: int
     n_fixed: int
     n_parameters: int

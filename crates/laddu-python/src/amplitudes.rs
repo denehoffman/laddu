@@ -8,7 +8,7 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyBytes, PyList},
+    types::{PyBytes, PyList, PyTuple},
 };
 use std::collections::HashMap;
 
@@ -105,21 +105,21 @@ impl PyExpression {
     ///
     /// Returns
     /// -------
-    /// parameters : list of str
-    ///     The list of parameter names
+    /// parameters : tuple of str
+    ///     The tuple of parameter names
     #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
+    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.parameters())
     }
     /// The free parameters used by the Expression
     #[getter]
-    fn free_parameters(&self) -> Vec<String> {
-        self.0.free_parameters()
+    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.free_parameters())
     }
     /// The fixed parameters used by the Expression
     #[getter]
-    fn fixed_parameters(&self) -> Vec<String> {
-        self.0.fixed_parameters()
+    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.fixed_parameters())
     }
     /// Number of free parameters
     #[getter]
@@ -345,22 +345,22 @@ impl PyEvaluator {
     ///
     /// Returns
     /// -------
-    /// parameters : list of str
-    ///     The list of parameter names
+    /// parameters : tuple of str
+    ///     The tuple of parameter names
     ///
     #[getter]
-    fn parameters(&self) -> Vec<String> {
-        self.0.parameters()
+    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.parameters())
     }
     /// The free parameters used by the Evaluator
     #[getter]
-    fn free_parameters(&self) -> Vec<String> {
-        self.0.free_parameters()
+    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.free_parameters())
     }
     /// The fixed parameters used by the Evaluator
     #[getter]
-    fn fixed_parameters(&self) -> Vec<String> {
-        self.0.fixed_parameters()
+    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, self.0.fixed_parameters())
     }
     /// Number of free parameters
     #[getter]
