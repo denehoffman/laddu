@@ -23,18 +23,21 @@ impl Default for FrameAxes {
 impl FrameAxes {
     /// Construct normalized right-handed axes after validating orthogonality.
     pub fn new(x: Vec3, y: Vec3, z: Vec3) -> LadduResult<Self> {
+        const ORTHOGONALITY_TOL: f64 = 1.0e-12;
+        const HANDEDNESS_TOL: f64 = 1.0e-12;
+
         let x = unit_vector(x, "x axis")?;
         let y = unit_vector(y, "y axis")?;
         let z = unit_vector(z, "z axis")?;
-        if x.dot(&y).abs() > f64::EPSILON
-            || x.dot(&z).abs() > f64::EPSILON
-            || y.dot(&z).abs() > f64::EPSILON
+        if x.dot(&y).abs() > ORTHOGONALITY_TOL
+            || x.dot(&z).abs() > ORTHOGONALITY_TOL
+            || y.dot(&z).abs() > ORTHOGONALITY_TOL
         {
             return Err(LadduError::Custom(
                 "frame axes must be mutually orthogonal".to_string(),
             ));
         }
-        if x.cross(&y).dot(&z) < 0.0 {
+        if x.cross(&y).dot(&z) < -HANDEDNESS_TOL {
             return Err(LadduError::Custom(
                 "frame axes must form a right-handed basis".to_string(),
             ));
@@ -67,26 +70,28 @@ impl FrameAxes {
         let reference = reference.boost(&system_boost);
         let parent = parent.boost(&system_boost);
         let spectator = spectator.boost(&system_boost);
+
         let parent_rest = RestFrame::new(parent)?;
+        let reference_in_parent = parent_rest.transform(reference).vec3();
+        let spectator_in_parent = parent_rest.transform(spectator).vec3();
+
         let plane_normal = unit_vector(
-            reference.vec3().cross(&parent.vec3()),
+            reference_in_parent.cross(&(-spectator_in_parent)),
             "production-plane normal",
         )?;
+
         let z = match frame {
-            Frame::Helicity => unit_vector(
-                -parent_rest.transform(spectator).vec3(),
-                "production-frame z axis",
-            )?,
-            Frame::GottfriedJackson => unit_vector(
-                parent_rest.transform(reference).vec3(),
-                "Gottfried-Jackson z axis",
-            )?,
+            Frame::Helicity => unit_vector(-spectator_in_parent, "production-frame z axis")?,
+            Frame::GottfriedJackson => {
+                unit_vector(reference_in_parent, "Gottfried-Jackson z axis")?
+            }
             Frame::Adair => {
                 return Err(LadduError::Custom(
                     "Adair frame construction is not implemented yet".to_string(),
                 ));
             }
         };
+
         Self::from_z_and_plane_normal(z, plane_normal)
     }
 
