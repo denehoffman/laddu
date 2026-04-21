@@ -233,7 +233,7 @@ mod tests {
         let res_mass = Mass::new(["kshort1", "kshort2"]);
         let expr = KopfKMatrixPi1::new(
             "pi1",
-            [[parameter("p0"), parameter("p1")]],
+            [[parameter!("p0"), parameter!("p1")]],
             KopfKMatrixPi1Channel::PiEtaPrime,
             &res_mass,
         )
@@ -252,7 +252,7 @@ mod tests {
         let res_mass = Mass::new(["kshort1", "kshort2"]);
         let expr = KopfKMatrixPi1::new(
             "pi1",
-            [[parameter("p0"), parameter("p1")]],
+            [[parameter!("p0"), parameter!("p1")]],
             KopfKMatrixPi1Channel::PiEtaPrime,
             &res_mass,
         )

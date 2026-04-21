@@ -1,8 +1,9 @@
 #[cfg(any(test, feature = "python"))]
 use laddu_core::utils::functions::QR_DEFAULT;
 use laddu_core::{
-    amplitudes::{constant, Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
+    amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
+    parameter,
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
     traits::Variable,
     utils::{
@@ -278,7 +279,7 @@ impl ClebschGordan {
             m2.value() as i64,
             m.value() as i64,
         );
-        Scalar::new(name, constant(&format!("{name}.value"), value))
+        Scalar::new(name, parameter!(&format!("{name}.value"), value))
     }
 }
 
@@ -304,7 +305,7 @@ impl Wigner3j {
             m2.value() as i64,
             m3.value() as i64,
         );
-        Scalar::new(name, constant(&format!("{name}.value"), value))
+        Scalar::new(name, parameter!(&format!("{name}.value"), value))
     }
 }
 
@@ -833,7 +834,7 @@ mod tests {
                 Frame::Helicity,
             )
             .unwrap();
-        let explicit = Scalar::new("norm", constant("norm.value", 5.0_f64.sqrt())).unwrap()
+        let explicit = Scalar::new("norm", parameter!("norm.value", 5.0_f64.sqrt())).unwrap()
             * ClebschGordan::new(
                 "orbital_spin",
                 AngularMomentum::integer(2),

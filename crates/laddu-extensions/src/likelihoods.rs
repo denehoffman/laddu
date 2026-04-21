@@ -4434,8 +4434,9 @@ mod tests {
     #[cfg(feature = "mpi")]
     use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
     use laddu_core::{
-        amplitudes::{parameter, Amplitude, AmplitudeID, ExpressionDependence, Parameter},
+        amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter},
         data::{Dataset, DatasetMetadata, EventData},
+        parameter,
         resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
         utils::vectors::Vec4,
         Expression, LadduError, LadduResult,
@@ -4675,7 +4676,7 @@ mod tests {
     }
 
     fn make_constant_nll() -> (Box<NLL>, Vec<f64>) {
-        let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
+        let amp = ConstantAmplitude::new("amp", parameter!("scale")).unwrap();
         let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0]);
         let mc = dataset_with_weights(&[0.5, 1.5]);
@@ -4684,8 +4685,8 @@ mod tests {
     }
 
     fn make_two_parameter_nll() -> (Box<NLL>, Vec<f64>) {
-        let amp_a = ConstantAmplitude::new("amp_a", parameter("alpha")).unwrap();
-        let amp_b = ConstantAmplitude::new("amp_b", parameter("beta")).unwrap();
+        let amp_a = ConstantAmplitude::new("amp_a", parameter!("alpha")).unwrap();
+        let amp_b = ConstantAmplitude::new("amp_b", parameter!("beta")).unwrap();
         let expr = (amp_a + amp_b).norm_sqr();
         let data = dataset_with_weights(&[1.0, 2.0, 3.0, 1.0]);
         let mc = dataset_with_weights(&[0.5, 1.5, 2.5, 0.5]);
@@ -4906,9 +4907,9 @@ mod tests {
 
         match kind {
             DeterministicModelKind::Separable => {
-                let p1 = ConstantAmplitude::new("p1", parameter("p1"))
+                let p1 = ConstantAmplitude::new("p1", parameter!("p1"))
                     .expect("separable p1 should build");
-                let p2 = ConstantAmplitude::new("p2", parameter("p2"))
+                let p2 = ConstantAmplitude::new("p2", parameter!("p2"))
                     .expect("separable p2 should build");
                 let c1 = CacheOnlyBeamAmplitude::new("c1", 0).expect("separable c1 should build");
                 let c2 = CacheOnlyBeamAmplitude::new("c2", 1).expect("separable c2 should build");
@@ -4921,9 +4922,9 @@ mod tests {
             }
             DeterministicModelKind::Partial => {
                 let p =
-                    ConstantAmplitude::new("p", parameter("p")).expect("partial p should build");
+                    ConstantAmplitude::new("p", parameter!("p")).expect("partial p should build");
                 let c = CacheOnlyBeamAmplitude::new("c", 0).expect("partial c should build");
-                let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+                let m = CachedBeamScaleAmplitude::new("m", parameter!("m"), 1)
                     .expect("partial m should build");
                 let expression = (&p * &c) + &m;
                 DeterministicNllFixture {
@@ -4932,9 +4933,9 @@ mod tests {
                 }
             }
             DeterministicModelKind::NonSeparable => {
-                let m1 = CachedBeamScaleAmplitude::new("m1", parameter("m1"), 0)
+                let m1 = CachedBeamScaleAmplitude::new("m1", parameter!("m1"), 0)
                     .expect("non-separable m1 should build");
-                let m2 = CachedBeamScaleAmplitude::new("m2", parameter("m2"), 1)
+                let m2 = CachedBeamScaleAmplitude::new("m2", parameter!("m2"), 1)
                     .expect("non-separable m2 should build");
                 let expression = &m1 * &m2;
                 DeterministicNllFixture {
@@ -4950,10 +4951,11 @@ mod tests {
     fn make_mixed_workload_nll_fixture(n_events: usize) -> DeterministicNllFixture {
         let data = generated_two_p4_dataset(n_events, 1.4, 0.08);
         let mc = generated_two_p4_dataset(n_events, 1.9, 0.11);
-        let p = ConstantAmplitude::new("p", parameter("p")).expect("mixed-workload p should build");
+        let p =
+            ConstantAmplitude::new("p", parameter!("p")).expect("mixed-workload p should build");
         let c = CacheOnlyBeamAmplitude::new("c", 0)
             .expect("mixed-workload cache amplitude should build");
-        let m = CachedBeamScaleAmplitude::new("m", parameter("m"), 1)
+        let m = CachedBeamScaleAmplitude::new("m", parameter!("m"), 1)
             .expect("mixed-workload beam amplitude should build");
         let expression = (&p * &c) + &m;
         DeterministicNllFixture {
@@ -5249,7 +5251,7 @@ mod tests {
 
     #[test]
     fn nll_value_matches_mixed_scale_weighted_closed_form() {
-        let amp = ConstantAmplitude::new("amp", parameter("scale")).unwrap();
+        let amp = ConstantAmplitude::new("amp", parameter!("scale")).unwrap();
         let expr = amp.norm_sqr();
         let data = dataset_with_weights(&[1.0e12, 1.0e-12, 3.5, 7.25e4, 2.0e-3]);
         let mc = dataset_with_weights(&[4.0e9, 9.0e-6, 1.25, 2.5e2, 8.0e-4]);
@@ -5276,8 +5278,8 @@ mod tests {
 
     #[test]
     fn nll_evaluate_and_gradient_match_hardcoded_weighted_reference() {
-        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("alpha"), 0).unwrap();
-        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("beta"), 1).unwrap();
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter!("alpha"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter!("beta"), 1).unwrap();
         let expr = (&amp_a + &amp_b).norm_sqr();
         let data = dataset_with_two_p4_and_weights(
             &[(1.0, 0.8), (2.5, 1.7), (4.0, 2.4), (3.3, 1.1)],
@@ -5672,8 +5674,8 @@ mod tests {
     fn mpi_mixed_scale_value_matches_local_evaluate() {
         use_mpi(true);
         let world = get_world().expect("MPI world should be initialized");
-        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter("scale_a"), 0).unwrap();
-        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter("scale_b"), 1).unwrap();
+        let amp_a = CachedBeamScaleAmplitude::new("amp_a", parameter!("scale_a"), 0).unwrap();
+        let amp_b = CachedBeamScaleAmplitude::new("amp_b", parameter!("scale_b"), 1).unwrap();
         let expr = (amp_a + amp_b).norm_sqr();
         let data = dataset_with_two_p4_and_weights(
             &[(1.0, 0.5), (10.0, 1.0), (3.0, 5.0), (1.0e2, 2.0e-1)],

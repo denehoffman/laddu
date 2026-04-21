@@ -251,9 +251,9 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = Flatte::new(
             "flatte",
-            parameter("mass"),
-            parameter("g_obs"),
-            parameter("g_alt"),
+            parameter!("mass"),
+            parameter!("g_obs"),
+            parameter!("g_alt"),
             (&daughter_1_mass, &daughter_2_mass),
             (0.1349768, 0.547862),
             &resonance_mass,
@@ -275,9 +275,9 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = Flatte::new(
             "flatte",
-            parameter("mass"),
-            parameter("g_obs"),
-            parameter("g_alt"),
+            parameter!("mass"),
+            parameter!("g_obs"),
+            parameter!("g_alt"),
             (&daughter_1_mass, &daughter_2_mass),
             (0.1349768, 0.547862),
             &resonance_mass,

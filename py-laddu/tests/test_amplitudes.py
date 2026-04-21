@@ -5,7 +5,6 @@ from laddu import (
     Event,
     Scalar,
     Vec3,
-    constant,
     parameter,
 )
 from laddu.amplitudes import (
@@ -56,7 +55,7 @@ def make_test_dataset() -> Dataset:
 
 
 def test_constant_amplitude() -> None:
-    amp = Scalar('constant', constant('const_amp', 2.0))
+    amp = Scalar('constant', parameter('const_amp', 2.0))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([])
@@ -99,9 +98,15 @@ def test_batch_evaluation() -> None:
 
 
 def test_expression_operations() -> None:
-    amp1 = ComplexScalar('const1', constant('const1_re', 2.0), constant('const1_im', 0.0))
-    amp2 = ComplexScalar('const2', constant('const2_re', 0.0), constant('const2_im', 1.0))
-    amp3 = ComplexScalar('const3', constant('const3_re', 3.0), constant('const3_im', 4.0))
+    amp1 = ComplexScalar(
+        'const1', parameter('const1_re', 2.0), parameter('const1_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'const2', parameter('const2_re', 0.0), parameter('const2_im', 1.0)
+    )
+    amp3 = ComplexScalar(
+        'const3', parameter('const3_re', 3.0), parameter('const3_im', 4.0)
+    )
     dataset = make_test_dataset()
 
     expr_add = amp1 + amp2
@@ -221,8 +226,12 @@ def test_compiled_expression_display() -> None:
 
 
 def test_amplitude_activation() -> None:
-    amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
-    amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
+    amp1 = ComplexScalar(
+        'const1', parameter('const1_re', 1.0), parameter('const1_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'const2', parameter('const2_re', 2.0), parameter('const2_im', 0.0)
+    )
     dataset = make_test_dataset()
 
     expr = amp1 + amp2
@@ -252,13 +261,13 @@ def test_amplitude_activation() -> None:
 
 def test_amplitude_activation_globs() -> None:
     amp1 = ComplexScalar(
-        'signal.s', constant('signal_s_re', 1.0), constant('signal_s_im', 0.0)
+        'signal.s', parameter('signal_s_re', 1.0), parameter('signal_s_im', 0.0)
     )
     amp2 = ComplexScalar(
-        'signal.d', constant('signal_d_re', 2.0), constant('signal_d_im', 0.0)
+        'signal.d', parameter('signal_d_re', 2.0), parameter('signal_d_im', 0.0)
     )
     amp3 = ComplexScalar(
-        'background', constant('background_re', 4.0), constant('background_im', 0.0)
+        'background', parameter('background_re', 4.0), parameter('background_im', 0.0)
     )
     evaluator = (amp1 + amp2 + amp3).load(make_test_dataset())
 
@@ -288,8 +297,12 @@ def test_amplitude_activation_globs() -> None:
 
 
 def test_evaluator_active_mask_roundtrip() -> None:
-    amp1 = ComplexScalar('const1', constant('const1_re', 1.0), constant('const1_im', 0.0))
-    amp2 = ComplexScalar('const2', constant('const2_re', 2.0), constant('const2_im', 0.0))
+    amp1 = ComplexScalar(
+        'const1', parameter('const1_re', 1.0), parameter('const1_im', 0.0)
+    )
+    amp2 = ComplexScalar(
+        'const2', parameter('const2_re', 2.0), parameter('const2_im', 0.0)
+    )
     evaluator = (amp1 + amp2).load(make_test_dataset())
 
     assert evaluator.active_mask == [True, True]
@@ -440,7 +453,7 @@ def test_gradient() -> None:
 
 def test_zeros_and_ones() -> None:
     amp = ComplexScalar(
-        'parametric', parameter('test_param_re'), constant('zeros_const_im', 2.0)
+        'parametric', parameter('test_param_re'), parameter('zeros_const_im', 2.0)
     )
     dataset = make_test_dataset()
     expr = (amp * One() + Zero()).norm_sqr()
@@ -491,7 +504,7 @@ def test_expression_fix_updates_metadata_and_evaluator() -> None:
 
 def test_expression_free_and_rename_parameters() -> None:
     dataset = make_test_dataset()
-    amp = Scalar('scale', constant('scale', 2.0))
+    amp = Scalar('scale', parameter('scale', 2.0))
     expr = amp.norm_sqr()
 
     freed_expr = expr.free('scale')
@@ -518,8 +531,8 @@ def test_expression_free_and_rename_parameters() -> None:
 # TODO: This panics rather than raises an exception.
 # I'm not sure if it's possible to avoid this, since operations in Rust aren't fallible
 # def test_duplicate_amplitude_registration() -> None:
-#     amp1 = ComplexScalar('same_name', constant(1.0), constant(0.0))
-#     amp2 = ComplexScalar('same_name', constant(2.0), constant(0.0))
+#     amp1 = ComplexScalar('same_name', parameter(1.0), parameter(0.0))
+#     amp2 = ComplexScalar('same_name', parameter(2.0), parameter(0.0))
 #     with pytest.raises(ValueError):
 #         amp1 + amp2
 #
@@ -565,7 +578,7 @@ def test_tree_printing() -> None:
 
 
 def test_amplitude_summation() -> None:
-    terms = [Scalar(f'{i}', constant(f'const_sum_{i}', i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', parameter(f'const_sum_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 
@@ -601,7 +614,7 @@ def test_amplitude_summation() -> None:
 
 
 def test_amplitude_product() -> None:
-    terms = [Scalar(f'{i}', constant(f'const_prod_{i}', i)) for i in range(1, 5)]
+    terms = [Scalar(f'{i}', parameter(f'const_prod_{i}', i)) for i in range(1, 5)]
     dataset = make_test_dataset()
     params = []
 

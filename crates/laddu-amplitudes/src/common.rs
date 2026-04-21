@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn test_scalar_creation_and_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let expr = Scalar::new("test_scalar", parameter("test_param")).unwrap();
+        let expr = Scalar::new("test_scalar", parameter!("test_param")).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.5];
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn test_scalar_gradient() {
         let dataset = Arc::new(test_dataset());
-        let expr = Scalar::new("test_scalar", parameter("test_param"))
+        let expr = Scalar::new("test_scalar", parameter!("test_param"))
             .unwrap()
             .norm_sqr(); // |f(x)|^2
         let evaluator = expr.load(&dataset).unwrap();
@@ -398,14 +398,14 @@ mod tests {
     fn test_scalar_reports_real_valued_hint() {
         let scalar = Scalar {
             name: "test_scalar".to_string(),
-            value: parameter("test_param"),
+            value: parameter!("test_param"),
             pid: Default::default(),
         };
         let complex = ComplexScalar {
             name: "test_complex".to_string(),
-            re: parameter("re_param"),
+            re: parameter!("re_param"),
             pid_re: Default::default(),
-            im: parameter("im_param"),
+            im: parameter!("im_param"),
             pid_im: Default::default(),
         };
 
@@ -470,8 +470,12 @@ mod tests {
     #[test]
     fn test_complex_scalar_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let expr = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"))
-            .unwrap();
+        let expr = ComplexScalar::new(
+            "test_complex",
+            parameter!("re_param"),
+            parameter!("im_param"),
+        )
+        .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
@@ -484,9 +488,13 @@ mod tests {
     #[test]
     fn test_complex_scalar_gradient() {
         let dataset = Arc::new(test_dataset());
-        let expr = ComplexScalar::new("test_complex", parameter("re_param"), parameter("im_param"))
-            .unwrap()
-            .norm_sqr(); // |f(x + iy)|^2
+        let expr = ComplexScalar::new(
+            "test_complex",
+            parameter!("re_param"),
+            parameter!("im_param"),
+        )
+        .unwrap()
+        .norm_sqr(); // |f(x + iy)|^2
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
@@ -502,10 +510,18 @@ mod tests {
     #[test]
     fn test_semantic_key_deduplicates_matching_complex_scalar() {
         let dataset = Arc::new(test_dataset());
-        let expr = ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
-            .unwrap()
-            + ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
-                .unwrap();
+        let expr = ComplexScalar::new(
+            "same_complex",
+            parameter!("re_param"),
+            parameter!("im_param"),
+        )
+        .unwrap()
+            + ComplexScalar::new(
+                "same_complex",
+                parameter!("re_param"),
+                parameter!("im_param"),
+            )
+            .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let result = evaluator.evaluate(&[1.5, 2.5]);
@@ -518,19 +534,29 @@ mod tests {
     #[test]
     #[should_panic(expected = "re differs")]
     fn test_semantic_key_reports_mismatched_complex_scalar_field() {
-        let _expr =
-            ComplexScalar::new("same_complex", parameter("re_param"), parameter("im_param"))
-                .unwrap()
-                + ComplexScalar::new("same_complex", parameter("other_re"), parameter("im_param"))
-                    .unwrap();
+        let _expr = ComplexScalar::new(
+            "same_complex",
+            parameter!("re_param"),
+            parameter!("im_param"),
+        )
+        .unwrap()
+            + ComplexScalar::new(
+                "same_complex",
+                parameter!("other_re"),
+                parameter!("im_param"),
+            )
+            .unwrap();
     }
 
     #[test]
     fn test_polar_complex_scalar_evaluation() {
         let dataset = Arc::new(test_dataset());
-        let expr =
-            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"))
-                .unwrap();
+        let expr = PolarComplexScalar::new(
+            "test_polar",
+            parameter!("r_param"),
+            parameter!("theta_param"),
+        )
+        .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;
@@ -546,9 +572,12 @@ mod tests {
     #[test]
     fn test_polar_complex_scalar_gradient() {
         let dataset = Arc::new(test_dataset());
-        let expr =
-            PolarComplexScalar::new("test_polar", parameter("r_param"), parameter("theta_param"))
-                .unwrap();
+        let expr = PolarComplexScalar::new(
+            "test_polar",
+            parameter!("r_param"),
+            parameter!("theta_param"),
+        )
+        .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
         let r = 2.0;

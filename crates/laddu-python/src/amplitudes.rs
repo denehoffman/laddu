@@ -1,7 +1,7 @@
 use crate::data::PyDataset;
 use laddu_core::{
-    amplitudes::{constant, parameter, Evaluator, Expression, Parameter, TestAmplitude},
-    f64, CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
+    amplitudes::{Evaluator, Expression, Parameter, TestAmplitude},
+    CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -713,17 +713,41 @@ impl PyCompiledExpression {
     }
 }
 
-/// A class, typically used to allow Amplitudes to take either free parameters or constants as
-/// inputs
-///
-/// See Also
-/// --------
-/// laddu.parameter
-/// laddu.constant
-///
 #[pyclass(name = "Parameter", module = "laddu", from_py_object)]
 #[derive(Clone)]
 pub struct PyParameter(pub Parameter);
+
+#[pymethods]
+impl PyParameter {
+    #[getter]
+    fn name(&self) -> &str {
+        &self.0.name
+    }
+    #[getter]
+    fn fixed(&self) -> Option<f64> {
+        self.0.fixed
+    }
+    #[getter]
+    fn initial(&self) -> Option<f64> {
+        self.0.initial
+    }
+    #[getter]
+    fn bounds(&self) -> (Option<f64>, Option<f64>) {
+        self.0.bounds
+    }
+    #[getter]
+    fn unit(&self) -> Option<&str> {
+        self.0.unit.as_deref()
+    }
+    #[getter]
+    fn latex(&self) -> Option<&str> {
+        self.0.latex.as_deref()
+    }
+    #[getter]
+    fn description(&self) -> Option<&str> {
+        self.0.description.as_deref()
+    }
+}
 
 /// A free parameter which floats during an optimization
 ///
@@ -731,6 +755,18 @@ pub struct PyParameter(pub Parameter);
 /// ----------
 /// name : str
 ///     The name of the free parameter
+/// fixed : float, optional
+///     If specified, the parameter will be fixed to this value
+/// initial : float, optional
+///     If specified, the parameter will always be initialized to this value
+/// bounds : tuple of (float or None, float or None)
+///     Specify the lower and upper bounds for the parameter (None corresponds to no bound)
+/// unit : str, optional
+///     Optional unit string which may be used to annotate the parameter
+/// latex : str, optional
+///     Optional LaTeX representation of the parameter
+/// description : str, optional
+///     Optional description of the parameter
 ///
 /// Returns
 /// -------
@@ -739,30 +775,39 @@ pub struct PyParameter(pub Parameter);
 ///
 /// Notes
 /// -----
-/// Two free parameters with the same name are shared in a fit
+/// Two free parameters with the same name are shared in a fit.
 ///
-#[pyfunction(name = "parameter")]
-pub fn py_parameter(name: &str) -> PyParameter {
-    PyParameter(parameter(name))
-}
-
-/// A term which stays constant during an optimization
+/// Attempting to set both the fixed and initial value will result in an overwrite (both will be
+/// set to the "fixed" value).
 ///
-/// Parameters
-/// ----------
-/// name : str
-///     The name of the parameter
-/// value : float
-///     The numerical value of the constant
-///
-/// Returns
-/// -------
-/// laddu.Parameter
-///     An object that can be used as the input for many Amplitude constructors
-///
-#[pyfunction(name = "constant")]
-pub fn py_constant(name: &str, value: f64) -> PyParameter {
-    PyParameter(constant(name, value))
+#[pyfunction(name = "parameter", signature = (name, fixed=None, *, initial=None, bounds=(None, None), unit=None, latex=None, description=None))]
+pub fn py_parameter(
+    name: &str,
+    fixed: Option<f64>,
+    initial: Option<f64>,
+    bounds: (Option<f64>, Option<f64>),
+    unit: Option<&str>,
+    latex: Option<&str>,
+    description: Option<&str>,
+) -> PyParameter {
+    let mut par = Parameter::new(name);
+    if let Some(value) = initial {
+        par = par.with_initial(value);
+    }
+    if let Some(value) = fixed {
+        par = par.with_fixed_value(value);
+    }
+    par = par.with_bounds(bounds.0, bounds.1);
+    if let Some(unit) = unit {
+        par = par.with_unit(unit);
+    }
+    if let Some(latex) = latex {
+        par = par.with_latex(latex);
+    }
+    if let Some(description) = description {
+        par = par.with_description(description);
+    }
+    PyParameter(par)
 }
 
 /// An amplitude used only for internal testing which evaluates `(p0 + i * p1) * event.p4s\[0\].e`.

@@ -244,8 +244,8 @@ mod tests {
         let expr = KopfKMatrixRho::new(
             "rho",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
             ],
             KopfKMatrixRhoChannel::FourPi,
             &res_mass,
@@ -266,8 +266,8 @@ mod tests {
         let expr = KopfKMatrixRho::new(
             "rho",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
             ],
             KopfKMatrixRhoChannel::FourPi,
             &res_mass,

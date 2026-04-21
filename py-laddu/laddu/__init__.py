@@ -7,7 +7,7 @@ from typing import cast as _cast
 
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
-from .amplitudes import One, Zero, constant, expr_product, expr_sum, parameter
+from .amplitudes import One, Parameter, Zero, expr_product, expr_sum, parameter
 from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
 from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .amplitudes.flatte import Flatte
@@ -60,7 +60,7 @@ from .extensions import (
     likelihood_product,
     likelihood_sum,
 )
-from .laddu import Evaluator, Expression, Parameter
+from .laddu import Evaluator, Expression
 from .utils.angular_momentum import allowed_projections, helicity_combinations
 from .utils.variables import (
     Angles,
@@ -182,7 +182,6 @@ __all__ = [
     '__version__',
     'allowed_projections',
     'amplitudes',
-    'constant',
     'data',
     'experimental',
     'expr_product',

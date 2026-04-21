@@ -1,8 +1,7 @@
 use laddu_core::{
-    amplitudes::{
-        parameter, Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude,
-    },
+    amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
     data::{DatasetMetadata, EventData, NamedEventView},
+    parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
     utils::vectors::Vec4,
     Dataset, Expression, LadduResult,
@@ -115,19 +114,19 @@ fn synthetic_weighted_dataset(n_events: usize) -> Arc<Dataset> {
 fn build_scenario_expression(kind: ScenarioKind) -> Expression {
     match kind {
         ScenarioKind::Separable => {
-            let p1 = ParameterOnlyScalar::new("sep_p1", parameter("sep_p1")).unwrap();
-            let p2 = ParameterOnlyScalar::new("sep_p2", parameter("sep_p2")).unwrap();
+            let p1 = ParameterOnlyScalar::new("sep_p1", parameter!("sep_p1")).unwrap();
+            let p2 = ParameterOnlyScalar::new("sep_p2", parameter!("sep_p2")).unwrap();
             let c1 = CacheOnlyScalar::new("sep_c1").unwrap();
             let c2 = CacheOnlyScalar::new("sep_c2").unwrap();
             (&p1 * &c1) + &(&p2 * &c2)
         }
         ScenarioKind::Partial => {
-            let p = ParameterOnlyScalar::new("partial_p", parameter("partial_p")).unwrap();
+            let p = ParameterOnlyScalar::new("partial_p", parameter!("partial_p")).unwrap();
             let c = CacheOnlyScalar::new("partial_c").unwrap();
             let m = TestAmplitude::new(
                 "partial_m",
-                parameter("partial_mr"),
-                parameter("partial_mi"),
+                parameter!("partial_mr"),
+                parameter!("partial_mi"),
             )
             .unwrap();
             (&p * &c) + &m
@@ -135,14 +134,14 @@ fn build_scenario_expression(kind: ScenarioKind) -> Expression {
         ScenarioKind::NonSeparable => {
             let m1 = TestAmplitude::new(
                 "nonsep_m1",
-                parameter("nonsep_m1r"),
-                parameter("nonsep_m1i"),
+                parameter!("nonsep_m1r"),
+                parameter!("nonsep_m1i"),
             )
             .unwrap();
             let m2 = TestAmplitude::new(
                 "nonsep_m2",
-                parameter("nonsep_m2r"),
-                parameter("nonsep_m2i"),
+                parameter!("nonsep_m2r"),
+                parameter!("nonsep_m2i"),
             )
             .unwrap();
             &m1 * &m2

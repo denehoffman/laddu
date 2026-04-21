@@ -144,12 +144,12 @@ The ``z00p`` and ``z22p`` objects can be combined with other amplitudes using ba
    f0_1500 = ld.Scalar("[f_0(1500)]", ld.parameter("Re[f_0(1500)]"))
    f2_1525 = ld.ComplexScalar("[f_2'(1525)]", ld.parameter("Re[f_2'(1525)]"), ld.parameter("Im[f_2'(1525)]"))
 
-Finally, we can register the Breit-Wigners. These have two free parameters, the mass and width of the resonance. For the sake of demonstration, let's fix the mass by passing in a ``constant`` and let the width float with a ``parameter``. These two functions create the same object, so we could just as easily write this with both values fixed or free in the fit:
+Finally, we can register the Breit-Wigners. These have two free parameters, the mass and width of the resonance. For the sake of demonstration, let's fix the mass by passing in a ``parameter`` with a fixed value and let the width float with a ``parameter``. These two functions create the same object, so we could just as easily write this with both values fixed or free in the fit:
 
 .. code:: python
 
-   bw0 = ld.BreitWigner("BW_0", ld.constant(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
-   bw2 = ld.BreitWigner("BW_2", ld.constant(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
+   bw0 = ld.BreitWigner("BW_0", ld.parameter(1.506), ld.parameter("f_0 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
+   bw2 = ld.BreitWigner("BW_2", ld.parameter(1.517), ld.parameter("f_2 width"), 0, ld.Mass(['kshort1']), ld.Mass(['kshort2']), res_mass)
 
 As you can see, these amplitudes also take additional parameters like the masses of each decay product.
 

@@ -303,8 +303,8 @@ mod tests {
         let expr = KopfKMatrixA0::new(
             "a0",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
             ],
             KopfKMatrixA0Channel::KKbar,
             &res_mass,
@@ -327,8 +327,8 @@ mod tests {
         let expr = KopfKMatrixA0::new(
             "a0",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
             ],
             KopfKMatrixA0Channel::KKbar,
             &res_mass,

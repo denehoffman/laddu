@@ -267,14 +267,14 @@
 //! let p2_mass = Mass::new(["kshort2"]);
 //! let bw = MyBreitWigner::new(
 //!     "bw",
-//!     parameter("mass"),
-//!     parameter("width"),
+//!     parameter!("mass"),
+//!     parameter!("width"),
 //!     2,
 //!     &p1_mass,
 //!     &p2_mass,
 //!     &resonance_mass,
 //! ).unwrap();
-//! let mag = Scalar::new("mag", parameter("magnitude")).unwrap();
+//! let mag = Scalar::new("mag", parameter!("magnitude")).unwrap();
 //! let expr = (mag * bw).norm_sqr();
 //!
 //! let nll = NLL::new(&expr, &ds_data, &ds_mc, None).unwrap();
@@ -377,9 +377,10 @@ pub mod traits {
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
     pub use laddu_core::amplitudes::{
-        constant, parameter, Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey,
-        Evaluator, Expression, Parameter,
+        Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
+        Expression, Parameter,
     };
+    pub use laddu_core::parameter;
 }
 
 /// <div class="warning">
@@ -394,13 +395,13 @@ pub mod experimental {
 
 pub use laddu_amplitudes::*;
 pub use laddu_core::amplitudes::{
-    constant, parameter, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
-    Expression, Parameter,
+    AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
 };
 pub use laddu_core::data::{
     BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
     EventData, NamedEventView,
 };
+pub use laddu_core::parameter;
 pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
 pub use laddu_core::utils::reaction::{
     Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,

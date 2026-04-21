@@ -13,7 +13,6 @@ from laddu import (
     LikelihoodScalar,
     Scalar,
     Vec3,
-    constant,
     get_threads,
     likelihood_sum,
     parameter,
@@ -931,7 +930,7 @@ def test_nll_parameter_fix_free_and_rename() -> None:
 
 
 def test_nll_free_from_fixed_parameter() -> None:
-    amp = Scalar('scale', constant('scale', 2.0))
+    amp = Scalar('scale', parameter('scale', 2.0))
     expr = amp.norm_sqr()
     data = _dataset_from_weights([1.0])
     mc = _dataset_from_weights([1.0])

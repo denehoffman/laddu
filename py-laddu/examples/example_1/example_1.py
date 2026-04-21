@@ -510,7 +510,7 @@ def fit_unbinned(
     z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
     bw_f01500 = ld.BreitWigner(
         'f0(1500)',
-        ld.constant('f0_mass', 1.506),
+        ld.parameter('f0_mass', 1.506),
         ld.parameter('f0_width'),
         0,
         ld.Mass(['kshort1']),
@@ -519,7 +519,7 @@ def fit_unbinned(
     )
     bw_f21525 = ld.BreitWigner(
         'f2(1525)',
-        ld.constant('f2_mass', 1.517),
+        ld.parameter('f2_mass', 1.517),
         ld.parameter('f2_width'),
         2,
         ld.Mass(['kshort1']),

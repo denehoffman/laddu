@@ -310,10 +310,10 @@ mod tests {
         let expr = KopfKMatrixF2::new(
             "f2",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
-                [parameter("p4"), parameter("p5")],
-                [parameter("p6"), parameter("p7")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
+                [parameter!("p4"), parameter!("p5")],
+                [parameter!("p6"), parameter!("p7")],
             ],
             KopfKMatrixF2Channel::FourPi,
             &res_mass,
@@ -335,10 +335,10 @@ mod tests {
         let expr = KopfKMatrixF2::new(
             "f2",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
-                [parameter("p4"), parameter("p5")],
-                [parameter("p6"), parameter("p7")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
+                [parameter!("p4"), parameter!("p5")],
+                [parameter!("p6"), parameter!("p7")],
             ],
             KopfKMatrixF2Channel::FourPi,
             &res_mass,
@@ -373,10 +373,10 @@ mod tests {
         let _amp = KopfKMatrixF2::new(
             "f2",
             [
-                [parameter("p0"), parameter("p1")],
-                [parameter("p2"), parameter("p3")],
-                [parameter("p4"), parameter("p5")],
-                [parameter("p6"), parameter("p7")],
+                [parameter!("p0"), parameter!("p1")],
+                [parameter!("p2"), parameter!("p3")],
+                [parameter!("p4"), parameter!("p5")],
+                [parameter!("p6"), parameter!("p7")],
             ],
             KopfKMatrixF2Channel::FourPi,
             &res_mass,

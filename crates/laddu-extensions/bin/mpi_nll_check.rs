@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use laddu_amplitudes::common::ComplexScalar;
-use laddu_core::amplitudes::parameter;
 use laddu_core::data::{Dataset, DatasetMetadata, EventData};
+use laddu_core::parameter;
 use laddu_core::utils::vectors::Vec4;
 use laddu_core::{Expression, LadduResult};
 use laddu_extensions::likelihoods::LikelihoodTerm;
@@ -100,9 +100,9 @@ fn case_configs() -> Vec<CaseConfig> {
         CaseConfig {
             name: "product_norm",
             expression: {
-                let amp_a = ComplexScalar::new("a", parameter("a_re"), parameter("a_im"))
+                let amp_a = ComplexScalar::new("a", parameter!("a_re"), parameter!("a_im"))
                     .expect("ComplexScalar a should build");
-                let amp_b = ComplexScalar::new("b", parameter("b_re"), parameter("b_im"))
+                let amp_b = ComplexScalar::new("b", parameter!("b_re"), parameter!("b_im"))
                     .expect("ComplexScalar b should build");
                 (&amp_a * &amp_b).norm_sqr()
             },
@@ -113,9 +113,9 @@ fn case_configs() -> Vec<CaseConfig> {
         CaseConfig {
             name: "sum_norm",
             expression: {
-                let amp_a = ComplexScalar::new("a", parameter("a_re"), parameter("a_im"))
+                let amp_a = ComplexScalar::new("a", parameter!("a_re"), parameter!("a_im"))
                     .expect("ComplexScalar a should build");
-                let amp_b = ComplexScalar::new("b", parameter("b_re"), parameter("b_im"))
+                let amp_b = ComplexScalar::new("b", parameter!("b_re"), parameter!("b_im"))
                     .expect("ComplexScalar b should build");
                 (&amp_a + &amp_b).norm_sqr()
             },
@@ -126,9 +126,9 @@ fn case_configs() -> Vec<CaseConfig> {
         CaseConfig {
             name: "sum_norm_with_fixed_b",
             expression: {
-                let amp_a = ComplexScalar::new("a", parameter("a_re"), parameter("a_im"))
+                let amp_a = ComplexScalar::new("a", parameter!("a_re"), parameter!("a_im"))
                     .expect("ComplexScalar a should build");
-                let amp_b = ComplexScalar::new("b", parameter("b_re"), parameter("b_im"))
+                let amp_b = ComplexScalar::new("b", parameter!("b_re"), parameter!("b_im"))
                     .expect("ComplexScalar b should build");
                 (&amp_a + &amp_b)
                     .norm_sqr()

@@ -198,9 +198,9 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = Voigt::new(
             "voigt",
-            parameter("mass"),
-            parameter("width"),
-            parameter("sigma"),
+            parameter!("mass"),
+            parameter!("width"),
+            parameter!("sigma"),
             &resonance_mass,
         )
         .unwrap();
@@ -218,9 +218,9 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = Voigt::new(
             "voigt",
-            parameter("mass"),
-            parameter("width"),
-            parameter("sigma"),
+            parameter!("mass"),
+            parameter!("width"),
+            parameter!("sigma"),
             &resonance_mass,
         )
         .unwrap();

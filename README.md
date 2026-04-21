@@ -226,7 +226,7 @@ While we cannot (yet) implement new amplitudes within the Python interface alone
 import laddu as ld
 import matplotlib.pyplot as plt
 import numpy as np
-from laddu import constant, parameter
+from laddu import parameter
 
 def main():
     p4_columns = ['beam', 'proton', 'kshort1', 'kshort2']

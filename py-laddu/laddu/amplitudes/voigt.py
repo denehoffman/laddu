@@ -6,12 +6,12 @@ loaded directly and evaluated.
 Examples
 --------
 >>> from laddu.amplitudes.voigt import Voigt
->>> from laddu import Mass, constant
+>>> from laddu import Mass, parameter
 >>> expr = Voigt(
 ...     'rho_voigt',
-...     mass=constant('rho_mass', 0.775),
-...     width=constant('rho_width', 0.149),
-...     sigma=constant('rho_sigma', 0.010),
+...     mass=parameter('rho_mass', 0.775),
+...     width=parameter('rho_width', 0.149),
+...     sigma=parameter('rho_sigma', 0.010),
 ...     resonance_mass=Mass(["p1", "p2"]),
 ... )
 >>> expr.norm_sqr()

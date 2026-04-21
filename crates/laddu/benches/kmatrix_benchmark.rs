@@ -1,13 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use fastrand_contrib::RngExt;
+use laddu::parameter;
 use laddu::{
     amplitudes::{
-        constant,
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
         },
-        parameter,
         zlm::Zlm,
     },
     data::DatasetReadOptions,
@@ -56,11 +55,14 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let f0p = KopfKMatrixF0::new(
         "f0+",
         [
-            [constant("f0+ c00 re", 0.0), constant("f0+ c00 im", 0.0)],
-            [parameter("f0(980)+ re"), constant("f0(980)+ im_fix", 0.0)],
-            [parameter("f0(1370)+ re"), parameter("f0(1370)+ im")],
-            [parameter("f0(1500)+ re"), parameter("f0(1500)+ im")],
-            [parameter("f0(1710)+ re"), parameter("f0(1710)+ im")],
+            [parameter!("f0+ c00 re", 0.0), parameter!("f0+ c00 im", 0.0)],
+            [
+                parameter!("f0(980)+ re"),
+                parameter!("f0(980)+ im_fix", 0.0),
+            ],
+            [parameter!("f0(1370)+ re"), parameter!("f0(1370)+ im")],
+            [parameter!("f0(1500)+ re"), parameter!("f0(1500)+ im")],
+            [parameter!("f0(1710)+ re"), parameter!("f0(1710)+ im")],
         ],
         KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
@@ -70,8 +72,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let a0p = KopfKMatrixA0::new(
         "a0+",
         [
-            [parameter("a0(980)+ re"), parameter("a0(980)+ im")],
-            [parameter("a0(1450)+ re"), parameter("a0(1450)+ im")],
+            [parameter!("a0(980)+ re"), parameter!("a0(980)+ im")],
+            [parameter!("a0(1450)+ re"), parameter!("a0(1450)+ im")],
         ],
         KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
@@ -81,11 +83,14 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let f0n = KopfKMatrixF0::new(
         "f0-",
         [
-            [constant("f0- c00 re", 0.0), constant("f0- c00 im", 0.0)],
-            [parameter("f0(980)- re"), constant("f0(980)- im_fix", 0.0)],
-            [parameter("f0(1370)- re"), parameter("f0(1370)- im")],
-            [parameter("f0(1500)- re"), parameter("f0(1500)- im")],
-            [parameter("f0(1710)- re"), parameter("f0(1710)- im")],
+            [parameter!("f0- c00 re", 0.0), parameter!("f0- c00 im", 0.0)],
+            [
+                parameter!("f0(980)- re"),
+                parameter!("f0(980)- im_fix", 0.0),
+            ],
+            [parameter!("f0(1370)- re"), parameter!("f0(1370)- im")],
+            [parameter!("f0(1500)- re"), parameter!("f0(1500)- im")],
+            [parameter!("f0(1710)- re"), parameter!("f0(1710)- im")],
         ],
         KopfKMatrixF0Channel::PiPi,
         &resonance_mass,
@@ -95,8 +100,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let a0n = KopfKMatrixA0::new(
         "a0-",
         [
-            [parameter("a0(980)- re"), parameter("a0(980)- im")],
-            [parameter("a0(1450)- re"), parameter("a0(1450)- im")],
+            [parameter!("a0(980)- re"), parameter!("a0(980)- im")],
+            [parameter!("a0(1450)- re"), parameter!("a0(1450)- im")],
         ],
         KopfKMatrixA0Channel::PiEta,
         &resonance_mass,
@@ -106,10 +111,10 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let f2 = KopfKMatrixF2::new(
         "f2",
         [
-            [parameter("f2(1270) re"), parameter("f2(1270) im")],
-            [parameter("f2(1525) re"), parameter("f2(1525) im")],
-            [parameter("f2(1850) re"), parameter("f2(1850) im")],
-            [parameter("f2(1910) re"), parameter("f2(1910) im")],
+            [parameter!("f2(1270) re"), parameter!("f2(1270) im")],
+            [parameter!("f2(1525) re"), parameter!("f2(1525) im")],
+            [parameter!("f2(1850) re"), parameter!("f2(1850) im")],
+            [parameter!("f2(1910) re"), parameter!("f2(1910) im")],
         ],
         KopfKMatrixF2Channel::KKbar,
         &resonance_mass,
@@ -119,8 +124,8 @@ fn kmatrix_nll_benchmark(c: &mut Criterion) {
     let a2 = KopfKMatrixA2::new(
         "a2",
         [
-            [parameter("a2(1320) re"), parameter("a2(1320) im")],
-            [parameter("a2(1700) re"), parameter("a2(1700) im")],
+            [parameter!("a2(1320) re"), parameter!("a2(1320) im")],
+            [parameter!("a2(1700) re"), parameter!("a2(1700) im")],
         ],
         KopfKMatrixA2Channel::PiEtaPrime,
         &resonance_mass,

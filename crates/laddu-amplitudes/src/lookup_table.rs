@@ -1019,7 +1019,7 @@ mod tests {
             "lookup",
             vec![mass("kshort1")],
             vec![LookupAxis::new(vec![0.0, 0.25, 0.75, 1.0]).unwrap()],
-            vec![parameter("p0"), parameter("p1"), parameter("p2")],
+            vec![parameter!("p0"), parameter!("p1"), parameter!("p2")],
             LookupInterpolation::Nearest,
             LookupBoundaryMode::Zero,
         )
@@ -1044,7 +1044,7 @@ mod tests {
             "lookup",
             vec![mass("kshort1")],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
-            vec![parameter("p0"), parameter("p1")],
+            vec![parameter!("p0"), parameter!("p1")],
             LookupInterpolation::Linear,
             LookupBoundaryMode::Zero,
         )
@@ -1069,9 +1069,9 @@ mod tests {
             vec![mass("kshort1")],
             vec![LookupAxis::new(vec![0.0, 0.25, 0.75, 1.0]).unwrap()],
             vec![
-                (parameter("r0"), parameter("theta0")),
-                (parameter("r1"), parameter("theta1")),
-                (parameter("r2"), parameter("theta2")),
+                (parameter!("r0"), parameter!("theta0")),
+                (parameter!("r1"), parameter!("theta1")),
+                (parameter!("r2"), parameter!("theta2")),
             ],
             LookupInterpolation::Nearest,
             LookupBoundaryMode::Zero,
@@ -1100,8 +1100,8 @@ mod tests {
             vec![mass("kshort1")],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
             vec![
-                (parameter("re0"), parameter("im0")),
-                (parameter("re1"), parameter("im1")),
+                (parameter!("re0"), parameter!("im0")),
+                (parameter!("re1"), parameter!("im1")),
             ],
             LookupInterpolation::Linear,
             LookupBoundaryMode::Zero,
@@ -1128,7 +1128,7 @@ mod tests {
             "lookup",
             vec![Box::new(Mass::new(["kshort1", "kshort2"]))],
             vec![LookupAxis::new(vec![0.0, 1.0]).unwrap()],
-            vec![parameter("p0"), parameter("p1")],
+            vec![parameter!("p0"), parameter!("p1")],
             LookupInterpolation::Linear,
             LookupBoundaryMode::Zero,
         )

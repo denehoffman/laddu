@@ -17,7 +17,14 @@ from laddu.amplitudes import (
 )
 from laddu.data import Dataset
 
-class Parameter: ...
+class Parameter:
+    name: str
+    fixed: float | None
+    initial: float | None
+    bounds: tuple[float | None, float | None]
+    unit: str | None
+    latex: str | None
+    description: str | None
 
 class Expression:
     parameters: tuple[str, ...]
@@ -58,8 +65,16 @@ def One() -> Expression: ...
 def Zero() -> Expression: ...
 def expr_sum(amplitudes: Sequence[Expression]) -> Expression: ...
 def expr_product(amplitudes: Sequence[Expression]) -> Expression: ...
-def constant(name: str, value: float) -> Parameter: ...
-def parameter(name: str) -> Parameter: ...
+def parameter(
+    name: str,
+    fixed: float | None = None,
+    *,
+    initial: float | None = None,
+    bounds: tuple[float | None, float | None] = (None, None),
+    unit: str | None = None,
+    latex: str | None = None,
+    description: str | None = None,
+) -> Parameter: ...
 
 class CompiledExpression: ...
 
@@ -122,7 +137,6 @@ __all__ = [
     'Zero',
     'breit_wigner',
     'common',
-    'constant',
     'expr_product',
     'expr_sum',
     'flatte',

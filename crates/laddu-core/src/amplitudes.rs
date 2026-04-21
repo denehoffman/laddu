@@ -213,7 +213,7 @@ use crate::mpi::LadduMPI;
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
 /// An enum containing either a named free parameter or a constant value.
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, Debug)]
 pub struct Parameter {
     /// The name of the parameter.
     pub name: String,
@@ -233,6 +233,22 @@ pub struct Parameter {
     pub description: Option<String>,
 }
 
+/// Helper trait to convert values to bounds-like [`Option<f64>`]
+pub trait IntoBound {
+    /// Convert to a bound
+    fn into_bound(self) -> Option<f64>;
+}
+impl IntoBound for f64 {
+    fn into_bound(self) -> Option<f64> {
+        Some(self)
+    }
+}
+impl IntoBound for Option<f64> {
+    fn into_bound(self) -> Option<f64> {
+        self
+    }
+}
+
 impl Parameter {
     /// Create a free (floating) parameter with the given name.
     pub fn new(name: impl Into<String>) -> Self {
@@ -245,18 +261,31 @@ impl Parameter {
     /// Helper method to set the fixed value of a parameter.
     pub fn with_fixed_value(mut self, value: f64) -> Self {
         self.fixed = Some(value);
+        self.initial = Some(value);
         self
     }
 
     /// Helper method to set the initial value of a parameter.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the parameter is fixed.
     pub fn with_initial(mut self, value: f64) -> Self {
+        assert!(
+            self.is_free(),
+            "cannot manually set `initial` on a fixed parameter"
+        );
         self.initial = Some(value);
         self
     }
 
     /// Helper method to set the bounds of a parameter.
-    pub fn with_bounds(mut self, min: Option<f64>, max: Option<f64>) -> Self {
-        self.bounds = (min, max);
+    pub fn with_bounds<L, U>(mut self, min: L, max: U) -> Self
+    where
+        L: IntoBound,
+        U: IntoBound,
+    {
+        self.bounds = (IntoBound::into_bound(min), IntoBound::into_bound(max));
         self
     }
 
@@ -289,16 +318,6 @@ impl Parameter {
     }
 }
 
-/// Shorthand for generating a named free parameter.
-pub fn parameter(name: &str) -> Parameter {
-    Parameter::new(name)
-}
-
-/// Shorthand for generating a fixed parameter with the given name and value.
-pub fn constant(name: &str, value: f64) -> Parameter {
-    Parameter::new(name).with_fixed_value(value)
-}
-
 /// Convenience macro for creating parameters. Usage:
 /// `parameter!(\"name\")` for a free parameter, or `parameter!(\"name\", 1.0)` for a fixed one.
 #[macro_export]
@@ -306,8 +325,91 @@ macro_rules! parameter {
     ($name:expr) => {
         $crate::amplitudes::Parameter::new($name)
     };
+
     ($name:expr, $value:expr) => {
         $crate::amplitudes::Parameter::new($name).with_fixed_value($value)
+    };
+
+    ($name:expr, $($rest:tt)+) => {{
+        $crate::parameter!(@parse
+            $crate::amplitudes::Parameter::new($name),
+            [fixed = false, initial = false];
+            $($rest)+
+        )
+    }};
+
+    // done
+    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt];) => {
+        $p
+    };
+
+    // fixed after initial -> reject
+    (@parse $p:expr, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    // initial after fixed -> reject
+    (@parse $p:expr, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    // fixed first time
+    (@parse $p:expr, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_fixed_value($value),
+            [fixed = true, initial = false];
+            $($($rest)*)?
+        )
+    };
+
+    (@parse $p:expr, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    // initial first time
+    (@parse $p:expr, [fixed = false, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_initial($value),
+            [fixed = false, initial = true];
+            $($($rest)*)?
+        )
+    };
+
+    (@parse $p:expr, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
+        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
+    };
+
+    // other fields
+    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; bounds : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_bounds($min, $max),
+            [fixed = $fixed_seen, initial = $initial_seen];
+            $($($rest)*)?
+        )
+    };
+
+    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_unit($value),
+            [fixed = $fixed_seen, initial = $initial_seen];
+            $($($rest)*)?
+        )
+    };
+
+    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; latex : $value:expr $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_latex($value),
+            [fixed = $fixed_seen, initial = $initial_seen];
+            $($($rest)*)?
+        )
+    };
+
+    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; description : $value:expr $(, $($rest:tt)*)?) => {
+        $crate::parameter!(@parse
+            $p.with_description($value),
+            [fixed = $fixed_seen, initial = $initial_seen];
+            $($($rest)*)?
+        )
     };
 }
 
@@ -5257,9 +5359,9 @@ mod tests {
         let dataset = deterministic_fixture_dataset();
         match kind {
             DeterministicFixtureKind::Separable => {
-                let p1 = ParameterOnlyScalar::new("p1", parameter("p1"))
+                let p1 = ParameterOnlyScalar::new("p1", parameter!("p1"))
                     .expect("separable p1 should build");
-                let p2 = ParameterOnlyScalar::new("p2", parameter("p2"))
+                let p2 = ParameterOnlyScalar::new("p2", parameter!("p2"))
                     .expect("separable p2 should build");
                 let c1 = CacheOnlyScalar::new("c1").expect("separable c1 should build");
                 let c2 = CacheOnlyScalar::new("c2").expect("separable c2 should build");
@@ -5271,9 +5373,9 @@ mod tests {
             }
             DeterministicFixtureKind::Partial => {
                 let p =
-                    ParameterOnlyScalar::new("p", parameter("p")).expect("partial p should build");
+                    ParameterOnlyScalar::new("p", parameter!("p")).expect("partial p should build");
                 let c = CacheOnlyScalar::new("c").expect("partial c should build");
-                let m = TestAmplitude::new("m", parameter("mr"), parameter("mi"))
+                let m = TestAmplitude::new("m", parameter!("mr"), parameter!("mi"))
                     .expect("partial m should build");
                 DeterministicFixture {
                     expression: (&p * &c) + &m,
@@ -5282,9 +5384,9 @@ mod tests {
                 }
             }
             DeterministicFixtureKind::NonSeparable => {
-                let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i"))
+                let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i"))
                     .expect("non-separable m1 should build");
-                let m2 = TestAmplitude::new("m2", parameter("m2r"), parameter("m2i"))
+                let m2 = TestAmplitude::new("m2", parameter!("m2r"), parameter!("m2i"))
                     .expect("non-separable m2 should build");
                 DeterministicFixture {
                     expression: &m1 * &m2,
@@ -5510,7 +5612,7 @@ mod tests {
 
     #[test]
     fn test_batch_evaluation() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag")).unwrap();
+        let expr = TestAmplitude::new("test", parameter!("real"), parameter!("imag")).unwrap();
         let mut event1 = test_event();
         event1.p4s[0].t = 10.0;
         let mut event2 = test_event();
@@ -5536,8 +5638,8 @@ mod tests {
 
     #[test]
     fn test_load_compiles_expression_ir_once() {
-        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        let expr = (TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            + TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap())
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5545,9 +5647,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_value_matches_lowered_runtime() {
-        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
-            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        let expr = ((TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            + TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap())
+            * TestAmplitude::new("c", parameter!("cr"), parameter!("ci")).unwrap())
         .conj()
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
@@ -5579,7 +5681,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_load_initializes_with_lowered_value_runtime() {
-        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai"))
+        let expr = TestAmplitude::new("a", parameter!("ar"), parameter!("ai"))
             .unwrap()
             .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
@@ -5600,8 +5702,8 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_gradient_matches_lowered_runtime() {
-        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            * TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        let expr = (TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            * TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap())
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5668,9 +5770,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_value_gradient_matches_lowered_runtime() {
-        let expr = ((TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
-            * TestAmplitude::new("c", parameter("cr"), parameter("ci")).unwrap())
+        let expr = ((TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            + TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap())
+            * TestAmplitude::new("c", parameter!("cr"), parameter!("ci")).unwrap())
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5799,8 +5901,8 @@ mod tests {
     }
     #[test]
     fn test_compiled_expression_display_reports_dag_refs() {
-        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
-        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let a = TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap();
         let term = &a * &b;
         let expr = &term + &term;
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
@@ -5820,8 +5922,8 @@ mod tests {
 
     #[test]
     fn test_expression_compiled_expression_display_reports_dag_refs_without_loading() {
-        let a = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
-        let b = TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let a = TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap();
+        let b = TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap();
         let term = &a * &b;
         let expr = &term + &term;
 
@@ -5839,8 +5941,8 @@ mod tests {
 
     #[test]
     fn test_compiled_expression_display_uses_current_active_mask() {
-        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap();
+        let expr = TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            + TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         evaluator.deactivate("b");
@@ -5854,7 +5956,7 @@ mod tests {
 
     #[test]
     fn test_evaluator_expression_reconstructs_expression() {
-        let expr = TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap();
+        let expr = TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -5866,7 +5968,7 @@ mod tests {
 
     #[test]
     fn test_active_mask_override_ignores_current_ir_specialization() {
-        let expr = ComplexScalar::new("amp", parameter("scale"), constant("amp_im", 0.0))
+        let expr = ComplexScalar::new("amp", parameter!("scale"), parameter!("amp_im", 0.0))
             .unwrap()
             .norm_sqr();
         let dataset = Arc::new(test_dataset());
@@ -5889,8 +5991,8 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_dependence_diagnostics_surface() {
-        let expr = (TestAmplitude::new("a", parameter("ar"), parameter("ai")).unwrap()
-            + TestAmplitude::new("b", parameter("br"), parameter("bi")).unwrap())
+        let expr = (TestAmplitude::new("a", parameter!("ar"), parameter!("ai")).unwrap()
+            + TestAmplitude::new("b", parameter!("br"), parameter!("bi")).unwrap())
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5906,7 +6008,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_default_dependence_hint_is_mixed() {
-        let expr = ComplexScalar::new("c", parameter("cr"), parameter("ci")).unwrap();
+        let expr = ComplexScalar::new("c", parameter!("cr"), parameter!("ci")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         assert_eq!(
@@ -5916,7 +6018,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_parameter_only_dependence_hint_propagates() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap();
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         assert_eq!(
@@ -5936,7 +6038,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_real_valued_hint_folds_imag_projection_to_zero() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+        let expr = ParameterOnlyScalar::new("p", parameter!("p"))
             .unwrap()
             .imag();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
@@ -5951,7 +6053,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_real_valued_hint_simplifies_conjugation() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p"))
+        let expr = ParameterOnlyScalar::new("p", parameter!("p"))
             .unwrap()
             .conj();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
@@ -5963,7 +6065,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_dependence_warnings_surface() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             + &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5974,7 +6076,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_normalization_plan_explain_surface() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -5994,7 +6096,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_normalization_execution_sets_surface() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -6005,9 +6107,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_normalization_execution_sets_partial_surface() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         let sets = evaluator.expression_normalization_execution_sets();
@@ -6017,7 +6119,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integrals_at_load() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -6045,7 +6147,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integrals_empty_when_non_separable() {
-        let expr = TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap()
+        let expr = TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -6055,7 +6157,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integrals_recompute_on_activation_change() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -6068,7 +6170,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integrals_recompute_on_dataset_change() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let mut evaluator = expr.load(&dataset).unwrap();
@@ -6086,7 +6188,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integral_gradient_terms_scale_by_cache_integrals() {
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![
             Arc::new(test_event()),
@@ -6112,7 +6214,7 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_precomputed_cached_integral_gradient_terms_empty_when_not_separable() {
-        let expr = TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap()
+        let expr = TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
@@ -6122,9 +6224,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_lowered_cached_factor_programs_match_ir_cached_paths() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
@@ -6187,9 +6289,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_lowered_residual_runtime_matches_zeroed_node_path() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
@@ -6269,9 +6371,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_reuses_lowered_artifacts_when_dataset_key_changes() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(test_dataset());
         let mut evaluator = expr.load(&dataset).unwrap();
         drop(dataset);
@@ -6312,12 +6414,12 @@ mod tests {
 
     #[test]
     fn test_evaluate_weighted_gradient_sum_local_matches_eventwise_baseline() {
-        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
-        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let p1 = ParameterOnlyScalar::new("p1", parameter!("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter!("p2")).unwrap();
         let c1 = CacheOnlyScalar::new("c1").unwrap();
         let c2 = CacheOnlyScalar::new("c2").unwrap();
         let c3 = CacheOnlyScalar::new("c3").unwrap();
-        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i")).unwrap();
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
@@ -6342,12 +6444,12 @@ mod tests {
 
     #[test]
     fn test_evaluate_weighted_value_sum_local_matches_eventwise_baseline() {
-        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
-        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let p1 = ParameterOnlyScalar::new("p1", parameter!("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter!("p2")).unwrap();
         let c1 = CacheOnlyScalar::new("c1").unwrap();
         let c2 = CacheOnlyScalar::new("c2").unwrap();
         let c3 = CacheOnlyScalar::new("c3").unwrap();
-        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i")).unwrap();
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
@@ -6366,12 +6468,12 @@ mod tests {
 
     #[test]
     fn test_weighted_sums_match_hardcoded_reference_values() {
-        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
-        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let p1 = ParameterOnlyScalar::new("p1", parameter!("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter!("p2")).unwrap();
         let c1 = CacheOnlyScalar::new("c1").unwrap();
         let c2 = CacheOnlyScalar::new("c2").unwrap();
         let c3 = CacheOnlyScalar::new("c3").unwrap();
-        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i")).unwrap();
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
 
         let metadata = Arc::new(DatasetMetadata::default());
@@ -6417,7 +6519,7 @@ mod tests {
     #[test]
     fn test_evaluate_weighted_gradient_sum_local_respects_signed_cached_terms() {
         let expr = Expression::one()
-            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            - &(ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
                 * &CacheOnlyScalar::new("k").unwrap());
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
@@ -6446,7 +6548,7 @@ mod tests {
     #[test]
     fn test_evaluate_weighted_value_sum_local_respects_signed_cached_terms() {
         let expr = Expression::one()
-            - &(ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+            - &(ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
                 * &CacheOnlyScalar::new("k").unwrap());
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
@@ -6468,9 +6570,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_diagnostics_follow_activation_changes() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -6491,9 +6593,9 @@ mod tests {
     }
     #[test]
     fn test_expression_ir_specialization_cache_reuses_prior_mask_specializations() {
-        let expr = (ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = (ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap())
-            + &TestAmplitude::new("m", parameter("mr"), parameter("mi")).unwrap();
+            + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
@@ -6579,12 +6681,12 @@ mod tests {
 
     #[test]
     fn test_weighted_sums_match_baseline_after_activation_changes() {
-        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
-        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let p1 = ParameterOnlyScalar::new("p1", parameter!("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter!("p2")).unwrap();
         let c1 = CacheOnlyScalar::new("c1").unwrap();
         let c2 = CacheOnlyScalar::new("c2").unwrap();
         let c3 = CacheOnlyScalar::new("c3").unwrap();
-        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i")).unwrap();
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
@@ -6608,7 +6710,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_local_does_not_depend_on_dataset_rows() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+        let expr = TestAmplitude::new("test", parameter!("real"), parameter!("imag"))
             .unwrap()
             .norm_sqr();
         let mut event1 = test_event();
@@ -6633,7 +6735,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_gradient_local_does_not_depend_on_dataset_rows() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+        let expr = TestAmplitude::new("test", parameter!("real"), parameter!("imag"))
             .unwrap()
             .norm_sqr();
         let mut event1 = test_event();
@@ -6658,7 +6760,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_with_gradient_local_matches_separate_paths() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+        let expr = TestAmplitude::new("test", parameter!("real"), parameter!("imag"))
             .unwrap()
             .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![
@@ -6689,7 +6791,7 @@ mod tests {
 
     #[test]
     fn test_evaluate_with_gradient_batch_local_matches_separate_paths() {
-        let expr = TestAmplitude::new("test", parameter("real"), parameter("imag"))
+        let expr = TestAmplitude::new("test", parameter!("real"), parameter!("imag"))
             .unwrap()
             .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![
@@ -6734,9 +6836,9 @@ mod tests {
         );
         let mut amplitude = TestAmplitude {
             name: "test".to_string(),
-            re: parameter("real"),
+            re: parameter!("real"),
             pid_re: ParameterID::default(),
-            im: parameter("imag"),
+            im: parameter!("imag"),
             pid_im: ParameterID::default(),
             beam_energy: Default::default(),
         };
@@ -6761,8 +6863,8 @@ mod tests {
 
         let expr = ComplexScalar::new(
             "constant",
-            constant("const_re", 2.0),
-            constant("const_im", 3.0),
+            parameter!("const_re", 2.0),
+            parameter!("const_im", 3.0),
         )
         .expect("constant amplitude should construct");
         let events = vec![
@@ -6795,7 +6897,7 @@ mod tests {
         use_mpi(true);
         let world = get_world().expect("MPI world should be initialized");
 
-        let expr = ParameterOnlyScalar::new("p", parameter("p")).unwrap()
+        let expr = ParameterOnlyScalar::new("p", parameter!("p")).unwrap()
             * &CacheOnlyScalar::new("k").unwrap();
         let events = vec![
             Arc::new(EventData {
@@ -6881,12 +6983,12 @@ mod tests {
         use_mpi(true);
         let world = get_world().expect("MPI world should be initialized");
 
-        let p1 = ParameterOnlyScalar::new("p1", parameter("p1")).unwrap();
-        let p2 = ParameterOnlyScalar::new("p2", parameter("p2")).unwrap();
+        let p1 = ParameterOnlyScalar::new("p1", parameter!("p1")).unwrap();
+        let p2 = ParameterOnlyScalar::new("p2", parameter!("p2")).unwrap();
         let c1 = CacheOnlyScalar::new("c1").unwrap();
         let c2 = CacheOnlyScalar::new("c2").unwrap();
         let c3 = CacheOnlyScalar::new("c3").unwrap();
-        let m1 = TestAmplitude::new("m1", parameter("m1r"), parameter("m1i")).unwrap();
+        let m1 = TestAmplitude::new("m1", parameter!("m1r"), parameter!("m1i")).unwrap();
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let events = vec![
             Arc::new(EventData {
@@ -6982,8 +7084,8 @@ mod tests {
     fn test_evaluate_local_succeeds_for_constant_amplitude() {
         let expr = ComplexScalar::new(
             "constant",
-            constant("const_re", 2.0),
-            constant("const_im", 3.0),
+            parameter!("const_re", 2.0),
+            parameter!("const_im", 3.0),
         )
         .unwrap();
         let dataset = Arc::new(Dataset::new_with_metadata(
@@ -7001,8 +7103,8 @@ mod tests {
     fn test_constant_amplitude() {
         let expr = ComplexScalar::new(
             "constant",
-            constant("const_re", 2.0),
-            constant("const_im", 3.0),
+            parameter!("const_re", 2.0),
+            parameter!("const_im", 3.0),
         )
         .unwrap();
         let dataset = Arc::new(Dataset::new_with_metadata(
@@ -7018,8 +7120,8 @@ mod tests {
     fn test_parametric_amplitude() {
         let expr = ComplexScalar::new(
             "parametric",
-            parameter("test_param_re"),
-            parameter("test_param_im"),
+            parameter!("test_param_re"),
+            parameter!("test_param_im"),
         )
         .unwrap();
         let dataset = Arc::new(test_dataset());
@@ -7032,20 +7134,20 @@ mod tests {
     fn test_expression_operations() {
         let expr1 = ComplexScalar::new(
             "const1",
-            constant("const1_re", 2.0),
-            constant("const1_im", 0.0),
+            parameter!("const1_re", 2.0),
+            parameter!("const1_im", 0.0),
         )
         .unwrap();
         let expr2 = ComplexScalar::new(
             "const2",
-            constant("const2_re", 0.0),
-            constant("const2_im", 1.0),
+            parameter!("const2_re", 0.0),
+            parameter!("const2_im", 1.0),
         )
         .unwrap();
         let expr3 = ComplexScalar::new(
             "const3",
-            constant("const3_re", 3.0),
-            constant("const3_im", 4.0),
+            parameter!("const3_re", 3.0),
+            parameter!("const3_im", 4.0),
         )
         .unwrap();
 
@@ -7146,14 +7248,14 @@ mod tests {
     fn test_amplitude_activation() {
         let expr1 = ComplexScalar::new(
             "const1",
-            constant("const1_re_act", 1.0),
-            constant("const1_im_act", 0.0),
+            parameter!("const1_re_act", 1.0),
+            parameter!("const1_im_act", 0.0),
         )
         .unwrap();
         let expr2 = ComplexScalar::new(
             "const2",
-            constant("const2_re_act", 2.0),
-            constant("const2_im_act", 0.0),
+            parameter!("const2_re_act", 2.0),
+            parameter!("const2_im_act", 0.0),
         )
         .unwrap();
 
@@ -7185,14 +7287,14 @@ mod tests {
     fn test_gradient() {
         let expr1 = ComplexScalar::new(
             "parametric_1",
-            parameter("test_param_re_1"),
-            parameter("test_param_im_1"),
+            parameter!("test_param_re_1"),
+            parameter!("test_param_im_1"),
         )
         .unwrap();
         let expr2 = ComplexScalar::new(
             "parametric_2",
-            parameter("test_param_re_2"),
-            parameter("test_param_im_2"),
+            parameter!("test_param_re_2"),
+            parameter!("test_param_im_2"),
         )
         .unwrap();
 
@@ -7330,14 +7432,14 @@ mod tests {
     fn test_expression_function_gradients() {
         let expr1 = ComplexScalar::new(
             "function_parametric_1",
-            parameter("function_test_param_re_1"),
-            parameter("function_test_param_im_1"),
+            parameter!("function_test_param_re_1"),
+            parameter!("function_test_param_im_1"),
         )
         .unwrap();
         let expr2 = ComplexScalar::new(
             "function_parametric_2",
-            parameter("function_test_param_re_2"),
-            parameter("function_test_param_im_2"),
+            parameter!("function_test_param_re_2"),
+            parameter!("function_test_param_im_2"),
         )
         .unwrap();
 
@@ -7387,8 +7489,8 @@ mod tests {
     fn test_zeros_and_ones() {
         let amp = ComplexScalar::new(
             "parametric",
-            parameter("test_param_re"),
-            constant("fixed_two", 2.0),
+            parameter!("test_param_re"),
+            parameter!("fixed_two", 2.0),
         )
         .unwrap();
         let dataset = Arc::new(test_dataset());
@@ -7411,8 +7513,8 @@ mod tests {
     fn test_default_build_uses_lowered_expression_runtime() {
         let expr = ComplexScalar::new(
             "opt_in_gate",
-            constant("opt_in_gate_re", 2.0),
-            constant("opt_in_gate_im", 0.0),
+            parameter!("opt_in_gate_re", 2.0),
+            parameter!("opt_in_gate_im", 0.0),
         )
         .unwrap()
         .norm_sqr();
@@ -7428,11 +7530,145 @@ mod tests {
     }
 
     #[test]
+    fn parameter_name_only_creates_free_parameter() {
+        let p = parameter!("mass");
+
+        assert_eq!(p.name, "mass");
+        assert_eq!(p.fixed, None);
+        assert_eq!(p.initial, None);
+        assert_eq!(p.bounds, (None, None));
+        assert_eq!(p.unit, None);
+        assert_eq!(p.latex, None);
+        assert_eq!(p.description, None);
+        assert!(p.is_free());
+        assert!(!p.is_fixed());
+    }
+
+    #[test]
+    fn parameter_name_and_value_creates_fixed_parameter() {
+        let p = parameter!("width", 0.15);
+
+        assert_eq!(p.name, "width");
+        assert_eq!(p.fixed, Some(0.15));
+        assert_eq!(p.initial, Some(0.15));
+        assert!(p.is_fixed());
+        assert!(!p.is_free());
+    }
+
+    #[test]
+    fn keyword_initial_sets_initial_only() {
+        let p = parameter!("alpha", initial: 1.25);
+
+        assert_eq!(p.name, "alpha");
+        assert_eq!(p.fixed, None);
+        assert_eq!(p.initial, Some(1.25));
+        assert_eq!(p.bounds, (None, None));
+        assert!(p.is_free());
+    }
+
+    #[test]
+    fn keyword_fixed_sets_fixed_and_initial() {
+        let p = parameter!("beta", fixed: 2.5);
+
+        assert_eq!(p.name, "beta");
+        assert_eq!(p.fixed, Some(2.5));
+        assert_eq!(p.initial, Some(2.5));
+        assert!(p.is_fixed());
+    }
+
+    #[test]
+    fn bounds_accept_plain_numbers() {
+        let p = parameter!("x", bounds: (0.0, 10.0));
+
+        assert_eq!(p.bounds, (Some(0.0), Some(10.0)));
+    }
+
+    #[test]
+    fn bounds_accept_none_and_number() {
+        let p = parameter!("x", bounds: (None, 10.0));
+
+        assert_eq!(p.bounds, (None, Some(10.0)));
+    }
+
+    #[test]
+    fn bounds_accept_number_and_none() {
+        let p = parameter!("x", bounds: (-1.0, None));
+
+        assert_eq!(p.bounds, (Some(-1.0), None));
+    }
+
+    #[test]
+    fn bounds_accept_both_none() {
+        let p = parameter!("x", bounds: (None, None));
+
+        assert_eq!(p.bounds, (None, None));
+    }
+
+    #[test]
+    fn bounds_accept_arbitrary_expressions() {
+        let lo = 1.0;
+        let hi = 2.0 * 3.0;
+        let p = parameter!("x", bounds: (lo - 0.5, hi));
+
+        assert_eq!(p.bounds, (Some(0.5), Some(6.0)));
+    }
+
+    #[test]
+    fn multiple_keyword_arguments_work_together() {
+        let p = parameter!(
+            "gamma",
+            initial: 1.0,
+            bounds: (0.0, 5.0),
+            unit: "GeV",
+            latex: r"\gamma",
+            description: "test parameter",
+        );
+
+        assert_eq!(p.name, "gamma");
+        assert_eq!(p.fixed, None);
+        assert_eq!(p.initial, Some(1.0));
+        assert_eq!(p.bounds, (Some(0.0), Some(5.0)));
+        assert_eq!(p.unit.as_deref(), Some("GeV"));
+        assert_eq!(p.latex.as_deref(), Some(r"\gamma"));
+        assert_eq!(p.description.as_deref(), Some("test parameter"));
+    }
+
+    #[test]
+    fn fixed_can_be_combined_with_other_fields() {
+        let p = parameter!(
+            "delta",
+            fixed: 3.0,
+            bounds: (0.0, 10.0),
+            unit: "rad",
+        );
+
+        assert_eq!(p.name, "delta");
+        assert_eq!(p.fixed, Some(3.0));
+        assert_eq!(p.initial, Some(3.0));
+        assert_eq!(p.bounds, (Some(0.0), Some(10.0)));
+        assert_eq!(p.unit.as_deref(), Some("rad"));
+    }
+
+    #[test]
+    fn trailing_comma_is_accepted() {
+        let p = parameter!(
+            "eps",
+            initial: 0.5,
+            bounds: (None, 1.0),
+            unit: "arb",
+        );
+
+        assert_eq!(p.initial, Some(0.5));
+        assert_eq!(p.bounds, (None, Some(1.0)));
+        assert_eq!(p.unit.as_deref(), Some("arb"));
+    }
+
+    #[test]
     fn test_parameter_registration() {
         let expr = ComplexScalar::new(
             "parametric",
-            parameter("test_param_re"),
-            constant("fixed_two", 2.0),
+            parameter!("test_param_re"),
+            parameter!("fixed_two", 2.0),
         )
         .unwrap();
         let parameters = expr.free_parameters();
@@ -7445,14 +7681,14 @@ mod tests {
     fn test_duplicate_amplitude_registration() {
         let amp1 = ComplexScalar::new(
             "same_name",
-            constant("dup_re1", 1.0),
-            constant("dup_im1", 0.0),
+            parameter!("dup_re1", 1.0),
+            parameter!("dup_im1", 0.0),
         )
         .unwrap();
         let amp2 = ComplexScalar::new(
             "same_name",
-            constant("dup_re2", 2.0),
-            constant("dup_im2", 0.0),
+            parameter!("dup_re2", 2.0),
+            parameter!("dup_im2", 0.0),
         )
         .unwrap();
         let _expr = amp1 + amp2;
@@ -7462,14 +7698,14 @@ mod tests {
     fn test_tree_printing() {
         let amp1 = ComplexScalar::new(
             "parametric_1",
-            parameter("test_param_re_1"),
-            parameter("test_param_im_1"),
+            parameter!("test_param_re_1"),
+            parameter!("test_param_im_1"),
         )
         .unwrap();
         let amp2 = ComplexScalar::new(
             "parametric_2",
-            parameter("test_param_re_2"),
-            parameter("test_param_im_2"),
+            parameter!("test_param_re_2"),
+            parameter!("test_param_im_2"),
         )
         .unwrap();
         let expr =

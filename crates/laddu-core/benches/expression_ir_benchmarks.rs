@@ -4,10 +4,9 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 use laddu_core::{
-    amplitudes::{
-        parameter, Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude,
-    },
+    amplitudes::{Amplitude, AmplitudeID, ExpressionDependence, Parameter, TestAmplitude},
     data::{read_parquet, DatasetMetadata, DatasetReadOptions, EventData, NamedEventView},
+    parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
     utils::vectors::Vec4,
     Dataset, Evaluator, Expression, LadduResult,
@@ -176,22 +175,22 @@ fn build_scenario(dataset: &Arc<Dataset>, kind: ScenarioKind) -> ScenarioCase {
 fn build_scenario_expression(kind: ScenarioKind) -> Expression {
     match kind {
         ScenarioKind::Separable => {
-            let p1 = ParameterOnlyScalar::new("sep_p1", parameter("sep_p1"))
+            let p1 = ParameterOnlyScalar::new("sep_p1", parameter!("sep_p1"))
                 .expect("separable p1 should construct");
-            let p2 = ParameterOnlyScalar::new("sep_p2", parameter("sep_p2"))
+            let p2 = ParameterOnlyScalar::new("sep_p2", parameter!("sep_p2"))
                 .expect("separable p2 should construct");
             let c1 = CacheOnlyScalar::new("sep_c1").expect("separable c1 should construct");
             let c2 = CacheOnlyScalar::new("sep_c2").expect("separable c2 should construct");
             (&p1 * &c1) + &(&p2 * &c2)
         }
         ScenarioKind::Partial => {
-            let p = ParameterOnlyScalar::new("partial_p", parameter("partial_p"))
+            let p = ParameterOnlyScalar::new("partial_p", parameter!("partial_p"))
                 .expect("partial p should construct");
             let c = CacheOnlyScalar::new("partial_c").expect("partial c should construct");
             let m = TestAmplitude::new(
                 "partial_m",
-                parameter("partial_mr"),
-                parameter("partial_mi"),
+                parameter!("partial_mr"),
+                parameter!("partial_mi"),
             )
             .expect("partial mixed amplitude should construct");
             (&p * &c) + &m
@@ -199,14 +198,14 @@ fn build_scenario_expression(kind: ScenarioKind) -> Expression {
         ScenarioKind::NonSeparable => {
             let m1 = TestAmplitude::new(
                 "nonsep_m1",
-                parameter("nonsep_m1r"),
-                parameter("nonsep_m1i"),
+                parameter!("nonsep_m1r"),
+                parameter!("nonsep_m1i"),
             )
             .expect("non-separable m1 should construct");
             let m2 = TestAmplitude::new(
                 "nonsep_m2",
-                parameter("nonsep_m2r"),
-                parameter("nonsep_m2i"),
+                parameter!("nonsep_m2r"),
+                parameter!("nonsep_m2i"),
             )
             .expect("non-separable m2 should construct");
             &m1 * &m2
@@ -217,16 +216,16 @@ fn build_scenario_expression(kind: ScenarioKind) -> Expression {
 fn build_large_gradient_case(dataset: &Arc<Dataset>, n_terms: usize) -> LargeGradientCase {
     let mut expression = TestAmplitude::new(
         "large_grad_amp_0",
-        parameter("large_grad_re_0"),
-        parameter("large_grad_im_0"),
+        parameter!("large_grad_re_0"),
+        parameter!("large_grad_im_0"),
     )
     .expect("large gradient term 0 should construct")
     .norm_sqr();
     for index in 1..n_terms {
         let amplitude = TestAmplitude::new(
             &format!("large_grad_amp_{index}"),
-            parameter(&format!("large_grad_re_{index}")),
-            parameter(&format!("large_grad_im_{index}")),
+            parameter!(&format!("large_grad_re_{index}")),
+            parameter!(&format!("large_grad_im_{index}")),
         )
         .expect("large gradient term should construct");
         expression = &expression + &amplitude.norm_sqr();
@@ -266,14 +265,14 @@ fn build_real_unary_case(dataset: &Arc<Dataset>) -> RealUnaryCase {
 fn build_real_unary_expression() -> Expression {
     let amp0 = TestAmplitude::new(
         "real_unary_amp_0",
-        parameter("real_unary_re_0"),
-        parameter("real_unary_im_0"),
+        parameter!("real_unary_re_0"),
+        parameter!("real_unary_im_0"),
     )
     .expect("real unary term 0 should construct");
     let amp1 = TestAmplitude::new(
         "real_unary_amp_1",
-        parameter("real_unary_re_1"),
-        parameter("real_unary_im_1"),
+        parameter!("real_unary_re_1"),
+        parameter!("real_unary_im_1"),
     )
     .expect("real unary term 1 should construct");
     let cache =
@@ -342,7 +341,7 @@ fn sampled_dataset(dataset: &Arc<Dataset>, n_take: usize) -> Arc<Dataset> {
 }
 
 fn build_test_evaluator(dataset: &Arc<Dataset>) -> Evaluator {
-    let expression = TestAmplitude::new("ir_probe", parameter("ir_re"), parameter("ir_im"))
+    let expression = TestAmplitude::new("ir_probe", parameter!("ir_re"), parameter!("ir_im"))
         .expect("test amplitude should construct")
         .norm_sqr();
     expression

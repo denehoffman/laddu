@@ -410,8 +410,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             2,
             &daughter_1_mass,
             &daughter_2_mass,
@@ -434,8 +434,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             2,
             &daughter_1_mass,
             &daughter_2_mass,
@@ -459,8 +459,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new_without_barrier_factors(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             2,
             &daughter_1_mass,
             &daughter_2_mass,
@@ -483,8 +483,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWigner::new_without_barrier_factors(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             2,
             &daughter_1_mass,
             &daughter_2_mass,
@@ -506,8 +506,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWignerNonRelativistic::new(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             &resonance_mass,
         )
         .unwrap();
@@ -525,8 +525,8 @@ mod tests {
         let resonance_mass = Mass::new(["kshort1", "kshort2"]);
         let amp = BreitWignerNonRelativistic::new(
             "bw",
-            parameter("mass"),
-            parameter("width"),
+            parameter!("mass"),
+            parameter!("width"),
             &resonance_mass,
         )
         .unwrap();
