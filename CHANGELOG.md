@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.2](https://github.com/denehoffman/laddu/compare/v0.17.1...v0.17.2) (2026-04-21)
+
+
+### Features
+
+* Add metadata to Parameters and remove ParameterLike wrapper type ([bf38895](https://github.com/denehoffman/laddu/commit/bf3889545a0216f338b02d1b26499abde1a57862))
+* Implement constant conversion for expressions ([52386dd](https://github.com/denehoffman/laddu/commit/52386dd377e620eb94c4a7c810f0a05097e91aa7))
+* Let set_threads and threads take None as an argument equivalent to 0 ([c5ad5aa](https://github.com/denehoffman/laddu/commit/c5ad5aa2c29c8c049b06d98546e39762eee2c2b3))
+
+
+### Bug Fixes
+
+* Make parameter name outputs immutable tuples instead of lists ([e025ff1](https://github.com/denehoffman/laddu/commit/e025ff19afbfc1a8017bf141c2dd50b038e1955b))
+
 ## [0.17.1](https://github.com/denehoffman/laddu/compare/v0.17.0...v0.17.1) (2026-04-20)
 
 
