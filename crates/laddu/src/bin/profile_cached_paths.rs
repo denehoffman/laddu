@@ -316,11 +316,17 @@ fn run_mode(mode: Mode, iters: usize) {
             let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
-                sink += evaluator.evaluate_local(&params)[0].re;
+                sink += evaluator
+                    .evaluate_local(&params)
+                    .expect("local evaluation should succeed")[0]
+                    .re;
             }
             let t0 = Instant::now();
             for _ in 0..iters {
-                sink += evaluator.evaluate_local(&params)[0].re;
+                sink += evaluator
+                    .evaluate_local(&params)
+                    .expect("local evaluation should succeed")[0]
+                    .re;
             }
             eprintln!(
                 "mode=evaluate iters={iters} sink={sink} elapsed={:?}",
@@ -335,11 +341,17 @@ fn run_mode(mode: Mode, iters: usize) {
             let params = vec![100.0, 0.112, 50.0, 50.0, 0.086];
             let mut sink = 0.0;
             for _ in 0..WARMUP_ITERS {
-                sink += evaluator.evaluate_gradient_local(&params)[0][0].re;
+                sink += evaluator
+                    .evaluate_gradient_local(&params)
+                    .expect("local gradient evaluation should succeed")[0][0]
+                    .re;
             }
             let t0 = Instant::now();
             for _ in 0..iters {
-                sink += evaluator.evaluate_gradient_local(&params)[0][0].re;
+                sink += evaluator
+                    .evaluate_gradient_local(&params)
+                    .expect("local gradient evaluation should succeed")[0][0]
+                    .re;
             }
             eprintln!(
                 "mode=evaluate_gradient iters={iters} sink={sink} elapsed={:?}",

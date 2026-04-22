@@ -21,7 +21,7 @@ pub use ganesh_ext::LikelihoodTermObserver;
 /// Extended maximum likelihood cost functions with support for additive terms
 pub mod likelihoods;
 
-pub use likelihoods::{LikelihoodEvaluator, LikelihoodExpression, LikelihoodScalar, NLL};
+pub use likelihoods::{LikelihoodExpression, LikelihoodScalar, NLL};
 
 use fastrand::Rng;
 use rapidhash::{HashSetExt, RapidHashSet};

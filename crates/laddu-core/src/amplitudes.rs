@@ -12,7 +12,6 @@ use std::{
 
 use auto_ops::*;
 use dyn_clone::DynClone;
-use indexmap::IndexMap;
 use nalgebra::DVector;
 use num::complex::Complex64;
 
@@ -276,6 +275,7 @@ impl Parameter {
         })))
     }
 
+    /// Create a fixed parameter with the given name and value.
     pub fn new_fixed(name: impl Into<String>, value: f64) -> Self {
         Self(Arc::new(Mutex::new(ParameterMetadata {
             name: name.into(),
@@ -284,40 +284,43 @@ impl Parameter {
         })))
     }
 
+    /// Return the current parameter name.
     pub fn name(&self) -> String {
         self.0.lock().name.clone()
     }
 
+    /// Return the fixed value when the parameter is fixed.
     pub fn fixed(&self) -> Option<f64> {
         self.0.lock().fixed
     }
 
+    /// Return the current initial value, if one is set.
     pub fn initial(&self) -> Option<f64> {
         self.0.lock().initial
     }
 
+    /// Return the current lower and upper bounds.
     pub fn bounds(&self) -> (Option<f64>, Option<f64>) {
         self.0.lock().bounds
     }
 
+    /// Return the optional unit label.
     pub fn unit(&self) -> Option<String> {
         self.0.lock().unit.clone()
     }
 
+    /// Return the optional LaTeX label.
     pub fn latex(&self) -> Option<String> {
         self.0.lock().latex.clone()
     }
 
+    /// Return the optional human-readable description.
     pub fn description(&self) -> Option<String> {
         self.0.lock().description.clone()
     }
 
-    pub fn rename(&self, name: impl Into<String>) {
-        self.0.lock().name = name.into();
-    }
-
     /// Helper method to set the name of a parameter.
-    pub fn set_name(&self, name: impl Into<String>) {
+    fn set_name(&self, name: impl Into<String>) {
         self.0.lock().name = name.into();
     }
 
@@ -444,10 +447,16 @@ macro_rules! parameter {
     }};
 }
 
-/// An ordered set of [`Parameter`]s
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+/// An ordered set of [`Parameter`]s.
+#[derive(Default, Debug, Clone)]
 pub struct ParameterMap {
-    parameters: IndexMap<String, Parameter>,
+    parameters: Vec<Parameter>,
+    name_to_index: HashMap<String, usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ParameterMapSerde {
+    parameters: Vec<Parameter>,
 }
 
 impl Index<usize> for ParameterMap {
@@ -462,14 +471,15 @@ impl Index<&str> for ParameterMap {
     type Output = Parameter;
 
     fn index(&self, key: &str) -> &Self::Output {
-        &self.parameters[key]
+        self.get(key)
+            .unwrap_or_else(|| panic!("parameter '{key}' not found"))
     }
 }
 
 impl IntoIterator for ParameterMap {
-    type Item = (String, Parameter);
+    type Item = Parameter;
 
-    type IntoIter = indexmap::map::IntoIter<String, Parameter>;
+    type IntoIter = std::vec::IntoIter<Parameter>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.parameters.into_iter()
@@ -477,16 +487,51 @@ impl IntoIterator for ParameterMap {
 }
 
 impl<'a> IntoIterator for &'a ParameterMap {
-    type Item = (&'a String, &'a Parameter);
+    type Item = &'a Parameter;
 
-    type IntoIter = indexmap::map::Iter<'a, String, Parameter>;
+    type IntoIter = std::slice::Iter<'a, Parameter>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.parameters.iter()
     }
 }
 
+impl Serialize for ParameterMap {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        ParameterMapSerde {
+            parameters: self.parameters.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParameterMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let serde = ParameterMapSerde::deserialize(deserializer)?;
+        Ok(Self::from_parameters(serde.parameters))
+    }
+}
+
 impl ParameterMap {
+    fn from_parameters(parameters: Vec<Parameter>) -> Self {
+        let name_to_index = parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| (parameter.name(), index))
+            .collect();
+        Self {
+            parameters,
+            name_to_index,
+        }
+    }
+
+    /// Register a parameter into the ordered map and return its assembled [`ParameterID`].
     pub fn register_parameter(&mut self, p: &Parameter) -> LadduResult<ParameterID> {
         let name = p.name();
         if name.is_empty() {
@@ -496,7 +541,7 @@ impl ParameterMap {
             });
         }
 
-        if let Some((index, _, existing)) = self.get_full(&name) {
+        if let Some((index, existing)) = self.get_indexed(&name) {
             match (existing.fixed(), p.fixed()) {
                 (Some(a), Some(b)) if (a - b).abs() > f64::EPSILON => {
                     return Err(LadduError::ParameterConflict {
@@ -516,27 +561,19 @@ impl ParameterMap {
                         reason: "attempted to use a free parameter name as fixed".to_string(),
                     });
                 }
-                (Some(_), Some(_)) => return Ok(ParameterID::Constant(index)),
-                (None, None) => return Ok(ParameterID::Parameter(index)),
+                (Some(_), Some(_)) | (None, None) => return Ok(self.parameter_id(index)),
             }
         }
 
-        let index = self.len();
+        let index = self.parameters.len();
         self.insert(p.clone());
-        let id = if p.is_fixed() {
-            ParameterID::Constant(index)
-        } else {
-            ParameterID::Parameter(index)
-        };
-        Ok(id)
+        Ok(self.parameter_id(index))
     }
+    /// Return the assembled indices of all free parameters.
     pub fn free_parameter_indices(&self) -> Vec<usize> {
-        self.parameters
-            .values()
-            .enumerate()
-            .filter_map(|(i, p)| if p.is_free() { Some(i) } else { None })
-            .collect()
+        (0..self.free().len()).collect()
     }
+    /// Rename a single parameter in place.
     pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
         if old == new {
             return Ok(());
@@ -547,39 +584,58 @@ impl ParameterMap {
                 reason: "rename target already exists".to_string(),
             });
         }
-        if let Some((index, _, parameter)) = self.parameters.shift_remove_full(old) {
+        if let Some(index) = self.index(old) {
+            let parameter = self.parameters[index].clone();
             parameter.set_name(new);
-            self.parameters
-                .insert_before(index, new.to_string(), parameter);
+            self.name_to_index.remove(old);
+            self.name_to_index.insert(new.to_string(), index);
         } else {
             self.assert_parameter_exists(old)?;
         }
         Ok(())
     }
+    /// Rename multiple parameters in place.
     pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
         for (old, new) in mapping {
             self.rename_parameter(old, new)?;
         }
         Ok(())
     }
+    /// Fix a parameter to the supplied value.
     pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
         self.assert_parameter_exists(name)?;
-        self.get(name).map(|p| p.set_fixed_value(Some(value)));
+        if let Some(parameter) = self.get(name) {
+            parameter.set_fixed_value(Some(value));
+        }
         Ok(())
     }
+    /// Mark a parameter as free.
     pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
         self.assert_parameter_exists(name)?;
-        self.get(name).map(|p| p.set_fixed_value(None));
+        if let Some(parameter) = self.get(name) {
+            parameter.set_fixed_value(None);
+        }
         Ok(())
     }
+    /// Return whether a parameter with the given name exists.
     pub fn contains_key(&self, name: &str) -> bool {
-        self.parameters.contains_key(name)
+        self.name_to_index.contains_key(name)
     }
+    /// Return the storage index for a named parameter.
     pub fn index(&self, name: &str) -> Option<usize> {
-        self.parameters.get_index_of(name)
+        self.name_to_index.get(name).copied()
     }
+    /// Insert or replace a parameter by name while preserving insertion order.
     pub fn insert(&mut self, parameter: Parameter) -> Option<Parameter> {
-        self.parameters.insert(parameter.name(), parameter)
+        let name = parameter.name();
+        if let Some(index) = self.index(&name) {
+            Some(std::mem::replace(&mut self.parameters[index], parameter))
+        } else {
+            let index = self.parameters.len();
+            self.parameters.push(parameter);
+            self.name_to_index.insert(name, index);
+            None
+        }
     }
     /// The number of parameters in the set
     pub fn len(&self) -> usize {
@@ -590,31 +646,31 @@ impl ParameterMap {
         self.parameters.is_empty()
     }
     /// Iterate over all parameters in the set
-    pub fn iter(&self) -> indexmap::map::Iter<'_, String, Parameter> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Parameter> {
         self.parameters.iter()
     }
     /// Get a parameter by name
     pub fn get(&self, key: &str) -> Option<&Parameter> {
-        self.parameters.get(key)
+        self.index(key).map(|index| &self.parameters[index])
     }
-    pub fn get_full(&self, key: &str) -> Option<(usize, &String, &Parameter)> {
-        self.parameters.get_full(key)
+    /// Get both the storage index and parameter for a given name.
+    pub fn get_indexed(&self, key: &str) -> Option<(usize, &Parameter)> {
+        self.index(key)
+            .map(|index| (index, &self.parameters[index]))
     }
     /// Get all parameter names in order
     pub fn names(&self) -> Vec<String> {
-        self.parameters.keys().cloned().collect()
+        self.parameters.iter().map(Parameter::name).collect()
     }
     /// Filter the parameter set by a predicate
     pub fn filter(&self, predicate: impl Fn(&Parameter) -> bool) -> Self {
-        let filtered_parameters: IndexMap<_, _> = self
-            .parameters
-            .clone()
-            .into_iter()
-            .filter(|(_, parameter)| predicate(parameter))
-            .collect();
-        Self {
-            parameters: filtered_parameters,
-        }
+        Self::from_parameters(
+            self.parameters
+                .iter()
+                .filter(|parameter| predicate(parameter))
+                .cloned()
+                .collect(),
+        )
     }
     /// Get a set containing only free parameters
     pub fn free(&self) -> Self {
@@ -633,36 +689,42 @@ impl ParameterMap {
         self.filter(|p| p.initial().is_none())
     }
 
+    /// Assemble free inputs into a full [`Parameters`] object.
+    ///
+    /// The resulting values are ordered with all free parameters first, followed by fixed ones.
     pub fn assemble(&self, free_values: &[f64]) -> LadduResult<Parameters> {
-        let mut full = Vec::with_capacity(self.len());
+        let expected_free = self.free().len();
+        let n_fixed = self.fixed().len();
+        let mut values = vec![0.0; expected_free + n_fixed];
+        let mut storage_to_assembled = vec![0; self.len()];
         let mut free_iter = free_values.iter();
-        for (_, parameter) in self {
+        let mut free_index = 0;
+        let mut fixed_index = expected_free;
+        for (storage_index, parameter) in self.parameters.iter().enumerate() {
             if let Some(value) = parameter.fixed() {
-                full.push(value)
+                values[fixed_index] = value;
+                storage_to_assembled[storage_index] = fixed_index;
+                fixed_index += 1;
             } else if let Some(value) = free_iter.next() {
-                full.push(*value)
+                values[free_index] = *value;
+                storage_to_assembled[storage_index] = free_index;
+                free_index += 1;
             } else {
-                return Err(LadduError::ParameterConflict {
-                    name: "<parameters>".to_string(),
-                    reason: format!(
-                        "expected {} free values, received {}",
-                        self.free().len(),
-                        free_values.len()
-                    ),
+                return Err(LadduError::LengthMismatch {
+                    context: "parameter values".to_string(),
+                    expected: expected_free,
+                    actual: free_values.len(),
                 });
             }
         }
         if free_iter.next().is_some() {
-            return Err(LadduError::ParameterConflict {
-                name: "<parameters>".to_string(),
-                reason: format!(
-                    "expected {} free values, received {}",
-                    self.free().len(),
-                    free_values.len()
-                ),
+            return Err(LadduError::LengthMismatch {
+                context: "parameter values".to_string(),
+                expected: expected_free,
+                actual: free_values.len(),
             });
         }
-        Ok(Parameters::new(full, free_values.len()))
+        Ok(Parameters::new(values, expected_free, storage_to_assembled))
     }
 
     /// # Notes
@@ -670,12 +732,18 @@ impl ParameterMap {
     /// entries from `other`.
     pub fn merge(&self, other: &Self) -> (Self, Vec<usize>, Vec<usize>) {
         let mut merged = self.clone();
-        let left_map: Vec<usize> = (0..self.len()).collect();
         let mut right_map = Vec::with_capacity(other.len());
-        for (_, parameter) in other {
+        for parameter in other {
             let idx = merged.ensure_parameter(parameter.clone());
             right_map.push(idx);
         }
+        let left_map: Vec<usize> = (0..self.len())
+            .map(|index| merged.assembled_index(index))
+            .collect();
+        let right_map = right_map
+            .into_iter()
+            .map(|index| merged.assembled_index(index))
+            .collect();
         (merged, left_map, right_map)
     }
 
@@ -685,10 +753,14 @@ impl ParameterMap {
     pub fn extend_from(&self, other: &Self) -> (Self, Vec<usize>) {
         let mut merged = self.clone();
         let mut indices = Vec::with_capacity(other.len());
-        for (_, parameter) in other {
+        for parameter in other {
             let idx = merged.ensure_parameter(parameter.clone());
             indices.push(idx);
         }
+        let indices = indices
+            .into_iter()
+            .map(|index| merged.assembled_index(index))
+            .collect();
         (merged, indices)
     }
 
@@ -700,6 +772,31 @@ impl ParameterMap {
         let idx = self.len();
         self.insert(parameter);
         idx
+    }
+
+    fn assembled_index(&self, storage_index: usize) -> usize {
+        let n_free = self
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.is_free())
+            .count();
+        let preceding_in_group = self.parameters[..storage_index]
+            .iter()
+            .filter(|parameter| self.parameters[storage_index].is_free() == parameter.is_free())
+            .count();
+        if self.parameters[storage_index].is_free() {
+            preceding_in_group
+        } else {
+            n_free + preceding_in_group
+        }
+    }
+
+    fn parameter_id(&self, storage_index: usize) -> ParameterID {
+        if self.parameters[storage_index].is_fixed() {
+            ParameterID::Constant(storage_index)
+        } else {
+            ParameterID::Parameter(storage_index)
+        }
     }
 
     fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
@@ -836,7 +933,6 @@ pub trait Amplitude: DynClone + Send + Sync {
         gradient: &mut DVector<Complex64>,
     ) {
         let x = parameters.values().to_owned();
-        let n_free = parameters.len();
         let h: DVector<f64> = x
             .iter()
             .map(|&xi| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
@@ -847,8 +943,8 @@ pub trait Amplitude: DynClone + Send + Sync {
             let mut x_minus = x.clone();
             x_plus[*i] += h[*i];
             x_minus[*i] -= h[*i];
-            let f_plus = self.compute(&Parameters::new(x_plus, n_free), cache);
-            let f_minus = self.compute(&Parameters::new(x_minus, n_free), cache);
+            let f_plus = self.compute(&parameters.with_values(x_plus), cache);
+            let f_minus = self.compute(&parameters.with_values(x_minus), cache);
             gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
         }
     }
@@ -2000,10 +2096,12 @@ impl Expression {
         CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
     }
 
+    /// Fix a parameter used by this expression's evaluator resources.
     pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
         self.registry.resources.fix_parameter(name, value)
     }
 
+    /// Mark a parameter used by this expression's evaluator resources as free.
     pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
         self.registry.resources.free_parameter(name)
     }
@@ -4174,13 +4272,6 @@ impl Evaluator {
         self.resources.read().n_parameters()
     }
 
-    fn as_expression(&self) -> Expression {
-        Expression {
-            registry: self.registry.clone(),
-            tree: self.expression.clone(),
-        }
-    }
-
     pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
         self.resources.read().fix_parameter(name, value)
     }
@@ -4458,7 +4549,10 @@ impl Evaluator {
         execution_context: &ExecutionContext,
     ) -> Vec<Complex64> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(parameters)
+            .expect("parameter slice must match evaluator resources");
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
@@ -4783,7 +4877,10 @@ impl Evaluator {
         execution_context: &ExecutionContext,
     ) -> Vec<DVector<Complex64>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(parameters)
+            .expect("parameter slice must match evaluator resources");
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
@@ -5362,15 +5459,15 @@ impl Amplitude for TestAmplitude {
 
     fn compute_gradient(
         &self,
-        _parameters: &Parameters,
+        parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
         let beam_energy = cache.get_scalar(self.beam_energy);
-        if let ParameterID::Parameter(ind) = self.pid_re {
+        if let Some(ind) = parameters.free_index(self.pid_re) {
             gradient[ind] = Complex64::ONE * beam_energy;
         }
-        if let ParameterID::Parameter(ind) = self.pid_im {
+        if let Some(ind) = parameters.free_index(self.pid_im) {
             gradient[ind] = Complex64::I * beam_energy;
         }
     }
@@ -5425,14 +5522,14 @@ mod tests {
 
         fn compute_gradient(
             &self,
-            _parameters: &Parameters,
+            parameters: &Parameters,
             _cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {
-            if let ParameterID::Parameter(ind) = self.pid_re {
+            if let Some(ind) = parameters.free_index(self.pid_re) {
                 gradient[ind] = Complex64::ONE;
             }
-            if let ParameterID::Parameter(ind) = self.pid_im {
+            if let Some(ind) = parameters.free_index(self.pid_im) {
                 gradient[ind] = Complex64::I;
             }
         }

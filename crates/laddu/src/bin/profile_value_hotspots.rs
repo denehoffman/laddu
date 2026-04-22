@@ -474,13 +474,19 @@ fn run_breit_wigner_mode(args: &Args, ctx: &BreitWignerContext) {
     match args.mode {
         Mode::BreitWignerEvaluateLocal => {
             for _ in 0..warmup {
-                let values = ctx.evaluator.evaluate(black_box(&ctx.params));
+                let values = ctx
+                    .evaluator
+                    .evaluate(black_box(&ctx.params))
+                    .expect("Breit-Wigner evaluation should succeed");
                 black_box(values.iter().map(|value| value.re).sum::<f64>());
             }
             let mut sink = 0.0;
             let t0 = Instant::now();
             for _ in 0..iters {
-                let values = ctx.evaluator.evaluate(black_box(&ctx.params));
+                let values = ctx
+                    .evaluator
+                    .evaluate(black_box(&ctx.params))
+                    .expect("Breit-Wigner evaluation should succeed");
                 sink += black_box(values.iter().map(|value| value.re).sum::<f64>());
             }
             eprintln!(
@@ -585,8 +591,12 @@ fn run_kmatrix_mode(args: &Args, nll: &NLL, params: &[f64]) {
         Mode::KmatrixValue => nll
             .evaluate(black_box(params))
             .expect("k-matrix value should succeed"),
-        Mode::KmatrixDataTerm => nll.profile_data_term_local_value(black_box(params)),
-        Mode::KmatrixMcTerm => nll.profile_mc_term_local_value(black_box(params)),
+        Mode::KmatrixDataTerm => nll
+            .profile_data_term_local_value(black_box(params))
+            .expect("k-matrix data-term profiling should succeed"),
+        Mode::KmatrixMcTerm => nll
+            .profile_mc_term_local_value(black_box(params))
+            .expect("k-matrix MC-term profiling should succeed"),
         Mode::BreitWignerEvaluateLocal
         | Mode::BreitWignerNllValue
         | Mode::BreitWignerProjectionTotal

@@ -133,13 +133,13 @@ impl Amplitude for Voigt {
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
-        if let ParameterID::Parameter(index) = self.pid_mass {
+        if let Some(index) = parameters.free_index(self.pid_mass) {
             self.central_difference_with_indices(&[index], parameters, cache, gradient);
         }
-        if let ParameterID::Parameter(index) = self.pid_width {
+        if let Some(index) = parameters.free_index(self.pid_width) {
             self.central_difference_with_indices(&[index], parameters, cache, gradient);
         }
-        if let ParameterID::Parameter(index) = self.pid_sigma {
+        if let Some(index) = parameters.free_index(self.pid_sigma) {
             self.central_difference_with_indices(&[index], parameters, cache, gradient);
         }
     }

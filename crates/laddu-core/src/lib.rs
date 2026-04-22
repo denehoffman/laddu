@@ -572,6 +572,7 @@ pub use crate::utils::variables::{
 pub use crate::utils::vectors::{Vec3, Vec4};
 pub use amplitudes::{
     AmplitudeID, CompiledExpression, CompiledExpressionNode, Evaluator, Expression, Parameter,
+    ParameterMap,
 };
 
 /// The mathematical constant $`\pi`$.

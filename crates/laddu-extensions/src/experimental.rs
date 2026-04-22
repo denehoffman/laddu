@@ -1,6 +1,5 @@
 use laddu_core::{
-    parameter_manager::ParameterManager, traits::Variable, utils::histogram, LadduError,
-    LadduResult,
+    traits::Variable, utils::histogram, LadduError, LadduResult, Parameter, ParameterMap,
 };
 use nalgebra::DVector;
 
@@ -118,7 +117,7 @@ impl BinnedGuideTerm {
                 });
             }
         }
-        Ok(Self {
+        Self {
             nll,
             amplitude_sets,
             values,
@@ -127,7 +126,7 @@ impl BinnedGuideTerm {
             count_sets,
             error_sets,
         }
-        .into_expression())
+        .into_expression()
     }
 }
 
@@ -155,14 +154,6 @@ impl LikelihoodTerm for BinnedGuideTerm {
             result += chisqr;
         }
         Ok(result)
-    }
-
-    fn parameters(&self) -> Vec<String> {
-        self.nll.parameters()
-    }
-
-    fn parameter_manager(&self) -> &ParameterManager {
-        self.nll.parameter_manager()
     }
 
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
@@ -203,6 +194,29 @@ impl LikelihoodTerm for BinnedGuideTerm {
             }
         }
         Ok(gradient)
+    }
+
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.nll.fix_parameter(name, value)
+    }
+
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.nll.free_parameter(name)
+    }
+
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.nll.rename_parameter(old, new)
+    }
+
+    fn rename_parameters(
+        &self,
+        mapping: &std::collections::HashMap<String, String>,
+    ) -> LadduResult<()> {
+        self.nll.rename_parameters(mapping)
+    }
+
+    fn parameter_map(&self) -> ParameterMap {
+        self.nll.parameter_map()
     }
 }
 
@@ -282,10 +296,9 @@ pub fn py_binned_guide_term(
 /// [^1]: [Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties. In Journal of the American Statistical Association (Vol. 101, Issue 476, pp. 1418–1429). Informa UK Limited.](https://doi.org/10.1198/016214506000000735)
 #[derive(Clone)]
 pub struct Regularizer<const P: usize> {
-    parameters: Vec<String>,
+    parameter_map: ParameterMap,
     lambda: f64,
     weights: Vec<f64>,
-    parameter_manager: ParameterManager,
 }
 
 impl<const P: usize> Regularizer<P> {
@@ -310,12 +323,19 @@ impl<const P: usize> Regularizer<P> {
                 actual: weights.len(),
             });
         }
-        let parameter_manager = ParameterManager::new_from_names(&parameters);
+        let mut parameter_map = ParameterMap::default();
+        for parameter in &parameters {
+            if parameter_map.insert(Parameter::new(parameter)).is_some() {
+                return Err(LadduError::ParameterConflict {
+                    name: parameter.clone(),
+                    reason: "duplicate regularizer parameter name".to_string(),
+                });
+            }
+        }
         Ok(Self {
-            parameters: parameters.clone(),
+            parameter_map,
             lambda,
             weights,
-            parameter_manager,
         }
         .into())
     }
@@ -334,7 +354,7 @@ impl Regularizer<1> {
         U: AsRef<str>,
         F: AsRef<[f64]>,
     {
-        Self::construct(parameters, lambda, weights).map(|term| term.into_expression())
+        Self::construct(parameters, lambda, weights)?.into_expression()
     }
 }
 
@@ -351,7 +371,7 @@ impl Regularizer<2> {
         U: AsRef<str>,
         F: AsRef<[f64]>,
     {
-        Self::construct(parameters, lambda, weights).map(|term| term.into_expression())
+        Self::construct(parameters, lambda, weights)?.into_expression()
     }
 }
 
@@ -371,12 +391,8 @@ impl LikelihoodTerm for Regularizer<1> {
         .scale(self.lambda))
     }
 
-    fn parameters(&self) -> Vec<String> {
-        self.parameters.clone()
-    }
-
-    fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
+    fn parameter_map(&self) -> ParameterMap {
+        self.parameter_map.clone()
     }
 }
 
@@ -395,12 +411,8 @@ impl LikelihoodTerm for Regularizer<2> {
         Ok(DVector::from_vec(parameters.to_vec()).scale(self.lambda / denom))
     }
 
-    fn parameters(&self) -> Vec<String> {
-        self.parameters.clone()
-    }
-
-    fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
+    fn parameter_map(&self) -> ParameterMap {
+        self.parameter_map.clone()
     }
 }
 
@@ -480,10 +492,9 @@ mod tests {
     #[test]
     fn l1_regularizer_respects_weights() {
         let expr = Regularizer::<1>::new(["alpha", "beta"], 2.0, Some([1.0, 0.5])).unwrap();
-        let evaluator = expr.load();
         let values = vec![1.5, -2.0];
-        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 7.0);
-        let grad = evaluator.evaluate_gradient(&values).unwrap();
+        assert_relative_eq!(expr.evaluate(&values).unwrap(), 7.0);
+        let grad = expr.evaluate_gradient(&values).unwrap();
         assert_relative_eq!(grad[0], 2.0);
         assert_relative_eq!(grad[1], -1.0);
     }
@@ -491,10 +502,9 @@ mod tests {
     #[test]
     fn l2_regularizer_gradient_scales_parameters() {
         let expr = Regularizer::<2>::new(["x", "y"], 3.0, Some([1.0, 2.0])).unwrap();
-        let evaluator = expr.load();
         let values = vec![3.0_f64, 4.0_f64];
-        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 15.0);
-        let grad = evaluator.evaluate_gradient(&values).unwrap();
+        assert_relative_eq!(expr.evaluate(&values).unwrap(), 15.0);
+        let grad = expr.evaluate_gradient(&values).unwrap();
         let denom = (1.0 * values[0].powi(2) + 2.0 * values[1].powi(2)).sqrt();
         assert_relative_eq!(grad[0], 3.0 * values[0] / denom);
         assert_relative_eq!(grad[1], 3.0 * values[1] / denom);
@@ -509,10 +519,9 @@ mod tests {
     #[test]
     fn regularizer_defaults_to_unit_weights() {
         let expr = Regularizer::<1>::new(["alpha", "beta"], 1.5, None::<Vec<f64>>).unwrap();
-        let evaluator = expr.load();
         let values = vec![1.0, -2.0];
-        assert_relative_eq!(evaluator.evaluate(&values).unwrap(), 4.5);
-        let grad = evaluator.evaluate_gradient(&values).unwrap();
+        assert_relative_eq!(expr.evaluate(&values).unwrap(), 4.5);
+        let grad = expr.evaluate_gradient(&values).unwrap();
         assert_relative_eq!(grad[0], 1.5);
         assert_relative_eq!(grad[1], -1.5);
     }
