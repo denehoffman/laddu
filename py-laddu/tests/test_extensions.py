@@ -954,10 +954,14 @@ def test_evaluator_parameters_include_fixed_entries() -> None:
     assert expr.free_parameters == ('beta',)
     assert expr.fixed_parameters == ('alpha',)
     assert expr.evaluate([2.0]) == pytest.approx(3.5)
-    # NOTE: Passing the wrong number of parameters currently panics within Rust,
-    # so we skip calling expr.evaluate([10.0, 2.0]) here until the API
-    # surfaces a safe error.
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 1, received 2'
+    ):
+        expr.evaluate([10.0, 2.0])
     grad_free = expr.evaluate_gradient([2.0]).tolist()
     assert grad_free == pytest.approx([1.0])
-    # NOTE: expr.evaluate_gradient([10.0, 2.0]) would also panic for the
-    # same reason as above.
+
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 1, received 2'
+    ):
+        expr.evaluate_gradient([10.0, 2.0]).tolist()
