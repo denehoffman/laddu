@@ -28,12 +28,12 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
 ]
-version = "0.17.1"
+version = "0.18.0"
 description = "Python bindings for laddu"
 license = "MIT"
 readme = "README.md"
 dependencies = [
-  "laddu-cpu == 0.17.1", # x-release-please-version # WARNING: DO NOT EDIT
+  "laddu-cpu == 0.18.0", # x-release-please-version # WARNING: DO NOT EDIT
   "numpy",
   "ganesh-rs == 0.27.0",
 ]
@@ -47,7 +47,7 @@ pandas = ["pandas"]
 polars = ["polars"]
 tests = ["pytest", "pytest-cov", "pandas", "polars", "uproot"]
 uproot = ["uproot"]
-mpi = ["laddu-mpi == 0.17.1"] # x-release-please-version #WARNING:  DO NOT EDIT
+mpi = ["laddu-mpi == 0.18.0"] # x-release-please-version #WARNING:  DO NOT EDIT
 
 [tool.maturin]
 bindings = "pyo3"
