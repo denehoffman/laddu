@@ -44,24 +44,62 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 pub struct Parameters {
     values: Vec<f64>,
     n_free: usize,
+    storage_to_assembled: Vec<usize>,
 }
 
 impl Parameters {
-    pub fn new(values: Vec<f64>, n_free: usize) -> Self {
-        Self { values, n_free }
+    /// Create a full parameter store from assembled values and the number of free parameters.
+    pub fn new(values: Vec<f64>, n_free: usize, storage_to_assembled: Vec<usize>) -> Self {
+        Self {
+            values,
+            n_free,
+            storage_to_assembled,
+        }
     }
+    /// Borrow the assembled parameter values.
     pub fn values(&self) -> &[f64] {
         &self.values
     }
-    /// Obtain a parameter value or constant value from the given [`ParameterID`].
-    pub fn get(&self, pid: ParameterID) -> f64 {
-        match pid {
-            ParameterID::Parameter(index) | ParameterID::Constant(index) => self.values[index],
-            ParameterID::Uninit => f64::NAN,
+    /// Create a new parameter store with the same layout and different assembled values.
+    pub fn with_values(&self, values: Vec<f64>) -> Self {
+        Self {
+            values,
+            n_free: self.n_free,
+            storage_to_assembled: self.storage_to_assembled.clone(),
         }
     }
+    /// Obtain a parameter value or constant value from the given [`ParameterID`].
+    pub fn get(&self, pid: ParameterID) -> f64 {
+        self.assembled_index(pid)
+            .and_then(|index| self.values.get(index))
+            .copied()
+            .unwrap_or(f64::NAN)
+    }
+    /// Return the assembled index for the given registered parameter.
+    pub fn assembled_index(&self, pid: ParameterID) -> Option<usize> {
+        self.storage_index(pid)
+            .and_then(|index| self.storage_to_assembled.get(index).copied())
+    }
+    /// Return the free-parameter index for the given registered parameter, if it is currently
+    /// free.
+    pub fn free_index(&self, pid: ParameterID) -> Option<usize> {
+        let index = self.assembled_index(pid)?;
+        (index < self.n_free).then_some(index)
+    }
+    fn storage_index(&self, pid: ParameterID) -> Option<usize> {
+        match pid {
+            ParameterID::Parameter(index) | ParameterID::Constant(index) => Some(index),
+            ParameterID::Uninit => None,
+        }
+    }
+    /// Return the number of free parameters.
     pub fn len(&self) -> usize {
         self.n_free
+    }
+
+    /// Return whether there are no free parameters.
+    pub fn is_empty(&self) -> bool {
+        self.n_free == 0
     }
 }
 
@@ -73,6 +111,7 @@ pub struct Resources {
     pub active: Vec<bool>,
     #[serde(default)]
     active_indices: Vec<usize>,
+    /// The registered parameters and constants used by this resource set.
     pub parameter_map: ParameterMap,
     /// The [`Cache`] for each [`EventData`](`crate::data::EventData`)
     pub caches: Vec<Cache>,
@@ -261,18 +300,22 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
 }
 
 impl Resources {
+    /// Rename a single registered parameter.
     pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
         self.parameter_map.rename_parameter(old, new)
     }
 
+    /// Rename multiple registered parameters.
     pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
         self.parameter_map.rename_parameters(mapping)
     }
 
+    /// Mark a registered parameter as free.
     pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
         self.parameter_map.free_parameter(name)
     }
 
+    /// Fix a registered parameter to the supplied value.
     pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
         self.parameter_map.fix_parameter(name, value)
     }
@@ -740,7 +783,7 @@ mod tests {
     #[test]
     fn test_parameters() {
         let parameters = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let params = Parameters::new(parameters, 3);
+        let params = Parameters::new(parameters, 3, vec![0, 1, 2, 3, 4, 5]);
 
         assert_eq!(params.get(ParameterID::Parameter(0)), 1.0);
         assert_eq!(params.get(ParameterID::Parameter(1)), 2.0);
@@ -748,13 +791,15 @@ mod tests {
         assert_eq!(params.get(ParameterID::Constant(3)), 4.0);
         assert_eq!(params.get(ParameterID::Constant(4)), 5.0);
         assert_eq!(params.get(ParameterID::Constant(5)), 6.0);
+        assert_eq!(params.free_index(ParameterID::Parameter(0)), Some(0));
+        assert_eq!(params.free_index(ParameterID::Constant(3)), None);
         assert_eq!(params.len(), 3);
     }
 
     #[test]
     fn test_uninit_parameter_returns_nan() {
         let parameters = vec![1.0, 1.0];
-        let params = Parameters::new(parameters, 1);
+        let params = Parameters::new(parameters, 1, vec![0, 1]);
         assert!(params.get(ParameterID::Uninit).is_nan());
         assert!(params.get(ParameterID::Parameter(3)).is_nan());
         assert!(params.get(ParameterID::Constant(3)).is_nan());
@@ -859,7 +904,7 @@ mod tests {
         }
 
         match const1 {
-            ParameterID::Constant(idx) => assert_eq!(idx, 0),
+            ParameterID::Constant(idx) => assert_eq!(idx, 1),
             _ => panic!("Expected Constant variant"),
         }
     }

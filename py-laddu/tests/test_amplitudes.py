@@ -482,24 +482,24 @@ def test_expression_fix_updates_metadata_and_evaluator() -> None:
     amp = Scalar('scale', parameter('scale'))
     expr = amp.norm_sqr()
 
-    fixed_expr = expr.fix('scale', 3.0)
-    assert fixed_expr.parameters == ('scale',)
-    assert fixed_expr.free_parameters == ()
-    assert fixed_expr.fixed_parameters == ('scale',)
-    assert fixed_expr.n_free == 0
-    assert fixed_expr.n_fixed == 1
+    expr.fix_parameter('scale', 3.0)
+    assert expr.parameters == ('scale',)
+    assert expr.free_parameters == ()
+    assert expr.fixed_parameters == ('scale',)
+    assert expr.n_free == 0
+    assert expr.n_fixed == 1
 
-    fixed_evaluator = fixed_expr.load(dataset)
+    fixed_evaluator = expr.load(dataset)
     assert fixed_evaluator.n_free == 0
     assert fixed_evaluator.fixed_parameters == ('scale',)
     result = fixed_evaluator.evaluate([])
     assert pytest.approx(result[0].real) == 9.0
 
     loaded = expr.load(dataset)
-    evaluator_fixed = loaded.fix('scale', 3.0)
-    assert evaluator_fixed.n_free == 0
-    assert evaluator_fixed.fixed_parameters == ('scale',)
-    assert pytest.approx(evaluator_fixed.evaluate([])[0].real) == 9.0
+    loaded.fix_parameter('scale', 3.0)
+    assert loaded.n_free == 0
+    assert loaded.fixed_parameters == ('scale',)
+    assert pytest.approx(loaded.evaluate([])[0].real) == 9.0
 
 
 def test_expression_free_and_rename_parameters() -> None:
@@ -507,25 +507,25 @@ def test_expression_free_and_rename_parameters() -> None:
     amp = Scalar('scale', parameter('scale', 2.0))
     expr = amp.norm_sqr()
 
-    freed_expr = expr.free('scale')
-    assert freed_expr.n_free == 1
-    assert freed_expr.free_parameters == ('scale',)
-    assert freed_expr.fixed_parameters == ()
+    expr.free_parameter('scale')
+    assert expr.n_free == 1
+    assert expr.free_parameters == ('scale',)
+    assert expr.fixed_parameters == ()
 
-    freed_eval = freed_expr.load(dataset)
+    freed_eval = expr.load(dataset)
     assert pytest.approx(freed_eval.evaluate([3.0])[0].real) == 9.0
 
-    renamed_expr = freed_expr.rename_parameter('scale', 'beta')
-    assert renamed_expr.parameters == ('beta',)
+    expr.rename_parameter('scale', 'beta')
+    assert expr.parameters == ('beta',)
 
-    renamed_expr_multi = freed_expr.rename_parameters({'scale': 'gamma'})
-    assert renamed_expr_multi.parameters == ('gamma',)
+    expr.rename_parameters({'beta': 'gamma'})
+    assert expr.parameters == ('gamma',)
 
-    renamed_eval = freed_eval.rename_parameter('scale', 'beta')
-    assert renamed_eval.parameters == ('beta',)
+    freed_eval.rename_parameter('scale', 'beta')
+    assert freed_eval.parameters == ('beta',)
 
-    renamed_eval_multi = freed_eval.rename_parameters({'scale': 'gamma'})
-    assert renamed_eval_multi.parameters == ('gamma',)
+    freed_eval.rename_parameters({'beta': 'gamma'})
+    assert freed_eval.parameters == ('gamma',)
 
 
 # TODO: This panics rather than raises an exception.

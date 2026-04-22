@@ -28,16 +28,61 @@ class LikelihoodExpression:
     parameters: tuple[str, ...]
     free_parameters: tuple[str, ...]
     fixed_parameters: tuple[str, ...]
+    n_free: int
+    n_fixed: int
+    n_parameters: int
 
-    def fix(self, name: str, value: float) -> LikelihoodExpression: ...
-    def free(self, name: str) -> LikelihoodExpression: ...
-    def rename_parameter(self, old: str, new: str) -> LikelihoodExpression: ...
-    def rename_parameters(self, mapping: Mapping[str, str]) -> LikelihoodExpression: ...
-    def load(self) -> LikelihoodEvaluator: ...
+    def fix_parameter(self, name: str, value: float) -> None: ...
+    def free_parameter(self, name: str) -> None: ...
+    def rename_parameter(self, old: str, new: str) -> None: ...
+    def rename_parameters(self, mapping: Mapping[str, str]) -> None: ...
     def __add__(self, other: LikelihoodExpression | int) -> LikelihoodExpression: ...
     def __radd__(self, other: LikelihoodExpression | int) -> LikelihoodExpression: ...
     def __mul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
     def __rmul__(self, other: LikelihoodExpression) -> LikelihoodExpression: ...
+    def evaluate(
+        self,
+        parameters: Sequence[float] | npt.ArrayLike,
+        threads: int | None = None,
+    ) -> float: ...
+    def evaluate_gradient(
+        self,
+        parameters: Sequence[float] | npt.ArrayLike,
+        threads: int | None = None,
+    ) -> npt.NDArray[np.float64]: ...
+    def minimize(
+        self,
+        p0: MinimizerInit,
+        *,
+        method: Literal[
+            'lbfgsb',
+            'adam',
+            'conjugate-gradient',
+            'trust-region',
+            'nelder-mead',
+            'cma-es',
+            'differential-evolution',
+            'pso',
+        ] = 'lbfgsb',
+        config: MinimizerConfig | None = None,
+        options: MinimizerOptions | None = None,
+        observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
+        terminators: MinimizationTerminator
+        | Sequence[MinimizationTerminator]
+        | None = None,
+        threads: int = 0,
+    ) -> ganesh.MinimizationSummary: ...
+    def mcmc(
+        self,
+        p0: SamplerInit,
+        *,
+        method: Literal['aies', 'ess'] = 'aies',
+        config: SamplerConfig | None = None,
+        options: SamplerOptions | None = None,
+        observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
+        terminators: MCMCTerminator | Sequence[MCMCTerminator] | None = None,
+        threads: int = 0,
+    ) -> ganesh.MCMCSummary: ...
 
 class ControlFlow(Enum):
     Continue = 0
@@ -104,58 +149,6 @@ SamplerInit: TypeAlias = (
     Sequence[Sequence[float]] | npt.ArrayLike | ganesh.AIESInit | ganesh.ESSInit
 )
 
-class LikelihoodEvaluator:
-    parameters: tuple[str, ...]
-    free_parameters: tuple[str, ...]
-    fixed_parameters: tuple[str, ...]
-    n_free: int
-    n_fixed: int
-    n_parameters: int
-
-    def evaluate(
-        self,
-        parameters: Sequence[float] | npt.ArrayLike,
-        threads: int | None = None,
-    ) -> float: ...
-    def evaluate_gradient(
-        self,
-        parameters: Sequence[float] | npt.ArrayLike,
-        threads: int | None = None,
-    ) -> npt.NDArray[np.float64]: ...
-    def minimize(
-        self,
-        p0: MinimizerInit,
-        *,
-        method: Literal[
-            'lbfgsb',
-            'adam',
-            'conjugate-gradient',
-            'trust-region',
-            'nelder-mead',
-            'cma-es',
-            'differential-evolution',
-            'pso',
-        ] = 'lbfgsb',
-        config: MinimizerConfig | None = None,
-        options: MinimizerOptions | None = None,
-        observers: MinimizationObserver | Sequence[MinimizationObserver] | None = None,
-        terminators: MinimizationTerminator
-        | Sequence[MinimizationTerminator]
-        | None = None,
-        threads: int = 0,
-    ) -> ganesh.MinimizationSummary: ...
-    def mcmc(
-        self,
-        p0: SamplerInit,
-        *,
-        method: Literal['aies', 'ess'] = 'aies',
-        config: SamplerConfig | None = None,
-        options: SamplerOptions | None = None,
-        observers: MCMCObserver | Sequence[MCMCObserver] | None = None,
-        terminators: MCMCTerminator | Sequence[MCMCTerminator] | None = None,
-        threads: int = 0,
-    ) -> ganesh.MCMCSummary: ...
-
 class StochasticNLL:
     nll: NLL
     expression: Expression
@@ -221,10 +214,10 @@ class NLL:
     def to_stochastic(
         self, batch_size: int, *, seed: int | None = None
     ) -> StochasticNLL: ...
-    def fix(self, name: str, value: float) -> NLL: ...
-    def free(self, name: str) -> NLL: ...
-    def rename_parameter(self, old: str, new: str) -> NLL: ...
-    def rename_parameters(self, mapping: Mapping[str, str]) -> NLL: ...
+    def fix_parameter(self, name: str, value: float) -> None: ...
+    def free_parameter(self, name: str) -> None: ...
+    def rename_parameter(self, old: str, new: str) -> None: ...
+    def rename_parameters(self, mapping: Mapping[str, str]) -> None: ...
     def activate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
     def activate_all(self) -> None: ...
     def deactivate(self, name: str | Sequence[str], *, strict: bool = True) -> None: ...
@@ -368,7 +361,6 @@ __all__ = [
     'EnsembleStatus',
     'GradientFreeStatus',
     'GradientStatus',
-    'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',

@@ -19,7 +19,6 @@ use laddu::{
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
     io,
-    resources::Parameters,
     traits::{LikelihoodTerm, Variable},
     utils::{
         enums::{Frame, Sign},
@@ -405,7 +404,9 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         "polarization_weighted_ylm_measurement_reference_mode_small_sample",
         |b| {
             b.iter(|| {
-                let values = measured_ylm.evaluate(&[]);
+                let values = measured_ylm
+                    .evaluate(&[])
+                    .expect("measured moment evaluation should succeed");
                 let mut sum = Complex64::new(0.0, 0.0);
                 for index in 0..values.len() {
                     let pol_term = (2.0 * big_phi[index]).cos() / p_gamma[index];
@@ -420,8 +421,12 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
         "polarization_weighted_ylm_measurement_value_and_gradient_small_sample",
         |b| {
             b.iter(|| {
-                let values = measured_ylm.evaluate(&[]);
-                let gradients = measured_ylm.evaluate_gradient(&[]);
+                let values = measured_ylm
+                    .evaluate(&[])
+                    .expect("measured moment evaluation should succeed");
+                let gradients = measured_ylm
+                    .evaluate_gradient(&[])
+                    .expect("measured moment gradient evaluation should succeed");
                 let mut value_sum = Complex64::new(0.0, 0.0);
                 let mut gradient_sum = Complex64::new(0.0, 0.0);
                 for index in 0..values.len() {
@@ -465,7 +470,9 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
                     for (slot, evaluator) in norm_evaluators.iter().enumerate() {
                         let row = slot / dim;
                         let col = slot % dim;
-                        let values = evaluator.evaluate(&[]);
+                        let values = evaluator
+                            .evaluate(&[])
+                            .expect("normalization evaluation should succeed");
                         let mut term = Complex64::new(0.0, 0.0);
                         for index in 0..values.len() {
                             term += values[index] * acc_weights[index];
@@ -489,8 +496,12 @@ fn moment_analysis_benchmarks(c: &mut Criterion) {
                     for (slot, evaluator) in norm_evaluators.iter().enumerate() {
                         let row = slot / dim;
                         let col = slot % dim;
-                        let values = evaluator.evaluate(&[]);
-                        let gradients = evaluator.evaluate_gradient(&[]);
+                        let values = evaluator
+                            .evaluate(&[])
+                            .expect("normalization evaluation should succeed");
+                        let gradients = evaluator
+                            .evaluate_gradient(&[])
+                            .expect("normalization gradient evaluation should succeed");
                         let mut term = Complex64::new(0.0, 0.0);
                         for index in 0..values.len() {
                             term += values[index] * acc_weights[index];
@@ -706,7 +717,10 @@ fn cached_evaluator_and_precompute_runtime_benchmarks(c: &mut Criterion) {
     let n_events = ds_data.n_events() as u64;
 
     let resources = evaluator.resources.read();
-    let params_obj = Parameters::new(&params, &resources.constants);
+    let params_obj = resources
+        .parameter_map
+        .assemble(&params)
+        .expect("parameter assembly should succeed");
     let active_indices = resources.active_indices().to_vec();
     let active_mask = resources.active.clone();
     let first_cache = resources.caches[0].clone();

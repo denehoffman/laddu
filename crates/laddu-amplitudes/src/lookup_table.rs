@@ -326,15 +326,15 @@ impl LookupValues {
         match self {
             Self::FixedComplex(_) => {}
             Self::Scalar { pids, .. } => {
-                if let ParameterID::Parameter(ind) = pids[index] {
+                if let Some(ind) = parameters.free_index(pids[index]) {
                     gradient[ind] += weight * Complex64::ONE;
                 }
             }
             Self::CartesianComplex { pids, .. } => {
-                if let ParameterID::Parameter(ind) = pids[index].0 {
+                if let Some(ind) = parameters.free_index(pids[index].0) {
                     gradient[ind] += weight * Complex64::ONE;
                 }
-                if let ParameterID::Parameter(ind) = pids[index].1 {
+                if let Some(ind) = parameters.free_index(pids[index].1) {
                     gradient[ind] += weight * Complex64::I;
                 }
             }
@@ -342,10 +342,10 @@ impl LookupValues {
                 let r = parameters.get(pids[index].0);
                 let theta = parameters.get(pids[index].1);
                 let exp_i_theta = Complex64::cis(theta);
-                if let ParameterID::Parameter(ind) = pids[index].0 {
+                if let Some(ind) = parameters.free_index(pids[index].0) {
                     gradient[ind] += weight * exp_i_theta;
                 }
-                if let ParameterID::Parameter(ind) = pids[index].1 {
+                if let Some(ind) = parameters.free_index(pids[index].1) {
                     gradient[ind] += weight * Complex64::I * Complex64::from_polar(r, theta);
                 }
             }

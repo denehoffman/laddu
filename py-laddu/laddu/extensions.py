@@ -8,7 +8,6 @@ import ganesh
 from laddu.laddu import (
     NLL,
     ControlFlow,
-    LikelihoodEvaluator,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
@@ -58,7 +57,6 @@ __all__ = [
     'EnsembleStatus',
     'GradientFreeStatus',
     'GradientStatus',
-    'LikelihoodEvaluator',
     'LikelihoodExpression',
     'LikelihoodOne',
     'LikelihoodScalar',

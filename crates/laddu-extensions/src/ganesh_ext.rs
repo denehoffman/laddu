@@ -1,6 +1,6 @@
 use crate::{
     likelihoods::{LikelihoodTerm, StochasticNLL},
-    LikelihoodEvaluator, NLL,
+    LikelihoodExpression, NLL,
 };
 use ganesh::traits::{Algorithm, Observer, Status};
 use ganesh::traits::{CostFunction, Gradient, LogDensity};
@@ -106,12 +106,12 @@ impl LogDensity<MaybeThreadPool, LadduError> for StochasticNLL {
     }
 }
 
-impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+impl CostFunction<MaybeThreadPool, LadduError> for LikelihoodExpression {
     fn evaluate(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))
     }
 }
-impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+impl Gradient<MaybeThreadPool, LadduError> for LikelihoodExpression {
     fn gradient(
         &self,
         parameters: &DVector<f64>,
@@ -120,7 +120,7 @@ impl Gradient<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
         args.install(|| LikelihoodTerm::evaluate_gradient(self, parameters.into()))
     }
 }
-impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodEvaluator {
+impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodExpression {
     fn log_density(&self, parameters: &DVector<f64>, args: &MaybeThreadPool) -> LadduResult<f64> {
         Ok(-args.install(|| LikelihoodTerm::evaluate(self, parameters.into()))?)
     }

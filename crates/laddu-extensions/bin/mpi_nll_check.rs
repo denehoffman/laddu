@@ -130,12 +130,14 @@ fn case_configs() -> Vec<CaseConfig> {
                     .expect("ComplexScalar a should build");
                 let amp_b = ComplexScalar::new("b", parameter!("b_re"), parameter!("b_im"))
                     .expect("ComplexScalar b should build");
-                (&amp_a + &amp_b)
-                    .norm_sqr()
-                    .fix("b_re", 0.15)
-                    .expect("fix b_re should succeed")
-                    .fix("b_im", -0.2)
-                    .expect("fix b_im should succeed")
+                let expression = (&amp_a + &amp_b).norm_sqr();
+                expression
+                    .fix_parameter("b_re", 0.15)
+                    .expect("fix b_re should succeed");
+                expression
+                    .fix_parameter("b_im", -0.2)
+                    .expect("fix b_im should succeed");
+                expression
             },
             parameters: vec![0.8, -0.35],
             data_weights: vec![1.7, 1.2, 2.5, 0.6, 1.1, 3.4, 2.0, 0.8],

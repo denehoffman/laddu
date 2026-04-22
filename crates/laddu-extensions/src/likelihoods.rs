@@ -15,11 +15,9 @@ use fastrand::Rng;
 #[cfg(feature = "python")]
 use laddu_core::ThreadPoolManager;
 use laddu_core::{
-    amplitudes::{CompiledExpression, Evaluator, Expression},
+    amplitudes::{CompiledExpression, Evaluator, Expression, ParameterMap},
     data::Dataset,
-    parameter_manager::ParameterManager,
-    resources::Parameters,
-    validate_free_parameter_len, LadduError, LadduResult,
+    validate_free_parameter_len, LadduError, LadduResult, Parameter,
 };
 use nalgebra::DVector;
 use num::complex::Complex64;
@@ -31,7 +29,7 @@ use laddu_core::mpi::LadduMPI;
 use mpi::{
     collective::SystemOperation, datatype::PartitionMut, topology::SimpleCommunicator, traits::*,
 };
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 #[cfg(feature = "python")]
 use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
@@ -134,19 +132,19 @@ fn evaluate_weighted_expression_sum_local<F>(
     evaluator: &Evaluator,
     parameters: &[f64],
     value_map: F,
-) -> f64
+) -> LadduResult<f64>
 where
     F: Fn(Complex64) -> f64 + Copy + Send + Sync,
 {
     let resources = evaluator.resources.read();
-    let parameters = Parameters::new(parameters, &resources.constants);
+    let parameters = resources.parameter_map.assemble(parameters)?;
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
     let program_snapshot = evaluator.expression_value_program_snapshot();
     let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
-        resources
+        Ok(resources
             .caches
             .par_iter()
             .zip(evaluator.dataset.events_local().par_iter())
@@ -170,13 +168,13 @@ where
                     event.weight * value_map(l)
                 },
             )
-            .parallel_sum_with_accumulator::<Klein<f64>>()
+            .parallel_sum_with_accumulator::<Klein<f64>>())
     }
     #[cfg(not(feature = "rayon"))]
     {
         let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
         let mut expr_slots = vec![Complex64::ZERO; slot_count];
-        resources
+        Ok(resources
             .caches
             .iter()
             .zip(evaluator.dataset.events_local().iter())
@@ -192,7 +190,7 @@ where
                 );
                 event.weight * value_map(l)
             })
-            .sum_with_accumulator::<Klein<f64>>()
+            .sum_with_accumulator::<Klein<f64>>())
     }
 }
 
@@ -200,16 +198,16 @@ fn project_weights_local_from_evaluator(
     evaluator: &Evaluator,
     parameters: &[f64],
     n_mc: f64,
-) -> Vec<f64> {
+) -> LadduResult<Vec<f64>> {
     let resources = evaluator.resources.read();
-    let parameters = Parameters::new(parameters, &resources.constants);
+    let parameters = resources.parameter_map.assemble(parameters)?;
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resources.active_indices().to_vec();
     let program_snapshot = evaluator.expression_value_program_snapshot();
     let slot_count = evaluator.expression_value_program_snapshot_slot_count(&program_snapshot);
     #[cfg(feature = "rayon")]
     {
-        resources
+        Ok(resources
             .caches
             .par_iter()
             .zip(evaluator.dataset.events_local().par_iter())
@@ -233,13 +231,13 @@ fn project_weights_local_from_evaluator(
                     event.weight * value.re / n_mc
                 },
             )
-            .collect()
+            .collect())
     }
     #[cfg(not(feature = "rayon"))]
     {
         let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
         let mut expr_slots = vec![Complex64::ZERO; slot_count];
-        resources
+        Ok(resources
             .caches
             .iter()
             .zip(evaluator.dataset.events_local().iter())
@@ -255,7 +253,7 @@ fn project_weights_local_from_evaluator(
                 );
                 event.weight * value.re / n_mc
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -266,7 +264,7 @@ fn project_weights_local_from_resolved_mask(
     resolved_mask: &[bool],
 ) -> LadduResult<Vec<f64>> {
     let resources = evaluator.resources.read();
-    let parameters = Parameters::new(parameters, &resources.constants);
+    let parameters = resources.parameter_map.assemble(parameters)?;
     let amplitude_len = evaluator.amplitudes.len();
     let active_indices = resolved_mask
         .iter()
@@ -332,9 +330,9 @@ fn project_weights_and_gradients_local_from_evaluator(
     evaluator: &Evaluator,
     parameters: &[f64],
     n_mc: f64,
-) -> (Vec<f64>, Vec<DVector<f64>>) {
+) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
     let resources = evaluator.resources.read();
-    let parameters = Parameters::new(parameters, &resources.constants);
+    let parameters = resources.parameter_map.assemble(parameters)?;
     let amplitude_len = evaluator.amplitudes.len();
     let grad_dim = parameters.len();
     let active_indices = resources.active_indices().to_vec();
@@ -380,7 +378,7 @@ fn project_weights_and_gradients_local_from_evaluator(
                 },
             )
             .collect::<Vec<_>>();
-        weighted.into_iter().unzip()
+        Ok(weighted.into_iter().unzip())
     }
     #[cfg(not(feature = "rayon"))]
     {
@@ -388,7 +386,7 @@ fn project_weights_and_gradients_local_from_evaluator(
         let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
         let mut value_slots = vec![Complex64::ZERO; slot_count];
         let mut gradient_slots = vec![DVector::zeros(grad_dim); slot_count];
-        resources
+        Ok(resources
             .caches
             .iter()
             .zip(evaluator.dataset.events_local().iter())
@@ -412,7 +410,7 @@ fn project_weights_and_gradients_local_from_evaluator(
                     gradient.map(|g| g.re).scale(event.weight / n_mc),
                 )
             })
-            .unzip()
+            .unzip())
     }
 }
 
@@ -528,10 +526,26 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64>;
     /// Evaluate the gradient of the term given some input parameters.
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>>;
-    /// The list of names of the input parameters for [`LikelihoodTerm::evaluate`].
-    fn parameters(&self) -> Vec<String>;
-    /// Access the parameter manager describing free/fixed state.
-    fn parameter_manager(&self) -> &ParameterManager;
+    /// Fix a named parameter local to this term.
+    fn fix_parameter(&self, _name: &str, _value: f64) -> LadduResult<()> {
+        Ok(())
+    }
+    /// Mark a named parameter local to this term as free.
+    fn free_parameter(&self, _name: &str) -> LadduResult<()> {
+        Ok(())
+    }
+    /// Rename a single parameter local to this term.
+    fn rename_parameter(&self, _old: &str, _new: &str) -> LadduResult<()> {
+        Ok(())
+    }
+    /// Rename multiple parameters local to this term.
+    fn rename_parameters(&self, _mapping: &HashMap<String, String>) -> LadduResult<()> {
+        Ok(())
+    }
+    /// Return the parameters owned by this term in local order.
+    fn parameter_map(&self) -> ParameterMap {
+        ParameterMap::default()
+    }
     /// A method called every step of any minimization/MCMC algorithm.
     fn update(&self) {}
 
@@ -539,7 +553,7 @@ pub trait LikelihoodTerm: DynClone + Send + Sync {
     ///
     /// This allows term constructors to return expressions without exposing the manager
     /// machinery that previously performed registration.
-    fn into_expression(self) -> LikelihoodExpression
+    fn into_expression(self) -> LadduResult<LikelihoodExpression>
     where
         Self: Sized + 'static,
     {
@@ -557,7 +571,6 @@ pub struct NLL {
     /// The internal [`Evaluator`] for accepted Monte Carlo
     pub accmc_evaluator: Evaluator,
     n_mc: f64,
-    parameter_manager: ParameterManager,
     projection_active_mask_cache: Arc<Mutex<HashMap<ProjectionMaskCacheKey, Vec<bool>>>>,
 }
 
@@ -575,7 +588,6 @@ impl NLL {
         let data_evaluator = expression.load(ds_data)?;
         let accmc_evaluator = expression.load(ds_accmc)?;
         Ok(Self {
-            parameter_manager: data_evaluator.parameter_manager().clone(),
             data_evaluator,
             n_mc: n_mc.unwrap_or(accmc_evaluator.dataset.n_events_weighted()),
             accmc_evaluator,
@@ -646,32 +658,32 @@ impl NLL {
 
     /// The parameter names for this NLL.
     pub fn parameters(&self) -> Vec<String> {
-        self.parameter_manager.parameters()
+        self.data_evaluator.parameters()
     }
 
     /// The free parameter names for this NLL.
     pub fn free_parameters(&self) -> Vec<String> {
-        self.parameter_manager.free_parameters()
+        self.data_evaluator.free_parameters()
     }
 
     /// The fixed parameter names for this NLL.
     pub fn fixed_parameters(&self) -> Vec<String> {
-        self.parameter_manager.fixed_parameters()
+        self.data_evaluator.fixed_parameters()
     }
 
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.parameter_manager.n_free_parameters()
+        self.data_evaluator.n_free()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed(&self) -> usize {
-        self.parameter_manager.n_fixed_parameters()
+        self.data_evaluator.n_fixed()
     }
 
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
-        self.parameter_manager.n_parameters()
+        self.data_evaluator.n_parameters()
     }
 
     /// Returns the expression represented by this NLL.
@@ -685,61 +697,6 @@ impl NLL {
         self.data_evaluator.compiled_expression()
     }
 
-    /// Return a new [`NLL`] with the given parameter fixed to a value.
-    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Box<Self>> {
-        let data_evaluator = self.data_evaluator.fix(name, value)?;
-        let accmc_evaluator = self.accmc_evaluator.fix(name, value)?;
-        Ok(Self {
-            parameter_manager: self.parameter_manager.fix(name, value)?,
-            data_evaluator,
-            accmc_evaluator,
-            n_mc: self.n_mc,
-            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-        .into())
-    }
-
-    /// Return a new [`NLL`] with the given parameter freed.
-    pub fn free(&self, name: &str) -> LadduResult<Box<Self>> {
-        let data_evaluator = self.data_evaluator.free(name)?;
-        let accmc_evaluator = self.accmc_evaluator.free(name)?;
-        Ok(Self {
-            parameter_manager: self.parameter_manager.free(name)?,
-            data_evaluator,
-            accmc_evaluator,
-            n_mc: self.n_mc,
-            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-        .into())
-    }
-
-    /// Return a new [`NLL`] with a single parameter renamed.
-    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Box<Self>> {
-        let data_evaluator = self.data_evaluator.rename_parameter(old, new)?;
-        let accmc_evaluator = self.accmc_evaluator.rename_parameter(old, new)?;
-        Ok(Self {
-            parameter_manager: self.parameter_manager.rename(old, new)?,
-            data_evaluator,
-            accmc_evaluator,
-            n_mc: self.n_mc,
-            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-        .into())
-    }
-
-    /// Return a new [`NLL`] with several parameters renamed.
-    pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<Box<Self>> {
-        let data_evaluator = self.data_evaluator.rename_parameters(mapping)?;
-        let accmc_evaluator = self.accmc_evaluator.rename_parameters(mapping)?;
-        Ok(Self {
-            parameter_manager: self.parameter_manager.rename_parameters(mapping)?,
-            data_evaluator,
-            accmc_evaluator,
-            n_mc: self.n_mc,
-            projection_active_mask_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-        .into())
-    }
     /// Create a new [`StochasticNLL`] from this [`NLL`].
     pub fn to_stochastic(
         &self,
@@ -854,17 +811,9 @@ impl NLL {
     ) -> LadduResult<Vec<f64>> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = mc_evaluator {
-            Ok(project_weights_local_from_evaluator(
-                &mc_evaluator,
-                parameters,
-                self.n_mc,
-            ))
+            project_weights_local_from_evaluator(&mc_evaluator, parameters, self.n_mc)
         } else {
-            Ok(project_weights_local_from_evaluator(
-                &self.accmc_evaluator,
-                parameters,
-                self.n_mc,
-            ))
+            project_weights_local_from_evaluator(&self.accmc_evaluator, parameters, self.n_mc)
         }
     }
 
@@ -942,17 +891,13 @@ impl NLL {
     ) -> LadduResult<(Vec<f64>, Vec<DVector<f64>>)> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         if let Some(mc_evaluator) = mc_evaluator {
-            Ok(project_weights_and_gradients_local_from_evaluator(
-                &mc_evaluator,
-                parameters,
-                self.n_mc,
-            ))
+            project_weights_and_gradients_local_from_evaluator(&mc_evaluator, parameters, self.n_mc)
         } else {
-            Ok(project_weights_and_gradients_local_from_evaluator(
+            project_weights_and_gradients_local_from_evaluator(
                 &self.accmc_evaluator,
                 parameters,
                 self.n_mc,
-            ))
+            )
         }
     }
 
@@ -1655,50 +1600,54 @@ impl NLL {
         self.project_weights_and_gradients_subset_with_strict(parameters, names, mc_evaluator, true)
     }
 
-    fn evaluate_data_term_local(&self, parameters: &[f64]) -> f64 {
+    fn evaluate_data_term_local(&self, parameters: &[f64]) -> LadduResult<f64> {
         evaluate_weighted_expression_sum_local(&self.data_evaluator, parameters, |l| f64::ln(l.re))
     }
 
-    fn evaluate_mc_term_local(&self, parameters: &[f64]) -> f64 {
+    fn evaluate_mc_term_local(&self, parameters: &[f64]) -> LadduResult<f64> {
         self.accmc_evaluator
             .evaluate_weighted_value_sum_local(parameters)
     }
 
     #[doc(hidden)]
-    pub fn profile_data_term_local_value(&self, parameters: &[f64]) -> f64 {
+    pub fn profile_data_term_local_value(&self, parameters: &[f64]) -> LadduResult<f64> {
         self.evaluate_data_term_local(parameters)
     }
 
     #[doc(hidden)]
-    pub fn profile_mc_term_local_value(&self, parameters: &[f64]) -> f64 {
+    pub fn profile_mc_term_local_value(&self, parameters: &[f64]) -> LadduResult<f64> {
         self.evaluate_mc_term_local(parameters)
     }
 
-    fn evaluate_local(&self, parameters: &[f64]) -> f64 {
-        let data_term = self.evaluate_data_term_local(parameters);
-        let mc_term = self.evaluate_mc_term_local(parameters);
-        -2.0 * (data_term - mc_term / self.n_mc)
+    fn evaluate_local(&self, parameters: &[f64]) -> LadduResult<f64> {
+        let data_term = self.evaluate_data_term_local(parameters)?;
+        let mc_term = self.evaluate_mc_term_local(parameters)?;
+        Ok(-2.0 * (data_term - mc_term / self.n_mc))
     }
 
     #[cfg(feature = "mpi")]
-    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
-        let data_term_local = self.evaluate_data_term_local(parameters);
+    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> LadduResult<f64> {
+        let data_term_local = self.evaluate_data_term_local(parameters)?;
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = self
             .accmc_evaluator
-            .evaluate_weighted_value_sum_mpi(parameters, world);
-        -2.0 * (data_term - mc_term / self.n_mc)
+            .evaluate_weighted_value_sum_mpi(parameters, world)?;
+        Ok(-2.0 * (data_term - mc_term / self.n_mc))
     }
 
     #[cfg(feature = "mpi")]
     /// Evaluate the NLL value across all ranks.
-    pub fn evaluate_mpi_value(&self, parameters: &[f64], world: &SimpleCommunicator) -> f64 {
+    pub fn evaluate_mpi_value(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> LadduResult<f64> {
         self.evaluate_mpi(parameters, world)
     }
 
-    fn evaluate_data_gradient_term_local(&self, parameters: &[f64]) -> DVector<f64> {
+    fn evaluate_data_gradient_term_local(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         let data_resources = self.data_evaluator.resources.read();
-        let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        let data_parameters = data_resources.parameter_map.assemble(parameters)?;
         #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
@@ -1782,15 +1731,15 @@ impl NLL {
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
         };
-        data_term
+        Ok(data_term)
     }
 
-    fn evaluate_gradient_local(&self, parameters: &[f64]) -> DVector<f64> {
-        let data_term = self.evaluate_data_gradient_term_local(parameters);
+    fn evaluate_gradient_local(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        let data_term = self.evaluate_data_gradient_term_local(parameters)?;
         let mc_term = self
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_local(parameters);
-        -2.0 * (data_term - mc_term / self.n_mc)
+            .evaluate_weighted_gradient_sum_local(parameters)?;
+        Ok(-2.0 * (data_term - mc_term / self.n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -1798,13 +1747,13 @@ impl NLL {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
-        let data_term_local = self.evaluate_data_gradient_term_local(parameters);
+    ) -> LadduResult<DVector<f64>> {
+        let data_term_local = self.evaluate_data_gradient_term_local(parameters)?;
         let data_term = reduce_gradient(world, &data_term_local);
         let mc_term = self
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_mpi(parameters, world);
-        -2.0 * (data_term - mc_term / self.n_mc)
+            .evaluate_weighted_gradient_sum_mpi(parameters, world)?;
+        Ok(-2.0 * (data_term - mc_term / self.n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -1813,39 +1762,54 @@ impl NLL {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         self.evaluate_gradient_mpi(parameters, world)
     }
 }
 
 impl LikelihoodTerm for NLL {
-    /// Get the list of parameter names in the order they appear in the [`NLL::evaluate`]
-    /// method.
-    fn parameters(&self) -> Vec<String> {
-        self.parameters()
-    }
-    fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
-    }
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return Ok(self.evaluate_mpi(parameters, &world));
+                return self.evaluate_mpi(parameters, &world);
             }
         }
-        Ok(self.evaluate_local(parameters))
+        self.evaluate_local(parameters)
     }
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         validate_free_parameter_len(parameters.len(), self.n_free())?;
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return Ok(self.evaluate_gradient_mpi(parameters, &world));
+                return self.evaluate_gradient_mpi(parameters, &world);
             }
         }
-        Ok(self.evaluate_gradient_local(parameters))
+        self.evaluate_gradient_local(parameters)
+    }
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.data_evaluator.fix_parameter(name, value)?;
+        self.accmc_evaluator.fix_parameter(name, value)?;
+        Ok(())
+    }
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.data_evaluator.free_parameter(name)?;
+        self.accmc_evaluator.free_parameter(name)?;
+        Ok(())
+    }
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.data_evaluator.rename_parameter(old, new)?;
+        self.accmc_evaluator.rename_parameter(old, new)?;
+        Ok(())
+    }
+    fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.data_evaluator.rename_parameters(mapping)?;
+        self.accmc_evaluator.rename_parameters(mapping)?;
+        Ok(())
+    }
+    fn parameter_map(&self) -> ParameterMap {
+        self.data_evaluator.resources.read().parameter_map.clone()
     }
 }
 
@@ -1865,19 +1829,13 @@ pub struct StochasticNLL {
 }
 
 impl LikelihoodTerm for StochasticNLL {
-    fn parameters(&self) -> Vec<String> {
-        self.nll.parameters()
-    }
-    fn parameter_manager(&self) -> &ParameterManager {
-        self.nll.parameter_manager()
-    }
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
         validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
         let indices = self.batch_indices.lock();
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return Ok(self.evaluate_mpi(parameters, &indices, &world));
+                return self.evaluate_mpi(parameters, &indices, &world);
             }
         }
         #[cfg(feature = "rayon")]
@@ -1890,7 +1848,7 @@ impl LikelihoodTerm for StochasticNLL {
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        Ok(self.evaluate_local(parameters, &indices, n_data_batch_local))
+        self.evaluate_local(parameters, &indices, n_data_batch_local)
     }
     fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
         validate_free_parameter_len(parameters.len(), self.nll.n_free())?;
@@ -1898,7 +1856,7 @@ impl LikelihoodTerm for StochasticNLL {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = laddu_core::mpi::get_world() {
-                return Ok(self.evaluate_gradient_mpi(parameters, &indices, &world));
+                return self.evaluate_gradient_mpi(parameters, &indices, &world);
             }
         }
         #[cfg(feature = "rayon")]
@@ -1911,10 +1869,25 @@ impl LikelihoodTerm for StochasticNLL {
             .iter()
             .map(|&i| self.nll.data_evaluator.dataset.events_local()[i].weight)
             .sum_with_accumulator::<Klein<f64>>();
-        Ok(self.evaluate_gradient_local(parameters, &indices, n_data_batch_local))
+        self.evaluate_gradient_local(parameters, &indices, n_data_batch_local)
+    }
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.nll.fix_parameter(name, value)
+    }
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.nll.free_parameter(name)
+    }
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.nll.rename_parameter(old, new)
+    }
+    fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.nll.rename_parameters(mapping)
     }
     fn update(&self) {
         self.resample();
+    }
+    fn parameter_map(&self) -> ParameterMap {
+        self.nll.parameter_map()
     }
 }
 
@@ -1998,43 +1971,48 @@ impl StochasticNLL {
             .sum_with_accumulator::<Klein<f64>>();
     }
 
-    fn evaluate_data_term_local(&self, parameters: &[f64], indices: &[usize]) -> f64 {
+    fn evaluate_data_term_local(&self, parameters: &[f64], indices: &[usize]) -> LadduResult<f64> {
         let data_result = self
             .nll
             .data_evaluator
-            .evaluate_batch_local(parameters, indices);
+            .evaluate_batch_local(parameters, indices)?;
         #[cfg(feature = "rayon")]
         {
-            indices
+            Ok(indices
                 .par_iter()
                 .zip(data_result.par_iter())
                 .map(|(&i, &l)| {
                     let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .parallel_sum_with_accumulator::<Klein<f64>>()
+                .parallel_sum_with_accumulator::<Klein<f64>>())
         }
         #[cfg(not(feature = "rayon"))]
         {
-            indices
+            Ok(indices
                 .iter()
                 .zip(data_result.iter())
                 .map(|(&i, &l)| {
                     let e = &self.nll.data_evaluator.dataset.events_local()[i];
                     e.weight * l.re.ln()
                 })
-                .sum_with_accumulator::<Klein<f64>>()
+                .sum_with_accumulator::<Klein<f64>>())
         }
     }
 
-    fn evaluate_local(&self, parameters: &[f64], indices: &[usize], n_data_batch: f64) -> f64 {
+    fn evaluate_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+        n_data_batch: f64,
+    ) -> LadduResult<f64> {
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let data_term = self.evaluate_data_term_local(parameters, indices);
+        let data_term = self.evaluate_data_term_local(parameters, indices)?;
         let mc_term = self
             .nll
             .accmc_evaluator
-            .evaluate_weighted_value_sum_local(parameters);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
+            .evaluate_weighted_value_sum_local(parameters)?;
+        Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -2043,28 +2021,28 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> f64 {
+    ) -> LadduResult<f64> {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let data_term_local = self.evaluate_data_term_local(parameters, &locals);
+        let data_term_local = self.evaluate_data_term_local(parameters, &locals)?;
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
         let data_term = reduce_scalar(world, data_term_local);
         let mc_term = self
             .nll
             .accmc_evaluator
-            .evaluate_weighted_value_sum_mpi(parameters, world);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
+            .evaluate_weighted_value_sum_mpi(parameters, world)?;
+        Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc))
     }
 
     fn evaluate_data_gradient_term_local(
         &self,
         parameters: &[f64],
         indices: &[usize],
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let data_resources = self.nll.data_evaluator.resources.read();
-        let data_parameters = Parameters::new(parameters, &data_resources.constants);
+        let data_parameters = data_resources.parameter_map.assemble(parameters)?;
         #[cfg(feature = "rayon")]
         let n_parameters = parameters.len();
         #[cfg(feature = "rayon")]
@@ -2155,7 +2133,7 @@ impl StochasticNLL {
                 .map(|(w, l, g)| g.map(|gi| gi.re * w / l.re))
                 .sum()
         };
-        data_term
+        Ok(data_term)
     }
 
     fn evaluate_gradient_local(
@@ -2163,14 +2141,14 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         n_data_batch: f64,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let data_term = self.evaluate_data_gradient_term_local(parameters, indices);
+        let data_term = self.evaluate_data_gradient_term_local(parameters, indices)?;
         let mc_term = self
             .nll
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_local(parameters);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
+            .evaluate_weighted_gradient_sum_local(parameters)?;
+        Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc))
     }
 
     #[cfg(feature = "mpi")]
@@ -2179,19 +2157,19 @@ impl StochasticNLL {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let total = self.nll.data_evaluator.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
         let n_data_batch_local = self.data_batch_weight_local(&locals);
         let n_data_total = self.nll.data_evaluator.dataset.n_events_weighted();
-        let data_term_local = self.evaluate_data_gradient_term_local(parameters, &locals);
+        let data_term_local = self.evaluate_data_gradient_term_local(parameters, &locals)?;
         let n_data_batch = reduce_scalar(world, n_data_batch_local);
         let data_term = reduce_gradient(world, &data_term_local);
         let mc_term = self
             .nll
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_mpi(parameters, world);
-        -2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc)
+            .evaluate_weighted_gradient_sum_mpi(parameters, world)?;
+        Ok(-2.0 * (data_term * n_data_total / n_data_batch - mc_term / self.nll.n_mc))
     }
 }
 
@@ -2290,8 +2268,8 @@ impl PyNLL {
         Ok(PyStochasticNLL(self.0.to_stochastic(batch_size, seed)?))
     }
     /// Turn an ``NLL`` into a likelihood expression that can be combined with other terms.
-    fn to_expression(&self) -> PyLikelihoodExpression {
-        PyLikelihoodExpression(self.0.clone().into_expression())
+    fn to_expression(&self) -> PyResult<PyLikelihoodExpression> {
+        Ok(PyLikelihoodExpression(self.0.clone().into_expression()?))
     }
     /// The names of the free parameters used to evaluate the NLL
     ///
@@ -2327,21 +2305,21 @@ impl PyNLL {
     fn n_parameters(&self) -> usize {
         self.0.n_parameters()
     }
-    /// Return a new NLL with the given parameter fixed
-    fn fix(&self, name: &str, value: f64) -> PyResult<PyNLL> {
-        Ok(PyNLL(self.0.fix(name, value)?))
+    /// Fix a parameter used by this NLL.
+    fn fix_parameter(&self, name: &str, value: f64) -> PyResult<()> {
+        Ok(self.0.fix_parameter(name, value)?)
     }
-    /// Return a new NLL with the given parameter freed
-    fn free(&self, name: &str) -> PyResult<PyNLL> {
-        Ok(PyNLL(self.0.free(name)?))
+    /// Mark a parameter used by this NLL as free.
+    fn free_parameter(&self, name: &str) -> PyResult<()> {
+        Ok(self.0.free_parameter(name)?)
     }
-    /// Return a new NLL with a single parameter renamed
-    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyNLL> {
-        Ok(PyNLL(self.0.rename_parameter(old, new)?))
+    /// Rename a single parameter used by this NLL.
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<()> {
+        Ok(self.0.rename_parameter(old, new)?)
     }
-    /// Return a new NLL with several parameters renamed
-    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyNLL> {
-        Ok(PyNLL(self.0.rename_parameters(&mapping)?))
+    /// Rename several parameters used by this NLL.
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<()> {
+        Ok(self.0.rename_parameters(&mapping)?)
     }
     /// Activates Amplitudes in the NLL by name
     ///
@@ -3340,19 +3318,16 @@ impl LikelihoodNode {
 pub struct LikelihoodExpression {
     registry: LikelihoodRegistry,
     tree: LikelihoodNode,
-    parameter_manager: ParameterManager,
 }
 
 impl LikelihoodExpression {
     /// Build a [`LikelihoodExpression`] from a single [`LikelihoodTerm`].
-    pub fn from_term(term: Box<dyn LikelihoodTerm>) -> Self {
-        let registry = LikelihoodRegistry::singleton(term);
-        let parameter_manager = registry.parameter_manager.clone();
-        Self {
+    pub fn from_term(term: Box<dyn LikelihoodTerm>) -> LadduResult<Self> {
+        let registry = LikelihoodRegistry::singleton(term)?;
+        Ok(Self {
             registry,
             tree: LikelihoodNode::Term(0),
-            parameter_manager,
-        }
+        })
     }
 
     /// Create an expression representing zero, the additive identity.
@@ -3360,7 +3335,6 @@ impl LikelihoodExpression {
         Self {
             registry: LikelihoodRegistry::default(),
             tree: LikelihoodNode::Zero,
-            parameter_manager: ParameterManager::default(),
         }
     }
 
@@ -3369,7 +3343,6 @@ impl LikelihoodExpression {
         Self {
             registry: LikelihoodRegistry::default(),
             tree: LikelihoodNode::One,
-            parameter_manager: ParameterManager::default(),
         }
     }
 
@@ -3381,11 +3354,9 @@ impl LikelihoodExpression {
         let (registry, left_map, right_map) = a.registry.merge(&b.registry);
         let left_tree = a.tree.remap(&left_map);
         let right_tree = b.tree.remap(&right_map);
-        let (parameter_manager, _, _) = a.parameter_manager.merge(&b.parameter_manager);
         LikelihoodExpression {
             registry,
             tree: build(Box::new(left_tree), Box::new(right_tree)),
-            parameter_manager,
         }
     }
 
@@ -3402,77 +3373,149 @@ impl LikelihoodExpression {
 
     /// The parameter names referenced across all terms in this expression.
     pub fn parameters(&self) -> Vec<String> {
-        self.parameter_manager.parameters()
+        self.registry.parameter_map.read().names()
     }
 
     /// The free parameter names which require user-provided values.
     pub fn free_parameters(&self) -> Vec<String> {
-        self.parameter_manager.free_parameters()
+        self.registry.parameter_map.read().free().names()
     }
 
     /// The names of parameters with constant (fixed) values.
     pub fn fixed_parameters(&self) -> Vec<String> {
-        self.parameter_manager.fixed_parameters()
+        self.registry.parameter_map.read().fixed().names()
     }
 
-    fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
-        if self.parameter_manager.contains(name) {
-            Ok(())
-        } else {
-            Err(LadduError::UnregisteredParameter {
-                name: name.to_string(),
-                reason: "parameter not found".into(),
-            })
+    /// Number of free parameters.
+    pub fn n_free(&self) -> usize {
+        self.registry.parameter_map.read().free().len()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed(&self) -> usize {
+        self.registry.parameter_map.read().fixed().len()
+    }
+
+    /// Total number of parameters (free + fixed).
+    pub fn n_parameters(&self) -> usize {
+        self.registry.parameter_map.read().len()
+    }
+
+    fn assemble(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
+        Ok(self
+            .registry
+            .parameter_map
+            .read()
+            .assemble(parameters)?
+            .values()
+            .to_vec())
+    }
+
+    /// Evaluate the sum/product of all terms.
+    pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        let parameters = self.assemble(parameters)?;
+        let mut param_buffers = self.registry.buffers();
+        for (layout, buffer) in self
+            .registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
         }
+        let likelihood_values = LikelihoodValues(
+            self.registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        Ok(self.tree.evaluate(&likelihood_values))
     }
 
-    /// Return a new [`LikelihoodExpression`] with the given parameter fixed to a value.
-    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
-        self.assert_parameter_exists(name)?;
-        let mut output = self.clone();
-        output.parameter_manager = self.parameter_manager.fix(name, value)?;
-        Ok(output)
-    }
-
-    /// Return a new [`LikelihoodExpression`] with the given parameter freed.
-    pub fn free(&self, name: &str) -> LadduResult<Self> {
-        self.assert_parameter_exists(name)?;
-        let mut output = self.clone();
-        output.parameter_manager = self.parameter_manager.free(name)?;
-        Ok(output)
-    }
-
-    /// Return a new [`LikelihoodExpression`] with the given parameter renamed.
-    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
-        self.assert_parameter_exists(old)?;
-        if old == new {
-            return Ok(self.clone());
+    /// Evaluate the gradient.
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        let free_parameter_count = parameters.len();
+        let free_parameter_indices = self.registry.parameter_map.read().free_parameter_indices();
+        let parameters = self.assemble(parameters)?;
+        let mut param_buffers = self.registry.buffers();
+        for (layout, buffer) in self
+            .registry
+            .param_layouts
+            .iter()
+            .zip(param_buffers.iter_mut())
+        {
+            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
+                buffer[buffer_idx] = parameters[param_idx];
+            }
         }
-        let mut output = self.clone();
-        output.parameter_manager = self.parameter_manager.rename(old, new)?;
-        Ok(output)
+        let likelihood_values = LikelihoodValues(
+            self.registry
+                .terms
+                .iter()
+                .zip(param_buffers.iter())
+                .map(|(term, buffer)| term.evaluate(buffer))
+                .collect::<LadduResult<Vec<_>>>()?,
+        );
+        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.registry.terms.len())
+            .map(|_| DVector::zeros(parameters.len()))
+            .collect();
+        for (((term, param_buffer), gradient_buffer), layout) in self
+            .registry
+            .terms
+            .iter()
+            .zip(param_buffers.iter())
+            .zip(gradient_buffers.iter_mut())
+            .zip(self.registry.param_layouts.iter())
+        {
+            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
+            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
+                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
+            }
+        }
+        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
+        let full_gradient = self
+            .tree
+            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
+        let mut reduced = DVector::zeros(free_parameter_count);
+        for (out_idx, &global_idx) in free_parameter_indices.iter().enumerate() {
+            reduced[out_idx] = full_gradient[global_idx];
+        }
+        Ok(reduced)
+    }
+}
+
+impl LikelihoodTerm for LikelihoodExpression {
+    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
+        LikelihoodExpression::evaluate(self, parameters)
+    }
+    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
+        LikelihoodExpression::evaluate_gradient(self, parameters)
+    }
+    fn update(&self) {
+        self.registry.terms.iter().for_each(|term| term.update())
+    }
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.registry.fix_parameter(name, value)
     }
 
-    /// Return a new [`LikelihoodExpression`] with several parameters renamed.
-    pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<Self> {
-        for old in mapping.keys() {
-            self.assert_parameter_exists(old)?;
-        }
-        let mut output = self.clone();
-        output.parameter_manager = self.parameter_manager.rename_parameters(mapping)?;
-        Ok(output)
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.registry.free_parameter(name)
     }
 
-    /// Load a `LikelihoodExpression` so it can be evaluated repeatedly.
-    pub fn load(&self) -> LikelihoodEvaluator {
-        let parameter_manager = self.parameter_manager.clone();
-        let free_parameter_indices = parameter_manager.free_parameter_indices();
-        LikelihoodEvaluator {
-            likelihood_registry: self.registry.clone(),
-            likelihood_expression: self.tree.clone(),
-            free_parameter_indices,
-            parameter_manager,
-        }
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.registry.rename_parameter(old, new)
+    }
+
+    fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.registry.rename_parameters(mapping)
+    }
+
+    fn parameter_map(&self) -> ParameterMap {
+        self.registry.parameter_map.read().clone()
     }
 }
 
@@ -3500,30 +3543,38 @@ impl_op_ex!(
 #[derive(Clone, Default)]
 struct LikelihoodRegistry {
     terms: Vec<Box<dyn LikelihoodTerm>>,
-    parameter_manager: ParameterManager,
     param_layouts: Vec<Vec<usize>>,
-    param_counts: Vec<usize>,
+    parameter_map: Arc<RwLock<ParameterMap>>,
 }
 
 impl LikelihoodRegistry {
-    fn singleton(term: Box<dyn LikelihoodTerm>) -> Self {
+    fn singleton(term: Box<dyn LikelihoodTerm>) -> LadduResult<Self> {
         let mut registry = Self::default();
         registry.push_term(term);
-        registry
+        Ok(registry)
+    }
+
+    fn buffers(&self) -> Vec<Vec<f64>> {
+        self.param_layouts
+            .iter()
+            .map(|layout| vec![0.0; layout.len()])
+            .collect()
     }
 
     fn push_term(&mut self, term: Box<dyn LikelihoodTerm>) -> usize {
         let term_idx = self.terms.len();
-        let term_manager = term.parameter_manager().clone();
-        let (merged_manager, _left_map, layout) = self.parameter_manager.merge(&term_manager);
-        self.parameter_manager = merged_manager;
-        let param_layout = term_manager
-            .free_parameter_indices()
-            .into_iter()
-            .map(|idx| layout[idx])
-            .collect();
-        self.param_layouts.push(param_layout);
-        self.param_counts.push(term_manager.n_free_parameters());
+        let right_parameter_map = term.parameter_map();
+        let (merged_parameter_map, left_indices, right_indices) = {
+            let left_parameter_map = self.parameter_map.read();
+            left_parameter_map.merge(&right_parameter_map)
+        };
+        *self.parameter_map.write() = merged_parameter_map;
+        for layout in &mut self.param_layouts {
+            for index in layout {
+                *index = left_indices[*index];
+            }
+        }
+        self.param_layouts.push(right_indices);
         self.terms.push(term);
         term_idx
     }
@@ -3541,6 +3592,48 @@ impl LikelihoodRegistry {
             right_map.push(idx);
         }
         (registry, left_map, right_map)
+    }
+
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.parameter_map.read().fix_parameter(name, value)?;
+        for term in &self.terms {
+            if term.parameter_map().contains_key(name) {
+                term.fix_parameter(name, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.parameter_map.read().free_parameter(name)?;
+        for term in &self.terms {
+            if term.parameter_map().contains_key(name) {
+                term.free_parameter(name)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.parameter_map.write().rename_parameter(old, new)?;
+        for term in &self.terms {
+            if term.parameter_map().contains_key(old) {
+                term.rename_parameter(old, new)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.parameter_map.write().rename_parameters(mapping)?;
+        for term in &self.terms {
+            for (old, new) in mapping.iter() {
+                if term.parameter_map().contains_key(old) {
+                    term.rename_parameter(old, new)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -3572,9 +3665,9 @@ pub struct PyLikelihoodExpression(pub LikelihoodExpression);
 /// --------
 /// >>> from laddu import LikelihoodScalar, likelihood_sum
 /// >>> expression = likelihood_sum([LikelihoodScalar('alpha')])
-/// >>> expression.load().evaluate([0.5])
+/// >>> expression.evaluate([0.5])
 /// 0.5
-/// >>> likelihood_sum([]).load().evaluate([])
+/// >>> likelihood_sum([]).evaluate([])
 /// 0.0
 ///
 /// Notes
@@ -3632,10 +3725,10 @@ pub fn py_likelihood_sum(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelihoodE
 /// Examples
 /// --------
 /// >>> from laddu import LikelihoodScalar, likelihood_product
-/// >>> evaluator = likelihood_product([LikelihoodScalar('alpha'), LikelihoodScalar('beta')]).load()
-/// >>> evaluator.parameters
+/// >>> expression = likelihood_product([LikelihoodScalar('alpha'), LikelihoodScalar('beta')])
+/// >>> expression.parameters
 /// ['alpha', 'beta']
-/// >>> evaluator.evaluate([2.0, 3.0])
+/// >>> expression.evaluate([2.0, 3.0])
 /// 6.0
 ///
 /// Notes
@@ -3686,10 +3779,10 @@ pub fn py_likelihood_product(terms: Vec<Bound<'_, PyAny>>) -> PyResult<PyLikelih
 /// Examples
 /// --------
 /// >>> from laddu import LikelihoodZero
-/// >>> evaluator = LikelihoodZero().load()
-/// >>> evaluator.parameters
+/// >>> expression = LikelihoodZero()
+/// >>> expression.parameters
 /// []
-/// >>> evaluator.evaluate([])
+/// >>> expression.evaluate([])
 /// 0.0
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
@@ -3713,7 +3806,7 @@ pub fn py_likelihood_zero() -> PyLikelihoodExpression {
 /// Examples
 /// --------
 /// >>> from laddu import LikelihoodOne
-/// >>> LikelihoodOne().load().evaluate([])
+/// >>> LikelihoodOne().evaluate([])
 /// 1.0
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
@@ -3744,11 +3837,6 @@ impl PyLikelihoodExpression {
         PyTuple::new(py, self.0.fixed_parameters())
     }
 
-    /// Load the expression into a reusable evaluator.
-    fn load(&self) -> PyLikelihoodEvaluator {
-        PyLikelihoodEvaluator(self.0.load())
-    }
-
     /// Fix a parameter to a constant value.
     ///
     /// Parameters
@@ -3758,13 +3846,8 @@ impl PyLikelihoodExpression {
     /// value : float
     ///     Value used during evaluation.
     ///
-    /// Returns
-    /// -------
-    /// LikelihoodExpression
-    ///     A new expression with the parameter fixed.
-    ///
-    fn fix(&self, name: &str, value: f64) -> PyResult<PyLikelihoodExpression> {
-        Ok(PyLikelihoodExpression(self.0.fix(name, value)?))
+    fn fix_parameter(&self, name: &str, value: f64) -> PyResult<()> {
+        Ok(self.0.fix_parameter(name, value)?)
     }
 
     /// Free a parameter that was previously fixed.
@@ -3774,13 +3857,8 @@ impl PyLikelihoodExpression {
     /// name : str
     ///     Name of the parameter.
     ///
-    /// Returns
-    /// -------
-    /// LikelihoodExpression
-    ///     A new expression with the parameter restored as free.
-    ///
-    fn free(&self, name: &str) -> PyResult<PyLikelihoodExpression> {
-        Ok(PyLikelihoodExpression(self.0.free(name)?))
+    fn free_parameter(&self, name: &str) -> PyResult<()> {
+        Ok(self.0.free_parameter(name)?)
     }
 
     /// Rename a parameter.
@@ -3792,13 +3870,8 @@ impl PyLikelihoodExpression {
     /// new : str
     ///     Desired parameter name.
     ///
-    /// Returns
-    /// -------
-    /// LikelihoodExpression
-    ///     A new expression with the parameter renamed.
-    ///
-    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyLikelihoodExpression> {
-        Ok(PyLikelihoodExpression(self.0.rename_parameter(old, new)?))
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<()> {
+        Ok(self.0.rename_parameter(old, new)?)
     }
 
     /// Rename multiple parameters at once.
@@ -3808,16 +3881,8 @@ impl PyLikelihoodExpression {
     /// mapping : dict[str, str]
     ///     Mapping from old names to new names.
     ///
-    /// Returns
-    /// -------
-    /// LikelihoodExpression
-    ///     A new expression with all provided renames applied.
-    ///
-    fn rename_parameters(
-        &self,
-        mapping: HashMap<String, String>,
-    ) -> PyResult<PyLikelihoodExpression> {
-        Ok(PyLikelihoodExpression(self.0.rename_parameters(&mapping)?))
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<()> {
+        Ok(self.0.rename_parameters(&mapping)?)
     }
     fn __add__(&self, other: &Bound<'_, PyAny>) -> PyResult<PyLikelihoodExpression> {
         if let Ok(other_expr) = other.extract::<PyLikelihoodExpression>() {
@@ -3877,206 +3942,14 @@ impl PyLikelihoodExpression {
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
-}
 
-/// A structure to evaluate and minimize combinations of [`LikelihoodTerm`]s.
-#[derive(Clone)]
-pub struct LikelihoodEvaluator {
-    likelihood_registry: LikelihoodRegistry,
-    likelihood_expression: LikelihoodNode,
-    free_parameter_indices: Vec<usize>,
-    parameter_manager: ParameterManager,
-}
-
-impl LikelihoodEvaluator {
-    /// The ordered list of parameter names (free and fixed) referenced by this expression.
-    pub fn parameters(&self) -> Vec<String> {
-        self.parameter_manager.parameters()
-    }
-
-    /// The ordered list of free parameter names required to evaluate this expression.
-    pub fn free_parameters(&self) -> Vec<String> {
-        self.parameter_manager.free_parameters()
-    }
-
-    /// The ordered list of parameters that currently have fixed values.
-    pub fn fixed_parameters(&self) -> Vec<String> {
-        self.parameter_manager.fixed_parameters()
-    }
-
-    /// Number of free parameters.
-    pub fn n_free(&self) -> usize {
-        self.free_parameter_indices.len()
-    }
-
-    /// Number of fixed parameters.
-    pub fn n_fixed(&self) -> usize {
-        self.parameter_manager.n_fixed_parameters()
-    }
-
-    /// Total number of parameters (free + fixed).
-    pub fn n_parameters(&self) -> usize {
-        self.parameter_manager.n_parameters()
-    }
-
-    fn assemble_parameters(&self, parameters: &[f64]) -> LadduResult<Vec<f64>> {
-        validate_free_parameter_len(parameters.len(), self.free_parameter_indices.len())?;
-        self.parameter_manager.assemble_full(parameters)
-    }
-
-    /// Evaluate the sum/product of all terms.
-    pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        let parameters = self.assemble_parameters(parameters)?;
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect::<LadduResult<Vec<_>>>()?,
-        );
-        Ok(self.likelihood_expression.evaluate(&likelihood_values))
-    }
-
-    /// Evaluate the gradient.
-    pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        let parameters = self.assemble_parameters(parameters)?;
-        let mut param_buffers: Vec<Vec<f64>> = self
-            .likelihood_registry
-            .param_counts
-            .iter()
-            .map(|&count| vec![0.0; count])
-            .collect();
-        for (layout, buffer) in self
-            .likelihood_registry
-            .param_layouts
-            .iter()
-            .zip(param_buffers.iter_mut())
-        {
-            for (buffer_idx, &param_idx) in layout.iter().enumerate() {
-                buffer[buffer_idx] = parameters[param_idx];
-            }
-        }
-        let likelihood_values = LikelihoodValues(
-            self.likelihood_registry
-                .terms
-                .iter()
-                .zip(param_buffers.iter())
-                .map(|(term, buffer)| term.evaluate(buffer))
-                .collect::<LadduResult<Vec<_>>>()?,
-        );
-        let mut gradient_buffers: Vec<DVector<f64>> = (0..self.likelihood_registry.terms.len())
-            .map(|_| DVector::zeros(self.parameter_manager.n_parameters()))
-            .collect();
-        for (((term, param_buffer), gradient_buffer), layout) in self
-            .likelihood_registry
-            .terms
-            .iter()
-            .zip(param_buffers.iter())
-            .zip(gradient_buffers.iter_mut())
-            .zip(self.likelihood_registry.param_layouts.iter())
-        {
-            let term_gradient = term.evaluate_gradient(param_buffer)?; // This has a local layout
-            for (term_idx, &buffer_idx) in layout.iter().enumerate() {
-                gradient_buffer[buffer_idx] = term_gradient[term_idx] // This has a global layout
-            }
-        }
-        let likelihood_gradients = LikelihoodGradients(gradient_buffers);
-        let full_gradient = self
-            .likelihood_expression
-            .evaluate_gradient(&likelihood_values, &likelihood_gradients);
-        let mut reduced = DVector::zeros(self.free_parameter_indices.len());
-        for (out_idx, &global_idx) in self.free_parameter_indices.iter().enumerate() {
-            reduced[out_idx] = full_gradient[global_idx];
-        }
-        Ok(reduced)
-    }
-}
-
-impl LikelihoodTerm for LikelihoodEvaluator {
-    fn update(&self) {
-        self.likelihood_registry
-            .terms
-            .iter()
-            .for_each(|term| term.update())
-    }
-    /// The parameter names associated with this evaluator (free and fixed).
-    fn parameters(&self) -> Vec<String> {
-        self.parameters()
-    }
-    fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
-    }
-    /// A function that can be called to evaluate the sum/product of the [`LikelihoodTerm`]s
-    /// contained by this [`LikelihoodEvaluator`].
-    fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        LikelihoodEvaluator::evaluate(self, parameters)
-    }
-
-    /// Evaluate the gradient of the stored [`LikelihoodExpression`] over the events in the [`Dataset`]
-    /// stored by the [`LikelihoodEvaluator`] with the given values for free parameters.
-    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        LikelihoodEvaluator::evaluate_gradient(self, parameters)
-    }
-}
-
-/// A class which can be used to evaluate a collection of likelihood terms described by a
-/// [`LikelihoodExpression`]
-///
-#[cfg(feature = "python")]
-#[pyclass(name = "LikelihoodEvaluator", module = "laddu", skip_from_py_object)]
-pub struct PyLikelihoodEvaluator(LikelihoodEvaluator);
-
-#[cfg_attr(coverage_nightly, coverage(off))]
-#[cfg(feature = "python")]
-#[pymethods]
-impl PyLikelihoodEvaluator {
-    /// A list of the names of all parameters across all terms in all models.
-    ///
-    /// Returns
-    /// -------
-    /// parameters : tuple of str
-    ///
-    #[getter]
-    fn parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.parameters())
-    }
-
-    /// A list of names of the free parameters.
-    #[getter]
-    fn free_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.free_parameters())
-    }
-
-    /// A list of names for parameters fixed to constant values.
-    #[getter]
-    fn fixed_parameters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, self.0.fixed_parameters())
-    }
-
-    /// Number of free parameters in the evaluator.
+    /// Number of free parameters in the expression.
     #[getter]
     fn n_free(&self) -> usize {
         self.0.n_free()
     }
 
-    /// Number of fixed parameters in the evaluator.
+    /// Number of fixed parameters in the expression.
     #[getter]
     fn n_fixed(&self) -> usize {
         self.0.n_fixed()
@@ -4088,7 +3961,7 @@ impl PyLikelihoodEvaluator {
         self.0.n_parameters()
     }
 
-    /// Evaluate the sum of all terms in the evaluator
+    /// Evaluate the sum of all terms in the expression.
     ///
     /// Parameters
     /// ----------
@@ -4114,7 +3987,7 @@ impl PyLikelihoodEvaluator {
         validate_free_parameter_len(parameters.len(), self.0.n_free())?;
         install_laddu_with_threads(threads, || self.0.evaluate(&parameters)).map_err(PyErr::from)
     }
-    /// Evaluate the gradient of the sum of all terms in the evaluator
+    /// Evaluate the gradient of the sum of all terms in the expression.
     ///
     /// Parameters
     /// ----------
@@ -4194,7 +4067,7 @@ impl PyLikelihoodEvaluator {
     /// Examples
     /// --------
     /// >>> import ganesh
-    /// >>> evaluator.minimize(
+    /// >>> expression.minimize(
     /// ...     [1.0],
     /// ...     method='lbfgsb',
     /// ...     options=ganesh.LBFGSBOptions(max_steps=150),
@@ -4294,8 +4167,8 @@ impl PyLikelihoodEvaluator {
     /// --------
     /// >>> from laddu import LikelihoodScalar, likelihood_sum
     /// >>> import ganesh
-    /// >>> evaluator = likelihood_sum([LikelihoodScalar('alpha')]).load()
-    /// >>> summary = evaluator.mcmc(
+    /// >>> expression = likelihood_sum([LikelihoodScalar('alpha')])
+    /// >>> summary = expression.mcmc(
     /// ...     [[0.0], [0.4]],
     /// ...     method='aies',
     /// ...     options=ganesh.AIESOptions(max_steps=4),
@@ -4351,47 +4224,50 @@ impl PyLikelihoodEvaluator {
 /// A [`LikelihoodTerm`] which represents a single scaling parameter.
 #[derive(Clone)]
 pub struct LikelihoodScalar {
-    name: String,
-    parameter_manager: ParameterManager,
+    parameter_map: Arc<RwLock<ParameterMap>>,
 }
 
 impl LikelihoodScalar {
     /// Create a new [`LikelihoodScalar`] with a parameter with the given name and wrap it as a
     /// [`LikelihoodExpression`].
     #[allow(clippy::new_ret_no_self)]
-    pub fn new<T: AsRef<str>>(name: T) -> LikelihoodExpression {
-        Self::new_term(name).into_expression()
-    }
-
-    /// Construct the underlying [`LikelihoodTerm`] for advanced use cases.
-    pub fn new_term<T: AsRef<str>>(name: T) -> Box<Self> {
-        let name_str: String = name.as_ref().into();
-        let manager = ParameterManager::new_from_names(std::slice::from_ref(&name_str));
-        Self {
-            name: name_str,
-            parameter_manager: manager,
-        }
-        .into()
+    pub fn new<T: AsRef<str>>(name: T) -> LadduResult<LikelihoodExpression> {
+        let mut parameter_map = ParameterMap::default();
+        parameter_map.insert(Parameter::new(name.as_ref()));
+        let term = Self {
+            parameter_map: Arc::new(RwLock::new(parameter_map)),
+        };
+        term.into_expression()
     }
 }
 
 impl LikelihoodTerm for LikelihoodScalar {
     fn evaluate(&self, parameters: &[f64]) -> LadduResult<f64> {
-        validate_free_parameter_len(parameters.len(), 1)?;
         Ok(parameters[0])
     }
 
-    fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<DVector<f64>> {
-        validate_free_parameter_len(parameters.len(), 1)?;
+    fn evaluate_gradient(&self, _parameters: &[f64]) -> LadduResult<DVector<f64>> {
         Ok(DVector::from_vec(vec![1.0]))
     }
 
-    fn parameters(&self) -> Vec<String> {
-        vec![self.name.clone()]
+    fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.parameter_map.read().fix_parameter(name, value)
     }
 
-    fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
+    fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.parameter_map.read().free_parameter(name)
+    }
+
+    fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.parameter_map.write().rename_parameter(old, new)
+    }
+
+    fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.parameter_map.write().rename_parameters(mapping)
+    }
+
+    fn parameter_map(&self) -> ParameterMap {
+        self.parameter_map.read().clone()
     }
 }
 
@@ -4416,13 +4292,13 @@ impl LikelihoodTerm for LikelihoodScalar {
 /// --------
 /// >>> from laddu import LikelihoodScalar, likelihood_sum
 /// >>> expr = likelihood_sum([LikelihoodScalar('alpha')])
-/// >>> expr.load().evaluate([1.25])
+/// >>> expr.evaluate([1.25])
 /// 1.25
 #[cfg_attr(coverage_nightly, coverage(off))]
 #[cfg(feature = "python")]
 #[pyfunction(name = "LikelihoodScalar")]
-pub fn py_likelihood_scalar(name: String) -> PyLikelihoodExpression {
-    PyLikelihoodExpression(LikelihoodScalar::new(name))
+pub fn py_likelihood_scalar(name: String) -> PyResult<PyLikelihoodExpression> {
+    Ok(PyLikelihoodExpression(LikelihoodScalar::new(name)?))
 }
 
 #[cfg(test)]
@@ -4491,11 +4367,11 @@ mod tests {
 
         fn compute_gradient(
             &self,
-            _parameters: &Parameters,
+            parameters: &Parameters,
             _cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {
-            if let ParameterID::Parameter(index) = self.pid {
+            if let Some(index) = parameters.free_index(self.pid) {
                 gradient[index] = Complex64::ONE;
             }
         }
@@ -4546,11 +4422,11 @@ mod tests {
 
         fn compute_gradient(
             &self,
-            _parameters: &Parameters,
+            parameters: &Parameters,
             cache: &Cache,
             gradient: &mut DVector<Complex64>,
         ) {
-            if let ParameterID::Parameter(index) = self.pid {
+            if let Some(index) = parameters.free_index(self.pid) {
                 gradient[index] = Complex64::new(cache.get_scalar(self.sid), 0.0);
             }
         }
@@ -4783,24 +4659,31 @@ mod tests {
             &fixture.nll.data_evaluator,
             &fixture.parameters,
             |l| f64::ln(l.re),
-        );
+        )
+        .expect("evaluate should succeed");
         let expected_mc_term = fixture
             .nll
             .accmc_evaluator
-            .evaluate_weighted_value_sum_local(&fixture.parameters);
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let expected_value = -2.0 * (expected_value - expected_mc_term / fixture.nll.n_mc);
 
         let expected_data_gradient = fixture
             .nll
-            .evaluate_data_gradient_term_local(&fixture.parameters);
+            .evaluate_data_gradient_term_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let expected_mc_gradient = fixture
             .nll
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let expected_gradient =
             -2.0 * (expected_data_gradient - expected_mc_gradient / fixture.nll.n_mc);
 
-        let actual_value = fixture.nll.evaluate_local(&fixture.parameters);
+        let actual_value = fixture
+            .nll
+            .evaluate_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         assert_relative_eq!(
             actual_value,
             expected_value,
@@ -4808,7 +4691,10 @@ mod tests {
             max_relative = DETERMINISTIC_STRICT_REL_TOL
         );
 
-        let actual_gradient = fixture.nll.evaluate_gradient_local(&fixture.parameters);
+        let actual_gradient = fixture
+            .nll
+            .evaluate_gradient_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         assert_eq!(
             actual_gradient.len(),
             expected_gradient.len(),
@@ -4835,15 +4721,20 @@ mod tests {
             &fixture.nll.data_evaluator,
             &fixture.parameters,
             |l| f64::ln(l.re),
-        );
+        )
+        .expect("evaluate should succeed");
         let mc_term_local = fixture
             .nll
             .accmc_evaluator
-            .evaluate_weighted_value_sum_local(&fixture.parameters);
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let data_term = super::reduce_scalar(world, data_term_local);
         let mc_term = super::reduce_scalar(world, mc_term_local);
         let expected_value = -2.0 * (data_term - mc_term / fixture.nll.n_mc);
-        let mpi_value = fixture.nll.evaluate_mpi_value(&fixture.parameters, world);
+        let mpi_value = fixture
+            .nll
+            .evaluate_mpi_value(&fixture.parameters, world)
+            .expect("evaluate should succeed");
         assert_relative_eq!(
             mpi_value,
             expected_value,
@@ -4853,17 +4744,20 @@ mod tests {
 
         let data_gradient_local = fixture
             .nll
-            .evaluate_data_gradient_term_local(&fixture.parameters);
+            .evaluate_data_gradient_term_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let mc_gradient_local = fixture
             .nll
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_local(&fixture.parameters);
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters)
+            .expect("evaluate should succeed");
         let data_gradient = super::reduce_gradient(world, &data_gradient_local);
         let mc_gradient = super::reduce_gradient(world, &mc_gradient_local);
         let expected_gradient = -2.0 * (data_gradient - mc_gradient / fixture.nll.n_mc);
         let mpi_gradient = fixture
             .nll
-            .evaluate_mpi_gradient(&fixture.parameters, world);
+            .evaluate_mpi_gradient(&fixture.parameters, world)
+            .expect("evaluate should succeed");
         assert_eq!(
             mpi_gradient.len(),
             expected_gradient.len(),
@@ -4996,15 +4890,13 @@ mod tests {
     }
 
     fn case_likelihood_evaluate_short() -> LadduResult<()> {
-        let alpha = LikelihoodScalar::new("alpha");
-        let evaluator = alpha.load();
-        evaluator.evaluate(&[]).map(|_| ())
+        let alpha = LikelihoodScalar::new("alpha")?;
+        alpha.evaluate(&[]).map(|_| ())
     }
 
     fn case_likelihood_gradient_long() -> LadduResult<()> {
-        let alpha = LikelihoodScalar::new("alpha");
-        let evaluator = alpha.load();
-        evaluator.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
+        let alpha = LikelihoodScalar::new("alpha")?;
+        alpha.evaluate_gradient(&[1.0, 2.0]).map(|_| ())
     }
 
     #[test]
@@ -5103,88 +4995,75 @@ mod tests {
 
     #[test]
     fn likelihood_expression_evaluates_scalar_sum() {
-        let alpha = LikelihoodScalar::new("alpha");
-        let beta = LikelihoodScalar::new("beta");
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
+        let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha + &beta;
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
-        let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 5.0);
-        let grad = evaluator.evaluate_gradient(&params).unwrap();
+        assert_relative_eq!(expr.evaluate(&params).unwrap(), 5.0);
+        let grad = expr.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 1.0);
         assert_relative_eq!(grad[1], 1.0);
     }
 
     #[test]
     fn likelihood_expression_evaluates_scalar_product() {
-        let alpha = LikelihoodScalar::new("alpha");
-        let beta = LikelihoodScalar::new("beta");
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
+        let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha * &beta;
-        let evaluator = expr.load();
         let params = vec![2.0, 3.0];
-        assert_relative_eq!(evaluator.evaluate(&params).unwrap(), 6.0);
-        let grad = evaluator.evaluate_gradient(&params).unwrap();
+        assert_relative_eq!(expr.evaluate(&params).unwrap(), 6.0);
+        let grad = expr.evaluate_gradient(&params).unwrap();
         assert_relative_eq!(grad[0], 3.0);
         assert_relative_eq!(grad[1], 2.0);
     }
 
     #[test]
     fn likelihood_expression_tracks_fixed_parameters() {
-        let alpha = LikelihoodScalar::new("alpha");
-        let beta = LikelihoodScalar::new("beta");
-        let expr = (&alpha + &beta).fix("alpha", 1.5).unwrap();
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
+        let beta = LikelihoodScalar::new("beta").unwrap();
+        let expr = &alpha + &beta;
+        expr.fix_parameter("alpha", 1.5).unwrap();
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
         assert_eq!(expr.free_parameters(), vec!["beta"]);
         assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
-        let evaluator = expr.load();
-        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
-        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
         let params_free = vec![2.0];
-        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
-        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
+        assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.5);
+        let grad_free = expr.evaluate_gradient(&params_free).unwrap();
         assert_eq!(grad_free.len(), 1);
         assert_relative_eq!(grad_free[0], 1.0);
     }
 
     #[test]
     fn likelihood_expression_handles_term_local_fixed_parameters() {
-        let alpha = LikelihoodScalar::new("alpha").fix("alpha", 1.5).unwrap();
-        let beta = LikelihoodScalar::new("beta");
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
+        alpha.fix_parameter("alpha", 1.5).unwrap();
+        let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha + &beta;
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
         assert_eq!(expr.free_parameters(), vec!["beta"]);
         assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
 
-        let evaluator = expr.load();
-        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
-        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
-
         let params_free = vec![2.0];
-        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.5);
-        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
+        assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.5);
+        let grad_free = expr.evaluate_gradient(&params_free).unwrap();
         assert_eq!(grad_free.len(), 1);
         assert_relative_eq!(grad_free[0], 1.0);
     }
 
     #[test]
     fn likelihood_product_handles_term_local_fixed_parameters() {
-        let alpha = LikelihoodScalar::new("alpha").fix("alpha", 1.5).unwrap();
-        let beta = LikelihoodScalar::new("beta");
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
+        alpha.fix_parameter("alpha", 1.5).unwrap();
+        let beta = LikelihoodScalar::new("beta").unwrap();
         let expr = &alpha * &beta;
         assert_eq!(expr.parameters(), vec!["alpha", "beta"]);
         assert_eq!(expr.free_parameters(), vec!["beta"]);
         assert_eq!(expr.fixed_parameters(), vec!["alpha"]);
 
-        let evaluator = expr.load();
-        assert_eq!(evaluator.parameters(), vec!["alpha", "beta"]);
-        assert_eq!(evaluator.free_parameters(), vec!["beta"]);
-        assert_eq!(evaluator.fixed_parameters(), vec!["alpha"]);
-
         let params_free = vec![2.0];
-        assert_relative_eq!(evaluator.evaluate(&params_free).unwrap(), 3.0);
-        let grad_free = evaluator.evaluate_gradient(&params_free).unwrap();
+        assert_relative_eq!(expr.evaluate(&params_free).unwrap(), 3.0);
+        let grad_free = expr.evaluate_gradient(&params_free).unwrap();
         assert_eq!(grad_free.len(), 1);
         assert_relative_eq!(grad_free[0], 1.5);
     }
@@ -5562,10 +5441,9 @@ mod tests {
 
     #[test]
     fn likelihood_evaluator_reports_length_mismatch() {
-        let alpha = LikelihoodScalar::new("alpha");
-        let evaluator = alpha.load();
+        let alpha = LikelihoodScalar::new("alpha").unwrap();
 
-        let err_short = evaluator.evaluate(&[]).unwrap_err();
+        let err_short = alpha.evaluate(&[]).unwrap_err();
         assert!(matches!(
             err_short,
             LadduError::LengthMismatch {
@@ -5575,7 +5453,7 @@ mod tests {
             }
         ));
 
-        let err_long = evaluator.evaluate_gradient(&[1.0, 2.0]).unwrap_err();
+        let err_long = alpha.evaluate_gradient(&[1.0, 2.0]).unwrap_err();
         assert!(matches!(
             err_long,
             LadduError::LengthMismatch {
@@ -5624,25 +5502,34 @@ mod tests {
         let data_term_local =
             super::evaluate_weighted_expression_sum_local(&nll.data_evaluator, &params, |l| {
                 f64::ln(l.re)
-            });
+            })
+            .expect("evaluate should succeed");
         let mc_term_local = nll
             .accmc_evaluator
-            .evaluate_weighted_value_sum_local(&params);
+            .evaluate_weighted_value_sum_local(&params)
+            .expect("evaluate should succeed");
         let data_term = super::reduce_scalar(&world, data_term_local);
         let mc_term = super::reduce_scalar(&world, mc_term_local);
         let expected_value = -2.0 * (data_term - mc_term / nll.n_mc);
 
-        let mpi_value = nll.evaluate_mpi(&params, &world);
+        let mpi_value = nll
+            .evaluate_mpi(&params, &world)
+            .expect("evaluate should succeed");
         assert_relative_eq!(mpi_value, expected_value);
 
-        let data_gradient_local = nll.evaluate_data_gradient_term_local(&params);
+        let data_gradient_local = nll
+            .evaluate_data_gradient_term_local(&params)
+            .expect("evaluate should succeed");
         let mc_gradient_local = nll
             .accmc_evaluator
-            .evaluate_weighted_gradient_sum_local(&params);
+            .evaluate_weighted_gradient_sum_local(&params)
+            .expect("evaluate should succeed");
         let data_gradient = super::reduce_gradient(&world, &data_gradient_local);
         let mc_gradient = super::reduce_gradient(&world, &mc_gradient_local);
         let expected_gradient = -2.0 * (data_gradient - mc_gradient / nll.n_mc);
-        let mpi_gradient = nll.evaluate_gradient_mpi(&params, &world);
+        let mpi_gradient = nll
+            .evaluate_gradient_mpi(&params, &world)
+            .expect("evaluate should succeed");
         assert_relative_eq!(mpi_gradient, expected_gradient);
 
         finalize_mpi();
@@ -5688,8 +5575,14 @@ mod tests {
         let nll = NLL::new(&expr, &data, &mc, None).unwrap();
         let params = vec![1.125, -0.375];
 
-        let data_local = nll.data_evaluator.evaluate_local(&params);
-        let mc_local = nll.accmc_evaluator.evaluate_local(&params);
+        let data_local = nll
+            .data_evaluator
+            .evaluate_local(&params)
+            .expect("evaluate should succeed");
+        let mc_local = nll
+            .accmc_evaluator
+            .evaluate_local(&params)
+            .expect("evaluate should succeed");
         let data_term_local: f64 = data_local
             .iter()
             .zip(nll.data_evaluator.dataset.events_local().iter())
@@ -5703,7 +5596,9 @@ mod tests {
         let data_term = super::reduce_scalar(&world, data_term_local);
         let mc_term = super::reduce_scalar(&world, mc_term_local);
         let expected = -2.0 * (data_term - mc_term / nll.n_mc);
-        let mpi_value = nll.evaluate_mpi_value(&params, &world);
+        let mpi_value = nll
+            .evaluate_mpi_value(&params, &world)
+            .expect("evaluate should succeed");
         assert_relative_eq!(mpi_value, expected, epsilon = 1e-9, max_relative = 1e-12);
         finalize_mpi();
     }
@@ -5824,10 +5719,14 @@ mod tests {
         let world = get_world().expect("MPI world should be initialized");
         let fixture = make_mixed_workload_nll_fixture(2_048);
 
-        let baseline_value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+        let baseline_value = fixture
+            .nll
+            .evaluate_mpi(&fixture.parameters, &world)
+            .expect("evaluate should succeed");
         let baseline_gradient = fixture
             .nll
-            .evaluate_gradient_mpi(&fixture.parameters, &world);
+            .evaluate_gradient_mpi(&fixture.parameters, &world)
+            .expect("evaluate should succeed");
         let baseline_weights = fixture
             .nll
             .project_weights_mpi(&fixture.parameters, None, &world)
@@ -5846,7 +5745,10 @@ mod tests {
         );
 
         for pass_index in 0..24 {
-            let value = fixture.nll.evaluate_mpi(&fixture.parameters, &world);
+            let value = fixture
+                .nll
+                .evaluate_mpi(&fixture.parameters, &world)
+                .expect("evaluate should succeed");
             assert_relative_eq!(
                 value,
                 baseline_value,
@@ -5856,7 +5758,8 @@ mod tests {
 
             let gradient = fixture
                 .nll
-                .evaluate_gradient_mpi(&fixture.parameters, &world);
+                .evaluate_gradient_mpi(&fixture.parameters, &world)
+                .expect("evaluate should succeed");
             assert_eq!(
                 gradient.len(),
                 baseline_gradient.len(),

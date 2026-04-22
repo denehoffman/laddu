@@ -145,17 +145,17 @@ impl Amplitude for KopfKMatrixPi1 {
     }
     fn compute_gradient(
         &self,
-        _parameters: &Parameters,
+        parameters: &Parameters,
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
         let ikc_inv_vec = cache.get_complex_vector(self.ikc_cache_index);
         let p_vec_constants = cache.get_matrix(self.p_vec_cache_index);
         let internal_gradient = FixedKMatrix::compute_gradient(&ikc_inv_vec, &p_vec_constants);
-        if let ParameterID::Parameter(index) = self.couplings_indices_real[0] {
+        if let Some(index) = parameters.free_index(self.couplings_indices_real[0]) {
             gradient[index] = internal_gradient[0];
         }
-        if let ParameterID::Parameter(index) = self.couplings_indices_imag[0] {
+        if let Some(index) = parameters.free_index(self.couplings_indices_imag[0]) {
             gradient[index] = Complex64::I * internal_gradient[0];
         }
     }

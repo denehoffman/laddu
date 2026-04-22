@@ -221,19 +221,19 @@ impl PyExpression {
     fn cis(&self) -> PyExpression {
         PyExpression(self.0.cis())
     }
-    /// Return a new Expression with the given parameter fixed
-    fn fix(&self, name: &str, value: f64) -> PyResult<()> {
+    /// Fix a parameter used by this Expression.
+    fn fix_parameter(&self, name: &str, value: f64) -> PyResult<()> {
         Ok(self.0.fix_parameter(name, value)?)
     }
-    /// Return a new Expression with the given parameter freed
-    fn free(&self, name: &str) -> PyResult<()> {
+    /// Mark a parameter used by this Expression as free.
+    fn free_parameter(&self, name: &str) -> PyResult<()> {
         Ok(self.0.free_parameter(name)?)
     }
-    /// Return a new Expression with a single parameter renamed
+    /// Rename a single parameter used by this Expression.
     fn rename_parameter(&mut self, old: &str, new: &str) -> PyResult<()> {
         Ok(self.0.rename_parameter(old, new)?)
     }
-    /// Return a new Expression with several parameters renamed
+    /// Rename several parameters used by this Expression.
     fn rename_parameters(&mut self, mapping: HashMap<String, String>) -> PyResult<()> {
         Ok(self.0.rename_parameters(&mapping)?)
     }
@@ -377,19 +377,19 @@ impl PyEvaluator {
     fn n_parameters(&self) -> usize {
         self.0.n_parameters()
     }
-    /// Return a new Evaluator with the given parameter fixed
-    fn fix(&self, name: &str, value: f64) -> PyResult<()> {
+    /// Fix a parameter used by this Evaluator.
+    fn fix_parameter(&self, name: &str, value: f64) -> PyResult<()> {
         Ok(self.0.fix_parameter(name, value)?)
     }
-    /// Return a new Evaluator with the given parameter freed
-    fn free(&self, name: &str) -> PyResult<()> {
+    /// Mark a parameter used by this Evaluator as free.
+    fn free_parameter(&self, name: &str) -> PyResult<()> {
         Ok(self.0.free_parameter(name)?)
     }
-    /// Return a new Evaluator with a single parameter renamed
+    /// Rename a single parameter used by this Evaluator.
     fn rename_parameter(&self, old: &str, new: &str) -> PyResult<()> {
         Ok(self.0.rename_parameter(old, new)?)
     }
-    /// Return a new Evaluator with several parameters renamed
+    /// Rename several parameters used by this Evaluator.
     fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<()> {
         Ok(self.0.rename_parameters(&mapping)?)
     }
