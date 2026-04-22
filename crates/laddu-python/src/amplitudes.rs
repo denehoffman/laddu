@@ -222,20 +222,20 @@ impl PyExpression {
         PyExpression(self.0.cis())
     }
     /// Return a new Expression with the given parameter fixed
-    fn fix(&self, name: &str, value: f64) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.fix(name, value)?))
+    fn fix(&self, name: &str, value: f64) -> PyResult<()> {
+        Ok(self.0.fix_parameter(name, value)?)
     }
     /// Return a new Expression with the given parameter freed
-    fn free(&self, name: &str) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.free(name)?))
+    fn free(&self, name: &str) -> PyResult<()> {
+        Ok(self.0.free_parameter(name)?)
     }
     /// Return a new Expression with a single parameter renamed
-    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.rename_parameter(old, new)?))
+    fn rename_parameter(&mut self, old: &str, new: &str) -> PyResult<()> {
+        Ok(self.0.rename_parameter(old, new)?)
     }
     /// Return a new Expression with several parameters renamed
-    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyExpression> {
-        Ok(PyExpression(self.0.rename_parameters(&mapping)?))
+    fn rename_parameters(&mut self, mapping: HashMap<String, String>) -> PyResult<()> {
+        Ok(self.0.rename_parameters(&mapping)?)
     }
     /// Return a tree-like diagnostic view of the compiled Expression.
     #[getter]
@@ -378,20 +378,20 @@ impl PyEvaluator {
         self.0.n_parameters()
     }
     /// Return a new Evaluator with the given parameter fixed
-    fn fix(&self, name: &str, value: f64) -> PyResult<PyEvaluator> {
-        Ok(PyEvaluator(self.0.fix(name, value)?))
+    fn fix(&self, name: &str, value: f64) -> PyResult<()> {
+        Ok(self.0.fix_parameter(name, value)?)
     }
     /// Return a new Evaluator with the given parameter freed
-    fn free(&self, name: &str) -> PyResult<PyEvaluator> {
-        Ok(PyEvaluator(self.0.free(name)?))
+    fn free(&self, name: &str) -> PyResult<()> {
+        Ok(self.0.free_parameter(name)?)
     }
     /// Return a new Evaluator with a single parameter renamed
-    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<PyEvaluator> {
-        Ok(PyEvaluator(self.0.rename_parameter(old, new)?))
+    fn rename_parameter(&self, old: &str, new: &str) -> PyResult<()> {
+        Ok(self.0.rename_parameter(old, new)?)
     }
     /// Return a new Evaluator with several parameters renamed
-    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<PyEvaluator> {
-        Ok(PyEvaluator(self.0.rename_parameters(&mapping)?))
+    fn rename_parameters(&self, mapping: HashMap<String, String>) -> PyResult<()> {
+        Ok(self.0.rename_parameters(&mapping)?)
     }
     /// Activates Amplitudes in the Expression by name or glob selector
     ///
@@ -575,7 +575,7 @@ impl PyEvaluator {
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         let values = install_with_threads(threads, || self.0.evaluate(&parameters))?;
-        Ok(PyArray1::from_slice(py, &values))
+        Ok(PyArray1::from_slice(py, &values?))
     }
     /// Evaluate the stored Expression over a subset of the stored Dataset
     ///
@@ -610,7 +610,7 @@ impl PyEvaluator {
     ) -> PyResult<Bound<'py, PyArray1<Complex64>>> {
         let values =
             install_with_threads(threads, || self.0.evaluate_batch(&parameters, &indices))?;
-        Ok(PyArray1::from_slice(py, &values))
+        Ok(PyArray1::from_slice(py, &values?))
     }
     /// Evaluate the gradient of the stored Expression over the stored Dataset
     ///
@@ -641,14 +641,15 @@ impl PyEvaluator {
         parameters: Vec<f64>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
-        let gradients = install_with_threads(threads, || {
-            self.0
-                .evaluate_gradient(&parameters)
+        let gradients: LadduResult<_> = install_with_threads(threads, || {
+            Ok(self
+                .0
+                .evaluate_gradient(&parameters)?
                 .iter()
                 .map(|grad| grad.data.as_vec().to_vec())
-                .collect::<Vec<Vec<Complex64>>>()
+                .collect::<Vec<Vec<Complex64>>>())
         })?;
-        Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
+        Ok(PyArray2::from_vec2(py, &gradients?).map_err(LadduError::NumpyError)?)
     }
     /// Evaluate the gradient of the stored Expression over a subset of the stored Dataset
     ///
@@ -682,14 +683,15 @@ impl PyEvaluator {
         indices: Vec<usize>,
         threads: Option<usize>,
     ) -> PyResult<Bound<'py, PyArray2<Complex64>>> {
-        let gradients = install_with_threads(threads, || {
-            self.0
-                .evaluate_gradient_batch(&parameters, &indices)
+        let gradients: LadduResult<_> = install_with_threads(threads, || {
+            Ok(self
+                .0
+                .evaluate_gradient_batch(&parameters, &indices)?
                 .iter()
                 .map(|grad| grad.data.as_vec().to_vec())
-                .collect::<Vec<Vec<Complex64>>>()
+                .collect::<Vec<Vec<Complex64>>>())
         })?;
-        Ok(PyArray2::from_vec2(py, &gradients).map_err(LadduError::NumpyError)?)
+        Ok(PyArray2::from_vec2(py, &gradients?).map_err(LadduError::NumpyError)?)
     }
 }
 
@@ -720,32 +722,32 @@ pub struct PyParameter(pub Parameter);
 #[pymethods]
 impl PyParameter {
     #[getter]
-    fn name(&self) -> &str {
-        &self.0.name
+    fn name(&self) -> String {
+        self.0.name()
     }
     #[getter]
     fn fixed(&self) -> Option<f64> {
-        self.0.fixed
+        self.0.fixed()
     }
     #[getter]
     fn initial(&self) -> Option<f64> {
-        self.0.initial
+        self.0.initial()
     }
     #[getter]
     fn bounds(&self) -> (Option<f64>, Option<f64>) {
-        self.0.bounds
+        self.0.bounds()
     }
     #[getter]
-    fn unit(&self) -> Option<&str> {
-        self.0.unit.as_deref()
+    fn unit(&self) -> Option<String> {
+        self.0.unit()
     }
     #[getter]
-    fn latex(&self) -> Option<&str> {
-        self.0.latex.as_deref()
+    fn latex(&self) -> Option<String> {
+        self.0.latex()
     }
     #[getter]
-    fn description(&self) -> Option<&str> {
-        self.0.description.as_deref()
+    fn description(&self) -> Option<String> {
+        self.0.description()
     }
 }
 
@@ -790,22 +792,22 @@ pub fn py_parameter(
     latex: Option<&str>,
     description: Option<&str>,
 ) -> PyParameter {
-    let mut par = Parameter::new(name);
+    let par = Parameter::new(name);
     if let Some(value) = initial {
-        par = par.with_initial(value);
+        par.set_initial(value);
     }
     if let Some(value) = fixed {
-        par = par.with_fixed_value(value);
+        par.set_fixed_value(Some(value)); // TODO: make this all consistent
     }
-    par = par.with_bounds(bounds.0, bounds.1);
+    par.set_bounds(bounds.0, bounds.1);
     if let Some(unit) = unit {
-        par = par.with_unit(unit);
+        par.set_unit(unit);
     }
     if let Some(latex) = latex {
-        par = par.with_latex(latex);
+        par.set_latex(latex);
     }
     if let Some(description) = description {
-        par = par.with_description(description);
+        par.set_description(description);
     }
     PyParameter(par)
 }

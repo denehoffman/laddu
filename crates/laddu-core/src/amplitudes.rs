@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::ops::Index;
 use std::time::Instant;
 use std::{
-    collections::HashMap,
     fmt::{Debug, Display},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -10,10 +12,11 @@ use std::{
 
 use auto_ops::*;
 use dyn_clone::DynClone;
+use indexmap::IndexMap;
 use nalgebra::DVector;
 use num::complex::Complex64;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -201,7 +204,6 @@ use crate::ExecutionContext;
 use crate::ThreadPolicy;
 use crate::{
     data::{Dataset, DatasetMetadata, NamedEventView},
-    parameter_manager::{ParameterManager, ParameterTransform},
     resources::{Cache, Parameters, Resources},
     LadduError, LadduResult, ParameterID, ReadWrite,
 };
@@ -212,25 +214,41 @@ use crate::mpi::LadduMPI;
 #[cfg(feature = "mpi")]
 use mpi::{datatype::PartitionMut, topology::SimpleCommunicator, traits::*};
 
-/// An enum containing either a named free parameter or a constant value.
 #[derive(Clone, Default, Serialize, Deserialize, Debug)]
-pub struct Parameter {
+struct ParameterMetadata {
     /// The name of the parameter.
-    pub name: String,
+    name: String,
     /// If `Some`, this parameter is fixed to the given value. If `None`, it is free.
-    pub fixed: Option<f64>,
+    fixed: Option<f64>,
     /// If `Some`, this is used for the initial value of the parameter in fits. If `None`, the user
     /// must provide the initial value on their own.
-    pub initial: Option<f64>,
+    initial: Option<f64>,
     /// Optional bounds which may be automatically used by optimizers. `None` represents no bound
     /// in the given direction.
-    pub bounds: (Option<f64>, Option<f64>),
+    bounds: (Option<f64>, Option<f64>),
     /// An optional unit string which may be used to annotate the parameter.
-    pub unit: Option<String>,
+    unit: Option<String>,
     /// Optional LaTeX representation of the parameter.
-    pub latex: Option<String>,
+    latex: Option<String>,
     /// Optional description of the parameter.
-    pub description: Option<String>,
+    description: Option<String>,
+}
+
+/// An enum containing either a named free parameter or a constant value.
+#[derive(Clone, Default, Serialize, Deserialize, Debug)]
+pub struct Parameter(Arc<Mutex<ParameterMetadata>>);
+
+// NOTE: hash and equality only depend on name
+impl PartialEq for Parameter {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.lock().name == other.0.lock().name
+    }
+}
+impl Eq for Parameter {}
+impl Hash for Parameter {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.lock().name.hash(state);
+    }
 }
 
 /// Helper trait to convert values to bounds-like [`Option<f64>`]
@@ -252,17 +270,69 @@ impl IntoBound for Option<f64> {
 impl Parameter {
     /// Create a free (floating) parameter with the given name.
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
+        Self(Arc::new(Mutex::new(ParameterMetadata {
             name: name.into(),
             ..Default::default()
-        }
+        })))
+    }
+
+    pub fn new_fixed(name: impl Into<String>, value: f64) -> Self {
+        Self(Arc::new(Mutex::new(ParameterMetadata {
+            name: name.into(),
+            fixed: Some(value),
+            ..Default::default()
+        })))
+    }
+
+    pub fn name(&self) -> String {
+        self.0.lock().name.clone()
+    }
+
+    pub fn fixed(&self) -> Option<f64> {
+        self.0.lock().fixed
+    }
+
+    pub fn initial(&self) -> Option<f64> {
+        self.0.lock().initial
+    }
+
+    pub fn bounds(&self) -> (Option<f64>, Option<f64>) {
+        self.0.lock().bounds
+    }
+
+    pub fn unit(&self) -> Option<String> {
+        self.0.lock().unit.clone()
+    }
+
+    pub fn latex(&self) -> Option<String> {
+        self.0.lock().latex.clone()
+    }
+
+    pub fn description(&self) -> Option<String> {
+        self.0.lock().description.clone()
+    }
+
+    pub fn rename(&self, name: impl Into<String>) {
+        self.0.lock().name = name.into();
+    }
+
+    /// Helper method to set the name of a parameter.
+    pub fn set_name(&self, name: impl Into<String>) {
+        self.0.lock().name = name.into();
     }
 
     /// Helper method to set the fixed value of a parameter.
-    pub fn with_fixed_value(mut self, value: f64) -> Self {
-        self.fixed = Some(value);
-        self.initial = Some(value);
-        self
+    pub fn set_fixed_value(&self, value: Option<f64>) {
+        {
+            let mut guard = self.0.lock();
+            if let Some(value) = value {
+                guard.fixed = Some(value);
+                guard.initial = Some(value);
+            } else {
+                guard.fixed = None;
+                // NOTE: freeing keeps the initial value as the previous fixed value
+            }
+        }
     }
 
     /// Helper method to set the initial value of a parameter.
@@ -270,51 +340,46 @@ impl Parameter {
     /// # Panics
     ///
     /// This method panics if the parameter is fixed.
-    pub fn with_initial(mut self, value: f64) -> Self {
+    pub fn set_initial(&self, value: f64) {
         assert!(
             self.is_free(),
             "cannot manually set `initial` on a fixed parameter"
         );
-        self.initial = Some(value);
-        self
+        self.0.lock().initial = Some(value);
     }
 
     /// Helper method to set the bounds of a parameter.
-    pub fn with_bounds<L, U>(mut self, min: L, max: U) -> Self
+    pub fn set_bounds<L, U>(&self, min: L, max: U)
     where
         L: IntoBound,
         U: IntoBound,
     {
-        self.bounds = (IntoBound::into_bound(min), IntoBound::into_bound(max));
-        self
+        self.0.lock().bounds = (IntoBound::into_bound(min), IntoBound::into_bound(max));
     }
 
     /// Helper method to set the unit of a parameter.
-    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
-        self.unit = Some(unit.into());
-        self
+    pub fn set_unit(&self, unit: impl Into<String>) {
+        self.0.lock().unit = Some(unit.into());
     }
 
     /// Helper method to set the LaTeX representation of a parameter.
-    pub fn with_latex(mut self, latex: impl Into<String>) -> Self {
-        self.latex = Some(latex.into());
-        self
+    pub fn set_latex(&self, latex: impl Into<String>) {
+        self.0.lock().latex = Some(latex.into());
     }
 
     /// Helper method to set the description of a parameter.
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
+    pub fn set_description(&self, description: impl Into<String>) {
+        self.0.lock().description = Some(description.into());
     }
 
     /// Is this parameter free?
     pub fn is_free(&self) -> bool {
-        self.fixed.is_none()
+        self.0.lock().fixed.is_none()
     }
 
     /// Is this parameter fixed?
     pub fn is_fixed(&self) -> bool {
-        self.fixed.is_some()
+        self.0.lock().fixed.is_some()
     }
 }
 
@@ -322,95 +387,331 @@ impl Parameter {
 /// `parameter!(\"name\")` for a free parameter, or `parameter!(\"name\", 1.0)` for a fixed one.
 #[macro_export]
 macro_rules! parameter {
-    ($name:expr) => {
+    ($name:expr) => {{
         $crate::amplitudes::Parameter::new($name)
-    };
-
-    ($name:expr, $value:expr) => {
-        $crate::amplitudes::Parameter::new($name).with_fixed_value($value)
-    };
-
-    ($name:expr, $($rest:tt)+) => {{
-        $crate::parameter!(@parse
-            $crate::amplitudes::Parameter::new($name),
-            [fixed = false, initial = false];
-            $($rest)+
-        )
     }};
 
-    // done
-    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt];) => {
-        $p
-    };
+    ($name:expr, $value:expr) => {{
+        let p = $crate::amplitudes::Parameter::new($name);
+        p.set_fixed_value(Some($value));
+        p
+    }};
 
-    // fixed after initial -> reject
-    (@parse $p:expr, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
+    ($name:expr, $($rest:tt)+) => {{
+        let p = $crate::amplitudes::Parameter::new($name);
+        $crate::parameter!(@parse p, [fixed = false, initial = false]; $($rest)+);
+        p
+    }};
+
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; ) => {};
+
+    (@parse $p:ident, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_fixed_value(Some($value));
+        $crate::parameter!(@parse $p, [fixed = true, initial = false]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = false, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_initial($value);
+        $crate::parameter!(@parse $p, [fixed = false, initial = true]; $($($rest)*)?);
+    }};
+
+    (@parse $p:ident, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
         compile_error!("parameter!: cannot specify both `fixed` and `initial`");
     };
 
-    // initial after fixed -> reject
-    (@parse $p:expr, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
+    (@parse $p:ident, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
         compile_error!("parameter!: cannot specify both `fixed` and `initial`");
     };
 
-    // fixed first time
-    (@parse $p:expr, [fixed = false, initial = false]; fixed : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_fixed_value($value),
-            [fixed = true, initial = false];
-            $($($rest)*)?
-        )
-    };
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; bounds : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {{
+        $p.set_bounds($min, $max);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
 
-    (@parse $p:expr, [fixed = false, initial = true]; fixed : $value:expr $(, $($rest:tt)*)?) => {
-        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
-    };
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_unit($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
 
-    // initial first time
-    (@parse $p:expr, [fixed = false, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_initial($value),
-            [fixed = false, initial = true];
-            $($($rest)*)?
-        )
-    };
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; latex : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_latex($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
 
-    (@parse $p:expr, [fixed = true, initial = false]; initial : $value:expr $(, $($rest:tt)*)?) => {
-        compile_error!("parameter!: cannot specify both `fixed` and `initial`");
-    };
+    (@parse $p:ident, [fixed = $f:tt, initial = $i:tt]; description : $value:expr $(, $($rest:tt)*)?) => {{
+        $p.set_description($value);
+        $crate::parameter!(@parse $p, [fixed = $f, initial = $i]; $($($rest)*)?);
+    }};
+}
 
-    // other fields
-    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; bounds : ($min:expr, $max:expr) $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_bounds($min, $max),
-            [fixed = $fixed_seen, initial = $initial_seen];
-            $($($rest)*)?
-        )
-    };
+/// An ordered set of [`Parameter`]s
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct ParameterMap {
+    parameters: IndexMap<String, Parameter>,
+}
 
-    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; unit : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_unit($value),
-            [fixed = $fixed_seen, initial = $initial_seen];
-            $($($rest)*)?
-        )
-    };
+impl Index<usize> for ParameterMap {
+    type Output = Parameter;
 
-    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; latex : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_latex($value),
-            [fixed = $fixed_seen, initial = $initial_seen];
-            $($($rest)*)?
-        )
-    };
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.parameters[index]
+    }
+}
 
-    (@parse $p:expr, [fixed = $fixed_seen:tt, initial = $initial_seen:tt]; description : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::parameter!(@parse
-            $p.with_description($value),
-            [fixed = $fixed_seen, initial = $initial_seen];
-            $($($rest)*)?
-        )
-    };
+impl Index<&str> for ParameterMap {
+    type Output = Parameter;
+
+    fn index(&self, key: &str) -> &Self::Output {
+        &self.parameters[key]
+    }
+}
+
+impl IntoIterator for ParameterMap {
+    type Item = (String, Parameter);
+
+    type IntoIter = indexmap::map::IntoIter<String, Parameter>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.parameters.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ParameterMap {
+    type Item = (&'a String, &'a Parameter);
+
+    type IntoIter = indexmap::map::Iter<'a, String, Parameter>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.parameters.iter()
+    }
+}
+
+impl ParameterMap {
+    pub fn register_parameter(&mut self, p: &Parameter) -> LadduResult<ParameterID> {
+        let name = p.name();
+        if name.is_empty() {
+            return Err(LadduError::UnregisteredParameter {
+                name: "<unnamed>".to_string(),
+                reason: "Parameter was not initialized with a name".to_string(),
+            });
+        }
+
+        if let Some((index, _, existing)) = self.get_full(&name) {
+            match (existing.fixed(), p.fixed()) {
+                (Some(a), Some(b)) if (a - b).abs() > f64::EPSILON => {
+                    return Err(LadduError::ParameterConflict {
+                        name,
+                        reason: "conflicting fixed values for the same parameter name".to_string(),
+                    });
+                }
+                (Some(_), None) => {
+                    return Err(LadduError::ParameterConflict {
+                        name,
+                        reason: "attempted to use a fixed parameter name as free".to_string(),
+                    });
+                }
+                (None, Some(_)) => {
+                    return Err(LadduError::ParameterConflict {
+                        name,
+                        reason: "attempted to use a free parameter name as fixed".to_string(),
+                    });
+                }
+                (Some(_), Some(_)) => return Ok(ParameterID::Constant(index)),
+                (None, None) => return Ok(ParameterID::Parameter(index)),
+            }
+        }
+
+        let index = self.len();
+        self.insert(p.clone());
+        let id = if p.is_fixed() {
+            ParameterID::Constant(index)
+        } else {
+            ParameterID::Parameter(index)
+        };
+        Ok(id)
+    }
+    pub fn free_parameter_indices(&self) -> Vec<usize> {
+        self.parameters
+            .values()
+            .enumerate()
+            .filter_map(|(i, p)| if p.is_free() { Some(i) } else { None })
+            .collect()
+    }
+    pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
+        if old == new {
+            return Ok(());
+        }
+        if self.contains_key(new) {
+            return Err(LadduError::ParameterConflict {
+                name: new.to_string(),
+                reason: "rename target already exists".to_string(),
+            });
+        }
+        if let Some((index, _, parameter)) = self.parameters.shift_remove_full(old) {
+            parameter.set_name(new);
+            self.parameters
+                .insert_before(index, new.to_string(), parameter);
+        } else {
+            self.assert_parameter_exists(old)?;
+        }
+        Ok(())
+    }
+    pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        for (old, new) in mapping {
+            self.rename_parameter(old, new)?;
+        }
+        Ok(())
+    }
+    pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.assert_parameter_exists(name)?;
+        self.get(name).map(|p| p.set_fixed_value(Some(value)));
+        Ok(())
+    }
+    pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.assert_parameter_exists(name)?;
+        self.get(name).map(|p| p.set_fixed_value(None));
+        Ok(())
+    }
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.parameters.contains_key(name)
+    }
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.parameters.get_index_of(name)
+    }
+    pub fn insert(&mut self, parameter: Parameter) -> Option<Parameter> {
+        self.parameters.insert(parameter.name(), parameter)
+    }
+    /// The number of parameters in the set
+    pub fn len(&self) -> usize {
+        self.parameters.len()
+    }
+    /// Returns true if the parameter set has no elements
+    pub fn is_empty(&self) -> bool {
+        self.parameters.is_empty()
+    }
+    /// Iterate over all parameters in the set
+    pub fn iter(&self) -> indexmap::map::Iter<'_, String, Parameter> {
+        self.parameters.iter()
+    }
+    /// Get a parameter by name
+    pub fn get(&self, key: &str) -> Option<&Parameter> {
+        self.parameters.get(key)
+    }
+    pub fn get_full(&self, key: &str) -> Option<(usize, &String, &Parameter)> {
+        self.parameters.get_full(key)
+    }
+    /// Get all parameter names in order
+    pub fn names(&self) -> Vec<String> {
+        self.parameters.keys().cloned().collect()
+    }
+    /// Filter the parameter set by a predicate
+    pub fn filter(&self, predicate: impl Fn(&Parameter) -> bool) -> Self {
+        let filtered_parameters: IndexMap<_, _> = self
+            .parameters
+            .clone()
+            .into_iter()
+            .filter(|(_, parameter)| predicate(parameter))
+            .collect();
+        Self {
+            parameters: filtered_parameters,
+        }
+    }
+    /// Get a set containing only free parameters
+    pub fn free(&self) -> Self {
+        self.filter(|p| p.is_free())
+    }
+    /// Get a set containing only fixed parameters
+    pub fn fixed(&self) -> Self {
+        self.filter(|p| p.is_fixed())
+    }
+    /// Get a set containing only initialized parameters
+    pub fn initialized(&self) -> Self {
+        self.filter(|p| p.initial().is_some())
+    }
+    /// Get a set containing only uninitialized parameters
+    pub fn uninitialized(&self) -> Self {
+        self.filter(|p| p.initial().is_none())
+    }
+
+    pub fn assemble(&self, free_values: &[f64]) -> LadduResult<Parameters> {
+        let mut full = Vec::with_capacity(self.len());
+        let mut free_iter = free_values.iter();
+        for (_, parameter) in self {
+            if let Some(value) = parameter.fixed() {
+                full.push(value)
+            } else if let Some(value) = free_iter.next() {
+                full.push(*value)
+            } else {
+                return Err(LadduError::ParameterConflict {
+                    name: "<parameters>".to_string(),
+                    reason: format!(
+                        "expected {} free values, received {}",
+                        self.free().len(),
+                        free_values.len()
+                    ),
+                });
+            }
+        }
+        if free_iter.next().is_some() {
+            return Err(LadduError::ParameterConflict {
+                name: "<parameters>".to_string(),
+                reason: format!(
+                    "expected {} free values, received {}",
+                    self.free().len(),
+                    free_values.len()
+                ),
+            });
+        }
+        Ok(Parameters::new(full, free_values.len()))
+    }
+
+    /// # Notes
+    /// When parameters overlap, the state and value stored in `self` always take precedence over
+    /// entries from `other`.
+    pub fn merge(&self, other: &Self) -> (Self, Vec<usize>, Vec<usize>) {
+        let mut merged = self.clone();
+        let left_map: Vec<usize> = (0..self.len()).collect();
+        let mut right_map = Vec::with_capacity(other.len());
+        for (_, parameter) in other {
+            let idx = merged.ensure_parameter(parameter.clone());
+            right_map.push(idx);
+        }
+        (merged, left_map, right_map)
+    }
+
+    /// # Notes
+    /// When both managers reference the same parameter, the value and fixed/free status from
+    /// `self` are retained.
+    pub fn extend_from(&self, other: &Self) -> (Self, Vec<usize>) {
+        let mut merged = self.clone();
+        let mut indices = Vec::with_capacity(other.len());
+        for (_, parameter) in other {
+            let idx = merged.ensure_parameter(parameter.clone());
+            indices.push(idx);
+        }
+        (merged, indices)
+    }
+
+    fn ensure_parameter(&mut self, parameter: Parameter) -> usize {
+        let name = parameter.name();
+        if let Some(idx) = self.index(&name) {
+            return idx;
+        }
+        let idx = self.len();
+        self.insert(parameter);
+        idx
+    }
+
+    fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
+        if self.contains_key(name) {
+            Ok(())
+        } else {
+            Err(LadduError::UnregisteredParameter {
+                name: name.to_string(),
+                reason: "parameter not found".to_string(),
+            })
+        }
+    }
 }
 
 /// This is the only required trait for writing new amplitude-like structures for this
@@ -534,8 +835,8 @@ pub trait Amplitude: DynClone + Send + Sync {
         cache: &Cache,
         gradient: &mut DVector<Complex64>,
     ) {
-        let x = parameters.parameters.to_owned();
-        let constants = parameters.constants.to_owned();
+        let x = parameters.values().to_owned();
+        let n_free = parameters.len();
         let h: DVector<f64> = x
             .iter()
             .map(|&xi| f64::cbrt(f64::EPSILON) * (xi.abs() + 1.0))
@@ -546,8 +847,8 @@ pub trait Amplitude: DynClone + Send + Sync {
             let mut x_minus = x.clone();
             x_plus[*i] += h[*i];
             x_minus[*i] -= h[*i];
-            let f_plus = self.compute(&Parameters::new(&x_plus, &constants), cache);
-            let f_minus = self.compute(&Parameters::new(&x_minus, &constants), cache);
+            let f_plus = self.compute(&Parameters::new(x_plus, n_free), cache);
+            let f_minus = self.compute(&Parameters::new(x_minus, n_free), cache);
             gradient[*i] = (f_plus - f_minus) / (2.0 * h[*i]);
         }
     }
@@ -738,7 +1039,7 @@ impl ExpressionRegistry {
         let mut amplitude_names = Vec::new();
         let mut amplitude_ids = Vec::new();
         let mut amplitude_semantic_keys = Vec::new();
-        let mut name_to_index = std::collections::HashMap::new();
+        let mut name_to_index = HashMap::new();
 
         let mut left_map = Vec::with_capacity(self.amplitudes.len());
         for ((amp, name), amp_id) in self
@@ -809,37 +1110,6 @@ impl ExpressionRegistry {
             left_map,
             right_map,
         ))
-    }
-
-    fn rebuild_with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
-        let mut resources = Resources::with_transform(transform);
-        let mut amplitudes = Vec::new();
-        let mut amplitude_names = Vec::new();
-        let mut amplitude_ids = Vec::new();
-        for ((amp, name), amp_id) in self
-            .amplitudes
-            .iter()
-            .zip(&self.amplitude_names)
-            .zip(&self.amplitude_ids)
-        {
-            let mut cloned_amp = dyn_clone::clone_box(&**amp);
-            let aid = cloned_amp.register(&mut resources)?;
-            if aid.0 != *name {
-                return Err(LadduError::ParameterConflict {
-                    name: aid.0,
-                    reason: "amplitude renamed during rebuild".to_string(),
-                });
-            }
-            amplitudes.push(cloned_amp);
-            amplitude_names.push(name.clone());
-            amplitude_ids.push(*amp_id);
-        }
-        Ok(Self {
-            amplitudes,
-            amplitude_names,
-            amplitude_ids,
-            resources,
-        })
     }
 }
 
@@ -1730,91 +2000,22 @@ impl Expression {
         CompiledExpression::from_ir(&expression_ir, &self.registry.amplitude_names)
     }
 
-    fn with_transform(&self, transform: ParameterTransform) -> LadduResult<Self> {
-        let merged = self
-            .registry
-            .resources
-            .parameter_overrides
-            .merged(&transform);
-        let registry = self.registry.rebuild_with_transform(merged)?;
-        Ok(Self {
-            registry,
-            tree: self.tree.clone(),
-        })
+    pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.registry.resources.fix_parameter(name, value)
     }
 
-    fn assert_parameter_exists(&self, name: &str) -> LadduResult<()> {
-        if self.parameters().iter().any(|p| p == name) {
-            Ok(())
-        } else {
-            Err(LadduError::UnregisteredParameter {
-                name: name.to_string(),
-                reason: "parameter not found".to_string(),
-            })
-        }
-    }
-
-    /// Return a new [`Expression`] with the given parameter fixed to a value.
-    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
-        self.assert_parameter_exists(name)?;
-        let mut transform = ParameterTransform::default();
-        transform.fixed.insert(name.to_string(), value);
-        self.with_transform(transform)
-    }
-
-    /// Return a new [`Expression`] with the given parameter freed.
-    pub fn free(&self, name: &str) -> LadduResult<Self> {
-        self.assert_parameter_exists(name)?;
-        let mut transform = ParameterTransform::default();
-        transform.freed.insert(name.to_string());
-        self.with_transform(transform)
+    pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.registry.resources.free_parameter(name)
     }
 
     /// Return a new [`Expression`] with a single parameter renamed.
-    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
-        self.assert_parameter_exists(old)?;
-        if old == new {
-            return Ok(self.clone());
-        }
-        if self.parameters().iter().any(|p| p == new) {
-            return Err(LadduError::ParameterConflict {
-                name: new.to_string(),
-                reason: "rename target already exists".to_string(),
-            });
-        }
-        let mut transform = ParameterTransform::default();
-        transform.renames.insert(old.to_string(), new.to_string());
-        self.with_transform(transform)
+    pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
+        self.registry.resources.rename_parameter(old, new)
     }
 
     /// Return a new [`Expression`] with several parameters renamed.
-    pub fn rename_parameters(
-        &self,
-        mapping: &std::collections::HashMap<String, String>,
-    ) -> LadduResult<Self> {
-        for old in mapping.keys() {
-            self.assert_parameter_exists(old)?;
-        }
-        let mut final_names: std::collections::HashSet<String> =
-            self.parameters().into_iter().collect();
-        for (old, new) in mapping {
-            if old == new {
-                continue;
-            }
-            final_names.remove(old);
-            if final_names.contains(new) {
-                return Err(LadduError::ParameterConflict {
-                    name: new.clone(),
-                    reason: "rename target already exists".to_string(),
-                });
-            }
-            final_names.insert(new.clone());
-        }
-        let mut transform = ParameterTransform::default();
-        for (old, new) in mapping {
-            transform.renames.insert(old.clone(), new.clone());
-        }
-        self.with_transform(transform)
+    pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.registry.resources.rename_parameters(mapping)
     }
 
     /// Load an [`Expression`] against a dataset, binding amplitudes and reserving caches.
@@ -1823,10 +2024,7 @@ impl Expression {
         let metadata = dataset.metadata();
         resources.reserve_cache(dataset.n_events_local());
         resources.refresh_active_indices();
-        let parameter_manager = ParameterManager::with_fixed_values(
-            &resources.parameter_names(),
-            &resources.fixed_parameter_values(),
-        );
+        let parameter_map = resources.parameter_map.clone();
         let mut amplitudes: Vec<Box<dyn Amplitude>> = self
             .registry
             .amplitudes
@@ -1867,8 +2065,8 @@ impl Expression {
             &amplitudes,
             &resources,
             dataset,
-            parameter_manager.n_free_parameters(),
-        );
+            parameter_map.free().len(),
+        )?;
         let initial_cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
         let lowering_start = Instant::now();
         let lowered_artifacts = Arc::new(Evaluator::lower_expression_runtime_artifacts(
@@ -1920,7 +2118,6 @@ impl Expression {
                 })),
             },
             registry: self.registry.clone(),
-            parameter_manager,
         })
     }
 
@@ -2416,7 +2613,6 @@ pub struct Evaluator {
     pub expression: ExpressionNode,
     ir_planning: ExpressionIrPlanningState,
     registry: ExpressionRegistry,
-    parameter_manager: ParameterManager,
 }
 
 #[allow(missing_docs)]
@@ -2663,7 +2859,7 @@ impl Evaluator {
         &self,
         resources: &Resources,
         key: CachedIntegralCacheKey,
-    ) -> ExpressionSpecializationState {
+    ) -> LadduResult<ExpressionSpecializationState> {
         let ir_compile_start = Instant::now();
         let expression_ir = self.compile_expression_ir_for_active_mask(&resources.active);
         let ir_compile_nanos = ir_compile_start.elapsed().as_nanos() as u64;
@@ -2673,8 +2869,8 @@ impl Evaluator {
             &self.amplitudes,
             resources,
             &self.dataset,
-            self.parameter_manager.n_free_parameters(),
-        );
+            self.resources.read().n_free_parameters(),
+        )?;
         let cached_integrals_nanos = cached_integrals_start.elapsed().as_nanos() as u64;
         let execution_sets = expression_ir.normalization_execution_sets().clone();
         let active_mask_key = resources.active.clone();
@@ -2711,7 +2907,7 @@ impl Evaluator {
         compile_metrics.specialization_cache_misses += 1;
         compile_metrics.specialization_ir_compile_nanos += ir_compile_nanos;
         compile_metrics.specialization_cached_integrals_nanos += cached_integrals_nanos;
-        ExpressionSpecializationState {
+        Ok(ExpressionSpecializationState {
             cached_integrals: Arc::new(CachedIntegralCacheState {
                 key,
                 expression_ir,
@@ -2719,21 +2915,21 @@ impl Evaluator {
                 execution_sets,
             }),
             lowered_artifacts,
-        }
+        })
     }
     fn ensure_expression_specialization(
         &self,
         resources: &Resources,
-    ) -> ExpressionSpecializationState {
+    ) -> LadduResult<ExpressionSpecializationState> {
         let key = Self::cached_integral_cache_key(resources.active.clone(), &self.dataset);
         if let Some(state) = self.ir_planning.cached_integrals.read().as_ref() {
             if state.key == key {
-                return ExpressionSpecializationState {
+                return Ok(ExpressionSpecializationState {
                     cached_integrals: state.clone(),
                     lowered_artifacts: self
                         .active_lowered_artifacts()
                         .expect("active lowered artifacts should exist for cached specialization"),
-                };
+                });
             }
         }
         let cached_specialization = {
@@ -2752,9 +2948,9 @@ impl Evaluator {
             let mut compile_metrics = self.ir_planning.compile_metrics.write();
             compile_metrics.specialization_cache_hits += 1;
             compile_metrics.specialization_cache_restore_nanos += restore_nanos;
-            return specialization;
+            return Ok(specialization);
         }
-        let specialization = self.build_expression_specialization(resources, key.clone());
+        let specialization = self.build_expression_specialization(resources, key.clone())?;
         self.ir_planning.specialization_metrics.write().cache_misses += 1;
         self.ir_planning
             .specialization_cache
@@ -2768,7 +2964,7 @@ impl Evaluator {
         };
         *self.ir_planning.specialization_status.write() =
             Some(ExpressionSpecializationStatus { origin });
-        specialization
+        Ok(specialization)
     }
     fn rebuild_runtime_specializations(&self, resources: &Resources) {
         let _ = self.ensure_expression_specialization(resources);
@@ -2795,14 +2991,14 @@ impl Evaluator {
         resources: &Resources,
         dataset: &Dataset,
         n_free_parameters: usize,
-    ) -> Vec<PrecomputedCachedIntegral> {
+    ) -> LadduResult<Vec<PrecomputedCachedIntegral>> {
         let descriptors = expression_ir.cached_integral_descriptors();
         if descriptors.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let execution_sets = expression_ir.normalization_execution_sets();
         let seed_parameters = vec![0.0; n_free_parameters];
-        let parameters = Parameters::new(&seed_parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(&seed_parameters)?;
         let mut amplitude_values = vec![Complex64::ZERO; amplitudes.len()];
         let mut value_slots = vec![Complex64::ZERO; expression_ir.node_count()];
         let active_set = resources.active_indices();
@@ -2825,7 +3021,7 @@ impl Evaluator {
                     value_slots[descriptor.cache_node_index] * weight;
             }
         }
-        descriptors
+        Ok(descriptors
             .iter()
             .zip(weighted_cache_sums)
             .map(
@@ -2837,7 +3033,7 @@ impl Evaluator {
                     weighted_cache_sum,
                 },
             )
-            .collect()
+            .collect())
     }
     fn lower_cached_parameter_factors(
         expression_ir: &ir::ExpressionIR,
@@ -3034,9 +3230,10 @@ impl Evaluator {
     fn ensure_cached_integral_cache_state(
         &self,
         resources: &Resources,
-    ) -> Arc<CachedIntegralCacheState> {
-        self.ensure_expression_specialization(resources)
-            .cached_integrals
+    ) -> LadduResult<Arc<CachedIntegralCacheState>> {
+        Ok(self
+            .ensure_expression_specialization(resources)?
+            .cached_integrals)
     }
 
     fn evaluate_expression_runtime_value_with_scratch(
@@ -3122,54 +3319,64 @@ impl Evaluator {
         )
     }
     /// Dependence classification for the compiled expression root.
-    pub fn expression_root_dependence(&self) -> ExpressionDependence {
+    pub fn expression_root_dependence(&self) -> LadduResult<ExpressionDependence> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .expression_ir
             .root_dependence()
-            .into()
+            .into())
     }
     /// Dependence classification for each compiled expression node.
-    pub fn expression_node_dependence_annotations(&self) -> Vec<ExpressionDependence> {
+    pub fn expression_node_dependence_annotations(&self) -> LadduResult<Vec<ExpressionDependence>> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .expression_ir
             .node_dependence_annotations()
             .iter()
             .copied()
             .map(Into::into)
-            .collect()
+            .collect())
     }
     /// Warning-level diagnostics for potentially inconsistent dependence hints.
-    pub fn expression_dependence_warnings(&self) -> Vec<String> {
+    pub fn expression_dependence_warnings(&self) -> LadduResult<Vec<String>> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .expression_ir
             .dependence_warnings()
-            .to_vec()
+            .to_vec())
     }
     /// Explain/debug view of IR normalization planning decomposition.
-    pub fn expression_normalization_plan_explain(&self) -> NormalizationPlanExplain {
+    pub fn expression_normalization_plan_explain(&self) -> LadduResult<NormalizationPlanExplain> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .expression_ir
             .normalization_plan_explain()
-            .into()
+            .into())
     }
     /// Explain/debug view of amplitude execution sets used by normalization evaluation.
-    pub fn expression_normalization_execution_sets(&self) -> NormalizationExecutionSetsExplain {
+    pub fn expression_normalization_execution_sets(
+        &self,
+    ) -> LadduResult<NormalizationExecutionSetsExplain> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .execution_sets
             .clone()
-            .into()
+            .into())
     }
     /// Cached integral terms precomputed at evaluator load.
-    pub fn expression_precomputed_cached_integrals(&self) -> Vec<PrecomputedCachedIntegral> {
+    pub fn expression_precomputed_cached_integrals(
+        &self,
+    ) -> LadduResult<Vec<PrecomputedCachedIntegral>> {
         let resources = self.resources.read();
-        self.ensure_cached_integral_cache_state(&resources)
+        Ok(self
+            .ensure_cached_integral_cache_state(&resources)?
             .values
-            .clone()
+            .clone())
     }
     /// Derivative rules for cached separable terms evaluated at the given parameter point.
     ///
@@ -3178,15 +3385,15 @@ impl Evaluator {
     pub fn expression_precomputed_cached_integral_gradient_terms(
         &self,
         parameters: &[f64],
-    ) -> Vec<PrecomputedCachedIntegralGradientTerm> {
+    ) -> LadduResult<Vec<PrecomputedCachedIntegralGradientTerm>> {
         let resources = self.resources.read();
-        let state = self.ensure_cached_integral_cache_state(&resources);
+        let state = self.ensure_cached_integral_cache_state(&resources)?;
         if state.values.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let Some(cache) = resources.caches.first() else {
-            return state
+            return Ok(state
                 .values
                 .iter()
                 .map(|descriptor| PrecomputedCachedIntegralGradientTerm {
@@ -3196,10 +3403,10 @@ impl Evaluator {
                     coefficient: descriptor.coefficient,
                     weighted_gradient: DVector::zeros(parameters.len()),
                 })
-                .collect();
+                .collect());
         };
 
-        let parameter_values = Parameters::new(parameters, &resources.constants);
+        let parameter_values = resources.parameter_map.assemble(parameters)?;
         let mut amplitude_values = vec![Complex64::ZERO; self.amplitudes.len()];
         self.fill_amplitude_values(
             &mut amplitude_values,
@@ -3260,7 +3467,7 @@ impl Evaluator {
 
         if use_lowered {
             let lowered_artifacts = lowered_artifacts.expect("lowered artifacts should exist");
-            state
+            Ok(state
                 .values
                 .iter()
                 .cloned()
@@ -3289,9 +3496,9 @@ impl Evaluator {
                         weighted_gradient,
                     }
                 })
-                .collect()
+                .collect())
         } else {
-            state
+            Ok(state
                 .values
                 .iter()
                 .map(|descriptor| {
@@ -3310,7 +3517,7 @@ impl Evaluator {
                         weighted_gradient,
                     }
                 })
-                .collect()
+                .collect())
         }
     }
     fn evaluate_cached_weighted_value_sum_ir(
@@ -3489,11 +3696,14 @@ impl Evaluator {
             )
     }
 
-    fn evaluate_weighted_value_sum_local_components(&self, parameters: &[f64]) -> (f64, f64) {
+    fn evaluate_weighted_value_sum_local_components(
+        &self,
+        parameters: &[f64],
+    ) -> LadduResult<(f64, f64)> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
-        let state = self.ensure_cached_integral_cache_state(&resources);
+        let state = self.ensure_cached_integral_cache_state(&resources)?;
         let lowered_artifacts = self.active_lowered_artifacts();
         let residual_value_slot_count = lowered_artifacts
             .as_ref()
@@ -3618,16 +3828,16 @@ impl Evaluator {
                 })
                 .sum()
         };
-        (residual_sum, cached_value_sum)
+        Ok((residual_sum, cached_value_sum))
     }
 
     /// Weighted sum over local events of the real expression value.
     ///
     /// This returns `sum_e(weight_e * Re(L_e))`.
-    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> f64 {
+    pub fn evaluate_weighted_value_sum_local(&self, parameters: &[f64]) -> LadduResult<f64> {
         let (residual_sum, cached_value_sum) =
-            self.evaluate_weighted_value_sum_local_components(parameters);
-        residual_sum + cached_value_sum
+            self.evaluate_weighted_value_sum_local_components(parameters)?;
+        Ok(residual_sum + cached_value_sum)
     }
 
     #[cfg(feature = "mpi")]
@@ -3638,9 +3848,9 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> f64 {
+    ) -> LadduResult<f64> {
         let (residual_sum_local, cached_value_sum_local) =
-            self.evaluate_weighted_value_sum_local_components(parameters);
+            self.evaluate_weighted_value_sum_local_components(parameters)?;
         let mut residual_sum = 0.0;
         world.all_reduce_into(
             &residual_sum_local,
@@ -3653,7 +3863,7 @@ impl Evaluator {
             &mut cached_value_sum,
             mpi::collective::SystemOperation::sum(),
         );
-        residual_sum + cached_value_sum
+        Ok(residual_sum + cached_value_sum)
     }
 
     /// Weighted sum over local events of the real gradient of the expression.
@@ -3662,12 +3872,12 @@ impl Evaluator {
     fn evaluate_weighted_gradient_sum_local_components(
         &self,
         parameters: &[f64],
-    ) -> (DVector<f64>, DVector<f64>) {
+    ) -> LadduResult<(DVector<f64>, DVector<f64>)> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
-        let state = self.ensure_cached_integral_cache_state(&resources);
+        let state = self.ensure_cached_integral_cache_state(&resources)?;
         let lowered_artifacts = self.active_lowered_artifacts();
         let active_index_set = resources.active_indices();
         let cached_parameter_indices = state
@@ -3840,16 +4050,19 @@ impl Evaluator {
                 })
                 .sum()
         };
-        (residual_sum, cached_term_sum)
+        Ok((residual_sum, cached_term_sum))
     }
 
     /// Weighted sum over local events of the real gradient of the expression.
     ///
     /// This returns `sum_e(weight_e * Re(dL_e/dp))` for all free parameters.
-    pub fn evaluate_weighted_gradient_sum_local(&self, parameters: &[f64]) -> DVector<f64> {
+    pub fn evaluate_weighted_gradient_sum_local(
+        &self,
+        parameters: &[f64],
+    ) -> LadduResult<DVector<f64>> {
         let (residual_sum, cached_term_sum) =
-            self.evaluate_weighted_gradient_sum_local_components(parameters);
-        residual_sum + cached_term_sum
+            self.evaluate_weighted_gradient_sum_local_components(parameters)?;
+        Ok(residual_sum + cached_term_sum)
     }
 
     #[cfg(feature = "mpi")]
@@ -3860,9 +4073,9 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> DVector<f64> {
+    ) -> LadduResult<DVector<f64>> {
         let (residual_sum_local, cached_term_sum_local) =
-            self.evaluate_weighted_gradient_sum_local_components(parameters);
+            self.evaluate_weighted_gradient_sum_local_components(parameters)?;
         let mut residual_sum = vec![0.0; residual_sum_local.len()];
         world.all_reduce_into(
             residual_sum_local.as_slice(),
@@ -3877,7 +4090,7 @@ impl Evaluator {
         );
         let mut total = DVector::from_vec(residual_sum);
         total += DVector::from_vec(cached_term_sum);
-        total
+        Ok(total)
     }
 
     pub fn evaluate_expression_value_with_scratch(
@@ -3933,42 +4146,32 @@ impl Evaluator {
     /// Get the list of parameter names in the order they appear in the [`Evaluator::evaluate`]
     /// method.
     pub fn parameters(&self) -> Vec<String> {
-        self.parameter_manager.parameters()
+        self.resources.read().parameter_names()
     }
 
     /// Get the list of free parameter names.
     pub fn free_parameters(&self) -> Vec<String> {
-        self.parameter_manager.free_parameters()
+        self.resources.read().free_parameter_names()
     }
 
     /// Get the list of fixed parameter names.
     pub fn fixed_parameters(&self) -> Vec<String> {
-        self.parameter_manager.fixed_parameters()
-    }
-
-    /// Values of parameters fixed to constants.
-    pub fn fixed_parameter_values(&self) -> HashMap<String, f64> {
-        self.resources.read().fixed_parameter_values()
+        self.resources.read().fixed_parameter_names()
     }
 
     /// Number of free parameters.
     pub fn n_free(&self) -> usize {
-        self.parameter_manager.n_free_parameters()
+        self.resources.read().n_free_parameters()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed(&self) -> usize {
-        self.parameter_manager.n_fixed_parameters()
+        self.resources.read().n_fixed_parameters()
     }
 
     /// Total number of parameters.
     pub fn n_parameters(&self) -> usize {
-        self.parameter_manager.n_parameters()
-    }
-
-    /// Access the parameter manager carried by this evaluator.
-    pub fn parameter_manager(&self) -> &ParameterManager {
-        &self.parameter_manager
+        self.resources.read().n_parameters()
     }
 
     fn as_expression(&self) -> Expression {
@@ -3978,31 +4181,20 @@ impl Evaluator {
         }
     }
 
-    /// Return a new [`Evaluator`] with the given parameter fixed to a value.
-    pub fn fix(&self, name: &str, value: f64) -> LadduResult<Self> {
-        self.as_expression().fix(name, value)?.load(&self.dataset)
+    pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.resources.read().fix_parameter(name, value)
     }
 
-    /// Return a new [`Evaluator`] with the given parameter freed.
-    pub fn free(&self, name: &str) -> LadduResult<Self> {
-        self.as_expression().free(name)?.load(&self.dataset)
+    pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.resources.read().free_parameter(name)
     }
 
-    /// Return a new [`Evaluator`] with a single parameter renamed.
-    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<Self> {
-        self.as_expression()
-            .rename_parameter(old, new)?
-            .load(&self.dataset)
+    pub fn rename_parameter(&self, old: &str, new: &str) -> LadduResult<()> {
+        self.resources.write().rename_parameter(old, new)
     }
 
-    /// Return a new [`Evaluator`] with several parameters renamed.
-    pub fn rename_parameters(
-        &self,
-        mapping: &std::collections::HashMap<String, String>,
-    ) -> LadduResult<Self> {
-        self.as_expression()
-            .rename_parameters(mapping)?
-            .load(&self.dataset)
+    pub fn rename_parameters(&self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.resources.write().rename_parameters(mapping)
     }
 
     /// Activate an [`Amplitude`] by name, skipping missing entries.
@@ -4123,16 +4315,16 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
-    pub fn evaluate_local(&self, parameters: &[f64]) -> Vec<Complex64> {
+    pub fn evaluate_local(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
         let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
-            resources
+            Ok(resources
                 .caches
                 .par_iter()
                 .map_init(
@@ -4156,13 +4348,13 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            resources
+            Ok(resources
                 .caches
                 .iter()
                 .map(|cache| {
@@ -4178,7 +4370,7 @@ impl Evaluator {
                         &mut expr_slots,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -4196,7 +4388,7 @@ impl Evaluator {
                 actual: active_mask.len(),
             });
         }
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let active_indices = active_mask
             .iter()
@@ -4334,8 +4526,12 @@ impl Evaluator {
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate`] instead.
     #[cfg(feature = "mpi")]
-    fn evaluate_mpi(&self, parameters: &[f64], world: &SimpleCommunicator) -> Vec<Complex64> {
-        let local_evaluation = self.evaluate_local(parameters);
+    fn evaluate_mpi(
+        &self,
+        parameters: &[f64],
+        world: &SimpleCommunicator,
+    ) -> LadduResult<Vec<Complex64>> {
+        let local_evaluation = self.evaluate_local(parameters)?;
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events];
         let (counts, displs) = world.get_counts_displs(n_events);
@@ -4345,7 +4541,7 @@ impl Evaluator {
             let mut partitioned_buffer = PartitionMut::new(&mut buffer, counts, displs);
             world.all_gather_varcount_into(&local_evaluation, &mut partitioned_buffer);
         }
-        buffer
+        Ok(buffer)
     }
 
     #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
@@ -4370,7 +4566,7 @@ impl Evaluator {
 
     /// Evaluate the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate(&self, parameters: &[f64]) -> Vec<Complex64> {
+    pub fn evaluate(&self, parameters: &[f64]) -> LadduResult<Vec<Complex64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -4402,16 +4598,20 @@ impl Evaluator {
 
     /// See [`Evaluator::evaluate_local`]. This method evaluates over a subset of events rather
     /// than all events in the total dataset.
-    pub fn evaluate_batch_local(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
+    pub fn evaluate_batch_local(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+    ) -> LadduResult<Vec<Complex64>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let active_indices = resources.active_indices().to_vec();
         let slot_count = self.expression_value_slot_count();
         let program_snapshot = self.expression_value_program_snapshot();
         #[cfg(feature = "rayon")]
         {
-            indices
+            Ok(indices
                 .par_iter()
                 .map_init(
                     || {
@@ -4435,13 +4635,13 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
             let mut amplitude_values = vec![Complex64::ZERO; amplitude_len];
             let mut expr_slots = vec![Complex64::ZERO; slot_count];
-            indices
+            Ok(indices
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
@@ -4457,7 +4657,7 @@ impl Evaluator {
                         &mut expr_slots,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -4469,16 +4669,20 @@ impl Evaluator {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<Complex64> {
+    ) -> LadduResult<Vec<Complex64>> {
         let total = self.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
-        let local_evaluation = self.evaluate_batch_local(parameters, &locals);
-        world.all_gather_batched_partitioned(&local_evaluation, indices, total, None)
+        let local_evaluation = self.evaluate_batch_local(parameters, &locals)?;
+        Ok(world.all_gather_batched_partitioned(&local_evaluation, indices, total, None))
     }
 
     /// Evaluate the stored [`Expression`] over a subset of events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters. See also [`Evaluator::evaluate`].
-    pub fn evaluate_batch(&self, parameters: &[f64], indices: &[usize]) -> Vec<Complex64> {
+    pub fn evaluate_batch(
+        &self,
+        parameters: &[f64],
+        indices: &[usize],
+    ) -> LadduResult<Vec<Complex64>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -4495,9 +4699,12 @@ impl Evaluator {
     ///
     /// This method is not intended to be called in analyses but rather in writing methods
     /// that have `mpi`-feature-gated versions. Most users will want to call [`Evaluator::evaluate_gradient`] instead.
-    pub fn evaluate_gradient_local(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
+    pub fn evaluate_gradient_local(
+        &self,
+        parameters: &[f64],
+    ) -> LadduResult<Vec<DVector<Complex64>>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
@@ -4506,7 +4713,7 @@ impl Evaluator {
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            resources
+            Ok(resources
                 .caches
                 .par_iter()
                 .map_init(
@@ -4536,7 +4743,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -4544,7 +4751,7 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
-            resources
+            Ok(resources
                 .caches
                 .iter()
                 .map(|cache| {
@@ -4564,7 +4771,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -4649,8 +4856,8 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex64>> {
-        let local_evaluation = self.evaluate_gradient_local(parameters);
+    ) -> LadduResult<Vec<DVector<Complex64>>> {
+        let local_evaluation = self.evaluate_gradient_local(parameters)?;
         let n_events = self.dataset.n_events();
         let mut buffer: Vec<Complex64> = vec![Complex64::ZERO; n_events * parameters.len()];
         let (counts, displs) = world.get_flattened_counts_displs(n_events, parameters.len());
@@ -4667,10 +4874,10 @@ impl Evaluator {
                 &mut partitioned_buffer,
             );
         }
-        buffer
+        Ok(buffer
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
-            .collect()
+            .collect())
     }
 
     #[cfg(all(feature = "mpi", feature = "execution-context-prototype"))]
@@ -4705,7 +4912,7 @@ impl Evaluator {
 
     /// Evaluate the gradient of the stored [`Expression`] over the events in the [`Dataset`] stored by the
     /// [`Evaluator`] with the given values for free parameters.
-    pub fn evaluate_gradient(&self, parameters: &[f64]) -> Vec<DVector<Complex64>> {
+    pub fn evaluate_gradient(&self, parameters: &[f64]) -> LadduResult<Vec<DVector<Complex64>>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -4741,9 +4948,9 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex64>> {
+    ) -> LadduResult<Vec<DVector<Complex64>>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
@@ -4752,7 +4959,7 @@ impl Evaluator {
         let slot_count = self.expression_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            indices
+            Ok(indices
                 .par_iter()
                 .map_init(
                     || {
@@ -4782,7 +4989,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -4790,7 +4997,7 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
-            indices
+            Ok(indices
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
@@ -4810,7 +5017,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -4822,15 +5029,15 @@ impl Evaluator {
         parameters: &[f64],
         indices: &[usize],
         world: &SimpleCommunicator,
-    ) -> Vec<DVector<Complex64>> {
+    ) -> LadduResult<Vec<DVector<Complex64>>> {
         let total = self.dataset.n_events();
         let locals = world.locals_from_globals(indices, total);
         let flattened_local_evaluation = self
-            .evaluate_gradient_batch_local(parameters, &locals)
+            .evaluate_gradient_batch_local(parameters, &locals)?
             .iter()
             .flat_map(|g| g.data.as_vec().to_vec())
             .collect::<Vec<Complex64>>();
-        world
+        Ok(world
             .all_gather_batched_partitioned(
                 &flattened_local_evaluation,
                 indices,
@@ -4839,7 +5046,7 @@ impl Evaluator {
             )
             .chunks(parameters.len())
             .map(DVector::from_row_slice)
-            .collect()
+            .collect())
     }
 
     /// Evaluate the gradient of the stored [`Expression`] over a subset of the
@@ -4849,7 +5056,7 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<DVector<Complex64>> {
+    ) -> LadduResult<Vec<DVector<Complex64>>> {
         #[cfg(feature = "mpi")]
         {
             if let Some(world) = crate::mpi::get_world() {
@@ -4863,9 +5070,9 @@ impl Evaluator {
     pub fn evaluate_with_gradient_local(
         &self,
         parameters: &[f64],
-    ) -> Vec<(Complex64, DVector<Complex64>)> {
+    ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
@@ -4874,7 +5081,7 @@ impl Evaluator {
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            resources
+            Ok(resources
                 .caches
                 .par_iter()
                 .map_init(
@@ -4904,7 +5111,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -4912,7 +5119,7 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
-            resources
+            Ok(resources
                 .caches
                 .iter()
                 .map(|cache| {
@@ -4932,7 +5139,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 
@@ -4950,7 +5157,7 @@ impl Evaluator {
                 actual: active_mask.len(),
             });
         }
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = active_mask
@@ -5033,9 +5240,9 @@ impl Evaluator {
         &self,
         parameters: &[f64],
         indices: &[usize],
-    ) -> Vec<(Complex64, DVector<Complex64>)> {
+    ) -> LadduResult<Vec<(Complex64, DVector<Complex64>)>> {
         let resources = self.resources.read();
-        let parameters = Parameters::new(parameters, &resources.constants);
+        let parameters = resources.parameter_map.assemble(parameters)?;
         let amplitude_len = self.amplitudes.len();
         let grad_dim = parameters.len();
         let active_indices = resources.active_indices().to_vec();
@@ -5044,7 +5251,7 @@ impl Evaluator {
         let slot_count = self.expression_value_gradient_slot_count();
         #[cfg(feature = "rayon")]
         {
-            indices
+            Ok(indices
                 .par_iter()
                 .map_init(
                     || {
@@ -5074,7 +5281,7 @@ impl Evaluator {
                         )
                     },
                 )
-                .collect()
+                .collect())
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -5082,7 +5289,7 @@ impl Evaluator {
             let mut gradient_values = vec![DVector::zeros(grad_dim); amplitude_len];
             let mut value_slots = vec![Complex64::ZERO; slot_count];
             let mut gradient_slots = vec![Complex64::ZERO; slot_count * grad_dim];
-            indices
+            Ok(indices
                 .iter()
                 .map(|&idx| {
                     let cache = &resources.caches[idx];
@@ -5102,7 +5309,7 @@ impl Evaluator {
                         grad_dim,
                     )
                 })
-                .collect()
+                .collect())
         }
     }
 }
@@ -5404,6 +5611,7 @@ mod tests {
             .expect("fixture evaluator should load");
         let expected_value = evaluator
             .evaluate_local(&fixture.parameters)
+            .expect("evaluation should succeed")
             .iter()
             .zip(fixture.dataset.events_local().iter())
             .fold(0.0, |accum, (value, event)| {
@@ -5411,6 +5619,7 @@ mod tests {
             });
         let expected_gradient = evaluator
             .evaluate_gradient_local(&fixture.parameters)
+            .expect("evaluation should succeed")
             .iter()
             .zip(fixture.dataset.events_local().iter())
             .fold(
@@ -5420,8 +5629,12 @@ mod tests {
                     accum
                 },
             );
-        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
-        let actual_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let actual_value = evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
+        let actual_gradient = evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert_relative_eq!(
             actual_value,
             expected_value,
@@ -5445,7 +5658,8 @@ mod tests {
         let state = {
             let resources = evaluator.resources.read();
             evaluator.ensure_cached_integral_cache_state(&resources)
-        };
+        }
+        .expect("state should be available");
         assert!(
             !state.values.is_empty(),
             "fixture should exercise cached normalization terms"
@@ -5455,11 +5669,14 @@ mod tests {
             "fixture should exercise residual normalization amplitudes"
         );
 
-        let (residual_value_sum, cached_value_sum) =
-            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        let (residual_value_sum, cached_value_sum) = evaluator
+            .evaluate_weighted_value_sum_local_components(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert!(residual_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
         assert!(cached_value_sum.abs() > DETERMINISTIC_STRICT_ABS_TOL);
-        let combined_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        let combined_value = evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert_relative_eq!(
             residual_value_sum + cached_value_sum,
             combined_value,
@@ -5467,9 +5684,12 @@ mod tests {
             max_relative = DETERMINISTIC_STRICT_REL_TOL
         );
 
-        let (residual_gradient_sum, cached_gradient_sum) =
-            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
-        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let (residual_gradient_sum, cached_gradient_sum) = evaluator
+            .evaluate_weighted_gradient_sum_local_components(&fixture.parameters)
+            .expect("evaluation should succeed");
+        let combined_gradient = evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert!(residual_gradient_sum
             .iter()
             .any(|value| value.abs() > DETERMINISTIC_STRICT_ABS_TOL));
@@ -5499,7 +5719,9 @@ mod tests {
             .expect("fixture evaluator should load");
         let original_mask = evaluator.active_mask();
 
-        let original_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        let original_value = evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
 
         evaluator.isolate_many(&["p", "c"]);
         assert_ne!(evaluator.active_mask(), original_mask);
@@ -5508,7 +5730,9 @@ mod tests {
             .set_active_mask(&original_mask)
             .expect("original fixture active mask should restore");
         assert_eq!(evaluator.active_mask(), original_mask);
-        let actual_value = evaluator.evaluate_weighted_value_sum_local(&fixture.parameters);
+        let actual_value = evaluator
+            .evaluate_weighted_value_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert_relative_eq!(
             actual_value,
             original_value,
@@ -5549,17 +5773,20 @@ mod tests {
         assert_eq!(
             separable_evaluator
                 .expression_precomputed_cached_integrals()
+                .expect("integrals should be computed")
                 .len(),
             2
         );
         assert_eq!(
             partial_evaluator
                 .expression_precomputed_cached_integrals()
+                .expect("integrals should be computed")
                 .len(),
             1
         );
         assert!(non_separable_evaluator
             .expression_precomputed_cached_integrals()
+            .expect("integrals should be computed")
             .is_empty());
     }
     #[test]
@@ -5575,11 +5802,14 @@ mod tests {
             .load(&fixture.dataset)
             .expect("fixture evaluator should load");
         let resources = evaluator.resources.read();
-        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let state = evaluator
+            .ensure_cached_integral_cache_state(&resources)
+            .expect("state should be available");
         assert!(state.values.is_empty());
 
-        let (residual_value_sum, cached_value_sum) =
-            evaluator.evaluate_weighted_value_sum_local_components(&fixture.parameters);
+        let (residual_value_sum, cached_value_sum) = evaluator
+            .evaluate_weighted_value_sum_local_components(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert_relative_eq!(
             cached_value_sum,
             0.0,
@@ -5587,17 +5817,22 @@ mod tests {
         );
         assert_relative_eq!(
             residual_value_sum,
-            evaluator.evaluate_weighted_value_sum_local(&fixture.parameters),
+            evaluator
+                .evaluate_weighted_value_sum_local(&fixture.parameters)
+                .expect("evaluation should succeed"),
             epsilon = DETERMINISTIC_STRICT_ABS_TOL,
             max_relative = DETERMINISTIC_STRICT_REL_TOL
         );
 
-        let (residual_gradient_sum, cached_gradient_sum) =
-            evaluator.evaluate_weighted_gradient_sum_local_components(&fixture.parameters);
+        let (residual_gradient_sum, cached_gradient_sum) = evaluator
+            .evaluate_weighted_gradient_sum_local_components(&fixture.parameters)
+            .expect("evaluation should succeed");
         assert!(cached_gradient_sum
             .iter()
             .all(|value| value.abs() <= DETERMINISTIC_STRICT_ABS_TOL));
-        let combined_gradient = evaluator.evaluate_weighted_gradient_sum_local(&fixture.parameters);
+        let combined_gradient = evaluator
+            .evaluate_weighted_gradient_sum_local(&fixture.parameters)
+            .expect("evaluation should succeed");
         for (residual_item, combined_item) in
             residual_gradient_sum.iter().zip(combined_gradient.iter())
         {
@@ -5624,11 +5859,15 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate_batch(&[1.1, 2.2], &[0, 2]);
+        let result = evaluator
+            .evaluate_batch(&[1.1, 2.2], &[0, 2])
+            .expect("evaluation should succeed");
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], Complex64::new(1.1, 2.2) * 10.0);
         assert_eq!(result[1], Complex64::new(1.1, 2.2) * 12.0);
-        let result_grad = evaluator.evaluate_gradient_batch(&[1.1, 2.2], &[0, 2]);
+        let result_grad = evaluator
+            .evaluate_gradient_batch(&[1.1, 2.2], &[0, 2])
+            .expect("evaluation should succeed");
         assert_eq!(result_grad.len(), 2);
         assert_eq!(result_grad[0][0], Complex64::new(10.0, 0.0));
         assert_eq!(result_grad[0][1], Complex64::new(0.0, 10.0));
@@ -5655,7 +5894,10 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
-        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1])
+            .expect("parameters should assemble");
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
         evaluator.fill_amplitude_values(
             &mut amplitude_values,
@@ -5708,7 +5950,10 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
-        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5], &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(&[1.0, 0.25, -0.8, 0.5])
+            .expect("parameters should assemble");
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
         evaluator.fill_amplitude_values(
             &mut amplitude_values,
@@ -5777,7 +6022,10 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
-        let parameters = Parameters::new(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1], &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(&[1.0, 0.25, -0.8, 0.5, 0.2, -1.1])
+            .expect("parameters should assemble");
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
         evaluator.fill_amplitude_values(
             &mut amplitude_values,
@@ -5976,7 +6224,12 @@ mod tests {
         let params = vec![2.0];
 
         evaluator.deactivate("amp");
-        assert_eq!(evaluator.evaluate(&params)[0], Complex64::new(0.0, 0.0));
+        assert_eq!(
+            evaluator
+                .evaluate(&params)
+                .expect("evaluation should succeed")[0],
+            Complex64::new(0.0, 0.0)
+        );
 
         let overridden = evaluator
             .evaluate_local_with_active_mask(&params, &[true])
@@ -5996,13 +6249,17 @@ mod tests {
         .norm_sqr();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        let annotations = evaluator.expression_node_dependence_annotations();
+        let annotations = evaluator
+            .expression_node_dependence_annotations()
+            .expect("annotations should exist");
         assert_eq!(annotations.len(), evaluator.expression_ir().node_count());
         assert!(annotations
             .iter()
             .all(|dependence| *dependence == ExpressionDependence::Mixed));
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::Mixed
         );
     }
@@ -6012,7 +6269,9 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::Mixed
         );
     }
@@ -6022,7 +6281,9 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::ParameterOnly
         );
     }
@@ -6032,7 +6293,9 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::CacheOnly
         );
     }
@@ -6049,7 +6312,12 @@ mod tests {
             ir.nodes()[ir.root()],
             ir::IrNode::Constant(value) if value == Complex64::ZERO
         ));
-        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::ZERO);
+        assert_eq!(
+            evaluator
+                .evaluate(&[2.5])
+                .expect("evaluation should succeed")[0],
+            Complex64::ZERO
+        );
     }
     #[test]
     fn test_expression_ir_real_valued_hint_simplifies_conjugation() {
@@ -6061,7 +6329,12 @@ mod tests {
         let ir = evaluator.expression_ir();
 
         assert!(matches!(ir.nodes()[ir.root()], ir::IrNode::Amp(0)));
-        assert_eq!(evaluator.evaluate(&[2.5])[0], Complex64::new(2.5, 0.0));
+        assert_eq!(
+            evaluator
+                .evaluate(&[2.5])
+                .expect("evaluation should succeed")[0],
+            Complex64::new(2.5, 0.0)
+        );
     }
     #[test]
     fn test_expression_ir_dependence_warnings_surface() {
@@ -6071,6 +6344,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         assert!(evaluator
             .expression_dependence_warnings()
+            .expect("warnings should exist")
             .iter()
             .any(|warning| warning.contains("both ParameterOnly and CacheOnly")));
     }
@@ -6080,7 +6354,9 @@ mod tests {
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        let explain = evaluator.expression_normalization_plan_explain();
+        let explain = evaluator
+            .expression_normalization_plan_explain()
+            .expect("plan should exist");
         assert_eq!(explain.root_dependence, ExpressionDependence::Mixed);
         assert_eq!(explain.separable_mul_candidate_nodes.len(), 1);
         assert_eq!(
@@ -6100,7 +6376,9 @@ mod tests {
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        let sets = evaluator.expression_normalization_execution_sets();
+        let sets = evaluator
+            .expression_normalization_execution_sets()
+            .expect("sets should exist");
         assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
         assert_eq!(sets.cached_cache_amplitudes, vec![1]);
         assert!(sets.residual_amplitudes.is_empty());
@@ -6112,7 +6390,9 @@ mod tests {
             + &TestAmplitude::new("m", parameter!("mr"), parameter!("mi")).unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        let sets = evaluator.expression_normalization_execution_sets();
+        let sets = evaluator
+            .expression_normalization_execution_sets()
+            .expect("sets should exist");
         assert_eq!(sets.cached_parameter_amplitudes, vec![0]);
         assert_eq!(sets.cached_cache_amplitudes, vec![1]);
         assert_eq!(sets.residual_amplitudes, vec![2]);
@@ -6123,13 +6403,17 @@ mod tests {
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        let precomputed = evaluator.expression_precomputed_cached_integrals();
+        let precomputed = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(precomputed.len(), 1);
         let cache_reference = CacheOnlyScalar::new("k_ref")
             .unwrap()
             .load(&dataset)
             .unwrap();
-        let cache_values = cache_reference.evaluate_local(&[]);
+        let cache_values = cache_reference
+            .evaluate_local(&[])
+            .expect("evaluation should succeed");
         let expected_weighted_sum = cache_values
             .iter()
             .zip(dataset.events_local().iter())
@@ -6153,6 +6437,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         assert!(evaluator
             .expression_precomputed_cached_integrals()
+            .expect("integrals should exist")
             .is_empty());
     }
     #[test]
@@ -6161,11 +6446,18 @@ mod tests {
             * &CacheOnlyScalar::new("k").unwrap();
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
+        assert_eq!(
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")
+                .len(),
+            1
+        );
 
         evaluator.isolate_many(&["p"]);
         assert!(evaluator
             .expression_precomputed_cached_integrals()
+            .expect("integrals should exist")
             .is_empty());
     }
     #[test]
@@ -6175,13 +6467,17 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let mut evaluator = expr.load(&dataset).unwrap();
         drop(dataset);
-        let before = evaluator.expression_precomputed_cached_integrals();
+        let before = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(before.len(), 1);
 
         Arc::get_mut(&mut evaluator.dataset)
             .expect("evaluator should own dataset Arc in this test")
             .clear_events_local();
-        let after = evaluator.expression_precomputed_cached_integrals();
+        let after = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].weighted_cache_sum, Complex64::ZERO);
         assert!(before[0].weighted_cache_sum != after[0].weighted_cache_sum);
@@ -6195,10 +6491,13 @@ mod tests {
             Arc::new(test_event()),
         ]));
         let evaluator = expr.load(&dataset).unwrap();
-        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        let cached_integrals = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(cached_integrals.len(), 1);
-        let gradient_terms =
-            evaluator.expression_precomputed_cached_integral_gradient_terms(&[1.25]);
+        let gradient_terms = evaluator
+            .expression_precomputed_cached_integral_gradient_terms(&[1.25])
+            .expect("evaluation should succeed");
         assert_eq!(gradient_terms.len(), 1);
         assert_eq!(gradient_terms[0].weighted_gradient.len(), 1);
         assert_relative_eq!(
@@ -6220,6 +6519,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         assert!(evaluator
             .expression_precomputed_cached_integral_gradient_terms(&[0.1, -0.2])
+            .expect("evaluation should succeed")
             .is_empty());
     }
     #[test]
@@ -6230,9 +6530,14 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
-        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let state = evaluator
+            .ensure_cached_integral_cache_state(&resources)
+            .expect("state should be available");
         let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
-        let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(&[0.55, 0.2, -0.15])
+            .expect("parameters should assemble");
 
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
         evaluator.fill_amplitude_values(
@@ -6295,9 +6600,14 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let resources = evaluator.resources.read();
-        let state = evaluator.ensure_cached_integral_cache_state(&resources);
+        let state = evaluator
+            .ensure_cached_integral_cache_state(&resources)
+            .expect("state should be available");
         let lowered_artifacts = evaluator.active_lowered_artifacts().unwrap();
-        let parameters = Parameters::new(&[0.55, 0.2, -0.15], &resources.constants);
+        let parameters = resources
+            .parameter_map
+            .assemble(&[0.55, 0.2, -0.15])
+            .expect("parameters should assemble");
 
         let mut amplitude_values = vec![Complex64::ZERO; evaluator.amplitudes.len()];
         evaluator.fill_amplitude_values(
@@ -6388,7 +6698,9 @@ mod tests {
             .expect("evaluator should own dataset Arc in this test")
             .clear_events_local();
 
-        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        let cached_integrals = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(cached_integrals.len(), 1);
         assert_eq!(cached_integrals[0].weighted_cache_sum, Complex64::ZERO);
 
@@ -6423,10 +6735,17 @@ mod tests {
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        assert_eq!(
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")
+                .len(),
+            2
+        );
         let params = vec![0.2, -0.3, 1.1, -0.7];
         let expected = evaluator
             .evaluate_gradient_local(&params)
+            .expect("evaluation should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(
@@ -6436,7 +6755,9 @@ mod tests {
                     accum
                 },
             );
-        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        let actual = evaluator
+            .evaluate_weighted_gradient_sum_local(&params)
+            .expect("evaluation should succeed");
         for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
             assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
         }
@@ -6453,16 +6774,25 @@ mod tests {
         let expr = (&p1 * &c1) + &(&p2 * &c2) + &(&(&m1 * &p1) * &c3);
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 2);
+        assert_eq!(
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")
+                .len(),
+            2
+        );
         let params = vec![0.2, -0.3, 1.1, -0.7];
         let expected = evaluator
             .evaluate_local(&params)
+            .expect("evaluation should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(0.0, |accum, (value, event)| {
                 accum + event.weight() * value.re
             });
-        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        let actual = evaluator
+            .evaluate_weighted_value_sum_local(&params)
+            .expect("evaluation should succeed");
         assert_relative_eq!(actual, expected, epsilon = 1e-10);
     }
 
@@ -6500,10 +6830,14 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let params = vec![0.7, -1.1, 0.9, -0.4];
 
-        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&params);
+        let weighted_value_sum = evaluator
+            .evaluate_weighted_value_sum_local(&params)
+            .expect("evaluation should succeed");
         assert_relative_eq!(weighted_value_sum, 22.7725, epsilon = 1e-12);
 
-        let weighted_gradient_sum = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        let weighted_gradient_sum = evaluator
+            .evaluate_weighted_gradient_sum_local(&params)
+            .expect("evaluation should succeed");
         let free_parameters = evaluator
             .free_parameters()
             .into_iter()
@@ -6523,14 +6857,24 @@ mod tests {
                 * &CacheOnlyScalar::new("k").unwrap());
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
         assert_eq!(
-            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")
+                .len(),
+            1
+        );
+        assert_eq!(
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")[0]
+                .coefficient,
             -1
         );
         let params = vec![0.75];
         let expected = evaluator
             .evaluate_gradient_local(&params)
+            .expect("evaluation should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(
@@ -6540,7 +6884,9 @@ mod tests {
                     accum
                 },
             );
-        let actual = evaluator.evaluate_weighted_gradient_sum_local(&params);
+        let actual = evaluator
+            .evaluate_weighted_gradient_sum_local(&params)
+            .expect("evaluation should succeed");
         for (actual_item, expected_item) in actual.iter().zip(expected.iter()) {
             assert_relative_eq!(*actual_item, *expected_item, epsilon = 1e-10);
         }
@@ -6552,20 +6898,32 @@ mod tests {
                 * &CacheOnlyScalar::new("k").unwrap());
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        assert_eq!(evaluator.expression_precomputed_cached_integrals().len(), 1);
         assert_eq!(
-            evaluator.expression_precomputed_cached_integrals()[0].coefficient,
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")
+                .len(),
+            1
+        );
+        assert_eq!(
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist")[0]
+                .coefficient,
             -1
         );
         let params = vec![0.75];
         let expected = evaluator
             .evaluate_local(&params)
+            .expect("evaluation should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(0.0, |accum, (value, event)| {
                 accum + event.weight() * value.re
             });
-        let actual = evaluator.evaluate_weighted_value_sum_local(&params);
+        let actual = evaluator
+            .evaluate_weighted_value_sum_local(&params)
+            .expect("evaluation should succeed");
         assert_relative_eq!(actual, expected, epsilon = 1e-10);
     }
     #[test]
@@ -6576,18 +6934,26 @@ mod tests {
         let dataset = Arc::new(Dataset::new(vec![Arc::new(test_event())]));
         let evaluator = expr.load(&dataset).unwrap();
 
-        let all_active = evaluator.expression_normalization_plan_explain();
+        let all_active = evaluator
+            .expression_normalization_plan_explain()
+            .expect("plan should exist");
         assert_eq!(all_active.cached_separable_nodes.len(), 1);
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::Mixed
         );
 
         evaluator.isolate_many(&["p"]);
-        let param_only = evaluator.expression_normalization_plan_explain();
+        let param_only = evaluator
+            .expression_normalization_plan_explain()
+            .expect("plan should exist");
         assert!(param_only.cached_separable_nodes.is_empty());
         assert_eq!(
-            evaluator.expression_root_dependence(),
+            evaluator
+                .expression_root_dependence()
+                .expect("root dependence should exist"),
             ExpressionDependence::ParameterOnly
         );
     }
@@ -6623,7 +6989,9 @@ mod tests {
                 cache_misses: 1,
             }
         );
-        let all_active_cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        let all_active_cached_integrals = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
 
         evaluator.isolate_many(&["p"]);
         assert_eq!(evaluator.specialization_cache_len(), 2);
@@ -6650,6 +7018,7 @@ mod tests {
         assert!(after_cache_miss_metrics.specialization_lowering_nanos > 0);
         assert!(evaluator
             .expression_precomputed_cached_integrals()
+            .expect("integrals should exist")
             .is_empty());
 
         evaluator.activate_many(&["k", "m"]);
@@ -6662,7 +7031,9 @@ mod tests {
             }
         );
         assert_eq!(
-            evaluator.expression_precomputed_cached_integrals(),
+            evaluator
+                .expression_precomputed_cached_integrals()
+                .expect("integrals should exist"),
             all_active_cached_integrals
         );
         let after_cache_hit_metrics = evaluator.expression_compile_metrics();
@@ -6696,13 +7067,16 @@ mod tests {
 
         let expected_value = evaluator
             .evaluate_local(&params)
+            .expect("evaluation should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(0.0, |accum, (value, event)| {
                 accum + event.weight() * value.re
             });
         assert_relative_eq!(
-            evaluator.evaluate_weighted_value_sum_local(&params),
+            evaluator
+                .evaluate_weighted_value_sum_local(&params)
+                .expect("evaluation should succeed"),
             expected_value,
             epsilon = 1e-10
         );
@@ -6729,7 +7103,9 @@ mod tests {
         Arc::get_mut(&mut evaluator.dataset)
             .expect("evaluator should own dataset Arc in this test")
             .clear_events_local();
-        let cached = evaluator.evaluate_local(&[1.25, -0.75]);
+        let cached = evaluator
+            .evaluate_local(&[1.25, -0.75])
+            .expect("evaluation should succeed");
         assert_eq!(cached.len(), expected_len);
     }
 
@@ -6754,7 +7130,9 @@ mod tests {
         Arc::get_mut(&mut evaluator.dataset)
             .expect("evaluator should own dataset Arc in this test")
             .clear_events_local();
-        let cached = evaluator.evaluate_gradient_local(&[1.25, -0.75]);
+        let cached = evaluator
+            .evaluate_gradient_local(&[1.25, -0.75])
+            .expect("evaluation should succeed");
         assert_eq!(cached.len(), expected_len);
     }
 
@@ -6770,9 +7148,15 @@ mod tests {
         ]));
         let evaluator = expr.load(&dataset).unwrap();
         let params = [1.25, -0.75];
-        let values = evaluator.evaluate_local(&params);
-        let gradients = evaluator.evaluate_gradient_local(&params);
-        let fused = evaluator.evaluate_with_gradient_local(&params);
+        let values = evaluator
+            .evaluate_local(&params)
+            .expect("evaluation should succeed");
+        let gradients = evaluator
+            .evaluate_gradient_local(&params)
+            .expect("evaluation should succeed");
+        let fused = evaluator
+            .evaluate_with_gradient_local(&params)
+            .expect("evaluation should succeed");
         assert_eq!(fused.len(), values.len());
         assert_eq!(fused.len(), gradients.len());
         for ((value_gradient, value), gradient) in
@@ -6803,9 +7187,15 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
         let params = [0.5, -1.25];
         let indices = vec![0, 2, 3];
-        let values = evaluator.evaluate_batch_local(&params, &indices);
-        let gradients = evaluator.evaluate_gradient_batch_local(&params, &indices);
-        let fused = evaluator.evaluate_with_gradient_batch_local(&params, &indices);
+        let values = evaluator
+            .evaluate_batch_local(&params, &indices)
+            .expect("evaluation should succeed");
+        let gradients = evaluator
+            .evaluate_gradient_batch_local(&params, &indices)
+            .expect("evaluation should succeed");
+        let fused = evaluator
+            .evaluate_with_gradient_batch_local(&params, &indices)
+            .expect("evaluation should succeed");
         assert_eq!(fused.len(), values.len());
         assert_eq!(fused.len(), gradients.len());
         for ((value_gradient, value), gradient) in
@@ -6946,7 +7336,9 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator = expr.load(&dataset).expect("evaluator should load");
-        let cached_integrals = evaluator.expression_precomputed_cached_integrals();
+        let cached_integrals = evaluator
+            .expression_precomputed_cached_integrals()
+            .expect("integrals should exist");
         assert_eq!(cached_integrals.len(), 1);
 
         let local_expected = dataset.events_local().iter().fold(0.0, |acc, event| {
@@ -6956,7 +7348,9 @@ mod tests {
         assert_relative_eq!(cached_local.re, local_expected, epsilon = 1e-12);
         assert_relative_eq!(cached_local.im, 0.0, epsilon = 1e-12);
 
-        let weighted_value_sum = evaluator.evaluate_weighted_value_sum_local(&[2.0]);
+        let weighted_value_sum = evaluator
+            .evaluate_weighted_value_sum_local(&[2.0])
+            .expect("evaluate should succeed");
         assert_relative_eq!(weighted_value_sum, 2.0 * local_expected, epsilon = 1e-10);
 
         let mut global_expected = 0.0;
@@ -7041,6 +7435,7 @@ mod tests {
 
         let local_expected_value = evaluator
             .evaluate_local(&params)
+            .expect("evaluate should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(0.0, |accum, (value, event)| {
@@ -7052,11 +7447,14 @@ mod tests {
             &mut global_expected_value,
             SystemOperation::sum(),
         );
-        let mpi_value = evaluator.evaluate_weighted_value_sum_mpi(&params, &world);
+        let mpi_value = evaluator
+            .evaluate_weighted_value_sum_mpi(&params, &world)
+            .expect("evaluate should succeed");
         assert_relative_eq!(mpi_value, global_expected_value, epsilon = 1e-10);
 
         let local_expected_gradient = evaluator
             .evaluate_gradient_local(&params)
+            .expect("evaluate should succeed")
             .iter()
             .zip(dataset.events_local().iter())
             .fold(
@@ -7072,7 +7470,9 @@ mod tests {
             &mut global_expected_gradient,
             SystemOperation::sum(),
         );
-        let mpi_gradient = evaluator.evaluate_weighted_gradient_sum_mpi(&params, &world);
+        let mpi_gradient = evaluator
+            .evaluate_weighted_gradient_sum_mpi(&params, &world)
+            .expect("evaluate should succeed");
         for (actual, expected) in mpi_gradient.iter().zip(global_expected_gradient.iter()) {
             assert_relative_eq!(*actual, *expected, epsilon = 1e-10);
         }
@@ -7093,9 +7493,13 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator = expr.load(&dataset).unwrap();
-        let values = evaluator.evaluate_local(&[]);
+        let values = evaluator
+            .evaluate_local(&[])
+            .expect("evaluation should succeed");
         assert_eq!(values.len(), 1);
-        let gradients = evaluator.evaluate_gradient_local(&[]);
+        let gradients = evaluator
+            .evaluate_gradient_local(&[])
+            .expect("evaluation should succeed");
         assert_eq!(gradients.len(), 1);
     }
 
@@ -7112,7 +7516,7 @@ mod tests {
             Arc::new(DatasetMetadata::default()),
         ));
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
@@ -7126,7 +7530,9 @@ mod tests {
         .unwrap();
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[2.0, 3.0]);
+        let result = evaluator
+            .evaluate(&[2.0, 3.0])
+            .expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(2.0, 3.0));
     }
 
@@ -7155,92 +7561,164 @@ mod tests {
 
         // Test (amp) addition
         let expr_add = &expr1 + &expr2;
-        let result_add = expr_add.load(&dataset).unwrap().evaluate(&[]);
+        let result_add = expr_add
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_add[0], Complex64::new(2.0, 1.0));
 
         // Test (amp) subtraction
         let expr_sub = &expr1 - &expr2;
-        let result_sub = expr_sub.load(&dataset).unwrap().evaluate(&[]);
+        let result_sub = expr_sub
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_sub[0], Complex64::new(2.0, -1.0));
 
         // Test (amp) multiplication
         let expr_mul = &expr1 * &expr2;
-        let result_mul = expr_mul.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul = expr_mul
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul[0], Complex64::new(0.0, 2.0));
 
         // Test (amp) division
         let expr_div = &expr1 / &expr3;
-        let result_div = expr_div.load(&dataset).unwrap().evaluate(&[]);
+        let result_div = expr_div
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_div[0], Complex64::new(6.0 / 25.0, -8.0 / 25.0));
 
         // Test (amp) neg
         let expr_neg = -&expr3;
-        let result_neg = expr_neg.load(&dataset).unwrap().evaluate(&[]);
+        let result_neg = expr_neg
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_neg[0], Complex64::new(-3.0, -4.0));
 
         // Test (expr) addition
         let expr_add2 = &expr_add + &expr_mul;
-        let result_add2 = expr_add2.load(&dataset).unwrap().evaluate(&[]);
+        let result_add2 = expr_add2
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_add2[0], Complex64::new(2.0, 3.0));
 
         // Test (expr) subtraction
         let expr_sub2 = &expr_add - &expr_mul;
-        let result_sub2 = expr_sub2.load(&dataset).unwrap().evaluate(&[]);
+        let result_sub2 = expr_sub2
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_sub2[0], Complex64::new(2.0, -1.0));
 
         // Test (expr) multiplication
         let expr_mul2 = &expr_add * &expr_mul;
-        let result_mul2 = expr_mul2.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul2 = expr_mul2
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul2[0], Complex64::new(-2.0, 4.0));
 
         // Test (expr) division
         let expr_div2 = &expr_add / &expr_add2;
-        let result_div2 = expr_div2.load(&dataset).unwrap().evaluate(&[]);
+        let result_div2 = expr_div2
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_div2[0], Complex64::new(7.0 / 13.0, -4.0 / 13.0));
 
         // Test (expr) neg
         let expr_neg2 = -&expr_mul2;
-        let result_neg2 = expr_neg2.load(&dataset).unwrap().evaluate(&[]);
+        let result_neg2 = expr_neg2
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_neg2[0], Complex64::new(2.0, -4.0));
 
         // Test (amp) real
         let expr_real = expr3.real();
-        let result_real = expr_real.load(&dataset).unwrap().evaluate(&[]);
+        let result_real = expr_real
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_real[0], Complex64::new(3.0, 0.0));
 
         // Test (expr) real
         let expr_mul2_real = expr_mul2.real();
-        let result_mul2_real = expr_mul2_real.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul2_real = expr_mul2_real
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul2_real[0], Complex64::new(-2.0, 0.0));
 
         // Test (amp) imag
         let expr_imag = expr3.imag();
-        let result_imag = expr_imag.load(&dataset).unwrap().evaluate(&[]);
+        let result_imag = expr_imag
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) imag
         let expr_mul2_imag = expr_mul2.imag();
-        let result_mul2_imag = expr_mul2_imag.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul2_imag = expr_mul2_imag
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul2_imag[0], Complex64::new(4.0, 0.0));
 
         // Test (amp) conj
         let expr_conj = expr3.conj();
-        let result_conj = expr_conj.load(&dataset).unwrap().evaluate(&[]);
+        let result_conj = expr_conj
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_conj[0], Complex64::new(3.0, -4.0));
 
         // Test (expr) conj
         let expr_mul2_conj = expr_mul2.conj();
-        let result_mul2_conj = expr_mul2_conj.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul2_conj = expr_mul2_conj
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul2_conj[0], Complex64::new(-2.0, -4.0));
 
         // Test (amp) norm_sqr
         let expr_norm = expr1.norm_sqr();
-        let result_norm = expr_norm.load(&dataset).unwrap().evaluate(&[]);
+        let result_norm = expr_norm
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_norm[0], Complex64::new(4.0, 0.0));
 
         // Test (expr) norm_sqr
         let expr_mul2_norm = expr_mul2.norm_sqr();
-        let result_mul2_norm = expr_mul2_norm.load(&dataset).unwrap().evaluate(&[]);
+        let result_mul2_norm = expr_mul2_norm
+            .load(&dataset)
+            .unwrap()
+            .evaluate(&[])
+            .expect("evaluation should succeed");
         assert_eq!(result_mul2_norm[0], Complex64::new(20.0, 0.0));
     }
 
@@ -7264,22 +7742,22 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         // Test initial state (all active)
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(3.0, 0.0));
 
         // Test deactivation
         evaluator.deactivate_strict("const1").unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(2.0, 0.0));
 
         // Test isolation
         evaluator.isolate_strict("const1").unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(1.0, 0.0));
 
         // Test reactivation
         evaluator.activate_all();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).expect("evaluation should succeed");
         assert_eq!(result[0], Complex64::new(3.0, 0.0));
     }
 
@@ -7304,7 +7782,9 @@ mod tests {
         let expr = &expr1 + &expr2;
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 1.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -7318,7 +7798,9 @@ mod tests {
         let expr = &expr1 - &expr2;
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 1.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -7332,7 +7814,9 @@ mod tests {
         let expr = &expr1 * &expr2;
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 5.0);
@@ -7346,7 +7830,9 @@ mod tests {
         let expr = &expr1 / &expr2;
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 4.0 / 41.0);
         assert_relative_eq!(gradient[0][0].im, -5.0 / 41.0);
@@ -7360,7 +7846,9 @@ mod tests {
         let expr = -(&expr1 * &expr2);
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, -4.0);
         assert_relative_eq!(gradient[0][0].im, -5.0);
@@ -7374,7 +7862,9 @@ mod tests {
         let expr = (&expr1 * &expr2).real();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -7388,7 +7878,9 @@ mod tests {
         let expr = (&expr1 * &expr2).imag();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 5.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -7402,7 +7894,9 @@ mod tests {
         let expr = (&expr1 * &expr2).conj();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 4.0);
         assert_relative_eq!(gradient[0][0].im, -5.0);
@@ -7416,7 +7910,9 @@ mod tests {
         let expr = (&expr1 * &expr2).norm_sqr();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         assert_relative_eq!(gradient[0][0].re, 164.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -7459,7 +7955,9 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let params = vec![2.0, 0.5, 1.2, -0.3];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
         let eps = 1e-6;
 
         for param_index in 0..params.len() {
@@ -7467,7 +7965,12 @@ mod tests {
             plus[param_index] += eps;
             let mut minus = params.clone();
             minus[param_index] -= eps;
-            let finite_diff = (evaluator.evaluate(&plus)[0] - evaluator.evaluate(&minus)[0])
+            let finite_diff = (evaluator
+                .evaluate(&plus)
+                .expect("evaluation should succeed")[0]
+                - evaluator
+                    .evaluate(&minus)
+                    .expect("evaluation should succeed")[0])
                 / Complex64::new(2.0 * eps, 0.0);
 
             assert_relative_eq!(
@@ -7498,8 +8001,12 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.0];
-        let value = evaluator.evaluate(&params);
-        let gradient = evaluator.evaluate_gradient(&params);
+        let value = evaluator
+            .evaluate(&params)
+            .expect("evaluation should succeed");
+        let gradient = evaluator
+            .evaluate_gradient(&params)
+            .expect("evaluation should succeed");
 
         // For |f(x) * 1 + 0|^2 where f(x) = x+2i, the value should be x^2 + 4
         assert_relative_eq!(value[0].re, 8.0);
@@ -7526,20 +8033,23 @@ mod tests {
         assert!(diagnostics.lowered_value_program_present);
         assert!(diagnostics.lowered_gradient_program_present);
         assert!(diagnostics.lowered_value_gradient_program_present);
-        assert_eq!(evaluator.evaluate(&[])[0], Complex64::new(4.0, 0.0));
+        assert_eq!(
+            evaluator.evaluate(&[]).expect("evaluation should succeed")[0],
+            Complex64::new(4.0, 0.0)
+        );
     }
 
     #[test]
     fn parameter_name_only_creates_free_parameter() {
         let p = parameter!("mass");
 
-        assert_eq!(p.name, "mass");
-        assert_eq!(p.fixed, None);
-        assert_eq!(p.initial, None);
-        assert_eq!(p.bounds, (None, None));
-        assert_eq!(p.unit, None);
-        assert_eq!(p.latex, None);
-        assert_eq!(p.description, None);
+        assert_eq!(p.name(), "mass");
+        assert_eq!(p.fixed(), None);
+        assert_eq!(p.initial(), None);
+        assert_eq!(p.bounds(), (None, None));
+        assert_eq!(p.unit(), None);
+        assert_eq!(p.latex(), None);
+        assert_eq!(p.description(), None);
         assert!(p.is_free());
         assert!(!p.is_fixed());
     }
@@ -7548,9 +8058,9 @@ mod tests {
     fn parameter_name_and_value_creates_fixed_parameter() {
         let p = parameter!("width", 0.15);
 
-        assert_eq!(p.name, "width");
-        assert_eq!(p.fixed, Some(0.15));
-        assert_eq!(p.initial, Some(0.15));
+        assert_eq!(p.name(), "width");
+        assert_eq!(p.fixed(), Some(0.15));
+        assert_eq!(p.initial(), Some(0.15));
         assert!(p.is_fixed());
         assert!(!p.is_free());
     }
@@ -7559,10 +8069,10 @@ mod tests {
     fn keyword_initial_sets_initial_only() {
         let p = parameter!("alpha", initial: 1.25);
 
-        assert_eq!(p.name, "alpha");
-        assert_eq!(p.fixed, None);
-        assert_eq!(p.initial, Some(1.25));
-        assert_eq!(p.bounds, (None, None));
+        assert_eq!(p.name(), "alpha");
+        assert_eq!(p.fixed(), None);
+        assert_eq!(p.initial(), Some(1.25));
+        assert_eq!(p.bounds(), (None, None));
         assert!(p.is_free());
     }
 
@@ -7570,9 +8080,9 @@ mod tests {
     fn keyword_fixed_sets_fixed_and_initial() {
         let p = parameter!("beta", fixed: 2.5);
 
-        assert_eq!(p.name, "beta");
-        assert_eq!(p.fixed, Some(2.5));
-        assert_eq!(p.initial, Some(2.5));
+        assert_eq!(p.name(), "beta");
+        assert_eq!(p.fixed(), Some(2.5));
+        assert_eq!(p.initial(), Some(2.5));
         assert!(p.is_fixed());
     }
 
@@ -7580,28 +8090,28 @@ mod tests {
     fn bounds_accept_plain_numbers() {
         let p = parameter!("x", bounds: (0.0, 10.0));
 
-        assert_eq!(p.bounds, (Some(0.0), Some(10.0)));
+        assert_eq!(p.bounds(), (Some(0.0), Some(10.0)));
     }
 
     #[test]
     fn bounds_accept_none_and_number() {
         let p = parameter!("x", bounds: (None, 10.0));
 
-        assert_eq!(p.bounds, (None, Some(10.0)));
+        assert_eq!(p.bounds(), (None, Some(10.0)));
     }
 
     #[test]
     fn bounds_accept_number_and_none() {
         let p = parameter!("x", bounds: (-1.0, None));
 
-        assert_eq!(p.bounds, (Some(-1.0), None));
+        assert_eq!(p.bounds(), (Some(-1.0), None));
     }
 
     #[test]
     fn bounds_accept_both_none() {
         let p = parameter!("x", bounds: (None, None));
 
-        assert_eq!(p.bounds, (None, None));
+        assert_eq!(p.bounds(), (None, None));
     }
 
     #[test]
@@ -7610,7 +8120,7 @@ mod tests {
         let hi = 2.0 * 3.0;
         let p = parameter!("x", bounds: (lo - 0.5, hi));
 
-        assert_eq!(p.bounds, (Some(0.5), Some(6.0)));
+        assert_eq!(p.bounds(), (Some(0.5), Some(6.0)));
     }
 
     #[test]
@@ -7624,13 +8134,13 @@ mod tests {
             description: "test parameter",
         );
 
-        assert_eq!(p.name, "gamma");
-        assert_eq!(p.fixed, None);
-        assert_eq!(p.initial, Some(1.0));
-        assert_eq!(p.bounds, (Some(0.0), Some(5.0)));
-        assert_eq!(p.unit.as_deref(), Some("GeV"));
-        assert_eq!(p.latex.as_deref(), Some(r"\gamma"));
-        assert_eq!(p.description.as_deref(), Some("test parameter"));
+        assert_eq!(p.name(), "gamma");
+        assert_eq!(p.fixed(), None);
+        assert_eq!(p.initial(), Some(1.0));
+        assert_eq!(p.bounds(), (Some(0.0), Some(5.0)));
+        assert_eq!(p.unit().as_deref(), Some("GeV"));
+        assert_eq!(p.latex().as_deref(), Some(r"\gamma"));
+        assert_eq!(p.description().as_deref(), Some("test parameter"));
     }
 
     #[test]
@@ -7642,11 +8152,11 @@ mod tests {
             unit: "rad",
         );
 
-        assert_eq!(p.name, "delta");
-        assert_eq!(p.fixed, Some(3.0));
-        assert_eq!(p.initial, Some(3.0));
-        assert_eq!(p.bounds, (Some(0.0), Some(10.0)));
-        assert_eq!(p.unit.as_deref(), Some("rad"));
+        assert_eq!(p.name(), "delta");
+        assert_eq!(p.fixed(), Some(3.0));
+        assert_eq!(p.initial(), Some(3.0));
+        assert_eq!(p.bounds(), (Some(0.0), Some(10.0)));
+        assert_eq!(p.unit().as_deref(), Some("rad"));
     }
 
     #[test]
@@ -7658,9 +8168,9 @@ mod tests {
             unit: "arb",
         );
 
-        assert_eq!(p.initial, Some(0.5));
-        assert_eq!(p.bounds, (None, Some(1.0)));
-        assert_eq!(p.unit.as_deref(), Some("arb"));
+        assert_eq!(p.initial(), Some(0.5));
+        assert_eq!(p.bounds(), (None, Some(1.0)));
+        assert_eq!(p.unit().as_deref(), Some("arb"));
     }
 
     #[test]

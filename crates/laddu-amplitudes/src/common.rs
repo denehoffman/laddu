@@ -372,7 +372,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.5];
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         assert_relative_eq!(result[0].re, 2.5);
         assert_relative_eq!(result[0].im, 0.0);
@@ -387,7 +387,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![2.0];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // For |f(x)|^2 where f(x) = x, the derivative should be 2x
         assert_relative_eq!(gradient[0][0].re, 4.0);
@@ -422,7 +422,7 @@ mod tests {
 
         let expr = VariableScalar::new("mass", &variable).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, expected);
         assert_relative_eq!(result[0].im, 0.0);
@@ -461,7 +461,7 @@ mod tests {
 
         let expr = variable.as_expression("mass").unwrap();
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, expected);
         assert_relative_eq!(result[0].im, 0.0);
@@ -479,7 +479,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![1.5, 2.5]; // Real and imaginary parts
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         assert_relative_eq!(result[0].re, 1.5);
         assert_relative_eq!(result[0].im, 2.5);
@@ -498,7 +498,7 @@ mod tests {
         let evaluator = expr.load(&dataset).unwrap();
 
         let params = vec![3.0, 4.0]; // Real and imaginary parts
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // For |f(x + iy)|^2, partial derivatives should be 2x and 2y
         assert_relative_eq!(gradient[0][0].re, 6.0);
@@ -524,7 +524,7 @@ mod tests {
             .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[1.5, 2.5]);
+        let result = evaluator.evaluate(&[1.5, 2.5]).unwrap();
 
         assert_eq!(evaluator.amplitudes.len(), 1);
         assert_relative_eq!(result[0].re, 3.0);
@@ -562,7 +562,7 @@ mod tests {
         let r = 2.0;
         let theta = PI / 4.3;
         let params = vec![r, theta];
-        let result = evaluator.evaluate(&params);
+        let result = evaluator.evaluate(&params).unwrap();
 
         // r * (cos(theta) + i*sin(theta))
         assert_relative_eq!(result[0].re, r * theta.cos());
@@ -583,7 +583,7 @@ mod tests {
         let r = 2.0;
         let theta = PI / 4.3;
         let params = vec![r, theta];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         // d/dr re^(iθ) = e^(iθ), d/dθ re^(iθ) = ire^(iθ)
         assert_relative_eq!(gradient[0][0].re, f64::cos(theta));

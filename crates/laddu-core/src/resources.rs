@@ -1,14 +1,12 @@
 use std::{array, collections::HashMap};
 
-use indexmap::IndexSet;
 use nalgebra::{SMatrix, SVector};
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use crate::{
-    amplitudes::{AmplitudeID, Parameter},
-    parameter_manager::ParameterTransform,
+    amplitudes::{AmplitudeID, Parameter, ParameterMap},
     LadduError, LadduResult,
 };
 
@@ -43,35 +41,27 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
 /// This struct holds references to the constants and free parameters used in the fit so that they
 /// may be obtained from their corresponding [`ParameterID`].
 #[derive(Debug)]
-pub struct Parameters<'a> {
-    pub(crate) parameters: &'a [f64],
-    pub(crate) constants: &'a [f64],
+pub struct Parameters {
+    values: Vec<f64>,
+    n_free: usize,
 }
 
-impl<'a> Parameters<'a> {
-    /// Create a new set of [`Parameters`] from a list of floating values and a list of constant values
-    pub fn new(parameters: &'a [f64], constants: &'a [f64]) -> Self {
-        Self {
-            parameters,
-            constants,
-        }
+impl Parameters {
+    pub fn new(values: Vec<f64>, n_free: usize) -> Self {
+        Self { values, n_free }
     }
-
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
     /// Obtain a parameter value or constant value from the given [`ParameterID`].
     pub fn get(&self, pid: ParameterID) -> f64 {
         match pid {
-            ParameterID::Parameter(index) => {
-                self.parameters.get(index).copied().unwrap_or(f64::NAN)
-            }
-            ParameterID::Constant(index) => self.constants.get(index).copied().unwrap_or(f64::NAN),
+            ParameterID::Parameter(index) | ParameterID::Constant(index) => self.values[index],
             ParameterID::Uninit => f64::NAN,
         }
     }
-
-    /// The number of free parameters.
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
-        self.parameters.len()
+        self.n_free
     }
 }
 
@@ -83,15 +73,7 @@ pub struct Resources {
     pub active: Vec<bool>,
     #[serde(default)]
     active_indices: Vec<usize>,
-    /// The set of all registered free parameter names across registered
-    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
-    pub free_parameters: IndexSet<String>,
-    /// The set of all registered fixed parameter names across registered
-    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
-    pub fixed_parameters: IndexSet<String>,
-    /// Values of all constants/fixed parameters across registered
-    /// [`Amplitude`](`crate::amplitudes::Amplitude`)s
-    pub constants: Vec<f64>,
+    pub parameter_map: ParameterMap,
     /// The [`Cache`] for each [`EventData`](`crate::data::EventData`)
     pub caches: Vec<Cache>,
     scalar_cache_names: HashMap<String, usize>,
@@ -101,8 +83,6 @@ pub struct Resources {
     matrix_cache_names: HashMap<String, usize>,
     complex_matrix_cache_names: HashMap<String, usize>,
     cache_size: usize,
-    parameter_entries: HashMap<String, ParameterEntry>,
-    pub(crate) parameter_overrides: ParameterTransform,
 }
 
 /// A single cache entry corresponding to precomputed data for a particular
@@ -280,37 +260,31 @@ impl<const R: usize, const C: usize> Default for ComplexMatrixID<R, C> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct ParameterEntry {
-    id: ParameterID,
-    fixed: Option<f64>,
-}
-
 impl Resources {
-    /// Create a new [`Resources`] instance with a parameter transform applied.
-    pub fn with_transform(transform: ParameterTransform) -> Self {
-        Self {
-            parameter_overrides: transform,
-            ..Default::default()
-        }
+    pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
+        self.parameter_map.rename_parameter(old, new)
+    }
+
+    pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.parameter_map.rename_parameters(mapping)
+    }
+
+    pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.parameter_map.free_parameter(name)
+    }
+
+    pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.parameter_map.fix_parameter(name, value)
     }
 
     /// The list of free parameter names.
     pub fn free_parameter_names(&self) -> Vec<String> {
-        self.free_parameters.iter().cloned().collect()
+        self.parameter_map.free().names()
     }
 
     /// The list of fixed parameter names.
     pub fn fixed_parameter_names(&self) -> Vec<String> {
-        self.fixed_parameters.iter().cloned().collect()
-    }
-
-    /// Map from fixed parameter names to their values.
-    pub fn fixed_parameter_values(&self) -> HashMap<String, f64> {
-        self.parameter_entries
-            .iter()
-            .filter_map(|(name, entry)| entry.fixed.map(|value| (name.clone(), value)))
-            .collect()
+        self.parameter_map.fixed().names()
     }
 
     /// All parameter names (free first, then fixed).
@@ -323,12 +297,12 @@ impl Resources {
 
     /// Number of free parameters.
     pub fn n_free_parameters(&self) -> usize {
-        self.free_parameters.len()
+        self.parameter_map.free().len()
     }
 
     /// Number of fixed parameters.
     pub fn n_fixed_parameters(&self) -> usize {
-        self.fixed_parameters.len()
+        self.parameter_map.fixed().len()
     }
 
     /// Total number of parameters.
@@ -604,25 +578,8 @@ impl Resources {
         self.amplitudes.get(name).cloned()
     }
 
-    fn apply_transform(&self, name: &str, fixed: Option<f64>) -> (String, Option<f64>) {
-        let final_name = self
-            .parameter_overrides
-            .renames
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string());
-        let fixed_value = if let Some(value) = self.parameter_overrides.fixed.get(name) {
-            Some(*value)
-        } else if self.parameter_overrides.freed.contains(name) {
-            None
-        } else {
-            fixed
-        };
-        (final_name, fixed_value)
-    }
-
-    /// Register a parameter. This method should be called within
-    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register). The resulting
+    /// register a parameter. this method should be called within
+    /// [`amplitude::register`](crate::amplitudes::amplitude::register). the resulting
     /// [`ParameterID`] should be stored to retrieve the value from the [`Parameters`] wrapper.
     ///
     /// # Errors
@@ -630,55 +587,7 @@ impl Resources {
     /// Returns an error if the parameter is unnamed, if the name is reused with incompatible
     /// fixed/free status or fixed value, or if renaming causes a conflict.
     pub fn register_parameter(&mut self, p: &Parameter) -> LadduResult<ParameterID> {
-        let base_name = &p.name;
-        if base_name.is_empty() {
-            return Err(LadduError::UnregisteredParameter {
-                name: "<unnamed>".to_string(),
-                reason: "Parameter was not initialized with a name".to_string(),
-            });
-        }
-        let (final_name, fixed_value) = self.apply_transform(base_name, p.fixed);
-
-        if let Some(existing) = self.parameter_entries.get(&final_name) {
-            match (existing.fixed, fixed_value) {
-                (Some(a), Some(b)) if (a - b).abs() > f64::EPSILON => {
-                    return Err(LadduError::ParameterConflict {
-                        name: final_name,
-                        reason: "conflicting fixed values for the same parameter name".to_string(),
-                    });
-                }
-                (Some(_), None) => {
-                    return Err(LadduError::ParameterConflict {
-                        name: final_name,
-                        reason: "attempted to use a fixed parameter name as free".to_string(),
-                    });
-                }
-                (None, Some(_)) => {
-                    return Err(LadduError::ParameterConflict {
-                        name: final_name,
-                        reason: "attempted to use a free parameter name as fixed".to_string(),
-                    });
-                }
-                _ => return Ok(existing.id),
-            }
-        }
-
-        let entry = if let Some(value) = fixed_value {
-            self.fixed_parameters.insert(final_name.clone());
-            self.constants.push(value);
-            ParameterEntry {
-                id: ParameterID::Constant(self.constants.len() - 1),
-                fixed: Some(value),
-            }
-        } else {
-            let (index, _) = self.free_parameters.insert_full(final_name.clone());
-            ParameterEntry {
-                id: ParameterID::Parameter(index),
-                fixed: None,
-            }
-        };
-        self.parameter_entries.insert(final_name, entry.clone());
-        Ok(entry.id)
+        self.parameter_map.register_parameter(p)
     }
     pub(crate) fn reserve_cache(&mut self, num_events: usize) {
         self.caches = vec![Cache::new(self.cache_size); num_events]
@@ -830,24 +739,22 @@ mod tests {
 
     #[test]
     fn test_parameters() {
-        let parameters = vec![1.0, 2.0, 3.0];
-        let constants = vec![4.0, 5.0, 6.0];
-        let params = Parameters::new(&parameters, &constants);
+        let parameters = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let params = Parameters::new(parameters, 3);
 
         assert_eq!(params.get(ParameterID::Parameter(0)), 1.0);
         assert_eq!(params.get(ParameterID::Parameter(1)), 2.0);
         assert_eq!(params.get(ParameterID::Parameter(2)), 3.0);
-        assert_eq!(params.get(ParameterID::Constant(0)), 4.0);
-        assert_eq!(params.get(ParameterID::Constant(1)), 5.0);
-        assert_eq!(params.get(ParameterID::Constant(2)), 6.0);
+        assert_eq!(params.get(ParameterID::Constant(3)), 4.0);
+        assert_eq!(params.get(ParameterID::Constant(4)), 5.0);
+        assert_eq!(params.get(ParameterID::Constant(5)), 6.0);
         assert_eq!(params.len(), 3);
     }
 
     #[test]
     fn test_uninit_parameter_returns_nan() {
-        let parameters = vec![1.0];
-        let constants = vec![1.0];
-        let params = Parameters::new(&parameters, &constants);
+        let parameters = vec![1.0, 1.0];
+        let params = Parameters::new(parameters, 1);
         assert!(params.get(ParameterID::Uninit).is_nan());
         assert!(params.get(ParameterID::Parameter(3)).is_nan());
         assert!(params.get(ParameterID::Constant(3)).is_nan());
@@ -943,7 +850,7 @@ mod tests {
             .register_parameter(&Parameter::new("param1"))
             .unwrap();
         let const1 = resources
-            .register_parameter(&Parameter::new("const1").with_fixed_value(1.0))
+            .register_parameter(&Parameter::new_fixed("const1", 1.0))
             .unwrap();
 
         match param1 {

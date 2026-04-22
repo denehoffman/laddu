@@ -685,7 +685,7 @@ mod tests {
             event.evaluate(&costheta).clamp(-1.0, 1.0).acos(),
             0.0,
         );
-        let value = evaluator.evaluate(&[])[0];
+        let value = evaluator.evaluate(&[]).unwrap()[0];
 
         assert_relative_eq!(value.re, expected.re);
         assert_relative_eq!(value.im, expected.im);
@@ -704,7 +704,7 @@ mod tests {
             AngularMomentumProjection::from_twice(0),
         )
         .unwrap();
-        let value = expr.load(&dataset).unwrap().evaluate(&[])[0];
+        let value = expr.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
 
         assert_relative_eq!(value.re, 1.0 / 2.0_f64.sqrt());
         assert_relative_eq!(value.im, 0.0);
@@ -728,9 +728,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_relative_eq!(diagonal.load(&dataset).unwrap().evaluate(&[])[0].re, 0.5);
         assert_relative_eq!(
-            off_diagonal.load(&dataset).unwrap().evaluate(&[])[0].norm(),
+            diagonal.load(&dataset).unwrap().evaluate(&[]).unwrap()[0].re,
+            0.5
+        );
+        assert_relative_eq!(
+            off_diagonal.load(&dataset).unwrap().evaluate(&[]).unwrap()[0].norm(),
             0.0
         );
     }
@@ -757,7 +760,7 @@ mod tests {
         .unwrap();
         let dataset = Arc::new(test_dataset());
         let event = dataset.event_view(0);
-        let value = expr.load(&dataset).unwrap().evaluate(&[])[0];
+        let value = expr.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
         let expected = blatt_weisskopf_m(
             event.get_p4_sum(["kshort1", "kshort2"]).unwrap().m(),
             event.p4("kshort1").unwrap().m(),
@@ -807,8 +810,8 @@ mod tests {
         .unwrap()
         .conj();
 
-        let factor_value = factor.load(&dataset).unwrap().evaluate(&[])[0];
-        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[])[0];
+        let factor_value = factor.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
+        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
 
         assert_relative_eq!(factor_value.re, explicit_value.re);
         assert_relative_eq!(factor_value.im, explicit_value.im);
@@ -867,8 +870,8 @@ mod tests {
                 )
                 .unwrap();
 
-        let factor_value = factor.load(&dataset).unwrap().evaluate(&[])[0];
-        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[])[0];
+        let factor_value = factor.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
+        let explicit_value = explicit.load(&dataset).unwrap().evaluate(&[]).unwrap()[0];
 
         assert_relative_eq!(factor_value.re, explicit_value.re);
         assert_relative_eq!(factor_value.im, explicit_value.im);

@@ -295,19 +295,22 @@ fn activation_churn_deactivate_names(kind: ScenarioKind) -> &'static [&'static s
     }
 }
 
-fn eventwise_weighted_value_sum(evaluator: &Evaluator, parameters: &[f64]) -> f64 {
-    evaluator
-        .evaluate_local(parameters)
+fn eventwise_weighted_value_sum(evaluator: &Evaluator, parameters: &[f64]) -> LadduResult<f64> {
+    Ok(evaluator
+        .evaluate_local(parameters)?
         .iter()
         .zip(evaluator.dataset.events_local().iter())
         .fold(0.0, |accum, (value, event)| {
             accum + event.weight() * value.re
-        })
+        }))
 }
 
-fn eventwise_weighted_gradient_sum(evaluator: &Evaluator, parameters: &[f64]) -> DVector<f64> {
-    evaluator
-        .evaluate_gradient_local(parameters)
+fn eventwise_weighted_gradient_sum(
+    evaluator: &Evaluator,
+    parameters: &[f64],
+) -> LadduResult<DVector<f64>> {
+    Ok(evaluator
+        .evaluate_gradient_local(parameters)?
         .iter()
         .zip(evaluator.dataset.events_local().iter())
         .fold(
@@ -316,7 +319,7 @@ fn eventwise_weighted_gradient_sum(evaluator: &Evaluator, parameters: &[f64]) ->
                 accum += gradient.map(|value| value.re).scale(event.weight());
                 accum
             },
-        )
+        ))
 }
 
 fn load_bench_dataset() -> Arc<Dataset> {
