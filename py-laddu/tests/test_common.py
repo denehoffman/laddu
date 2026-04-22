@@ -54,7 +54,7 @@ def test_scalar_gradient() -> None:
 
 
 def test_complex_scalar_creation_and_evaluation() -> None:
-    amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
+    amp = ComplexScalar('test_complex', (parameter('re_param'), parameter('im_param')))
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     result = evaluator.evaluate([1.5, 2.5])
@@ -63,7 +63,7 @@ def test_complex_scalar_creation_and_evaluation() -> None:
 
 
 def test_complex_scalar_gradient() -> None:
-    amp = ComplexScalar('test_complex', parameter('re_param'), parameter('im_param'))
+    amp = ComplexScalar('test_complex', (parameter('re_param'), parameter('im_param')))
     dataset = make_test_dataset()
     expr = amp.norm_sqr()
     evaluator = expr.load(dataset)
@@ -75,7 +75,9 @@ def test_complex_scalar_gradient() -> None:
 
 
 def test_polar_complex_scalar_creation_and_evaluation() -> None:
-    amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
+    amp = PolarComplexScalar(
+        'test_polar', (parameter('r_param'), parameter('theta_param'))
+    )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     r = 2.0
@@ -86,7 +88,9 @@ def test_polar_complex_scalar_creation_and_evaluation() -> None:
 
 
 def test_polar_complex_scalar_gradient() -> None:
-    amp = PolarComplexScalar('test_polar', parameter('r_param'), parameter('theta_param'))
+    amp = PolarComplexScalar(
+        'test_polar', (parameter('r_param'), parameter('theta_param'))
+    )
     dataset = make_test_dataset()
     evaluator = amp.load(dataset)
     r = 2.0
@@ -96,3 +100,14 @@ def test_polar_complex_scalar_gradient() -> None:
     assert pytest.approx(gradient[0][0].imag) == np.sin(theta)
     assert pytest.approx(gradient[0][1].real) == -r * np.sin(theta)
     assert pytest.approx(gradient[0][1].imag) == r * np.cos(theta)
+
+
+def test_auto_naming() -> None:
+    scalar = Scalar('test')
+    assert scalar.free_parameters[0] == 'test'
+    cscalar = ComplexScalar('test')
+    assert cscalar.free_parameters[0] == 'test (real)'
+    assert cscalar.free_parameters[1] == 'test (imag)'
+    pcscalar = PolarComplexScalar('test')
+    assert pcscalar.free_parameters[0] == 'test (mag)'
+    assert pcscalar.free_parameters[1] == 'test (phase)'

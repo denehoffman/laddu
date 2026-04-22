@@ -10,8 +10,8 @@ They are typically combined with dynamical amplitudes like
 Examples
 --------
 >>> from laddu.amplitudes import common, parameter
->>> mag = common.Scalar('mag', parameter('mag'))
->>> phase = common.PolarComplexScalar('cplx', parameter('r'), parameter('theta'))
+>>> mag = common.Scalar('mag', parameter('mag')) # or just common.Scalar('mag')
+>>> phase = common.PolarComplexScalar('cplx', (parameter('r'), parameter('theta')))
 >>> mag * phase
 ×
 ├─ mag(id=0)

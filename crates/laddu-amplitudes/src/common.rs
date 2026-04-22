@@ -3,6 +3,7 @@ use laddu_core::{
         Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, ExpressionDependence, Parameter,
     },
     data::{DatasetMetadata, NamedEventView},
+    parameter,
     resources::{Cache, ParameterID, Parameters, Resources},
     traits::Variable,
     LadduResult, ScalarID,
@@ -37,6 +38,10 @@ impl Scalar {
             pid: Default::default(),
         }
         .into_expression()
+    }
+    /// Create a new [`Scalar`] with the given name and a parameter value with the same name.
+    pub fn new_auto(name: &str) -> LadduResult<Expression> {
+        Self::new(name, parameter!(name))
     }
 }
 
@@ -77,8 +82,9 @@ impl Amplitude for Scalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// value : laddu.Parameter
-///     The scalar parameter contained in the Amplitude
+/// value : laddu.Parameter, optional
+///     The scalar parameter contained in the Amplitude. If not given, a free parameter will be
+///     created with the same name as the Amplitude.
 ///
 /// Returns
 /// -------
@@ -86,9 +92,13 @@ impl Amplitude for Scalar {
 ///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "Scalar")]
-pub fn py_scalar(name: &str, value: PyParameter) -> PyResult<PyExpression> {
-    Ok(PyExpression(Scalar::new(name, value.0)?))
+#[pyfunction(name = "Scalar", signature = (name, value = None))]
+pub fn py_scalar(name: &str, value: Option<PyParameter>) -> PyResult<PyExpression> {
+    if let Some(value) = value {
+        Ok(PyExpression(Scalar::new(name, value.0)?))
+    } else {
+        Ok(PyExpression(Scalar::new_auto(name)?))
+    }
 }
 
 /// A real-valued [`Amplitude`] which evaluates an event [`Variable`].
@@ -212,6 +222,16 @@ impl ComplexScalar {
         }
         .into_expression()
     }
+
+    /// Create a new [`ComplexScalar`] with the given name and real/imaginary parts automatically
+    /// named "{name} (real)" and "{name} (imag)", respectively.
+    pub fn new_auto(name: &str) -> LadduResult<Expression> {
+        Self::new(
+            name,
+            parameter!(format!("{} (real)", name)),
+            parameter!(format!("{} (imag)", name)),
+        )
+    }
 }
 
 #[typetag::serde]
@@ -253,10 +273,9 @@ impl Amplitude for ComplexScalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// re: laddu.Parameter
-///     The real part of the complex value contained in the Amplitude
-/// im: laddu.Parameter
-///     The imaginary part of the complex value contained in the Amplitude
+/// re_im: tuple[laddu.Parameter, laddu.Parameter], optional
+///     The real and imaginary parts of the complex value contained in the Amplitude. If not given,
+///     two free parameters will be generated automatically named "{name} (real)" and "{name} (imag)".
 ///
 /// Returns
 /// -------
@@ -264,9 +283,16 @@ impl Amplitude for ComplexScalar {
 ///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "ComplexScalar")]
-pub fn py_complex_scalar(name: &str, re: PyParameter, im: PyParameter) -> PyResult<PyExpression> {
-    Ok(PyExpression(ComplexScalar::new(name, re.0, im.0)?))
+#[pyfunction(name = "ComplexScalar", signature = (name, re_im = None))]
+pub fn py_complex_scalar(
+    name: &str,
+    re_im: Option<(PyParameter, PyParameter)>,
+) -> PyResult<PyExpression> {
+    if let Some((re, im)) = re_im {
+        Ok(PyExpression(ComplexScalar::new(name, re.0, im.0)?))
+    } else {
+        Ok(PyExpression(ComplexScalar::new_auto(name)?))
+    }
 }
 
 /// A complex-valued [`Amplitude`] which just contains two parameters representing its magnitude and
@@ -291,6 +317,16 @@ impl PolarComplexScalar {
             pid_theta: Default::default(),
         }
         .into_expression()
+    }
+
+    /// Create a new [`PolarComplexScalar`] with the given name and magnitude/phase parts
+    /// automatically named "{name} (mag)" and "{name} (phase)", respectively.
+    pub fn new_auto(name: &str) -> LadduResult<Expression> {
+        Self::new(
+            name,
+            parameter!(format!("{} (mag)", name)),
+            parameter!(format!("{} (phase)", name)),
+        )
     }
 }
 
@@ -335,10 +371,10 @@ impl Amplitude for PolarComplexScalar {
 /// ----------
 /// name : str
 ///     The Amplitude name
-/// r: laddu.Parameter
-///     The magnitude of the complex value contained in the Amplitude
-/// theta: laddu.Parameter
-///     The argument of the complex value contained in the Amplitude
+/// r_theta: tuple[laddu.Parameter, laddu.Parameter], optional
+///     The magnitude and argument/phase of the complex value contained in the Amplitude. If not
+///     given, two free parameters will be generated automatically named "{name} (mag)" and
+///     "{name} (phase)".
 ///
 /// Returns
 /// -------
@@ -346,13 +382,16 @@ impl Amplitude for PolarComplexScalar {
 ///     An Expression which can be loaded and evaluated directly
 ///
 #[cfg(feature = "python")]
-#[pyfunction(name = "PolarComplexScalar")]
+#[pyfunction(name = "PolarComplexScalar", signature = (name, r_theta = None))]
 pub fn py_polar_complex_scalar(
     name: &str,
-    r: PyParameter,
-    theta: PyParameter,
+    r_theta: Option<(PyParameter, PyParameter)>,
 ) -> PyResult<PyExpression> {
-    Ok(PyExpression(PolarComplexScalar::new(name, r.0, theta.0)?))
+    if let Some((r, theta)) = r_theta {
+        Ok(PyExpression(PolarComplexScalar::new(name, r.0, theta.0)?))
+    } else {
+        Ok(PyExpression(PolarComplexScalar::new_auto(name)?))
+    }
 }
 
 #[cfg(test)]
@@ -590,5 +629,17 @@ mod tests {
         assert_relative_eq!(gradient[0][0].im, f64::sin(theta));
         assert_relative_eq!(gradient[0][1].re, -r * f64::sin(theta));
         assert_relative_eq!(gradient[0][1].im, r * f64::cos(theta));
+    }
+
+    #[test]
+    fn test_auto_naming() {
+        let scalar = Scalar::new_auto("test").unwrap();
+        assert_eq!(scalar.free_parameters()[0], "test".to_string());
+        let cscalar = ComplexScalar::new_auto("test").unwrap();
+        assert_eq!(cscalar.free_parameters()[0], "test (real)".to_string());
+        assert_eq!(cscalar.free_parameters()[1], "test (imag)".to_string());
+        let pcscalar = PolarComplexScalar::new_auto("test").unwrap();
+        assert_eq!(pcscalar.free_parameters()[0], "test (mag)".to_string());
+        assert_eq!(pcscalar.free_parameters()[1], "test (phase)".to_string());
     }
 }

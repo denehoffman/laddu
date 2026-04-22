@@ -99,13 +99,13 @@ def test_batch_evaluation() -> None:
 
 def test_expression_operations() -> None:
     amp1 = ComplexScalar(
-        'const1', parameter('const1_re', 2.0), parameter('const1_im', 0.0)
+        'const1', (parameter('const1_re', 2.0), parameter('const1_im', 0.0))
     )
     amp2 = ComplexScalar(
-        'const2', parameter('const2_re', 0.0), parameter('const2_im', 1.0)
+        'const2', (parameter('const2_re', 0.0), parameter('const2_im', 1.0))
     )
     amp3 = ComplexScalar(
-        'const3', parameter('const3_re', 3.0), parameter('const3_im', 4.0)
+        'const3', (parameter('const3_re', 3.0), parameter('const3_im', 4.0))
     )
     dataset = make_test_dataset()
 
@@ -227,10 +227,10 @@ def test_compiled_expression_display() -> None:
 
 def test_amplitude_activation() -> None:
     amp1 = ComplexScalar(
-        'const1', parameter('const1_re', 1.0), parameter('const1_im', 0.0)
+        'const1', (parameter('const1_re', 1.0), parameter('const1_im', 0.0))
     )
     amp2 = ComplexScalar(
-        'const2', parameter('const2_re', 2.0), parameter('const2_im', 0.0)
+        'const2', (parameter('const2_re', 2.0), parameter('const2_im', 0.0))
     )
     dataset = make_test_dataset()
 
@@ -261,13 +261,13 @@ def test_amplitude_activation() -> None:
 
 def test_amplitude_activation_globs() -> None:
     amp1 = ComplexScalar(
-        'signal.s', parameter('signal_s_re', 1.0), parameter('signal_s_im', 0.0)
+        'signal.s', (parameter('signal_s_re', 1.0), parameter('signal_s_im', 0.0))
     )
     amp2 = ComplexScalar(
-        'signal.d', parameter('signal_d_re', 2.0), parameter('signal_d_im', 0.0)
+        'signal.d', (parameter('signal_d_re', 2.0), parameter('signal_d_im', 0.0))
     )
     amp3 = ComplexScalar(
-        'background', parameter('background_re', 4.0), parameter('background_im', 0.0)
+        'background', (parameter('background_re', 4.0), parameter('background_im', 0.0))
     )
     evaluator = (amp1 + amp2 + amp3).load(make_test_dataset())
 
@@ -298,10 +298,10 @@ def test_amplitude_activation_globs() -> None:
 
 def test_evaluator_active_mask_roundtrip() -> None:
     amp1 = ComplexScalar(
-        'const1', parameter('const1_re', 1.0), parameter('const1_im', 0.0)
+        'const1', (parameter('const1_re', 1.0), parameter('const1_im', 0.0))
     )
     amp2 = ComplexScalar(
-        'const2', parameter('const2_re', 2.0), parameter('const2_im', 0.0)
+        'const2', (parameter('const2_re', 2.0), parameter('const2_im', 0.0))
     )
     evaluator = (amp1 + amp2).load(make_test_dataset())
 
@@ -316,10 +316,10 @@ def test_evaluator_active_mask_roundtrip() -> None:
 
 def test_gradient() -> None:
     amp1 = ComplexScalar(
-        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+        'parametric_1', (parameter('test_param_re_1'), parameter('test_param_im_1'))
     )
     amp2 = ComplexScalar(
-        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+        'parametric_2', (parameter('test_param_re_2'), parameter('test_param_im_2'))
     )
     dataset = make_test_dataset()
     params = [2.0, 3.0, 4.0, 5.0]
@@ -453,7 +453,7 @@ def test_gradient() -> None:
 
 def test_zeros_and_ones() -> None:
     amp = ComplexScalar(
-        'parametric', parameter('test_param_re'), parameter('zeros_const_im', 2.0)
+        'parametric', (parameter('test_param_re'), parameter('zeros_const_im', 2.0))
     )
     dataset = make_test_dataset()
     expr = (amp * One() + Zero()).norm_sqr()
@@ -540,10 +540,10 @@ def test_expression_free_and_rename_parameters() -> None:
 
 def test_tree_printing() -> None:
     amp1 = ComplexScalar(
-        'parametric_1', parameter('test_param_re_1'), parameter('test_param_im_1')
+        'parametric_1', (parameter('test_param_re_1'), parameter('test_param_im_1'))
     )
     amp2 = ComplexScalar(
-        'parametric_2', parameter('test_param_re_2'), parameter('test_param_im_2')
+        'parametric_2', (parameter('test_param_re_2'), parameter('test_param_im_2'))
     )
     expr = (
         amp1.real()

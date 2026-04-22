@@ -358,7 +358,7 @@ def fit_binned(
     z00p = ld.Zlm('Z00+', 0, 0, '+', angles, polarization)
     z22p = ld.Zlm('Z22+', 2, 2, '+', angles, polarization)
     s0p = ld.Scalar('S0+', ld.parameter('S0+ re'))
-    d2p = ld.ComplexScalar('D2+', ld.parameter('D2+ re'), ld.parameter('D2+ im'))
+    d2p = ld.ComplexScalar('D2+', (ld.parameter('D2+ re'), ld.parameter('D2+ im')))
     pos_re = (s0p * z00p.real() + d2p * z22p.real()).norm_sqr()
     pos_im = (s0p * z00p.imag() + d2p * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
@@ -502,7 +502,7 @@ def fit_unbinned(
     tuple[np.ndarray, np.ndarray],
     ganesh.MinimizationSummary,
     list[ganesh.MinimizationSummary],
-    list[str],
+    tuple[str, ...],
 ]:
     logger.info('Starting Unbinned Fit')
     res_mass, angles, polarization = reaction_variables()
@@ -527,7 +527,7 @@ def fit_unbinned(
         res_mass,
     )
     s0p = ld.Scalar('S0+', ld.parameter('S0+ re'))
-    d2p = ld.ComplexScalar('D2+', ld.parameter('D2+ re'), ld.parameter('D2+ im'))
+    d2p = ld.ComplexScalar('D2+', (ld.parameter('D2+ re'), ld.parameter('D2+ im')))
     pos_re = (s0p * bw_f01500 * z00p.real() + d2p * bw_f21525 * z22p.real()).norm_sqr()
     pos_im = (s0p * bw_f01500 * z00p.imag() + d2p * bw_f21525 * z22p.imag()).norm_sqr()
     model = pos_re + pos_im
