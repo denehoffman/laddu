@@ -15,9 +15,9 @@ pub(crate) fn debug_key(value: impl std::fmt::Debug) -> String {
 }
 
 pub(crate) fn parameter_key(parameter: &Parameter) -> String {
-    match parameter.fixed {
-        Some(value) => format!("{:?}:fixed:{}", parameter.name, f64_key(value)),
-        None => format!("{:?}:free", parameter.name),
+    match parameter.fixed() {
+        Some(value) => format!("{:?}:fixed:{}", parameter.name(), f64_key(value)),
+        None => format!("{:?}:free", parameter.name()),
     }
 }
 

@@ -218,7 +218,7 @@ mod tests {
         let expr = test_phase_space_expression("kappa", Channel::S);
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 7.028417575882146e-5);
         assert_relative_eq!(result[0].im, 0.0);
@@ -230,7 +230,7 @@ mod tests {
         let expr = test_phase_space_expression("kappa", Channel::S);
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[]);
+        let result = evaluator.evaluate_gradient(&[]).unwrap();
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
     }
 
@@ -241,7 +241,7 @@ mod tests {
             + test_phase_space_expression("kappa", Channel::S);
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_eq!(evaluator.amplitudes.len(), 1);
         assert_relative_eq!(result[0].re, 2.0 * 7.028417575882146e-5);

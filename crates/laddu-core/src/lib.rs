@@ -534,8 +534,6 @@ pub mod data;
 /// Prototype execution context API for thread-policy and scratch reuse.
 #[cfg(feature = "execution-context-prototype")]
 pub mod execution_context;
-/// Utilities for tracking parameter state across expressions and likelihoods.
-pub mod parameter_manager;
 /// Structures for manipulating the cache and free parameters.
 pub mod resources;
 /// Shared per-call thread-pool reuse utilities.

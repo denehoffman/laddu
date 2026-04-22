@@ -420,7 +420,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[1.5, 0.3]);
+        let result = evaluator.evaluate(&[1.5, 0.3]).unwrap();
 
         assert_relative_eq!(result[0].re, 1.4308791652435877);
         assert_relative_eq!(result[0].im, 1.3839522217669178);
@@ -444,7 +444,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
+        let result = evaluator.evaluate_gradient(&[1.7, 0.3]).unwrap();
         assert_relative_eq!(result[0][0].re, -2.4885111876303205);
         assert_relative_eq!(result[0][0].im, -1.8242624730406152);
         assert_relative_eq!(result[0][1].re, -0.5492978554232557);
@@ -469,7 +469,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[1.5, 0.3]);
+        let result = evaluator.evaluate(&[1.5, 0.3]).unwrap();
 
         assert_relative_eq!(result[0].re, 2.0654840145948143);
         assert_relative_eq!(result[0].im, 1.2058262598870584);
@@ -493,7 +493,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
+        let result = evaluator.evaluate_gradient(&[1.7, 0.3]).unwrap();
         assert_relative_eq!(result[0][0].re, -3.2382865275566544);
         assert_relative_eq!(result[0][0].im, -0.9544869810033058);
         assert_relative_eq!(result[0][1].re, -0.06116353148223782);
@@ -513,7 +513,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[1.5, 0.3]);
+        let result = evaluator.evaluate(&[1.5, 0.3]).unwrap();
 
         assert_relative_eq!(result[0].re, 1.084721431628924);
         assert_relative_eq!(result[0].im, 1.3518336007116172);
@@ -532,7 +532,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[1.7, 0.3]);
+        let result = evaluator.evaluate_gradient(&[1.7, 0.3]).unwrap();
         assert_relative_eq!(result[0][0].re, -1.7757650016553739);
         assert_relative_eq!(result[0][0].im, -2.0392238297998153);
         assert_relative_eq!(result[0][1].re, -1.0894724338203443);

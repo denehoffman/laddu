@@ -289,7 +289,7 @@ mod tests {
         .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]);
+        let result = evaluator.evaluate(&[0.1, 0.2, 0.3, 0.4]).unwrap();
 
         assert_relative_eq!(result[0].re, -0.2092661754354623);
         assert_relative_eq!(result[0].im, -0.09850621309829852);
@@ -312,7 +312,7 @@ mod tests {
         .unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]);
+        let result = evaluator.evaluate_gradient(&[0.1, 0.2, 0.3, 0.4]).unwrap();
 
         assert_relative_eq!(result[0][0].re, -0.5756896047697867);
         assert_relative_eq!(result[0][0].im, 0.9398863940931068);

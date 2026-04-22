@@ -154,7 +154,7 @@ mod tests {
         let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 0.2713394403451035);
         assert_relative_eq!(result[0].im, 0.1426897184196572);
@@ -167,7 +167,7 @@ mod tests {
         let expr = Ylm::new("ylm", 1, 1, &angles).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[]);
+        let result = evaluator.evaluate_gradient(&[]).unwrap();
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
     }
 

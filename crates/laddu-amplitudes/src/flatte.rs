@@ -261,7 +261,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[0.98, 0.7, 0.2]);
+        let result = evaluator.evaluate(&[0.98, 0.7, 0.2]).unwrap();
 
         assert_relative_eq!(result[0].re, -0.7338320342780681);
         assert_relative_eq!(result[0].im, 0.5018145529787819);
@@ -285,7 +285,7 @@ mod tests {
         .unwrap();
         let evaluator = amp.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[0.98, 0.7, 0.2]);
+        let result = evaluator.evaluate_gradient(&[0.98, 0.7, 0.2]).unwrap();
 
         assert_eq!(result[0].len(), 3);
         assert_relative_eq!(result[0][0].re, -0.08473788905152731);

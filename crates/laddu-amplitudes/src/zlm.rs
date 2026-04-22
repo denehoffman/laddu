@@ -316,7 +316,7 @@ mod tests {
         let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 0.042841277808013944);
         assert_relative_eq!(result[0].im, -0.23859639139484332);
@@ -330,7 +330,7 @@ mod tests {
         let expr = Zlm::new("zlm", 1, 1, Sign::Positive, &angles, &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[]);
+        let result = evaluator.evaluate_gradient(&[]).unwrap();
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
     }
 
@@ -342,7 +342,7 @@ mod tests {
         let expr = PolPhase::new("polphase", &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, -0.2872914473575512);
         assert_relative_eq!(result[0].im, -0.2572403880070272);
@@ -356,7 +356,7 @@ mod tests {
         let expr = PolPhase::new("polphase", &polarization).unwrap();
         let evaluator = expr.load(&dataset).unwrap();
 
-        let result = evaluator.evaluate_gradient(&[]);
+        let result = evaluator.evaluate_gradient(&[]).unwrap();
         assert_eq!(result[0].len(), 0); // amplitude has no parameters
     }
 }

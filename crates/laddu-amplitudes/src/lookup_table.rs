@@ -853,7 +853,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 2.0);
         assert_relative_eq!(result[0].im, 3.0);
@@ -881,7 +881,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 2.0);
         assert_relative_eq!(result[0].im, 0.0);
@@ -901,7 +901,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_eq!(result[0], Complex64::ZERO);
     }
@@ -920,7 +920,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 2.0);
         assert_relative_eq!(result[0].im, 0.0);
@@ -940,7 +940,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 1.0 + 2.0 * 0.498);
         assert_relative_eq!(result[0].im, 0.0);
@@ -968,7 +968,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 1.0 + 2.0 * 0.498 + 3.0 * 0.007);
         assert_relative_eq!(result[0].im, 0.0);
@@ -988,7 +988,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_relative_eq!(result[0].re, 3.0);
         assert_relative_eq!(result[0].im, 0.0);
@@ -1008,7 +1008,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate(&[]);
+        let result = evaluator.evaluate(&[]).unwrap();
 
         assert_eq!(result[0], Complex64::ZERO);
     }
@@ -1028,7 +1028,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate_gradient(&[1.0, 2.0, 3.0]);
+        let result = evaluator.evaluate_gradient(&[1.0, 2.0, 3.0]).unwrap();
 
         assert_relative_eq!(result[0][0].re, 0.0);
         assert_relative_eq!(result[0][0].im, 0.0);
@@ -1053,7 +1053,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let result = evaluator.evaluate_gradient(&[1.0, 3.0]);
+        let result = evaluator.evaluate_gradient(&[1.0, 3.0]).unwrap();
         let value = 0.502 * 1.0 + 0.498 * 3.0;
 
         assert_relative_eq!(result[0][0].re, 2.0 * value * 0.502, epsilon = 1e-12);
@@ -1081,7 +1081,7 @@ mod tests {
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
         let params = [1.1, 1.2, 2.1, 2.2, 3.1, 3.2];
-        let gradient = evaluator.evaluate_gradient(&params);
+        let gradient = evaluator.evaluate_gradient(&params).unwrap();
 
         assert_relative_eq!(gradient[0][0].re, 0.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -1110,7 +1110,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let gradient = evaluator.evaluate_gradient(&[1.0, 2.0, 3.0, 4.0]);
+        let gradient = evaluator.evaluate_gradient(&[1.0, 2.0, 3.0, 4.0]).unwrap();
 
         assert_relative_eq!(gradient[0][0].re, 0.502, epsilon = 1e-12);
         assert_relative_eq!(gradient[0][0].im, 0.0);
@@ -1136,7 +1136,7 @@ mod tests {
 
         let dataset = Arc::new(test_dataset());
         let evaluator = expr.load(&dataset).unwrap();
-        let gradient = evaluator.evaluate_gradient(&[1.0, 3.0]);
+        let gradient = evaluator.evaluate_gradient(&[1.0, 3.0]).unwrap();
 
         assert_relative_eq!(gradient[0][0].re, 0.0);
         assert_relative_eq!(gradient[0][0].im, 0.0);
