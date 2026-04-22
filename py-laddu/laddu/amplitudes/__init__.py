@@ -7,7 +7,7 @@ Examples
 --------
 >>> from laddu.amplitudes import common, parameter
 >>> scalar = common.Scalar('mag', parameter('mag'))  # overall magnitude
->>> rho = common.ComplexScalar('rho', parameter('rho_re'), parameter('rho_im'))
+>>> rho = common.ComplexScalar('rho', (parameter('rho_re'), parameter('rho_im')))
 >>> expr = scalar * rho
 >>> expr
 ×

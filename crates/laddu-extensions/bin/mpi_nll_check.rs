@@ -28,8 +28,8 @@ fn main() -> LadduResult<()> {
             let _ = world;
             for case in case_configs() {
                 let nll = make_test_nll(&case, None, None);
-                let mpi_value = nll.evaluate_mpi_value(&case.parameters, &world);
-                let mpi_gradient = nll.evaluate_mpi_gradient(&case.parameters, &world);
+                let mpi_value = nll.evaluate_mpi_value(&case.parameters, &world)?;
+                let mpi_gradient = nll.evaluate_mpi_gradient(&case.parameters, &world)?;
                 if world.is_root() {
                     print_result_json("mpi", case.name, mpi_value, mpi_gradient.as_slice());
                 }
