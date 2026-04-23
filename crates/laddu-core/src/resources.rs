@@ -4,6 +4,8 @@ mod cache;
 mod cache_ids;
 mod parameter_store;
 mod registry;
+#[cfg(test)]
+mod tests;
 
 pub use cache::*;
 pub use cache_ids::*;
