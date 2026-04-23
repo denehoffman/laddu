@@ -3,7 +3,6 @@ mod mpi_benches {
     use std::sync::Arc;
 
     use criterion::{black_box, BatchSize, BenchmarkId, Criterion, Throughput};
-    use laddu::mpi::{finalize_mpi, get_world, use_mpi};
     use laddu::{
         amplitudes::{
             kmatrix::{
@@ -16,6 +15,7 @@ mod mpi_benches {
         data::{Dataset, DatasetReadOptions},
         extensions::NLL,
         io,
+        mpi::{finalize_mpi, get_world, use_mpi},
         traits::LikelihoodTerm,
         utils::{
             enums::{Frame, Sign},
@@ -23,8 +23,10 @@ mod mpi_benches {
         },
         RngSubsetExtension,
     };
-    use mpi::collective::SystemOperation;
-    use mpi::traits::{Communicator, CommunicatorCollectives};
+    use mpi::{
+        collective::SystemOperation,
+        traits::{Communicator, CommunicatorCollectives},
+    };
 
     const BENCH_DATASET_RELATIVE_PATH: &str = "benches/bench.parquet";
     const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];

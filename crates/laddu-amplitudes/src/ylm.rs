@@ -1,11 +1,10 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
+    math::spherical_harmonic,
     resources::{Cache, ComplexScalarID, Parameters, Resources},
-    utils::{
-        functions::spherical_harmonic,
-        variables::{Angles, Variable},
-    },
+    traits::Variable,
+    variables::Angles,
     LadduResult,
 };
 #[cfg(feature = "python")]
@@ -124,13 +123,14 @@ pub fn py_ylm(name: &str, l: usize, m: isize, angles: &PyAngles) -> PyResult<PyE
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{
         data::test_dataset,
-        utils::reaction::{Particle, Reaction},
+        reaction::{Particle, Reaction},
         Frame,
     };
+
+    use super::*;
 
     fn angles() -> Angles {
         let beam = Particle::measured("beam", "beam");

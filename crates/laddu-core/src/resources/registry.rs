@@ -1,0 +1,828 @@
+use std::{array, collections::HashMap};
+
+use serde::{Deserialize, Serialize};
+
+#[cfg(test)]
+use super::parameter_store::Parameters;
+use super::{
+    cache::Cache,
+    cache_ids::{ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, ScalarID, VectorID},
+    parameter_store::ParameterID,
+};
+use crate::{
+    amplitudes::{AmplitudeID, Parameter, ParameterMap},
+    LadduError, LadduResult,
+};
+
+fn is_glob_selector(selector: &str) -> bool {
+    selector.contains('*') || selector.contains('?')
+}
+
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.chars().collect::<Vec<_>>();
+    let text = text.chars().collect::<Vec<_>>();
+    let mut table = vec![vec![false; text.len() + 1]; pattern.len() + 1];
+    table[0][0] = true;
+    for pattern_idx in 1..=pattern.len() {
+        if pattern[pattern_idx - 1] == '*' {
+            table[pattern_idx][0] = table[pattern_idx - 1][0];
+        }
+    }
+    for pattern_idx in 1..=pattern.len() {
+        for text_idx in 1..=text.len() {
+            table[pattern_idx][text_idx] = match pattern[pattern_idx - 1] {
+                '*' => table[pattern_idx - 1][text_idx] || table[pattern_idx][text_idx - 1],
+                '?' => table[pattern_idx - 1][text_idx - 1],
+                character => {
+                    character == text[text_idx - 1] && table[pattern_idx - 1][text_idx - 1]
+                }
+            };
+        }
+    }
+    table[pattern.len()][text.len()]
+}
+
+/// The main resource manager for cached values, amplitudes, parameters, and constants.
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct Resources {
+    amplitudes: HashMap<String, AmplitudeID>,
+    /// A list indicating which amplitudes are active (using [`AmplitudeID`]s as indices)
+    pub active: Vec<bool>,
+    #[serde(default)]
+    active_indices: Vec<usize>,
+    /// The registered parameters and constants used by this resource set.
+    pub parameter_map: ParameterMap,
+    /// The [`Cache`] for each [`EventData`](crate::data::EventData)
+    pub caches: Vec<Cache>,
+    scalar_cache_names: HashMap<String, usize>,
+    complex_scalar_cache_names: HashMap<String, usize>,
+    vector_cache_names: HashMap<String, usize>,
+    complex_vector_cache_names: HashMap<String, usize>,
+    matrix_cache_names: HashMap<String, usize>,
+    complex_matrix_cache_names: HashMap<String, usize>,
+    cache_size: usize,
+}
+
+impl Resources {
+    /// Rename a single registered parameter.
+    pub fn rename_parameter(&mut self, old: &str, new: &str) -> LadduResult<()> {
+        self.parameter_map.rename_parameter(old, new)
+    }
+
+    /// Rename multiple registered parameters.
+    pub fn rename_parameters(&mut self, mapping: &HashMap<String, String>) -> LadduResult<()> {
+        self.parameter_map.rename_parameters(mapping)
+    }
+
+    /// Mark a registered parameter as free.
+    pub fn free_parameter(&self, name: &str) -> LadduResult<()> {
+        self.parameter_map.free_parameter(name)
+    }
+
+    /// Fix a registered parameter to the supplied value.
+    pub fn fix_parameter(&self, name: &str, value: f64) -> LadduResult<()> {
+        self.parameter_map.fix_parameter(name, value)
+    }
+
+    /// The list of free parameter names.
+    pub fn free_parameter_names(&self) -> Vec<String> {
+        self.parameter_map.free().names()
+    }
+
+    /// The list of fixed parameter names.
+    pub fn fixed_parameter_names(&self) -> Vec<String> {
+        self.parameter_map.fixed().names()
+    }
+
+    /// All parameter names (free first, then fixed).
+    pub fn parameter_names(&self) -> Vec<String> {
+        self.free_parameter_names()
+            .into_iter()
+            .chain(self.fixed_parameter_names())
+            .collect()
+    }
+
+    /// Number of free parameters.
+    pub fn n_free_parameters(&self) -> usize {
+        self.parameter_map.free().len()
+    }
+
+    /// Number of fixed parameters.
+    pub fn n_fixed_parameters(&self) -> usize {
+        self.parameter_map.fixed().len()
+    }
+
+    /// Total number of parameters.
+    pub fn n_parameters(&self) -> usize {
+        self.n_free_parameters() + self.n_fixed_parameters()
+    }
+
+    fn rebuild_active_indices(&mut self) {
+        self.active_indices.clear();
+        self.active_indices.extend(
+            self.active
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &is_active)| if is_active { Some(idx) } else { None }),
+        );
+    }
+
+    pub(crate) fn refresh_active_indices(&mut self) {
+        self.rebuild_active_indices();
+    }
+
+    /// Return the indices of active amplitudes.
+    pub fn active_indices(&self) -> &[usize] {
+        &self.active_indices
+    }
+
+    fn selector_indices(&self, selector: &str) -> Vec<usize> {
+        if is_glob_selector(selector) {
+            self.amplitudes
+                .iter()
+                .filter_map(|(name, amplitude)| {
+                    if glob_matches(selector, name) {
+                        Some(amplitude.1)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            self.amplitudes
+                .get(selector)
+                .map(|amplitude| vec![amplitude.1])
+                .unwrap_or_default()
+        }
+    }
+
+    fn set_activation_state_by_selector(
+        &mut self,
+        selector: &str,
+        active: bool,
+        strict: bool,
+    ) -> LadduResult<bool> {
+        let indices = self.selector_indices(selector);
+        if indices.is_empty() {
+            if strict {
+                return Err(LadduError::AmplitudeNotFoundError {
+                    name: selector.to_string(),
+                });
+            }
+            return Ok(false);
+        }
+        let mut changed = false;
+        for idx in indices {
+            if self.active[idx] != active {
+                self.active[idx] = active;
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
+    fn selector_indices_many<T: AsRef<str>>(
+        &self,
+        selectors: &[T],
+        strict: bool,
+    ) -> LadduResult<Vec<usize>> {
+        let mut indices = Vec::new();
+        for selector in selectors {
+            let selector_ref = selector.as_ref();
+            let selector_indices = self.selector_indices(selector_ref);
+            if selector_indices.is_empty() && strict {
+                return Err(LadduError::AmplitudeNotFoundError {
+                    name: selector_ref.to_string(),
+                });
+            }
+            indices.extend(selector_indices);
+        }
+        indices.sort_unstable();
+        indices.dedup();
+        Ok(indices)
+    }
+
+    fn isolate_indices(&mut self, indices: &[usize]) {
+        let mut changed = false;
+        for (idx, active) in self.active.iter_mut().enumerate() {
+            let next_active = indices.binary_search(&idx).is_ok();
+            if *active != next_active {
+                *active = next_active;
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+    }
+
+    /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
+    pub fn activate<T: AsRef<str>>(&mut self, name: T) {
+        if self
+            .set_activation_state_by_selector(name.as_ref(), true, false)
+            .unwrap_or(false)
+        {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
+    pub fn activate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+        let mut changed = false;
+        for name in names {
+            if self
+                .set_activation_state_by_selector(name.as_ref(), true, false)
+                .unwrap_or(false)
+            {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Activate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    pub fn activate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        if self.set_activation_state_by_selector(name.as_ref(), true, true)? {
+            self.rebuild_active_indices();
+        }
+        Ok(())
+    }
+    /// Activate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    pub fn activate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        let mut changed = false;
+        for name in names {
+            if self.set_activation_state_by_selector(name.as_ref(), true, true)? {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+        Ok(())
+    }
+    /// Activate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
+    pub fn activate_all(&mut self) {
+        let mut changed = false;
+        for active in self.active.iter_mut() {
+            if !*active {
+                *active = true;
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name.
+    pub fn deactivate<T: AsRef<str>>(&mut self, name: T) {
+        if self
+            .set_activation_state_by_selector(name.as_ref(), false, false)
+            .unwrap_or(false)
+        {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name.
+    pub fn deactivate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+        let mut changed = false;
+        for name in names {
+            if self
+                .set_activation_state_by_selector(name.as_ref(), false, false)
+                .unwrap_or(false)
+            {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Deactivate an [`Amplitude`](crate::amplitudes::Amplitude) by name, returning an error if it is missing.
+    pub fn deactivate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        if self.set_activation_state_by_selector(name.as_ref(), false, true)? {
+            self.rebuild_active_indices();
+        }
+        Ok(())
+    }
+    /// Deactivate several [`Amplitude`](crate::amplitudes::Amplitude)s by name, returning an error if any are missing.
+    pub fn deactivate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        let mut changed = false;
+        for name in names {
+            if self.set_activation_state_by_selector(name.as_ref(), false, true)? {
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+        Ok(())
+    }
+    /// Deactivate all registered [`Amplitude`](crate::amplitudes::Amplitude)s.
+    pub fn deactivate_all(&mut self) {
+        let mut changed = false;
+        for active in self.active.iter_mut() {
+            if *active {
+                *active = false;
+                changed = true;
+            }
+        }
+        if changed {
+            self.rebuild_active_indices();
+        }
+    }
+    /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest).
+    pub fn isolate<T: AsRef<str>>(&mut self, name: T) {
+        let indices = self.selector_indices(name.as_ref());
+        if !indices.is_empty() || !is_glob_selector(name.as_ref()) {
+            self.isolate_indices(&indices);
+        }
+    }
+    /// Isolate an [`Amplitude`](crate::amplitudes::Amplitude) by name (deactivate the rest), returning an error if it is missing.
+    pub fn isolate_strict<T: AsRef<str>>(&mut self, name: T) -> LadduResult<()> {
+        let indices = self.selector_indices_many(&[name], true)?;
+        self.isolate_indices(&indices);
+        Ok(())
+    }
+    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest).
+    pub fn isolate_many<T: AsRef<str>>(&mut self, names: &[T]) {
+        if let Ok(indices) = self.selector_indices_many(names, false) {
+            if !indices.is_empty() || names.iter().any(|name| !is_glob_selector(name.as_ref())) {
+                self.isolate_indices(&indices);
+            }
+        }
+    }
+    /// Isolate several [`Amplitude`](crate::amplitudes::Amplitude)s by name (deactivate the rest), returning an error if any are missing.
+    pub fn isolate_many_strict<T: AsRef<str>>(&mut self, names: &[T]) -> LadduResult<()> {
+        let indices = self.selector_indices_many(names, true)?;
+        self.isolate_indices(&indices);
+        Ok(())
+    }
+    /// Register an [`Amplitude`](crate::amplitudes::Amplitude) with the [`Resources`] manager.
+    /// This method should be called at the end of the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method. The
+    /// [`Amplitude`](crate::amplitudes::Amplitude) should probably obtain a name [`String`] in its
+    /// constructor.
+    ///
+    /// # Errors
+    ///
+    /// The [`Amplitude`](crate::amplitudes::Amplitude)'s name must be unique and not already
+    /// registered, else this will return a [`RegistrationError`][LadduError::RegistrationError].
+    pub fn register_amplitude(&mut self, name: &str) -> LadduResult<AmplitudeID> {
+        if self.amplitudes.contains_key(name) {
+            return Err(LadduError::RegistrationError {
+                name: name.to_string(),
+            });
+        }
+        let next_id = AmplitudeID(name.to_string(), self.amplitudes.len());
+        self.amplitudes.insert(name.to_string(), next_id.clone());
+        self.active.push(true);
+        self.rebuild_active_indices();
+        Ok(next_id)
+    }
+
+    /// Fetch the [`AmplitudeID`] for a previously registered amplitude by name.
+    pub fn amplitude_id(&self, name: &str) -> Option<AmplitudeID> {
+        self.amplitudes.get(name).cloned()
+    }
+
+    /// register a parameter. this method should be called within
+    /// [`amplitude::register`](crate::amplitudes::amplitude::register). the resulting
+    /// [`ParameterID`] should be stored to retrieve the value from the [`Parameters`] wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parameter is unnamed, if the name is reused with incompatible
+    /// fixed/free status or fixed value, or if renaming causes a conflict.
+    pub fn register_parameter(&mut self, p: &Parameter) -> LadduResult<ParameterID> {
+        self.parameter_map.register_parameter(p)
+    }
+    pub(crate) fn reserve_cache(&mut self, num_events: usize) {
+        self.caches = vec![Cache::new(self.cache_size); num_events]
+    }
+    /// Register a scalar with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`ScalarID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_scalar(&mut self, name: Option<&str>) -> ScalarID {
+        let first_index = if let Some(name) = name {
+            *self
+                .scalar_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += 1;
+                    self.cache_size - 1
+                })
+        } else {
+            self.cache_size += 1;
+            self.cache_size - 1
+        };
+        ScalarID(first_index)
+    }
+    /// Register a complex scalar with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`ComplexScalarID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_complex_scalar(&mut self, name: Option<&str>) -> ComplexScalarID {
+        let first_index = if let Some(name) = name {
+            *self
+                .complex_scalar_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += 2;
+                    self.cache_size - 2
+                })
+        } else {
+            self.cache_size += 2;
+            self.cache_size - 2
+        };
+        ComplexScalarID(first_index, first_index + 1)
+    }
+    /// Register a vector with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`VectorID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_vector<const R: usize>(&mut self, name: Option<&str>) -> VectorID<R> {
+        let first_index = if let Some(name) = name {
+            *self
+                .vector_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += R;
+                    self.cache_size - R
+                })
+        } else {
+            self.cache_size += R;
+            self.cache_size - R
+        };
+        VectorID(array::from_fn(|i| first_index + i))
+    }
+    /// Register a complex-valued vector with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`ComplexVectorID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_complex_vector<const R: usize>(
+        &mut self,
+        name: Option<&str>,
+    ) -> ComplexVectorID<R> {
+        let first_index = if let Some(name) = name {
+            *self
+                .complex_vector_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += R * 2;
+                    self.cache_size - (R * 2)
+                })
+        } else {
+            self.cache_size += R * 2;
+            self.cache_size - (R * 2)
+        };
+        ComplexVectorID(
+            array::from_fn(|i| first_index + i),
+            array::from_fn(|i| (first_index + R) + i),
+        )
+    }
+    /// Register a matrix with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`MatrixID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_matrix<const R: usize, const C: usize>(
+        &mut self,
+        name: Option<&str>,
+    ) -> MatrixID<R, C> {
+        let first_index = if let Some(name) = name {
+            *self
+                .matrix_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += R * C;
+                    self.cache_size - (R * C)
+                })
+        } else {
+            self.cache_size += R * C;
+            self.cache_size - (R * C)
+        };
+        MatrixID(array::from_fn(|i| {
+            array::from_fn(|j| first_index + i * C + j)
+        }))
+    }
+    /// Register a complex-valued matrix with an optional name (names are unique to the [`Cache`] so two different
+    /// registrations of the same type which share a name will also share values and may overwrite
+    /// each other). This method should be called within the
+    /// [`Amplitude::register`](crate::amplitudes::Amplitude::register) method, and the
+    /// resulting [`ComplexMatrixID`] should be stored to use later to retrieve the value from the [`Cache`].
+    pub fn register_complex_matrix<const R: usize, const C: usize>(
+        &mut self,
+        name: Option<&str>,
+    ) -> ComplexMatrixID<R, C> {
+        let first_index = if let Some(name) = name {
+            *self
+                .complex_matrix_cache_names
+                .entry(name.to_string())
+                .or_insert_with(|| {
+                    self.cache_size += 2 * R * C;
+                    self.cache_size - (2 * R * C)
+                })
+        } else {
+            self.cache_size += 2 * R * C;
+            self.cache_size - (2 * R * C)
+        };
+        ComplexMatrixID(
+            array::from_fn(|i| array::from_fn(|j| first_index + i * C + j)),
+            array::from_fn(|i| array::from_fn(|j| (first_index + R * C) + i * C + j)),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::{Matrix2, Vector2};
+    use num::complex::Complex64;
+
+    use super::*;
+
+    #[test]
+    fn test_parameters() {
+        let parameters = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let params = Parameters::new(parameters, 3, vec![0, 1, 2, 3, 4, 5]);
+
+        assert_eq!(params.get(ParameterID::Parameter(0)), 1.0);
+        assert_eq!(params.get(ParameterID::Parameter(1)), 2.0);
+        assert_eq!(params.get(ParameterID::Parameter(2)), 3.0);
+        assert_eq!(params.get(ParameterID::Constant(3)), 4.0);
+        assert_eq!(params.get(ParameterID::Constant(4)), 5.0);
+        assert_eq!(params.get(ParameterID::Constant(5)), 6.0);
+        assert_eq!(params.free_index(ParameterID::Parameter(0)), Some(0));
+        assert_eq!(params.free_index(ParameterID::Constant(3)), None);
+        assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn test_uninit_parameter_returns_nan() {
+        let parameters = vec![1.0, 1.0];
+        let params = Parameters::new(parameters, 1, vec![0, 1]);
+        assert!(params.get(ParameterID::Uninit).is_nan());
+        assert!(params.get(ParameterID::Parameter(3)).is_nan());
+        assert!(params.get(ParameterID::Constant(3)).is_nan());
+    }
+
+    #[test]
+    fn test_resources_amplitude_management() {
+        let mut resources = Resources::default();
+
+        let amp1 = resources.register_amplitude("amp1").unwrap();
+        let amp2 = resources.register_amplitude("amp2").unwrap();
+
+        assert!(resources.active[amp1.1]);
+        assert!(resources.active[amp2.1]);
+
+        resources.deactivate_strict("amp1").unwrap();
+        assert!(!resources.active[amp1.1]);
+        assert!(resources.active[amp2.1]);
+
+        resources.activate_strict("amp1").unwrap();
+        assert!(resources.active[amp1.1]);
+
+        resources.deactivate_all();
+        assert!(!resources.active[amp1.1]);
+        assert!(!resources.active[amp2.1]);
+
+        resources.activate_all();
+        assert!(resources.active[amp1.1]);
+        assert!(resources.active[amp2.1]);
+
+        resources.isolate_strict("amp1").unwrap();
+        assert!(resources.active[amp1.1]);
+        assert!(!resources.active[amp2.1]);
+    }
+
+    #[test]
+    fn test_resources_amplitude_glob_management() {
+        let mut resources = Resources::default();
+
+        let signal_s = resources.register_amplitude("signal.s").unwrap();
+        let signal_d = resources.register_amplitude("signal.d").unwrap();
+        let background = resources.register_amplitude("background").unwrap();
+
+        resources.deactivate_strict("signal.*").unwrap();
+        assert!(!resources.active[signal_s.1]);
+        assert!(!resources.active[signal_d.1]);
+        assert!(resources.active[background.1]);
+
+        resources.activate_strict("signal.?").unwrap();
+        assert!(resources.active[signal_s.1]);
+        assert!(resources.active[signal_d.1]);
+        assert!(resources.active[background.1]);
+
+        resources.isolate_strict("signal.*").unwrap();
+        assert!(resources.active[signal_s.1]);
+        assert!(resources.active[signal_d.1]);
+        assert!(!resources.active[background.1]);
+
+        resources.activate_all();
+        resources
+            .isolate_many_strict(&["signal.s", "back*"])
+            .unwrap();
+        assert!(resources.active[signal_s.1]);
+        assert!(!resources.active[signal_d.1]);
+        assert!(resources.active[background.1]);
+
+        assert!(resources.activate_strict("missing*").is_err());
+        assert!(resources.deactivate_strict("missing?").is_err());
+        assert!(resources.isolate_strict("missing*").is_err());
+    }
+
+    #[test]
+    fn test_resources_non_strict_zero_match_glob_is_noop() {
+        let mut resources = Resources::default();
+
+        let signal = resources.register_amplitude("signal").unwrap();
+        let background = resources.register_amplitude("background").unwrap();
+
+        resources.deactivate("missing*");
+        assert!(resources.active[signal.1]);
+        assert!(resources.active[background.1]);
+
+        resources.isolate("missing*");
+        assert!(resources.active[signal.1]);
+        assert!(resources.active[background.1]);
+    }
+
+    #[test]
+    fn test_resources_parameter_registration() {
+        let mut resources = Resources::default();
+
+        let param1 = resources
+            .register_parameter(&Parameter::new("param1"))
+            .unwrap();
+        let const1 = resources
+            .register_parameter(&Parameter::new_fixed("const1", 1.0))
+            .unwrap();
+
+        match param1 {
+            ParameterID::Parameter(idx) => assert_eq!(idx, 0),
+            _ => panic!("Expected Parameter variant"),
+        }
+
+        match const1 {
+            ParameterID::Constant(idx) => assert_eq!(idx, 1),
+            _ => panic!("Expected Constant variant"),
+        }
+    }
+
+    #[test]
+    fn test_cache_scalar_operations() {
+        let mut resources = Resources::default();
+
+        let scalar1 = resources.register_scalar(Some("test_scalar"));
+        let scalar2 = resources.register_scalar(None);
+        let scalar3 = resources.register_scalar(Some("test_scalar"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        cache.store_scalar(scalar1, 1.0);
+        cache.store_scalar(scalar2, 2.0);
+
+        assert_eq!(cache.get_scalar(scalar1), 1.0);
+        assert_eq!(cache.get_scalar(scalar2), 2.0);
+        assert_eq!(cache.get_scalar(scalar3), 1.0);
+    }
+
+    #[test]
+    fn test_cache_complex_operations() {
+        let mut resources = Resources::default();
+
+        let complex1 = resources.register_complex_scalar(Some("test_complex"));
+        let complex2 = resources.register_complex_scalar(None);
+        let complex3 = resources.register_complex_scalar(Some("test_complex"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        let value1 = Complex64::new(1.0, 2.0);
+        let value2 = Complex64::new(3.0, 4.0);
+        cache.store_complex_scalar(complex1, value1);
+        cache.store_complex_scalar(complex2, value2);
+
+        assert_eq!(cache.get_complex_scalar(complex1), value1);
+        assert_eq!(cache.get_complex_scalar(complex2), value2);
+        assert_eq!(cache.get_complex_scalar(complex3), value1);
+    }
+
+    #[test]
+    fn test_cache_vector_operations() {
+        let mut resources = Resources::default();
+
+        let vector_id1: VectorID<2> = resources.register_vector(Some("test_vector"));
+        let vector_id2: VectorID<2> = resources.register_vector(None);
+        let vector_id3: VectorID<2> = resources.register_vector(Some("test_vector"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        let value1 = Vector2::new(1.0, 2.0);
+        let value2 = Vector2::new(3.0, 4.0);
+        cache.store_vector(vector_id1, value1);
+        cache.store_vector(vector_id2, value2);
+
+        assert_eq!(cache.get_vector(vector_id1), value1);
+        assert_eq!(cache.get_vector(vector_id2), value2);
+        assert_eq!(cache.get_vector(vector_id3), value1);
+    }
+
+    #[test]
+    fn test_cache_complex_vector_operations() {
+        let mut resources = Resources::default();
+
+        let complex_vector_id1: ComplexVectorID<2> =
+            resources.register_complex_vector(Some("test_complex_vector"));
+        let complex_vector_id2: ComplexVectorID<2> = resources.register_complex_vector(None);
+        let complex_vector_id3: ComplexVectorID<2> =
+            resources.register_complex_vector(Some("test_complex_vector"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        let value1 = Vector2::new(Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0));
+        let value2 = Vector2::new(Complex64::new(5.0, 6.0), Complex64::new(7.0, 8.0));
+        cache.store_complex_vector(complex_vector_id1, value1);
+        cache.store_complex_vector(complex_vector_id2, value2);
+
+        assert_eq!(cache.get_complex_vector(complex_vector_id1), value1);
+        assert_eq!(cache.get_complex_vector(complex_vector_id2), value2);
+        assert_eq!(cache.get_complex_vector(complex_vector_id3), value1);
+    }
+
+    #[test]
+    fn test_cache_matrix_operations() {
+        let mut resources = Resources::default();
+
+        let matrix_id1: MatrixID<2, 2> = resources.register_matrix(Some("test_matrix"));
+        let matrix_id2: MatrixID<2, 2> = resources.register_matrix(None);
+        let matrix_id3: MatrixID<2, 2> = resources.register_matrix(Some("test_matrix"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        let value1 = Matrix2::new(1.0, 2.0, 3.0, 4.0);
+        let value2 = Matrix2::new(5.0, 6.0, 7.0, 8.0);
+        cache.store_matrix(matrix_id1, value1);
+        cache.store_matrix(matrix_id2, value2);
+
+        assert_eq!(cache.get_matrix(matrix_id1), value1);
+        assert_eq!(cache.get_matrix(matrix_id2), value2);
+        assert_eq!(cache.get_matrix(matrix_id3), value1);
+    }
+
+    #[test]
+    fn test_cache_complex_matrix_operations() {
+        let mut resources = Resources::default();
+
+        let complex_matrix_id1: ComplexMatrixID<2, 2> =
+            resources.register_complex_matrix(Some("test_complex_matrix"));
+        let complex_matrix_id2: ComplexMatrixID<2, 2> = resources.register_complex_matrix(None);
+        let complex_matrix_id3: ComplexMatrixID<2, 2> =
+            resources.register_complex_matrix(Some("test_complex_matrix"));
+
+        resources.reserve_cache(1);
+        let cache = &mut resources.caches[0];
+
+        let value1 = Matrix2::new(
+            Complex64::new(1.0, 2.0),
+            Complex64::new(3.0, 4.0),
+            Complex64::new(5.0, 6.0),
+            Complex64::new(7.0, 8.0),
+        );
+        let value2 = Matrix2::new(
+            Complex64::new(9.0, 10.0),
+            Complex64::new(11.0, 12.0),
+            Complex64::new(13.0, 14.0),
+            Complex64::new(15.0, 16.0),
+        );
+        cache.store_complex_matrix(complex_matrix_id1, value1);
+        cache.store_complex_matrix(complex_matrix_id2, value2);
+
+        assert_eq!(cache.get_complex_matrix(complex_matrix_id1), value1);
+        assert_eq!(cache.get_complex_matrix(complex_matrix_id2), value2);
+        assert_eq!(cache.get_complex_matrix(complex_matrix_id3), value1);
+    }
+
+    #[test]
+    fn test_uninit_parameter_registration() {
+        let mut resources = Resources::default();
+        let result = resources.register_parameter(&Parameter::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_duplicate_named_amplitude_registration_error() {
+        let mut resources = Resources::default();
+        assert!(resources.register_amplitude("test_amp").is_ok());
+        assert!(resources.register_amplitude("test_amp").is_err());
+    }
+}

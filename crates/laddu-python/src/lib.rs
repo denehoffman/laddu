@@ -1,8 +1,7 @@
 #![warn(clippy::perf, clippy::style)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 use laddu_core::ThreadPoolManager;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::{prelude::*, types::PyDict};
 
 /// Returns the number of CPUs (logical cores) available for use by ``laddu``.
 ///

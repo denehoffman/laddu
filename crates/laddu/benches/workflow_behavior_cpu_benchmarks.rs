@@ -3,12 +3,10 @@ use std::sync::Arc;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
-use laddu::parameter;
 use laddu::{
     amplitudes::{
         breit_wigner::BreitWigner,
-        common::ComplexScalar,
-        common::Scalar,
+        common::{ComplexScalar, Scalar},
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
@@ -18,12 +16,10 @@ use laddu::{
     },
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,
-    io,
+    io, parameter,
+    quantum::{Frame, Sign},
     traits::{LikelihoodTerm, Variable},
-    utils::{
-        enums::{Frame, Sign},
-        variables::{Mass, PolMagnitude},
-    },
+    variables::{Mass, PolMagnitude},
     RngSubsetExtension,
 };
 use nalgebra::{DMatrix, DVector};

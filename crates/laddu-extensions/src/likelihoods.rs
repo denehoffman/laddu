@@ -1,17 +1,19 @@
+#[cfg(feature = "rayon")]
+use std::cell::RefCell;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     sync::Arc,
 };
 
-#[cfg(feature = "rayon")]
-use std::cell::RefCell;
-
-use crate::RngSubsetExtension;
 use accurate::{sum::Klein, traits::*};
 use auto_ops::*;
 use dyn_clone::DynClone;
 use fastrand::Rng;
+#[cfg(feature = "python")]
+use ganesh::python::IntoPySummary;
+#[cfg(feature = "mpi")]
+use laddu_core::mpi::LadduMPI;
 #[cfg(feature = "python")]
 use laddu_core::ThreadPoolManager;
 use laddu_core::{
@@ -19,29 +21,20 @@ use laddu_core::{
     data::Dataset,
     validate_free_parameter_len, LadduError, LadduResult, Parameter,
 };
-use nalgebra::DVector;
-use num::complex::Complex64;
-
-#[cfg(feature = "mpi")]
-use laddu_core::mpi::LadduMPI;
-
-#[cfg(feature = "mpi")]
-use mpi::{
-    collective::SystemOperation, datatype::PartitionMut, topology::SimpleCommunicator, traits::*,
-};
-use parking_lot::{Mutex, RwLock};
-
-#[cfg(feature = "python")]
-use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
-#[cfg(feature = "python")]
-use ganesh::python::IntoPySummary;
 #[cfg(feature = "python")]
 use laddu_python::{
     amplitudes::{PyCompiledExpression, PyEvaluator, PyExpression},
     data::PyDataset,
 };
+#[cfg(feature = "mpi")]
+use mpi::{
+    collective::SystemOperation, datatype::PartitionMut, topology::SimpleCommunicator, traits::*,
+};
+use nalgebra::DVector;
+use num::complex::Complex64;
 #[cfg(feature = "python")]
 use numpy::{PyArray1, PyArray2, PyArray3};
+use parking_lot::{Mutex, RwLock};
 #[cfg(feature = "python")]
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -51,6 +44,10 @@ use pyo3::{
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+
+#[cfg(feature = "python")]
+use crate::ganesh_ext::py_ganesh::{mcmc_from_python, minimize_from_python};
+use crate::RngSubsetExtension;
 
 type ProjectionMaskCacheKey = (bool, Vec<String>);
 
@@ -4303,9 +4300,10 @@ pub fn py_likelihood_scalar(name: String) -> PyResult<PyLikelihoodExpression> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "python")]
-    use super::install_laddu_with_threads;
-    use super::{LikelihoodScalar, LikelihoodTerm, NLL};
+    #[cfg(feature = "mpi")]
+    use std::fs;
+    use std::sync::Arc;
+
     use approx::assert_relative_eq;
     #[cfg(feature = "mpi")]
     use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
@@ -4314,7 +4312,7 @@ mod tests {
         data::{Dataset, DatasetMetadata, EventData},
         parameter,
         resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
-        utils::vectors::Vec4,
+        vectors::Vec4,
         Expression, LadduError, LadduResult,
     };
     #[cfg(feature = "mpi")]
@@ -4324,9 +4322,10 @@ mod tests {
     use nalgebra::DVector;
     use num::complex::Complex64;
     use serde::{Deserialize, Serialize};
-    #[cfg(feature = "mpi")]
-    use std::fs;
-    use std::sync::Arc;
+
+    #[cfg(feature = "python")]
+    use super::install_laddu_with_threads;
+    use super::{LikelihoodScalar, LikelihoodTerm, NLL};
 
     const LENGTH_MISMATCH_MESSAGE_FRAGMENT: &str = "length mismatch";
     const AMPLITUDE_NOT_FOUND_MESSAGE_FRAGMENT: &str = "No registered amplitude";

@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use laddu_amplitudes::common::ComplexScalar;
-use laddu_core::data::{Dataset, DatasetMetadata, EventData};
-use laddu_core::parameter;
-use laddu_core::utils::vectors::Vec4;
-use laddu_core::{Expression, LadduResult};
-use laddu_extensions::likelihoods::LikelihoodTerm;
-use laddu_extensions::NLL;
-use nalgebra::DVector;
-
 #[cfg(feature = "mpi")]
 use laddu_core::mpi::{finalize_mpi, get_world, use_mpi, LadduMPI};
+use laddu_core::{
+    data::{Dataset, DatasetMetadata, EventData},
+    parameter,
+    vectors::Vec4,
+    Expression, LadduResult,
+};
+use laddu_extensions::{likelihoods::LikelihoodTerm, NLL};
+use nalgebra::DVector;
 
 struct CaseConfig {
     name: &'static str,

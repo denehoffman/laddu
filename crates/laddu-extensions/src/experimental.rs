@@ -1,21 +1,20 @@
 use laddu_core::{
-    traits::Variable, utils::histogram, LadduError, LadduResult, Parameter, ParameterMap,
+    math::histogram, traits::Variable, LadduError, LadduResult, Parameter, ParameterMap,
 };
-use nalgebra::DVector;
-
-use crate::{
-    likelihoods::{LikelihoodExpression, LikelihoodTerm},
-    NLL,
-};
-
-#[cfg(feature = "python")]
-use crate::likelihoods::{PyLikelihoodExpression, PyNLL};
 #[cfg(feature = "python")]
 use laddu_python::utils::variables::PyVariable;
+use nalgebra::DVector;
 #[cfg(feature = "python")]
 use pyo3::exceptions::PyValueError;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+
+#[cfg(feature = "python")]
+use crate::likelihoods::{PyLikelihoodExpression, PyNLL};
+use crate::{
+    likelihoods::{LikelihoodExpression, LikelihoodTerm},
+    NLL,
+};
 
 /// A [`LikelihoodTerm`] whose size is proportional to the χ²-distance from a binned projection of
 /// the fit to a provided set of datapoints representing the true values in each bin.
@@ -486,8 +485,9 @@ pub fn py_regularizer(
 
 #[cfg(test)]
 mod tests {
-    use super::Regularizer;
     use approx::assert_relative_eq;
+
+    use super::Regularizer;
 
     #[test]
     fn l1_regularizer_respects_weights() {

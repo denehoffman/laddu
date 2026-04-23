@@ -10,27 +10,6 @@ mod laddu {
     }
 
     #[pymodule_export]
-    use laddu_python::{
-        amplitudes::{
-            py_expr_one, py_expr_product, py_expr_sum, py_expr_zero, py_parameter,
-            py_test_amplitude, PyCompiledExpression, PyEvaluator, PyExpression, PyParameter,
-        },
-        available_parallelism,
-        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
-        get_threads,
-        mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
-        set_threads,
-        utils::{
-            angular_momentum::{py_allowed_projections, py_helicity_combinations},
-            variables::{
-                PyAngles, PyCosTheta, PyDecay, PyMandelstam, PyMass, PyParticle, PyPhi, PyPolAngle,
-                PyPolMagnitude, PyPolarization, PyReaction, PyVariableExpression,
-            },
-            vectors::{PyVec3, PyVec4},
-        },
-    };
-
-    #[pymodule_export]
     use laddu_amplitudes::{
         breit_wigner::{py_breit_wigner, py_breit_wigner_non_relativistic},
         common::{py_complex_scalar, py_polar_complex_scalar, py_scalar, py_variable_scalar},
@@ -52,7 +31,8 @@ mod laddu {
         ylm::py_ylm,
         zlm::{py_polphase, py_zlm},
     };
-
+    #[pymodule_export]
+    use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
     #[pymodule_export]
     use laddu_extensions::{
         ganesh_ext::py_ganesh::{py_integrated_autocorrelation_times, PyControlFlow},
@@ -61,12 +41,28 @@ mod laddu {
             py_likelihood_zero, PyLikelihoodExpression, PyNLL, PyStochasticNLL,
         },
     };
-
-    #[pymodule_export]
-    use laddu_extensions::experimental::{py_binned_guide_term, py_regularizer};
-
     #[pymodule_export]
     use laddu_python::data::{
         from_columns, read_parquet, read_parquet_chunked, read_root, write_parquet, write_root,
+    };
+    #[pymodule_export]
+    use laddu_python::{
+        amplitudes::{
+            py_expr_one, py_expr_product, py_expr_sum, py_expr_zero, py_parameter,
+            py_test_amplitude, PyCompiledExpression, PyEvaluator, PyExpression, PyParameter,
+        },
+        available_parallelism,
+        data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
+        get_threads,
+        mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
+        set_threads,
+        utils::{
+            angular_momentum::{py_allowed_projections, py_helicity_combinations},
+            variables::{
+                PyAngles, PyCosTheta, PyDecay, PyMandelstam, PyMass, PyParticle, PyPhi, PyPolAngle,
+                PyPolMagnitude, PyPolarization, PyReaction, PyVariableExpression,
+            },
+            vectors::{PyVec3, PyVec4},
+        },
     };
 }

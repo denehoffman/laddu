@@ -1,11 +1,11 @@
-use criterion::{black_box, BatchSize, BenchmarkId};
-use criterion::{criterion_group, criterion_main, Criterion};
+use std::{sync::Arc, time::Duration};
+
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use laddu_core::{
     amplitudes::TestAmplitude,
     data::{read_parquet, DatasetReadOptions},
     parameter, Dataset, Evaluator, ExecutionContext, ThreadPolicy,
 };
-use std::{sync::Arc, time::Duration};
 
 const BENCH_DATASET_PATH: &str = "benches/bench.parquet";
 const P4_NAMES: [&str; 4] = ["beam", "proton", "kshort1", "kshort2"];

@@ -44,6 +44,14 @@ required-features = ["mpi"]
 name = "kmatrix_benchmark"
 harness = false
 
+[[bin]]
+name = "profile_cached_paths"
+path = "bin/profile_cached_paths.rs"
+
+[[bin]]
+name = "profile_value_hotspots"
+path = "bin/profile_value_hotspots.rs"
+
 [features]
 default = ["rayon"]
 rayon = ["laddu-core/rayon"]

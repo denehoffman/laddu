@@ -1,14 +1,11 @@
-use crate::{
-    amplitudes::PyExpression,
-    data::{PyDataset, PyEvent},
-    utils::vectors::PyVec4,
-};
+use std::fmt::{Debug, Display};
+
 use laddu_core::{
     data::{Dataset, DatasetMetadata, Event, NamedEventView},
+    quantum::{AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum},
+    reaction::{Decay, Particle, Reaction},
     traits::Variable,
-    utils::angular_momentum::{AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum},
-    utils::reaction::{Decay, Particle, Reaction},
-    utils::variables::{
+    variables::{
         Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
         PolMagnitude, Polarization, VariableExpression,
     },
@@ -18,7 +15,12 @@ use num::rational::Ratio;
 use numpy::PyArray1;
 use pyo3::{exceptions::PyValueError, prelude::*, types::PyBool};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Display};
+
+use crate::{
+    amplitudes::PyExpression,
+    data::{PyDataset, PyEvent},
+    utils::vectors::PyVec4,
+};
 
 #[derive(FromPyObject, Clone, Serialize, Deserialize)]
 pub enum PyVariable {

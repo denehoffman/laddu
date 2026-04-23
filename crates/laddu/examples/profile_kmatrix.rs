@@ -3,7 +3,6 @@
 
 use std::{env, hint::black_box, process, time::Instant};
 
-use laddu::parameter;
 use laddu::{
     amplitudes::{
         kmatrix::{
@@ -14,12 +13,10 @@ use laddu::{
     },
     data::DatasetReadOptions,
     extensions::NLL,
-    io,
+    io, parameter,
+    quantum::{Frame, Sign},
     traits::LikelihoodTerm,
-    utils::{
-        enums::{Frame, Sign},
-        variables::Mass,
-    },
+    variables::Mass,
 };
 use rayon::{prelude::*, ThreadPoolBuilder};
 

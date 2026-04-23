@@ -62,7 +62,7 @@
 //! use laddu::NamedEventView;
 //! use laddu::resources::ScalarID;
 //! use laddu::traits::*;
-//! use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
+//! use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! use laddu::{Deserialize, Serialize, typetag};
 //! use num::complex::Complex64;
 //!
@@ -168,7 +168,7 @@
 //! # use laddu::NamedEventView;
 //! # use laddu::resources::ScalarID;
 //! # use laddu::traits::*;
-//! # use laddu::utils::functions::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
+//! # use laddu::math::{BarrierKind, QR_DEFAULT, Sheet, blatt_weisskopf_m, q_m};
 //! # use laddu::{Deserialize, Serialize, typetag};
 //! # use num::complex::Complex64;
 //! #
@@ -362,25 +362,57 @@ pub mod extensions {
 pub mod resources {
     pub use laddu_core::resources::*;
 }
-/// Utility functions, enums, and traits
-pub mod utils {
-    pub use laddu_core::utils::*;
+/// Special functions and numerical helpers.
+pub mod math {
+    pub use laddu_core::math::*;
+}
+/// Quantum-number helpers and discrete analysis enums.
+pub mod quantum {
+    pub use laddu_core::quantum::*;
+}
+/// Kinematic frame helpers and angle containers.
+pub mod kinematics {
+    pub use laddu_core::kinematics::*;
+}
+/// Reaction topology, particles, and decay-node helpers.
+pub mod reaction {
+    pub use laddu_core::reaction::*;
+}
+/// Event variables derived from reactions and particle selections.
+pub mod variables {
+    pub use laddu_core::variables::*;
+}
+/// Three- and four-vector types used throughout the library.
+pub mod vectors {
+    pub use laddu_core::vectors::*;
+}
+/// Execution-policy and thread-pool coordination helpers.
+pub mod execution {
+    pub use laddu_core::execution::*;
+}
+/// Parameter handles, identifiers, and assembled parameter storage.
+pub mod parameters {
+    pub use laddu_core::parameters::*;
+}
+/// Expression trees, compiled diagnostics, and evaluator interfaces.
+pub mod expression {
+    pub use laddu_core::expression::*;
 }
 /// Useful traits for all crate structs
 pub mod traits {
-    pub use laddu_core::amplitudes::Amplitude;
-    pub use laddu_core::utils::variables::Variable;
-    pub use laddu_core::ReadWrite;
+    pub use laddu_core::{amplitudes::Amplitude, variables::Variable};
     pub use laddu_extensions::likelihoods::LikelihoodTerm;
 }
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes {
     pub use laddu_amplitudes::*;
-    pub use laddu_core::amplitudes::{
-        Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
-        Expression, Parameter,
+    pub use laddu_core::{
+        amplitudes::{
+            Amplitude, AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator,
+            Expression, Parameter,
+        },
+        parameter,
     };
-    pub use laddu_core::parameter;
 }
 
 /// <div class="warning">
@@ -394,24 +426,28 @@ pub mod experimental {
 }
 
 pub use laddu_amplitudes::*;
-pub use laddu_core::amplitudes::{
-    AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
+pub use laddu_core::{
+    amplitudes::{
+        AmplitudeID, AmplitudeSemanticField, AmplitudeSemanticKey, Evaluator, Expression, Parameter,
+    },
+    data::{
+        BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
+        EventData, NamedEventView,
+    },
+    parameter,
+    parameters::{ParameterID, Parameters},
+    reaction::{
+        Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo,
+        TwoToTwoReaction,
+    },
+    resources::{Cache, Resources},
+    variables::{
+        Angles, CosTheta, IntoP4Selection, Mandelstam, Mass, P4Selection, Phi, PolAngle,
+        PolMagnitude, Polarization,
+    },
+    vectors::{Vec3, Vec4},
+    LadduError, LadduResult, PI,
 };
-pub use laddu_core::data::{
-    BinnedDataset, Dataset, DatasetMetadata, DatasetReadOptions, DatasetWriteOptions, Event,
-    EventData, NamedEventView,
-};
-pub use laddu_core::parameter;
-pub use laddu_core::resources::{Cache, ParameterID, Parameters, Resources};
-pub use laddu_core::utils::reaction::{
-    Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo, TwoToTwoReaction,
-};
-pub use laddu_core::utils::variables::{
-    AngleVariables, Angles, CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude, Polarization,
-};
-pub use laddu_core::utils::vectors::{Vec3, Vec4};
-pub use laddu_core::PI;
-pub use laddu_core::{LadduError, LadduResult};
 pub use laddu_extensions::*;
 pub use serde::{Deserialize, Serialize};
 pub use typetag;

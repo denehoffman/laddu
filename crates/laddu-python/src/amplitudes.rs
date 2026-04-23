@@ -1,7 +1,8 @@
-use crate::data::PyDataset;
+use std::collections::HashMap;
+
 use laddu_core::{
     amplitudes::{Evaluator, Expression, Parameter, TestAmplitude},
-    CompiledExpression, LadduError, LadduResult, ReadWrite, ThreadPoolManager,
+    CompiledExpression, LadduError, LadduResult, ThreadPoolManager,
 };
 use num::complex::Complex64;
 use numpy::{PyArray1, PyArray2};
@@ -10,7 +11,8 @@ use pyo3::{
     prelude::*,
     types::{PyBytes, PyList, PyTuple},
 };
-use std::collections::HashMap;
+
+use crate::data::PyDataset;
 
 fn install_with_threads<R: Send>(
     threads: Option<usize>,
@@ -310,7 +312,7 @@ impl PyExpression {
 
     #[new]
     fn new() -> Self {
-        Self(Expression::create_null())
+        Self(Expression::default())
     }
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(

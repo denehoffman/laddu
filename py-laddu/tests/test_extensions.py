@@ -965,3 +965,20 @@ def test_evaluator_parameters_include_fixed_entries() -> None:
         ValueError, match='free parameter vector length mismatch: expected 1, received 2'
     ):
         expr.evaluate_gradient([10.0, 2.0]).tolist()
+
+    expr.fix_parameter('beta', 2.0)
+    assert expr.parameters == ('alpha', 'beta')
+    assert expr.free_parameters == ()
+    assert expr.fixed_parameters == ('alpha', 'beta')
+    assert expr.evaluate([]) == pytest.approx(3.5)
+    assert expr.evaluate_gradient([]).tolist() == pytest.approx([])
+
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 0, received 1'
+    ):
+        expr.evaluate([1.0])
+
+    with pytest.raises(
+        ValueError, match='free parameter vector length mismatch: expected 0, received 1'
+    ):
+        expr.evaluate_gradient([1.0]).tolist()

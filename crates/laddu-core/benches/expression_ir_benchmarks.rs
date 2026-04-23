@@ -8,7 +8,7 @@ use laddu_core::{
     data::{read_parquet, DatasetMetadata, DatasetReadOptions, EventData, NamedEventView},
     parameter,
     resources::{Cache, ParameterID, Parameters, Resources, ScalarID},
-    utils::vectors::Vec4,
+    vectors::Vec4,
     Dataset, Evaluator, Expression, LadduResult,
 };
 use nalgebra::DVector;

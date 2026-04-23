@@ -1,16 +1,13 @@
 #[cfg(any(test, feature = "python"))]
-use laddu_core::utils::functions::QR_DEFAULT;
+use laddu_core::math::QR_DEFAULT;
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
+    math::{blatt_weisskopf_m, clebsch_gordon, wigner_3j, BarrierKind, Sheet, WignerDMatrix},
     parameter,
     resources::{Cache, ComplexScalarID, Parameters, Resources, ScalarID},
     traits::Variable,
-    utils::{
-        functions::{blatt_weisskopf_m, BarrierKind, Sheet},
-        variables::AngleVariables,
-        wigner::{clebsch_gordon, wigner_3j, WignerDMatrix},
-    },
+    variables::Angles,
     AngularMomentum, AngularMomentumProjection, Decay, LadduError, LadduResult,
     OrbitalAngularMomentum, Polarization, SpinState,
 };
@@ -52,16 +49,13 @@ impl WignerD {
     ///
     /// The returned expression evaluates
     /// `D^j_{m' m}(phi, theta, 0)`, with `theta = acos(costheta)`.
-    pub fn new<A>(
+    pub fn new(
         name: &str,
         spin: AngularMomentum,
         row_projection: AngularMomentumProjection,
         column_projection: AngularMomentumProjection,
-        angles: &A,
-    ) -> LadduResult<Expression>
-    where
-        A: AngleVariables,
-    {
+        angles: &Angles,
+    ) -> LadduResult<Expression> {
         SpinState::new(spin, row_projection)?;
         SpinState::new(spin, column_projection)?;
         Self {
@@ -636,11 +630,8 @@ mod tests {
     use approx::assert_relative_eq;
     use laddu_core::{
         data::test_dataset,
-        utils::{
-            functions::BarrierKind,
-            reaction::{Particle, Reaction},
-            wigner::WignerDMatrix,
-        },
+        math::{BarrierKind, WignerDMatrix},
+        reaction::{Particle, Reaction},
         Frame,
     };
 
