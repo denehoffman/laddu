@@ -396,13 +396,14 @@ pub fn py_polar_complex_scalar(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{f64, sync::Arc};
+
     use approx::assert_relative_eq;
     use laddu_core::{
-        amplitudes::ExpressionDependence, data::test_dataset, parameter, utils::variables::Mass, PI,
+        amplitudes::ExpressionDependence, data::test_dataset, parameter, variables::Mass, PI,
     };
-    use std::f64;
-    use std::sync::Arc;
+
+    use super::*;
 
     #[test]
     fn test_scalar_creation_and_evaluation() {

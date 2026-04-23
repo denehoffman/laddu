@@ -1,11 +1,9 @@
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::{DatasetMetadata, NamedEventView},
+    math::{rho_m, Sheet},
     resources::{Cache, Parameters, Resources},
-    utils::{
-        functions::{rho_m, Sheet},
-        variables::Variable,
-    },
+    traits::Variable,
     LadduResult, Mandelstam, Mass, ScalarID, PI,
 };
 #[cfg(feature = "python")]
@@ -179,13 +177,14 @@ pub fn py_phase_space_factor(
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{
         data::test_dataset,
-        utils::reaction::{Particle, Reaction},
+        reaction::{Particle, Reaction},
         Channel,
     };
+
+    use super::*;
 
     fn test_phase_space_expression(name: &str, channel: Channel) -> Expression {
         let beam = Particle::measured("beam", "beam");

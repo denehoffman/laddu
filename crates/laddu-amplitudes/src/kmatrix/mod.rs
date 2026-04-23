@@ -1,8 +1,6 @@
 use fastrand::Rng;
 use fastrand_contrib::RngExt;
-use laddu_core::utils::functions::{
-    blatt_weisskopf_m, chi_plus, rho_s, BarrierKind, Sheet, QR_DEFAULT,
-};
+use laddu_core::math::{blatt_weisskopf_m, chi_plus, rho_s, BarrierKind, Sheet, QR_DEFAULT};
 use nalgebra::{Cholesky, DMatrix, DVector, SMatrix, SVector};
 use num::{
     complex::Complex64,
@@ -273,8 +271,6 @@ pub use rho::KopfKMatrixRho;
 
 /// Module containing the $`\pi_1`$ K-matrix.
 pub mod pi1;
-pub use pi1::KopfKMatrixPi1;
-
 #[cfg(feature = "python")]
 pub use a0::py_kopf_kmatrix_a0;
 #[cfg(feature = "python")]
@@ -285,6 +281,7 @@ pub use f0::py_kopf_kmatrix_f0;
 pub use f2::py_kopf_kmatrix_f2;
 #[cfg(feature = "python")]
 pub use pi1::py_kopf_kmatrix_pi1;
+pub use pi1::KopfKMatrixPi1;
 #[cfg(feature = "python")]
 pub use rho::py_kopf_kmatrix_rho;
 
@@ -293,9 +290,10 @@ mod tests {
     // Note: These tests are not exhaustive, they only check one channel
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Mass};
+
+    use super::*;
 
     #[test]
     fn test_resampled_evaluation() {

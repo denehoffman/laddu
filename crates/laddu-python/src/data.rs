@@ -1,4 +1,5 @@
-use crate::utils::variables::{PyVariable, PyVariableExpression};
+use std::{path::PathBuf, sync::Arc};
+
 use laddu_core::{
     data::{
         io::{
@@ -11,7 +12,7 @@ use laddu_core::{
         write_root as core_write_root, BinnedDataset, Dataset, DatasetArcIter, DatasetMetadata,
         DatasetWriteOptions, Event, EventData, FloatPrecision, SharedDatasetIterExt,
     },
-    utils::variables::IntoP4Selection,
+    variables::IntoP4Selection,
     DatasetReadOptions,
 };
 use numpy::{PyArray1, PyReadonlyArray1};
@@ -21,9 +22,11 @@ use pyo3::{
     types::{PyDict, PyList},
     IntoPyObjectExt,
 };
-use std::{path::PathBuf, sync::Arc};
 
-use crate::utils::vectors::PyVec4;
+use crate::utils::{
+    variables::{PyVariable, PyVariableExpression},
+    vectors::PyVec4,
+};
 
 fn parse_aliases(aliases: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, Vec<String>)>> {
     let Some(aliases) = aliases else {
@@ -1268,7 +1271,7 @@ pub fn from_columns(
         let p4s = p4_columns
             .iter()
             .map(|components| {
-                laddu_core::utils::vectors::Vec4::new(
+                laddu_core::vectors::Vec4::new(
                     components[0][event_idx],
                     components[1][event_idx],
                     components[2][event_idx],

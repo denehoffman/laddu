@@ -1,13 +1,10 @@
-use serde::{Deserialize, Serialize};
-
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
+    math::{blatt_weisskopf_m, q_m, BarrierKind, Sheet, QR_DEFAULT},
     resources::{Cache, ParameterID, Parameters, Resources},
-    utils::{
-        functions::{blatt_weisskopf_m, q_m, BarrierKind, Sheet, QR_DEFAULT},
-        variables::{Mass, Variable},
-    },
+    traits::Variable,
+    variables::Mass,
     LadduResult, ScalarID,
 };
 #[cfg(feature = "python")]
@@ -19,6 +16,7 @@ use nalgebra::DVector;
 use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::semantic_key::{debug_key, display_key, parameter_key};
 
@@ -398,9 +396,10 @@ pub fn py_breit_wigner_non_relativistic(
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Mass};
+
+    use super::*;
 
     #[test]
     fn test_bw_evaluation() {

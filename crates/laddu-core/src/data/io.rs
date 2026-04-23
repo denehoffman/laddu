@@ -1,28 +1,33 @@
 //! Dataset I/O implementations and shared column-inference helpers.
 
-use super::*;
-#[cfg(feature = "mpi")]
-use crate::mpi::LadduMPI;
-use arrow::{
-    array::{Float32Array, Float64Array},
-    datatypes::{DataType, Field, Schema},
-    record_batch::RecordBatch,
-};
-#[cfg(feature = "mpi")]
-use mpi::topology::SimpleCommunicator;
-#[cfg(feature = "mpi")]
-use mpi::traits::Equivalence;
-use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
-use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
-#[cfg(feature = "mpi")]
-use parquet::file::metadata::ParquetMetaData;
 #[cfg(feature = "mpi")]
 use std::{cell::RefCell, rc::Rc};
 use std::{
     fs::File,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
+
+use arrow::{
+    array::{Float32Array, Float64Array},
+    datatypes::{DataType, Field, Schema},
+    record_batch::RecordBatch,
+};
+use indexmap::{IndexMap, IndexSet};
+#[cfg(feature = "mpi")]
+use mpi::topology::SimpleCommunicator;
+#[cfg(feature = "mpi")]
+use mpi::traits::*;
+use oxyroot::{Branch, Named, ReaderTree, RootFile, WriterTree};
+use parquet::arrow::{arrow_reader::ParquetRecordBatchReaderBuilder, ArrowWriter};
+#[cfg(feature = "mpi")]
+use parquet::file::metadata::ParquetMetaData;
+
+use super::{dataset::*, event::*, metadata::*};
+#[cfg(feature = "mpi")]
+use crate::mpi::LadduMPI;
+use crate::{LadduError, LadduResult};
 
 fn canonicalize_dataset_path(file_path: &str) -> LadduResult<PathBuf> {
     Ok(Path::new(&*shellexpand::full(file_path)?).canonicalize()?)

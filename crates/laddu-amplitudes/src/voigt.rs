@@ -188,9 +188,10 @@ pub fn py_voigt(
 mod tests {
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Mass};
+
+    use super::*;
 
     #[test]
     fn test_voigt_sqrt_profile_evaluation() {

@@ -21,9 +21,8 @@ pub use ganesh_ext::LikelihoodTermObserver;
 /// Extended maximum likelihood cost functions with support for additive terms
 pub mod likelihoods;
 
-pub use likelihoods::{LikelihoodExpression, LikelihoodScalar, NLL};
-
 use fastrand::Rng;
+pub use likelihoods::{LikelihoodExpression, LikelihoodScalar, NLL};
 use rapidhash::{HashSetExt, RapidHashSet};
 
 /// An extension to [`Rng`] which allows for sampling from a subset of the integers `[0..n)`
@@ -71,8 +70,9 @@ impl RngSubsetExtension for Rng {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
+
+    use super::*;
 
     #[test]
     fn floyd_sample_draws_unique_values() {

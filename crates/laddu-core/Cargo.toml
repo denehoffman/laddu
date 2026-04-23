@@ -59,6 +59,10 @@ required-features = ["execution-context-prototype"]
 name = "expression_ir_benchmarks"
 harness = false
 
+[[bin]]
+name = "expression_ir_compile_probe"
+path = "bin/expression_ir_compile_probe.rs"
+
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]

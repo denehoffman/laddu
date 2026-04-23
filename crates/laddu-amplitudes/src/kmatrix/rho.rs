@@ -1,11 +1,11 @@
-use super::{FixedKMatrix, KopfKMatrixRhoChannel};
-use crate::semantic_key::{debug_key, display_key, parameter_array_key};
+use std::array;
+
 use laddu_core::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression, Parameter},
     data::{DatasetMetadata, NamedEventView},
     resources::{Cache, ComplexVectorID, MatrixID, ParameterID, Parameters, Resources},
     traits::Variable,
-    utils::variables::Mass,
+    variables::Mass,
     LadduResult,
 };
 #[cfg(feature = "python")]
@@ -18,7 +18,9 @@ use num::complex::Complex64;
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::array;
+
+use super::{FixedKMatrix, KopfKMatrixRhoChannel};
+use crate::semantic_key::{debug_key, display_key, parameter_array_key};
 
 /// A K-matrix parameterization for $`\rho`$ particles described by Kopf et al.[^1] with fixed couplings and mass poles
 /// (free production couplings only).
@@ -233,9 +235,10 @@ mod tests {
     // Note: These tests are not exhaustive, they only check one channel
     use std::sync::Arc;
 
-    use super::*;
     use approx::assert_relative_eq;
     use laddu_core::{data::test_dataset, parameter, Mass};
+
+    use super::*;
 
     #[test]
     fn test_rho_evaluation() {

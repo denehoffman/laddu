@@ -1,9 +1,4 @@
-use crate::{
-    likelihoods::{LikelihoodTerm, StochasticNLL},
-    LikelihoodExpression, NLL,
-};
-use ganesh::traits::{Algorithm, Observer, Status};
-use ganesh::traits::{CostFunction, Gradient, LogDensity};
+use ganesh::traits::{Algorithm, CostFunction, Gradient, LogDensity, Observer, Status};
 #[cfg(feature = "python")]
 use ganesh::{
     algorithms::{
@@ -21,6 +16,11 @@ use ganesh::{
 };
 use laddu_core::{LadduError, LadduResult, ThreadPoolManager};
 use nalgebra::DVector;
+
+use crate::{
+    likelihoods::{LikelihoodTerm, StochasticNLL},
+    LikelihoodExpression, NLL,
+};
 
 /// A wrapper for the requested thread-count policy used by optimization callbacks.
 #[derive(Clone, Copy, Debug)]
@@ -132,8 +132,6 @@ impl LogDensity<MaybeThreadPool, LadduError> for LikelihoodExpression {
 pub mod py_ganesh {
     use std::{ops::ControlFlow, sync::Arc};
 
-    use super::*;
-
     use ganesh::{
         algorithms::{
             gradient_free::{
@@ -165,6 +163,8 @@ pub mod py_ganesh {
         types::PyList,
         Borrowed, PyErr,
     };
+
+    use super::*;
 
     #[cfg(feature = "python")]
     fn run_minimizer<A, P, S>(

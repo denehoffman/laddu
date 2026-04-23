@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use fastrand_contrib::RngExt;
-use laddu::parameter;
 use laddu::{
     amplitudes::{
         kmatrix::{
@@ -11,14 +10,11 @@ use laddu::{
     },
     data::DatasetReadOptions,
     extensions::NLL,
-    io,
+    io, parameter,
+    quantum::{Frame, Sign},
     traits::LikelihoodTerm,
-    utils::{
-        enums::{Frame, Sign},
-        variables::Mass,
-    },
+    variables::Mass,
 };
-
 use rayon::ThreadPoolBuilder;
 
 fn reaction_variables() -> (laddu::Angles, laddu::Polarization, Mass) {
