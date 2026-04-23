@@ -2,7 +2,7 @@ use nalgebra::DVector;
 use num::complex::Complex64;
 use serde::{Deserialize, Serialize};
 
-use super::topology::{Particle, Reaction};
+use super::{Particle, Reaction};
 use crate::{
     amplitudes::{Amplitude, AmplitudeID, AmplitudeSemanticKey, Expression},
     data::NamedEventView,
