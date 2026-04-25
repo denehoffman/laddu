@@ -17,14 +17,16 @@ from laddu.amplitudes import (
     expr_sum,
     parameter,
 )
-from laddu.amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
-from laddu.amplitudes.common import (
-    ComplexScalar,
-    PolarComplexScalar,
-    Scalar,
-    VariableScalar,
+from laddu.amplitudes.angular import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    PolPhase,
+    Wigner3j,
+    WignerD,
+    Ylm,
+    Zlm,
 )
-from laddu.amplitudes.flatte import Flatte
 from laddu.amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA0Channel,
@@ -39,23 +41,25 @@ from laddu.amplitudes.kmatrix import (
     KopfKMatrixRho,
     KopfKMatrixRhoChannel,
 )
-from laddu.amplitudes.lookup_table import (
+from laddu.amplitudes.lookup import (
     LookupTable,
     LookupTableComplex,
     LookupTablePolar,
     LookupTableScalar,
 )
-from laddu.amplitudes.phase_space import PhaseSpaceFactor
-from laddu.amplitudes.spin_factors import (
-    BlattWeisskopf,
-    ClebschGordan,
-    PhotonSDME,
-    Wigner3j,
-    WignerD,
+from laddu.amplitudes.resonance import (
+    BreitWigner,
+    BreitWignerNonRelativistic,
+    Flatte,
+    PhaseSpaceFactor,
+    Voigt,
 )
-from laddu.amplitudes.voigt import Voigt
-from laddu.amplitudes.ylm import Ylm
-from laddu.amplitudes.zlm import PolPhase, Zlm
+from laddu.amplitudes.scalar import (
+    ComplexScalar,
+    PolarComplexScalar,
+    Scalar,
+    VariableScalar,
+)
 from laddu.data import BinnedDataset, Dataset, Event
 from laddu.experimental import BinnedGuideTerm, Regularizer
 from laddu.extensions import (

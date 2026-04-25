@@ -5,23 +5,9 @@
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::new_ret_no_self)] // Amplitudes should return Expressions when constructed
 
-/// The Breit-Wigner amplitude.
-pub mod breit_wigner;
-pub use breit_wigner::{BreitWigner, BreitWignerNonRelativistic};
-
-/// The Flatte amplitude.
-pub mod flatte;
-pub use flatte::Flatte;
-
-/// The Voigt amplitude.
-pub mod voigt;
-pub use voigt::Voigt;
-
-mod semantic_key;
-
-/// Common amplitudes (like a scalar value which just contains a single free parameter).
-pub mod common;
-pub use common::{
+/// Scalar-valued amplitude components.
+pub mod scalar;
+pub use scalar::{
     ComplexScalar, PolarComplexScalar, Scalar, VariableExpressionExt, VariableScalar,
 };
 
@@ -29,24 +15,16 @@ pub use common::{
 pub mod kmatrix;
 
 /// Lookup-table amplitudes.
-pub mod lookup_table;
-pub use lookup_table::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTable};
+pub mod lookup;
+pub use lookup::{LookupAxis, LookupBoundaryMode, LookupInterpolation, LookupTable};
 
-/// A spherical harmonic amplitude.
-pub mod ylm;
-pub use ylm::Ylm;
-
-/// A polarized spherical harmonic amplitude.
-pub mod zlm;
-pub use zlm::Zlm;
-
-/// Spin, angular, barrier, and density-matrix factor amplitudes.
-pub mod spin_factors;
-pub use spin_factors::{
-    BlattWeisskopf, ClebschGordan, PhotonHelicity, PhotonPolarization, PhotonSDME, Wigner3j,
-    WignerD,
+/// Angular, barrier, and density-matrix factor amplitudes.
+pub mod angular;
+pub use angular::{
+    BlattWeisskopf, ClebschGordan, DecayAmplitudeExt, PhotonHelicity, PhotonPolarization,
+    PhotonSDME, PolPhase, Wigner3j, WignerD, Ylm, Zlm,
 };
 
-/// A phase space factor for `$a+b\to c+d$` with `$c\to 1+2$`.
-pub mod phase_space;
-pub use phase_space::PhaseSpaceFactor;
+/// Resonance line shapes and related factors.
+pub mod resonance;
+pub use resonance::{BreitWigner, BreitWignerNonRelativistic, Flatte, PhaseSpaceFactor, Voigt};

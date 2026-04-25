@@ -57,8 +57,6 @@ default = ["rayon"]
 rayon = ["laddu-core/rayon"]
 python = [
   "laddu-core/python",
-  "laddu-amplitudes/python",
-  "laddu-extensions/python",
 ]
 mpi = ["laddu-core/mpi", "laddu-extensions/mpi", "dep:mpi"]
 execution-context-prototype = ["laddu-core/execution-context-prototype"]

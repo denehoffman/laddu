@@ -12,36 +12,24 @@ readme = "README.md"
 
 [dependencies]
 laddu-core = { workspace = true }
-laddu-python = { workspace = true, optional = true }
 laddu-amplitudes = { workspace = true }
 approx = { workspace = true }
 
 accurate = { workspace = true }
 auto_ops = { workspace = true }
-bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 fastrand = { workspace = true }
 ganesh = { workspace = true }
 mpi = { workspace = true, optional = true }
 nalgebra = { workspace = true }
 num = { workspace = true }
-numpy = { workspace = true, optional = true }
 rapidhash = { workspace = true }
 rayon = { workspace = true, optional = true }
 parking_lot = { workspace = true }
-pyo3 = { workspace = true, features = [
-  "num-complex",
-  "abi3-py37",
-], optional = true }
-serde-pickle = { workspace = true }
 
 [features]
 default = ["rayon"]
 rayon = ["dep:rayon"]
-python = ["laddu-python", "pyo3", "numpy", "ganesh/python"]
-pyo3 = ["dep:pyo3"]
-laddu-python = ["dep:laddu-python"]
-numpy = ["dep:numpy"]
 mpi = ["dep:mpi", "laddu-core/mpi"]
 
 [dev-dependencies]

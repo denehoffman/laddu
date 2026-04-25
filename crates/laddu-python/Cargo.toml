@@ -13,22 +13,22 @@ rust-version.workspace = true
 readme = "README.md"
 
 [dependencies]
+laddu-amplitudes = { workspace = true }
 laddu-core = { workspace = true, features = ["python"] }
+laddu-extensions = { workspace = true }
 
-bitcode = { workspace = true }
+ganesh = { workspace = true, features = ["python"] }
 num = { workspace = true }
 num_cpus = { workspace = true }
 numpy = { workspace = true }
 pyo3 = { workspace = true, features = ["num-complex", "abi3-py37"] }
-rayon = { workspace = true, optional = true }
 serde = { workspace = true }
 serde-pickle = { workspace = true }
 typetag = { workspace = true }
 
 [features]
-default = ["rayon"]
-rayon = ["dep:rayon"]
-mpi = ["laddu-core/mpi"]
+default = []
+mpi = ["laddu-core/mpi", "laddu-extensions/mpi"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

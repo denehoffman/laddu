@@ -5,12 +5,12 @@ mod mpi_benches {
     use criterion::{black_box, BatchSize, BenchmarkId, Criterion, Throughput};
     use laddu::{
         amplitudes::{
+            angular::Zlm,
             kmatrix::{
                 KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
                 KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
             },
             parameter,
-            zlm::Zlm,
         },
         data::{Dataset, DatasetReadOptions},
         extensions::NLL,

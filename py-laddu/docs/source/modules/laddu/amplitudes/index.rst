@@ -10,10 +10,8 @@ amplitudes
    :maxdepth: 1
    :caption: Amplitudes:
 
-   common
-   lookup_table
-   ylm
-   zlm
-   phase_space
-   breit_wigner
+   angular
+   scalar
+   lookup
+   resonance
    kmatrix

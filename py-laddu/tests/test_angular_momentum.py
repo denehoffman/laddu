@@ -21,8 +21,8 @@ def test_helicity_combinations_returns_physical_values() -> None:
 
 
 def test_projection_helpers_reject_invalid_quantum_numbers() -> None:
-    with pytest.raises(ValueError, match='integer or half-integer'):
+    with pytest.raises(RuntimeError, match='integer or half-integer'):
         allowed_projections(0.25)
 
-    with pytest.raises(ValueError, match='integer or half-integer'):
+    with pytest.raises(RuntimeError, match='integer or half-integer'):
         helicity_combinations(Fraction(1, 3), 0)

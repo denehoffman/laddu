@@ -23,7 +23,7 @@ use pyo3::{
     IntoPyObjectExt,
 };
 
-use crate::utils::{
+use crate::{
     variables::{PyVariable, PyVariableExpression},
     vectors::PyVec4,
 };

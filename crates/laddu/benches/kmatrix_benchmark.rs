@@ -2,11 +2,11 @@ use criterion::{black_box, criterion_group, criterion_main, BatchSize, Benchmark
 use fastrand_contrib::RngExt;
 use laddu::{
     amplitudes::{
+        angular::Zlm,
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
         },
-        zlm::Zlm,
     },
     data::DatasetReadOptions,
     extensions::NLL,
