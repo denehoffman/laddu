@@ -5,11 +5,11 @@ use std::{env, hint::black_box, process, time::Instant};
 
 use laddu::{
     amplitudes::{
+        angular::Zlm,
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
         },
-        zlm::Zlm,
     },
     data::DatasetReadOptions,
     extensions::NLL,

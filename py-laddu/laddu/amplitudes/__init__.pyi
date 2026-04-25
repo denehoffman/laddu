@@ -4,16 +4,11 @@ import numpy as np
 import numpy.typing as npt
 
 from laddu.amplitudes import (
-    breit_wigner,
-    common,
-    flatte,
+    angular,
     kmatrix,
-    lookup_table,
-    phase_space,
-    spin_factors,
-    voigt,
-    ylm,
-    zlm,
+    lookup,
+    resonance,
+    scalar,
 )
 from laddu.data import Dataset
 
@@ -135,17 +130,12 @@ __all__ = [
     'Parameter',
     'TestAmplitude',
     'Zero',
-    'breit_wigner',
-    'common',
+    'angular',
     'expr_product',
     'expr_sum',
-    'flatte',
     'kmatrix',
-    'lookup_table',
+    'lookup',
     'parameter',
-    'phase_space',
-    'spin_factors',
-    'voigt',
-    'ylm',
-    'zlm',
+    'resonance',
+    'scalar',
 ]

@@ -5,14 +5,13 @@ use criterion::{
 };
 use laddu::{
     amplitudes::{
-        breit_wigner::BreitWigner,
-        common::{ComplexScalar, Scalar},
+        angular::{Ylm, Zlm},
         kmatrix::{
             KopfKMatrixA0, KopfKMatrixA0Channel, KopfKMatrixA2, KopfKMatrixA2Channel,
             KopfKMatrixF0, KopfKMatrixF0Channel, KopfKMatrixF2, KopfKMatrixF2Channel,
         },
-        ylm::Ylm,
-        zlm::Zlm,
+        resonance::BreitWigner,
+        scalar::{ComplexScalar, Scalar},
     },
     data::{Dataset, DatasetReadOptions},
     extensions::NLL,

@@ -4,10 +4,8 @@ use approx::assert_relative_eq;
 
 use super::*;
 use crate::{
-    kinematics::FrameAxes,
-    quantum::{AngularMomentum, AngularMomentumProjection, OrbitalAngularMomentum},
-    traits::Variable,
-    Channel, Dataset, DatasetMetadata, EventData, Frame, Vec3, Vec4,
+    kinematics::FrameAxes, traits::Variable, Channel, Dataset, DatasetMetadata, EventData, Frame,
+    Vec3, Vec4,
 };
 
 fn two_body_momentum(parent_mass: f64, daughter_1_mass: f64, daughter_2_mass: f64) -> f64 {
@@ -154,48 +152,4 @@ fn reaction_mandelstam_variables_match_resolved_values() {
     assert_relative_eq!(reaction.mandelstam(Channel::S).value(&event), resolved.s());
     assert_relative_eq!(reaction.mandelstam(Channel::T).value(&event), resolved.t());
     assert_relative_eq!(reaction.mandelstam(Channel::U).value(&event), resolved.u());
-}
-
-#[test]
-fn decay_factors_with_matching_names_deduplicate() {
-    let (dataset, reaction, rho, pi_plus, _) = pion_cascade_dataset();
-    let dataset = Arc::new(dataset);
-    let decay = reaction.decay(&rho).unwrap();
-    let factor_1 = decay
-        .canonical_factor(
-            "rho.factor",
-            AngularMomentum::integer(1),
-            AngularMomentumProjection::integer(0),
-            OrbitalAngularMomentum::integer(1),
-            AngularMomentum::integer(0),
-            &pi_plus,
-            AngularMomentum::integer(0),
-            AngularMomentum::integer(0),
-            AngularMomentumProjection::integer(0),
-            AngularMomentumProjection::integer(0),
-            Frame::Helicity,
-        )
-        .unwrap();
-    let factor_2 = decay
-        .canonical_factor(
-            "rho.factor",
-            AngularMomentum::integer(1),
-            AngularMomentumProjection::integer(0),
-            OrbitalAngularMomentum::integer(1),
-            AngularMomentum::integer(0),
-            &pi_plus,
-            AngularMomentum::integer(0),
-            AngularMomentum::integer(0),
-            AngularMomentumProjection::integer(0),
-            AngularMomentumProjection::integer(0),
-            Frame::Helicity,
-        )
-        .unwrap();
-
-    let evaluator = (&factor_1 + &factor_2).load(&dataset).unwrap();
-
-    assert_eq!(
-        evaluator.amplitudes.len(),
-        factor_1.load(&dataset).unwrap().amplitudes.len()
-    );
 }

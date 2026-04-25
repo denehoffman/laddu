@@ -401,7 +401,7 @@ pub mod expression {
 /// Useful traits for all crate structs
 pub mod traits {
     pub use laddu_core::{amplitudes::Amplitude, variables::Variable};
-    pub use laddu_extensions::likelihoods::LikelihoodTerm;
+    pub use laddu_extensions::likelihood::LikelihoodTerm;
 }
 /// [`Amplitude`](crate::amplitudes::Amplitude)s and methods for making and evaluating them.
 pub mod amplitudes {

@@ -8,9 +8,16 @@ from typing import cast as _cast
 from . import amplitudes, data, experimental, extensions, io, mpi, utils
 from ._backend import backend as _backend_module
 from .amplitudes import One, Parameter, Zero, expr_product, expr_sum, parameter
-from .amplitudes.breit_wigner import BreitWigner, BreitWignerNonRelativistic
-from .amplitudes.common import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
-from .amplitudes.flatte import Flatte
+from .amplitudes.angular import (
+    BlattWeisskopf,
+    ClebschGordan,
+    PhotonSDME,
+    PolPhase,
+    Wigner3j,
+    WignerD,
+    Ylm,
+    Zlm,
+)
 from .amplitudes.kmatrix import (
     KopfKMatrixA0,
     KopfKMatrixA0Channel,
@@ -25,17 +32,14 @@ from .amplitudes.kmatrix import (
     KopfKMatrixRho,
     KopfKMatrixRhoChannel,
 )
-from .amplitudes.phase_space import PhaseSpaceFactor
-from .amplitudes.spin_factors import (
-    BlattWeisskopf,
-    ClebschGordan,
-    PhotonSDME,
-    Wigner3j,
-    WignerD,
+from .amplitudes.resonance import (
+    BreitWigner,
+    BreitWignerNonRelativistic,
+    Flatte,
+    PhaseSpaceFactor,
+    Voigt,
 )
-from .amplitudes.voigt import Voigt
-from .amplitudes.ylm import Ylm
-from .amplitudes.zlm import PolPhase, Zlm
+from .amplitudes.scalar import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .data import BinnedDataset, Dataset, Event
 from .extensions import (
     NLL,

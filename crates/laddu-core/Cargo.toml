@@ -19,7 +19,6 @@ bitcode = { workspace = true }
 dyn-clone = { workspace = true }
 factorial = { workspace = true }
 fastrand = { workspace = true }
-ganesh = { workspace = true }
 indexmap = { workspace = true }
 lazy_static = { workspace = true }
 mpi = { workspace = true, optional = true }

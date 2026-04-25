@@ -40,7 +40,14 @@ pub mod amplitudes;
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod data;
 #[cfg_attr(coverage_nightly, coverage(off))]
-pub mod utils;
+pub mod quantum;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod variables;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod vectors;
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod extensions;
 
 #[cfg_attr(coverage_nightly, coverage(off))]
 pub mod mpi {

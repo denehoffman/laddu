@@ -16,8 +16,6 @@ name = "laddu_cpu"
 crate-type = ["cdylib"]
 
 [dependencies]
-laddu-amplitudes = { workspace = true, features = ["python"] }
-laddu-extensions = { workspace = true, features = ["python"] }
 laddu-python = { workspace = true }
 
 pyo3 = { workspace = true, features = [
@@ -29,4 +27,4 @@ pyo3 = { workspace = true, features = [
 
 [features]
 default = []
-mpi = ["laddu-extensions/mpi", "laddu-python/mpi"]
+mpi = ["laddu-python/mpi"]
