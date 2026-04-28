@@ -1,4 +1,7 @@
-from laddu.amplitude import (
+"""Core expression, evaluator, and parameter APIs."""
+
+from laddu.laddu import (
+    CompiledExpression,
     Evaluator,
     Expression,
     One,
@@ -9,27 +12,16 @@ from laddu.amplitude import (
     expr_sum,
     parameter,
 )
-from laddu.amplitudes import (
-    angular,
-    kmatrix,
-    lookup,
-    resonance,
-    scalar,
-)
 
 __all__ = [
+    'CompiledExpression',
     'Evaluator',
     'Expression',
     'One',
     'Parameter',
     'TestAmplitude',
     'Zero',
-    'angular',
     'expr_product',
     'expr_sum',
-    'kmatrix',
-    'lookup',
     'parameter',
-    'resonance',
-    'scalar',
 ]

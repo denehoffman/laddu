@@ -4,7 +4,7 @@ from typing import Any, Literal, overload
 import numpy as np
 from numpy.typing import NDArray
 
-from laddu.utils.variables import (
+from laddu.variables import (
     CosTheta,
     Mandelstam,
     Mass,
@@ -13,7 +13,7 @@ from laddu.utils.variables import (
     PolMagnitude,
     VariableExpression,
 )
-from laddu.utils.vectors import Vec4
+from laddu.vectors import Vec4
 
 class Event:
     p4s: dict[str, Vec4]

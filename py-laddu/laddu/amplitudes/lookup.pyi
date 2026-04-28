@@ -4,8 +4,8 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import Expression, Parameter
-from laddu.utils.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
+from laddu.amplitude import Expression, Parameter
+from laddu.variables import CosTheta, Mandelstam, Mass, Phi, PolAngle, PolMagnitude
 
 def LookupTable(
     name: str,

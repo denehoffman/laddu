@@ -1,8 +1,9 @@
 from fractions import Fraction
 from typing import TypeAlias
 
-from laddu.amplitudes import Expression
-from laddu.utils.variables import Angles, Decay, Polarization
+from laddu.amplitude import Expression
+from laddu.reaction import Decay
+from laddu.variables import Angles, Polarization
 
 QuantumNumber: TypeAlias = int | float | Fraction
 

@@ -5,7 +5,7 @@ from typing import Literal
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import (
+from laddu.amplitude import (
     CompiledExpression,
     Evaluator,
     Expression,
@@ -62,41 +62,41 @@ from laddu.amplitudes.scalar import (
 )
 from laddu.data import BinnedDataset, Dataset, Event
 from laddu.experimental import BinnedGuideTerm, Regularizer
-from laddu.extensions import (
+from laddu.likelihood import (
     NLL,
-    ControlFlow,
-    EnsembleStatus,
-    GradientFreeStatus,
-    GradientStatus,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
     LikelihoodZero,
-    MCMCSummary,
-    MinimizationStatus,
-    MinimizationSummary,
     StochasticNLL,
-    SwarmStatus,
-    integrated_autocorrelation_times,
     likelihood_product,
     likelihood_sum,
 )
-from laddu.utils.angular_momentum import allowed_projections, helicity_combinations
-from laddu.utils.variables import (
+from laddu.optimize import (
+    ControlFlow,
+    EnsembleStatus,
+    GradientFreeStatus,
+    GradientStatus,
+    MCMCSummary,
+    MinimizationStatus,
+    MinimizationSummary,
+    SwarmStatus,
+    integrated_autocorrelation_times,
+)
+from laddu.quantum import allowed_projections, helicity_combinations
+from laddu.reaction import Decay, Particle, Reaction
+from laddu.variables import (
     Angles,
     CosTheta,
-    Decay,
     Mandelstam,
     Mass,
-    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Reaction,
     VariableExpression,
 )
-from laddu.utils.vectors import Vec3, Vec4
+from laddu.vectors import Vec3, Vec4
 
 __all__ = [
     'NLL',

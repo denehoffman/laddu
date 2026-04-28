@@ -1,5 +1,5 @@
-from laddu.amplitudes import Expression, Parameter
-from laddu.utils.variables import Mandelstam, Mass
+from laddu.amplitude import Expression, Parameter
+from laddu.variables import Mandelstam, Mass
 
 def BreitWigner(
     name: str,

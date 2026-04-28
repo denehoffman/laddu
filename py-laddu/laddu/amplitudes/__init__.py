@@ -18,7 +18,7 @@ Examples
 Use :mod:`laddu.amplitudes.resonance` or the other submodules for concrete physics models.
 """
 
-from laddu.laddu import (
+from laddu.amplitude import (
     CompiledExpression,
     Evaluator,
     Expression,

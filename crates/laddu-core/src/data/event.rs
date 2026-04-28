@@ -86,18 +86,18 @@ impl EventData {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ColumnarP4Column {
+/// Columnar storage for one named four-momentum across all events.
+pub struct ColumnarP4Column {
     pub(crate) px: Vec<f64>,
     pub(crate) py: Vec<f64>,
     pub(crate) pz: Vec<f64>,
     pub(crate) e: Vec<f64>,
 }
 
-#[allow(dead_code)]
 impl ColumnarP4Column {
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    /// Create an empty four-momentum column with capacity for `capacity` events.
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             px: Vec::with_capacity(capacity),
             py: Vec::with_capacity(capacity),
@@ -106,14 +106,16 @@ impl ColumnarP4Column {
         }
     }
 
-    pub(crate) fn push(&mut self, p4: Vec4) {
+    /// Append one four-momentum to the column.
+    pub fn push(&mut self, p4: Vec4) {
         self.px.push(p4.x);
         self.py.push(p4.y);
         self.pz.push(p4.z);
         self.e.push(p4.t);
     }
 
-    pub(crate) fn get(&self, event_index: usize) -> Vec4 {
+    /// Return the four-momentum at `event_index`.
+    pub fn get(&self, event_index: usize) -> Vec4 {
         Vec4::new(
             self.px[event_index],
             self.py[event_index],
@@ -125,7 +127,7 @@ impl ColumnarP4Column {
 
 /// Columnar dataset storage used by [`Dataset`].
 #[derive(Debug, Default)]
-pub(crate) struct DatasetStorage {
+pub struct DatasetStorage {
     pub(crate) metadata: Arc<DatasetMetadata>,
     pub(crate) p4: Vec<ColumnarP4Column>,
     pub(crate) aux: Vec<Vec<f64>>,
@@ -144,8 +146,22 @@ impl Clone for DatasetStorage {
 }
 
 impl DatasetStorage {
+    /// Create columnar dataset storage from metadata, four-momentum columns, auxiliary columns, and weights.
+    pub fn new(
+        metadata: DatasetMetadata,
+        p4: Vec<ColumnarP4Column>,
+        aux: Vec<Vec<f64>>,
+        weights: Vec<f64>,
+    ) -> Self {
+        Self {
+            metadata: Arc::new(metadata),
+            p4,
+            aux,
+            weights,
+        }
+    }
     /// Convert this columnar dataset back to a row-event dataset.
-    pub(crate) fn to_dataset(&self) -> Dataset {
+    pub fn to_dataset(&self) -> Dataset {
         let events = (0..self.n_events())
             .map(|event_index| Arc::new(self.event_data(event_index)))
             .collect::<Vec<_>>();

@@ -5,9 +5,33 @@ from contextlib import contextmanager as _contextmanager
 from typing import Protocol as _Protocol
 from typing import cast as _cast
 
-from . import amplitudes, data, experimental, extensions, io, mpi, utils
+from . import (
+    amplitude,
+    amplitudes,
+    data,
+    experimental,
+    extensions,
+    io,
+    likelihood,
+    mpi,
+    optimize,
+    quantum,
+    reaction,
+    utils,
+    variables,
+    vectors,
+)
 from ._backend import backend as _backend_module
-from .amplitudes import One, Parameter, Zero, expr_product, expr_sum, parameter
+from .amplitude import (
+    Evaluator,
+    Expression,
+    One,
+    Parameter,
+    Zero,
+    expr_product,
+    expr_sum,
+    parameter,
+)
 from .amplitudes.angular import (
     BlattWeisskopf,
     ClebschGordan,
@@ -41,16 +65,21 @@ from .amplitudes.resonance import (
 )
 from .amplitudes.scalar import ComplexScalar, PolarComplexScalar, Scalar, VariableScalar
 from .data import BinnedDataset, Dataset, Event
-from .extensions import (
+from .likelihood import (
     NLL,
-    ControlFlow,
-    EnsembleStatus,
-    GradientFreeStatus,
-    GradientStatus,
     LikelihoodExpression,
     LikelihoodOne,
     LikelihoodScalar,
     LikelihoodZero,
+    StochasticNLL,
+    likelihood_product,
+    likelihood_sum,
+)
+from .optimize import (
+    ControlFlow,
+    EnsembleStatus,
+    GradientFreeStatus,
+    GradientStatus,
     MCMCObserver,
     MCMCSummary,
     MCMCTerminator,
@@ -58,27 +87,21 @@ from .extensions import (
     MinimizationStatus,
     MinimizationSummary,
     MinimizationTerminator,
-    StochasticNLL,
     integrated_autocorrelation_times,
-    likelihood_product,
-    likelihood_sum,
 )
-from .laddu import Evaluator, Expression
-from .utils.angular_momentum import allowed_projections, helicity_combinations
-from .utils.variables import (
+from .quantum import allowed_projections, helicity_combinations
+from .reaction import Decay, Particle, Reaction
+from .variables import (
     Angles,
     CosTheta,
-    Decay,
     Mandelstam,
     Mass,
-    Particle,
     Phi,
     PolAngle,
     Polarization,
     PolMagnitude,
-    Reaction,
 )
-from .utils.vectors import Vec3, Vec4
+from .vectors import Vec3, Vec4
 
 
 class _BackendProtocol(_Protocol):
@@ -183,6 +206,7 @@ __all__ = [
     'Zlm',
     '__version__',
     'allowed_projections',
+    'amplitude',
     'amplitudes',
     'data',
     'experimental',
@@ -193,11 +217,17 @@ __all__ = [
     'helicity_combinations',
     'integrated_autocorrelation_times',
     'io',
+    'likelihood',
     'likelihood_product',
     'likelihood_sum',
     'mpi',
+    'optimize',
     'parameter',
+    'quantum',
+    'reaction',
     'set_threads',
     'threads',
     'utils',
+    'variables',
+    'vectors',
 ]
