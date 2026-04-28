@@ -239,6 +239,12 @@ pub struct PyDecay(pub Decay);
 
 #[pymethods]
 impl PyDecay {
+    /// The enclosing reaction.
+    #[getter]
+    fn reaction(&self) -> PyReaction {
+        PyReaction(self.0.reaction().clone())
+    }
+
     /// The parent particle.
     #[getter]
     fn parent(&self) -> PyParticle {

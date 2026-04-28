@@ -43,6 +43,7 @@ class Particle:
     def composite(label: str, daughters: Sequence[Particle]) -> Particle: ...
 
 class Decay:
+    reaction: Reaction
     parent: Particle
     daughter_1: Particle
     daughter_2: Particle
