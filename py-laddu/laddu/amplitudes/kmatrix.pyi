@@ -1,7 +1,7 @@
 from enum import Enum
 
-from laddu.amplitudes import Expression, Parameter
-from laddu.utils.variables import Mass
+from laddu.amplitude import Expression, Parameter
+from laddu.variables import Mass
 
 class KopfKMatrixF0Channel(Enum):
     PiPi: KopfKMatrixF0Channel

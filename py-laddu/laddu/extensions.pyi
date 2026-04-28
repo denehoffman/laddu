@@ -7,7 +7,7 @@ import ganesh
 import numpy as np
 import numpy.typing as npt
 
-from laddu.amplitudes import CompiledExpression, Evaluator, Expression
+from laddu.amplitude import CompiledExpression, Evaluator, Expression
 from laddu.data import Dataset
 
 def likelihood_sum(
