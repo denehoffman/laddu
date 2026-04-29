@@ -441,8 +441,8 @@ pub use laddu_core::{
     parameter,
     parameters::{ParameterID, Parameters},
     reaction::{
-        Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo,
-        TwoToTwoReaction,
+        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
+        ResolvedTwoToTwo, TwoToTwoReaction,
     },
     resources::{Cache, Resources},
     variables::{

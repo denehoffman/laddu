@@ -132,6 +132,39 @@ fn reaction_particles_are_queryable_by_identifier() {
 }
 
 #[test]
+fn reaction_topology_roles_are_queryable() {
+    let (_, reaction, _, _, _) = pion_cascade_dataset();
+    let topology = reaction.two_to_two_topology().unwrap();
+
+    assert_eq!(topology.p1(), "beam");
+    assert_eq!(topology.p2(), "target");
+    assert_eq!(topology.p3(), "x");
+    assert_eq!(topology.p4(), "recoil");
+    assert_eq!(topology.role("p1").unwrap(), "beam");
+    assert_eq!(reaction.role("p3").unwrap().label(), "x");
+    assert!(topology.role("beam").is_err());
+    assert!(reaction.role("unknown").is_err());
+}
+
+#[test]
+fn reaction_can_be_constructed_from_graph_and_topology() {
+    let pi_plus = Particle::stored("pi_plus");
+    let pi_minus = Particle::stored("pi_minus");
+    let x = Particle::composite("x", (&pi_plus, &pi_minus)).unwrap();
+    let beam = Particle::stored("beam");
+    let target = Particle::missing("target");
+    let recoil = Particle::stored("recoil");
+    let graph =
+        ParticleGraph::new([beam.clone(), target.clone(), x.clone(), recoil.clone()]).unwrap();
+    let topology =
+        ReactionTopology::TwoToTwo(TwoToTwoReaction::new(&beam, &target, &x, &recoil).unwrap());
+    let reaction = Reaction::new(graph, topology).unwrap();
+
+    assert_eq!(reaction.role("p2").unwrap().label(), "target");
+    assert_eq!(reaction.particles().len(), 6);
+}
+
+#[test]
 fn reaction_serialization_preserves_identifiers_and_topology() {
     let (_, reaction, _, _, _) = pion_cascade_dataset();
     let serialized = serde_pickle::to_vec(&reaction, SerOptions::new()).unwrap();
@@ -215,6 +248,57 @@ fn two_to_two_reaction_solves_missing_particle() {
     assert_relative_eq!(resolved.p2().py(), full.p2().py());
     assert_relative_eq!(resolved.p2().pz(), full.p2().pz());
     assert_relative_eq!(resolved.p2().e(), full.p2().e());
+}
+
+#[test]
+fn two_to_two_reaction_solves_each_missing_slot() {
+    let (dataset, reaction, _, _, x) = pion_cascade_dataset();
+    let event = dataset.event_view(0);
+    let full = reaction.resolve_two_to_two(&event).unwrap();
+    let beam = Particle::stored("beam");
+    let target = Particle::stored("target");
+    let recoil = Particle::stored("recoil");
+    let missing_beam = Particle::missing("beam");
+    let missing_target = Particle::missing("target");
+    let missing_x = Particle::missing("x");
+    let missing_recoil = Particle::missing("recoil");
+    let cases = [
+        (
+            Reaction::two_to_two(&missing_beam, &target, &x, &recoil).unwrap(),
+            full.p1(),
+            0,
+        ),
+        (
+            Reaction::two_to_two(&beam, &missing_target, &x, &recoil).unwrap(),
+            full.p2(),
+            1,
+        ),
+        (
+            Reaction::two_to_two(&beam, &target, &missing_x, &recoil).unwrap(),
+            full.p3(),
+            2,
+        ),
+        (
+            Reaction::two_to_two(&beam, &target, &x, &missing_recoil).unwrap(),
+            full.p4(),
+            3,
+        ),
+    ];
+
+    for (reaction, expected, slot) in cases {
+        let resolved = reaction.resolve_two_to_two(&event).unwrap();
+        let actual = match slot {
+            0 => resolved.p1(),
+            1 => resolved.p2(),
+            2 => resolved.p3(),
+            3 => resolved.p4(),
+            _ => unreachable!("test slot"),
+        };
+        assert_relative_eq!(actual.px(), expected.px(), epsilon = 1.0e-12);
+        assert_relative_eq!(actual.py(), expected.py(), epsilon = 1.0e-12);
+        assert_relative_eq!(actual.pz(), expected.pz(), epsilon = 1.0e-12);
+        assert_relative_eq!(actual.e(), expected.e(), epsilon = 1.0e-12);
+    }
 }
 
 #[test]

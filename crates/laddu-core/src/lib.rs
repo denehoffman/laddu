@@ -576,8 +576,8 @@ pub use crate::{
         Channel, Frame, HelicityCombination, OrbitalAngularMomentum, Parity, Sign, SpinState,
     },
     reaction::{
-        Decay, Particle, ParticleSource, Reaction, ReactionTopology, ResolvedTwoToTwo,
-        TwoToTwoReaction,
+        Decay, Particle, ParticleGraph, ParticleSource, Reaction, ReactionTopology,
+        ResolvedTwoToTwo, TwoToTwoReaction,
     },
     resources::{
         Cache, ComplexMatrixID, ComplexScalarID, ComplexVectorID, MatrixID, Resources, ScalarID,
