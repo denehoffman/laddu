@@ -236,22 +236,46 @@ impl GeneratedParticle {
         labels
     }
 
-    fn append_layout(
+    fn append_decay_layout(
         &self,
         parent_id: Option<usize>,
+        produced_vertex_id: Option<usize>,
         particles: &mut Vec<GeneratedParticleLayout>,
-    ) {
+        vertices: &mut Vec<GeneratedVertexLayout>,
+    ) -> usize {
         let product_id = particles.len();
         particles.push(GeneratedParticleLayout {
             id: self.id().to_string(),
             product_id,
             parent_id,
             p4_label: Some(self.id().to_string()),
+            produced_vertex_id,
+            decay_vertex_id: None,
         });
         if let Self::Composite { daughters, .. } = self {
-            daughters.0.append_layout(Some(product_id), particles);
-            daughters.1.append_layout(Some(product_id), particles);
+            let vertex_id = vertices.len();
+            particles[product_id].decay_vertex_id = Some(vertex_id);
+            vertices.push(GeneratedVertexLayout {
+                vertex_id,
+                kind: GeneratedVertexKind::Decay,
+                incoming_product_ids: vec![product_id],
+                outgoing_product_ids: Vec::new(),
+            });
+            let daughter_1_id = daughters.0.append_decay_layout(
+                Some(product_id),
+                Some(vertex_id),
+                particles,
+                vertices,
+            );
+            let daughter_2_id = daughters.1.append_decay_layout(
+                Some(product_id),
+                Some(vertex_id),
+                particles,
+                vertices,
+            );
+            vertices[vertex_id].outgoing_product_ids = vec![daughter_1_id, daughter_2_id];
         }
+        product_id
     }
 
     fn sample_mass(&self, rng: &mut Rng) -> f64 {
@@ -409,12 +433,37 @@ impl GeneratedTwoToTwoReaction {
         labels
     }
 
-    fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
+    fn layout_components(&self) -> (Vec<GeneratedParticleLayout>, Vec<GeneratedVertexLayout>) {
         let mut particles = Vec::new();
-        for particle in [&self.p1, &self.p2, &self.p3, &self.p4] {
-            particle.append_layout(None, &mut particles);
-        }
-        particles
+        let mut vertices = vec![GeneratedVertexLayout {
+            vertex_id: 0,
+            kind: GeneratedVertexKind::Production,
+            incoming_product_ids: Vec::new(),
+            outgoing_product_ids: Vec::new(),
+        }];
+        let p1_id = self
+            .p1
+            .append_decay_layout(None, None, &mut particles, &mut vertices);
+        let p2_id = self
+            .p2
+            .append_decay_layout(None, None, &mut particles, &mut vertices);
+        let p3_id = self
+            .p3
+            .append_decay_layout(None, Some(0), &mut particles, &mut vertices);
+        let p4_id = self
+            .p4
+            .append_decay_layout(None, Some(0), &mut particles, &mut vertices);
+        vertices[0].incoming_product_ids = vec![p1_id, p2_id];
+        vertices[0].outgoing_product_ids = vec![p3_id, p4_id];
+        (particles, vertices)
+    }
+
+    fn particle_layouts(&self) -> Vec<GeneratedParticleLayout> {
+        self.layout_components().0
+    }
+
+    fn vertex_layouts(&self) -> Vec<GeneratedVertexLayout> {
+        self.layout_components().1
     }
 
     fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
@@ -537,6 +586,12 @@ impl GeneratedReactionTopology {
         }
     }
 
+    fn vertex_layouts(&self) -> Vec<GeneratedVertexLayout> {
+        match self {
+            Self::TwoToTwo(reaction) => reaction.vertex_layouts(),
+        }
+    }
+
     fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
         match self {
             Self::TwoToTwo(reaction) => reaction.reconstructed_reaction(),
@@ -582,6 +637,11 @@ impl GeneratedReaction {
         self.topology.particle_layouts()
     }
 
+    /// Return generated vertex layout entries in stable vertex-ID order.
+    pub fn vertex_layouts(&self) -> Vec<GeneratedVertexLayout> {
+        self.topology.vertex_layouts()
+    }
+
     /// Build the reconstructed reaction corresponding to this generated layout.
     pub fn reconstructed_reaction(&self) -> LadduResult<Reaction> {
         self.topology.reconstructed_reaction()
@@ -606,6 +666,8 @@ pub struct GeneratedParticleLayout {
     product_id: usize,
     parent_id: Option<usize>,
     p4_label: Option<String>,
+    produced_vertex_id: Option<usize>,
+    decay_vertex_id: Option<usize>,
 }
 
 impl GeneratedParticleLayout {
@@ -628,6 +690,56 @@ impl GeneratedParticleLayout {
     pub fn p4_label(&self) -> Option<&str> {
         self.p4_label.as_deref()
     }
+
+    /// Return the vertex ID where this particle was produced, if any.
+    pub fn produced_vertex_id(&self) -> Option<usize> {
+        self.produced_vertex_id
+    }
+
+    /// Return the vertex ID where this particle decays, if it is a generated parent.
+    pub fn decay_vertex_id(&self) -> Option<usize> {
+        self.decay_vertex_id
+    }
+}
+
+/// The semantic kind of a generated vertex.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeneratedVertexKind {
+    /// A production vertex connecting initial-state particles to outgoing products.
+    Production,
+    /// A decay vertex connecting one generated parent to generated daughters.
+    Decay,
+}
+
+/// Metadata for one generated vertex in a generated event layout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedVertexLayout {
+    vertex_id: usize,
+    kind: GeneratedVertexKind,
+    incoming_product_ids: Vec<usize>,
+    outgoing_product_ids: Vec<usize>,
+}
+
+impl GeneratedVertexLayout {
+    /// Return the zero-based stable vertex ID in generated-layout order.
+    pub fn vertex_id(&self) -> usize {
+        self.vertex_id
+    }
+
+    /// Return the semantic vertex kind.
+    pub fn kind(&self) -> GeneratedVertexKind {
+        self.kind
+    }
+
+    /// Return product IDs entering this vertex.
+    pub fn incoming_product_ids(&self) -> &[usize] {
+        &self.incoming_product_ids
+    }
+
+    /// Return product IDs leaving this vertex.
+    pub fn outgoing_product_ids(&self) -> &[usize] {
+        &self.outgoing_product_ids
+    }
 }
 
 /// Metadata describing the columns and generated particles in a generated event batch.
@@ -636,6 +748,7 @@ pub struct GeneratedEventLayout {
     p4_labels: Vec<String>,
     aux_labels: Vec<String>,
     particles: Vec<GeneratedParticleLayout>,
+    vertices: Vec<GeneratedVertexLayout>,
 }
 
 impl GeneratedEventLayout {
@@ -644,11 +757,13 @@ impl GeneratedEventLayout {
         p4_labels: Vec<String>,
         aux_labels: Vec<String>,
         particles: Vec<GeneratedParticleLayout>,
+        vertices: Vec<GeneratedVertexLayout>,
     ) -> Self {
         Self {
             p4_labels,
             aux_labels,
             particles,
+            vertices,
         }
     }
 
@@ -665,6 +780,11 @@ impl GeneratedEventLayout {
     /// Return generated particle layout entries in stable product-ID order.
     pub fn particles(&self) -> &[GeneratedParticleLayout] {
         &self.particles
+    }
+
+    /// Return generated vertex layout entries in stable vertex-ID order.
+    pub fn vertices(&self) -> &[GeneratedVertexLayout] {
+        &self.vertices
     }
 }
 
@@ -762,7 +882,12 @@ impl EventGenerator {
         Ok(GeneratedBatch::new(
             dataset,
             self.reaction.clone(),
-            GeneratedEventLayout::new(p4_labels, aux_labels, self.reaction.particle_layouts()),
+            GeneratedEventLayout::new(
+                p4_labels,
+                aux_labels,
+                self.reaction.particle_layouts(),
+                self.reaction.vertex_layouts(),
+            ),
         ))
     }
 
@@ -907,20 +1032,42 @@ mod tests {
         assert_eq!(particles[0].id(), "beam");
         assert_eq!(particles[0].product_id(), 0);
         assert_eq!(particles[0].parent_id(), None);
+        assert_eq!(particles[0].produced_vertex_id(), None);
+        assert_eq!(particles[0].decay_vertex_id(), None);
         assert_eq!(particles[1].id(), "target");
         assert_eq!(particles[1].parent_id(), None);
+        assert_eq!(particles[1].produced_vertex_id(), None);
+        assert_eq!(particles[1].decay_vertex_id(), None);
         assert_eq!(particles[2].id(), "kk");
         assert_eq!(particles[2].product_id(), 2);
         assert_eq!(particles[2].parent_id(), None);
+        assert_eq!(particles[2].produced_vertex_id(), Some(0));
+        assert_eq!(particles[2].decay_vertex_id(), Some(1));
         assert_eq!(particles[3].id(), "kshort1");
         assert_eq!(particles[3].parent_id(), Some(2));
+        assert_eq!(particles[3].produced_vertex_id(), Some(1));
+        assert_eq!(particles[3].decay_vertex_id(), None);
         assert_eq!(particles[4].id(), "kshort2");
         assert_eq!(particles[4].parent_id(), Some(2));
+        assert_eq!(particles[4].produced_vertex_id(), Some(1));
+        assert_eq!(particles[4].decay_vertex_id(), None);
         assert_eq!(particles[5].id(), "recoil");
         assert_eq!(particles[5].parent_id(), None);
+        assert_eq!(particles[5].produced_vertex_id(), Some(0));
+        assert_eq!(particles[5].decay_vertex_id(), None);
         for particle in particles {
             assert_eq!(particle.p4_label(), Some(particle.id()));
         }
+        let vertices = batch.layout().vertices();
+        assert_eq!(vertices.len(), 2);
+        assert_eq!(vertices[0].vertex_id(), 0);
+        assert_eq!(vertices[0].kind(), GeneratedVertexKind::Production);
+        assert_eq!(vertices[0].incoming_product_ids(), &[0, 1]);
+        assert_eq!(vertices[0].outgoing_product_ids(), &[2, 5]);
+        assert_eq!(vertices[1].vertex_id(), 1);
+        assert_eq!(vertices[1].kind(), GeneratedVertexKind::Decay);
+        assert_eq!(vertices[1].incoming_product_ids(), &[2]);
+        assert_eq!(vertices[1].outgoing_product_ids(), &[3, 4]);
     }
 
     #[test]
