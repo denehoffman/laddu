@@ -1,9 +1,8 @@
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 use super::{
     decay::Decay,
+    graph::ParticleGraph,
     particle::{resolve_particle_direct, Particle},
     two_to_two::{ResolvedTwoToTwo, TwoToTwoReaction},
 };
@@ -23,13 +22,20 @@ pub enum ReactionTopology {
     TwoToTwo(TwoToTwoReaction),
 }
 
-/// A reaction with direct particle definitions.
+/// A reaction with owned particle definitions and topology roles.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Reaction {
+    graph: ParticleGraph,
     topology: ReactionTopology,
 }
 
 impl Reaction {
+    /// Construct a reaction from a particle graph and topology.
+    pub fn new(graph: ParticleGraph, topology: ReactionTopology) -> LadduResult<Self> {
+        topology.validate(&graph)?;
+        Ok(Self { graph, topology })
+    }
+
     /// Construct a two-to-two reaction.
     pub fn two_to_two(
         p1: &Particle,
@@ -37,10 +43,15 @@ impl Reaction {
         p3: &Particle,
         p4: &Particle,
     ) -> LadduResult<Self> {
-        validate_unique_particles([p1, p2, p3, p4])?;
-        Ok(Self {
-            topology: ReactionTopology::TwoToTwo(TwoToTwoReaction::new(p1, p2, p3, p4)?),
-        })
+        Self::new(
+            ParticleGraph::new([p1.clone(), p2.clone(), p3.clone(), p4.clone()])?,
+            ReactionTopology::TwoToTwo(TwoToTwoReaction::new(p1, p2, p3, p4)?),
+        )
+    }
+
+    /// Return the owned particle graph.
+    pub const fn graph(&self) -> &ParticleGraph {
+        &self.graph
     }
 
     /// Return the reaction topology.
@@ -48,18 +59,32 @@ impl Reaction {
         &self.topology
     }
 
+    /// Return the two-to-two topology role assignments.
+    pub fn two_to_two_topology(&self) -> LadduResult<&TwoToTwoReaction> {
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => Ok(topology),
+        }
+    }
+
+    /// Return the particle assigned to a named topology role.
+    pub fn role(&self, role: &str) -> LadduResult<&Particle> {
+        match &self.topology {
+            ReactionTopology::TwoToTwo(topology) => self.graph.particle(topology.role(role)?),
+        }
+    }
+
     /// Resolve a particle p4 from an event.
     pub fn p4(&self, event: &NamedEventView<'_>, particle: &str) -> LadduResult<Vec4> {
         let particle = self.particle(particle)?;
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
-                if let Some(index) = topology.missing_index() {
-                    if topology.particle_at(index) == particle {
+                if topology.missing_particle() == Some(particle.label()) {
+                    if let Some(index) = topology.missing_index() {
                         return Ok(match index {
-                            0 => topology.resolve(event)?.p1(),
-                            1 => topology.resolve(event)?.p2(),
-                            2 => topology.resolve(event)?.p3(),
-                            3 => topology.resolve(event)?.p4(),
+                            0 => topology.resolve(&self.graph, event)?.p1(),
+                            1 => topology.resolve(&self.graph, event)?.p2(),
+                            2 => topology.resolve(&self.graph, event)?.p3(),
+                            3 => topology.resolve(&self.graph, event)?.p4(),
                             _ => unreachable!("validated two-to-two slot index"),
                         });
                     }
@@ -77,7 +102,7 @@ impl Reaction {
     /// Resolve the two-to-two topology momenta from an event.
     pub fn resolve_two_to_two(&self, event: &NamedEventView<'_>) -> LadduResult<ResolvedTwoToTwo> {
         match &self.topology {
-            ReactionTopology::TwoToTwo(topology) => topology.resolve(event),
+            ReactionTopology::TwoToTwo(topology) => topology.resolve(&self.graph, event),
         }
     }
 
@@ -188,32 +213,25 @@ impl Reaction {
 
     /// Return the particle with the given identifier.
     pub fn particle(&self, particle: &str) -> LadduResult<&Particle> {
-        self.find_particle(particle)
-            .ok_or_else(|| LadduError::Custom(format!("unknown reaction particle '{particle}'")))
+        self.graph.particle(particle)
     }
 
     /// Return whether the reaction contains a particle with the given identifier.
     pub fn contains(&self, particle: &str) -> bool {
-        self.find_particle(particle).is_some()
+        self.graph.contains(particle)
     }
 
     /// Return all particle definitions in this reaction.
     pub fn particles(&self) -> Vec<&Particle> {
-        let mut particles = Vec::new();
-        match &self.topology {
-            ReactionTopology::TwoToTwo(topology) => {
-                for root in [topology.p1(), topology.p2(), topology.p3(), topology.p4()] {
-                    collect_particles(root, &mut particles);
-                }
-            }
-        }
-        particles
+        self.graph.particles()
     }
 
     fn root_particle_for(&self, particle: &str) -> LadduResult<(usize, &Particle)> {
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
-                for (index, root) in [(2, topology.p3()), (3, topology.p4())] {
+                let p3 = self.graph.particle(topology.p3())?;
+                let p4 = self.graph.particle(topology.p4())?;
+                for (index, root) in [(2, p3), (3, p4)] {
                     if root.contains_id(particle) {
                         return Ok((index, root));
                     }
@@ -228,7 +246,9 @@ impl Reaction {
     fn parent_of(&self, child: &str) -> Option<String> {
         match &self.topology {
             ReactionTopology::TwoToTwo(topology) => {
-                [topology.p3(), topology.p4()].into_iter().find_map(|root| {
+                let p3 = self.graph.particle(topology.p3()).ok()?;
+                let p4 = self.graph.particle(topology.p4()).ok()?;
+                [p3, p4].into_iter().find_map(|root| {
                     root.parent_of_id(child)
                         .map(|particle| particle.label().to_string())
                 })
@@ -256,55 +276,18 @@ impl Reaction {
         let target_in_parent = self.p4_in_rest_frame_of(event, &parent, target)?;
         Ok(RestFrame::new(frame_particle_in_parent)?.transform(target_in_parent))
     }
+}
 
-    fn find_particle(&self, particle: &str) -> Option<&Particle> {
-        match &self.topology {
+impl ReactionTopology {
+    /// Validate topology roles against a particle graph.
+    pub fn validate(&self, graph: &ParticleGraph) -> LadduResult<()> {
+        match self {
             ReactionTopology::TwoToTwo(topology) => {
-                [topology.p1(), topology.p2(), topology.p3(), topology.p4()]
-                    .into_iter()
-                    .find_map(|root| find_particle(root, particle))
+                for role in ["p1", "p2", "p3", "p4"] {
+                    graph.particle(topology.role(role)?)?;
+                }
+                Ok(())
             }
         }
     }
-}
-
-fn validate_unique_particles<'a>(roots: impl IntoIterator<Item = &'a Particle>) -> LadduResult<()> {
-    let mut seen = HashSet::new();
-    for root in roots {
-        validate_unique_particle(root, &mut seen)?;
-    }
-    Ok(())
-}
-
-fn validate_unique_particle<'a>(
-    particle: &'a Particle,
-    seen: &mut HashSet<&'a str>,
-) -> LadduResult<()> {
-    if !seen.insert(particle.label()) {
-        return Err(LadduError::Custom(format!(
-            "duplicate reaction particle identifier '{}'",
-            particle.label()
-        )));
-    }
-    for daughter in particle.daughters() {
-        validate_unique_particle(daughter, seen)?;
-    }
-    Ok(())
-}
-
-fn collect_particles<'a>(particle: &'a Particle, particles: &mut Vec<&'a Particle>) {
-    particles.push(particle);
-    for daughter in particle.daughters() {
-        collect_particles(daughter, particles);
-    }
-}
-
-fn find_particle<'a>(particle: &'a Particle, id: &str) -> Option<&'a Particle> {
-    if particle.label() == id {
-        return Some(particle);
-    }
-    particle
-        .daughters()
-        .iter()
-        .find_map(|daughter| find_particle(daughter, id))
 }
