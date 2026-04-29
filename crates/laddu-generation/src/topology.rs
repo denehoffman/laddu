@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use fastrand::Rng;
 use laddu_core::{
-    data::{ColumnarP4Column, DatasetStorage},
     math::{q_m, Histogram, Sheet},
     Dataset, DatasetMetadata, LadduError, LadduResult, Particle, Reaction, Vec3, Vec4, PI,
 };
@@ -299,7 +298,7 @@ impl GeneratedParticle {
         rng: &mut Rng,
         p4_cm: Vec4,
         cm_to_lab_boost: &Vec3,
-        p4_storage: &mut HashMap<String, ColumnarP4Column>,
+        p4_storage: &mut HashMap<String, Vec<Vec4>>,
     ) {
         let p4_lab = p4_cm.boost(cm_to_lab_boost);
         if let Some(storage) = p4_storage.get_mut(self.id()) {
@@ -401,7 +400,7 @@ impl GeneratedTwoToTwoReaction {
         )
     }
 
-    fn generate_event(&self, rng: &mut Rng, p4_storage: &mut HashMap<String, ColumnarP4Column>) {
+    fn generate_event(&self, rng: &mut Rng, p4_storage: &mut HashMap<String, Vec<Vec4>>) {
         let GeneratedParticle::Initial {
             id: p1_id,
             generator: p1_generator,
@@ -512,7 +511,7 @@ impl GeneratedReactionTopology {
         }
     }
 
-    fn generate_event(&self, rng: &mut Rng, p4_storage: &mut HashMap<String, ColumnarP4Column>) {
+    fn generate_event(&self, rng: &mut Rng, p4_storage: &mut HashMap<String, Vec<Vec4>>) {
         match self {
             Self::TwoToTwo(reaction) => reaction.generate_event(rng, p4_storage),
         }
@@ -554,7 +553,7 @@ impl GeneratedReaction {
     fn generate(
         &self,
         rng: &mut Rng,
-        p4_storage: &mut HashMap<String, ColumnarP4Column>,
+        p4_storage: &mut HashMap<String, Vec<Vec4>>,
         n_events: usize,
     ) {
         for _ in 0..n_events {
@@ -588,9 +587,9 @@ impl EventGenerator {
     /// Generate a dataset.
     pub fn generate_dataset(&self, n_events: usize) -> LadduResult<Dataset> {
         let p4_labels = self.reaction.p4_labels();
-        let mut p4_data: HashMap<String, ColumnarP4Column> = p4_labels
+        let mut p4_data: HashMap<String, Vec<Vec4>> = p4_labels
             .iter()
-            .map(|label| (label.clone(), ColumnarP4Column::with_capacity(n_events)))
+            .map(|label| (label.clone(), Vec::with_capacity(n_events)))
             .collect();
         let metadata = DatasetMetadata::new(
             p4_labels.clone(),
@@ -608,7 +607,7 @@ impl EventGenerator {
             .iter()
             .filter_map(|label| p4_data.remove(label))
             .collect();
-        Ok(DatasetStorage::new(metadata, p4, aux, weights).to_dataset())
+        Dataset::from_columns(metadata, p4, aux, weights)
     }
 }
 

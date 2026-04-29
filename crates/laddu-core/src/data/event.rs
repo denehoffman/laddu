@@ -114,6 +114,16 @@ impl ColumnarP4Column {
         self.e.push(p4.t);
     }
 
+    /// Return the number of four-momenta stored in this column.
+    pub fn len(&self) -> usize {
+        self.px.len()
+    }
+
+    /// Return true if this column stores no four-momenta.
+    pub fn is_empty(&self) -> bool {
+        self.px.is_empty()
+    }
+
     /// Return the four-momentum at `event_index`.
     pub fn get(&self, event_index: usize) -> Vec4 {
         Vec4::new(
@@ -159,6 +169,31 @@ impl DatasetStorage {
             aux,
             weights,
         }
+    }
+
+    /// Create empty columnar storage with the given metadata and event capacity.
+    pub(crate) fn empty_with_capacity(metadata: Arc<DatasetMetadata>, capacity: usize) -> Self {
+        Self {
+            p4: (0..metadata.p4_names().len())
+                .map(|_| ColumnarP4Column::with_capacity(capacity))
+                .collect(),
+            aux: (0..metadata.aux_names().len())
+                .map(|_| Vec::with_capacity(capacity))
+                .collect(),
+            weights: Vec::with_capacity(capacity),
+            metadata,
+        }
+    }
+
+    /// Append one ordered event row.
+    pub(crate) fn push_event_data(&mut self, event: &EventData) {
+        for (column, p4) in self.p4.iter_mut().zip(&event.p4s) {
+            column.push(*p4);
+        }
+        for (column, value) in self.aux.iter_mut().zip(&event.aux) {
+            column.push(*value);
+        }
+        self.weights.push(event.weight);
     }
     /// Convert this columnar dataset back to a row-event dataset.
     pub fn to_dataset(&self) -> Dataset {

@@ -13,7 +13,7 @@ use laddu_core::{
         DatasetWriteOptions, Event, EventData, FloatPrecision, SharedDatasetIterExt,
     },
     variables::IntoP4Selection,
-    DatasetReadOptions,
+    DatasetReadOptions, Vec4,
 };
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::{
@@ -107,6 +107,48 @@ fn extract_numeric_column(value: Bound<'_, PyAny>, name: &str) -> PyResult<Vec<f
     Err(PyTypeError::new_err(format!(
         "Column '{name}' must be numeric (float32/float64/list of floats)"
     )))
+}
+
+fn metadata_from_names_and_aliases(
+    p4_names: Vec<String>,
+    aux_names: Vec<String>,
+    aliases: Option<Bound<'_, PyDict>>,
+) -> PyResult<DatasetMetadata> {
+    let parsed_aliases = parse_aliases(aliases)?;
+    let mut metadata = DatasetMetadata::new(p4_names, aux_names).map_err(PyErr::from)?;
+    if !parsed_aliases.is_empty() {
+        metadata
+            .add_p4_aliases(
+                parsed_aliases
+                    .into_iter()
+                    .map(|(alias_name, selection)| (alias_name, selection.into_selection())),
+            )
+            .map_err(PyErr::from)?;
+    }
+    Ok(metadata)
+}
+
+fn parse_p4_mapping(p4: Bound<'_, PyDict>) -> PyResult<Vec<(String, Vec4)>> {
+    p4.iter()
+        .map(|(key, value)| {
+            Ok((
+                key.extract::<String>()?,
+                value
+                    .extract::<PyVec4>()
+                    .map_err(|_| PyTypeError::new_err("p4 values must be laddu.Vec4 instances"))?
+                    .0,
+            ))
+        })
+        .collect()
+}
+
+fn parse_aux_mapping(aux: Option<Bound<'_, PyDict>>) -> PyResult<Vec<(String, f64)>> {
+    let Some(aux) = aux else {
+        return Ok(Vec::new());
+    };
+    aux.iter()
+        .map(|(key, value)| Ok((key.extract::<String>()?, value.extract::<f64>()?)))
+        .collect()
 }
 
 /// A single event
@@ -518,6 +560,52 @@ impl PyDataset {
             Dataset::new(events)
         };
         Ok(Self(Arc::new(dataset)))
+    }
+
+    /// Create an empty Dataset with explicit metadata.
+    ///
+    /// Parameters
+    /// ----------
+    /// p4_names : list of str
+    ///     Names of the four-momenta expected in each pushed event.
+    /// aux_names : list of str, optional
+    ///     Names of auxiliary scalar columns expected in each pushed event.
+    /// aliases : dict of {str: str or list[str]}, optional
+    ///     Additional particle identifiers that reference one or more p4 names.
+    #[staticmethod]
+    #[pyo3(signature = (*, p4_names, aux_names=None, aliases=None))]
+    fn empty(
+        p4_names: Vec<String>,
+        aux_names: Option<Vec<String>>,
+        aliases: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let metadata =
+            metadata_from_names_and_aliases(p4_names, aux_names.unwrap_or_default(), aliases)?;
+        Ok(Self(Arc::new(Dataset::empty(metadata))))
+    }
+
+    /// Append one named event to the Dataset.
+    ///
+    /// Parameters
+    /// ----------
+    /// p4 : dict[str, Vec4]
+    ///     Four-momenta keyed by p4 name.
+    /// aux : dict[str, float], optional
+    ///     Auxiliary scalar values keyed by aux name.
+    /// weight : float, optional
+    ///     Event weight. Defaults to 1.0.
+    #[pyo3(signature = (*, p4, aux=None, weight=1.0))]
+    fn push_event(
+        &mut self,
+        p4: Bound<'_, PyDict>,
+        aux: Option<Bound<'_, PyDict>>,
+        weight: f64,
+    ) -> PyResult<()> {
+        let p4 = parse_p4_mapping(p4)?;
+        let aux = parse_aux_mapping(aux)?;
+        Arc::make_mut(&mut self.0)
+            .push_event_named(p4, aux, weight)
+            .map_err(PyErr::from)
     }
 
     fn __len__(&self) -> usize {
@@ -1266,34 +1354,28 @@ pub fn from_columns(
             .map_err(PyErr::from)?;
     }
 
-    let mut events = Vec::with_capacity(n_events);
-    for event_idx in 0..n_events {
-        let p4s = p4_columns
-            .iter()
-            .map(|components| {
-                laddu_core::vectors::Vec4::new(
-                    components[0][event_idx],
-                    components[1][event_idx],
-                    components[2][event_idx],
-                    components[3][event_idx],
-                )
-            })
-            .collect::<Vec<_>>();
-        let aux = aux_columns
-            .iter()
-            .map(|values| values[event_idx])
-            .collect::<Vec<_>>();
-        events.push(Arc::new(EventData {
-            p4s,
-            aux,
-            weight: weights[event_idx],
-        }));
-    }
+    let p4_columns = p4_columns
+        .into_iter()
+        .map(|components| {
+            (0..n_events)
+                .map(|event_idx| {
+                    laddu_core::vectors::Vec4::new(
+                        components[0][event_idx],
+                        components[1][event_idx],
+                        components[2][event_idx],
+                        components[3][event_idx],
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
 
-    Ok(PyDataset(Arc::new(Dataset::new_with_metadata(
-        events,
-        Arc::new(metadata),
-    ))))
+    Ok(PyDataset(Arc::new(Dataset::from_columns(
+        metadata,
+        p4_columns,
+        aux_columns,
+        weights,
+    )?)))
 }
 
 /// A collection of Datasets binned by a Variable

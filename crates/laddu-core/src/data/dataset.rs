@@ -41,6 +41,20 @@ use crate::{
     LadduError, LadduResult,
 };
 
+fn local_weighted_sum(weights: &[f64]) -> f64 {
+    #[cfg(feature = "rayon")]
+    {
+        weights
+            .par_iter()
+            .copied()
+            .parallel_sum_with_accumulator::<Klein<f64>>()
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        weights.iter().copied().sum_with_accumulator::<Klein<f64>>()
+    }
+}
+
 /// A dataset that can be used to test the implementation of an
 /// [`Amplitude`](crate::amplitudes::Amplitude). This particular dataset contains a single
 /// [`EventData`] generated from [`test_event`].
@@ -144,6 +158,19 @@ impl Dataset {
     /// may include remotely owned events fetched on demand.
     pub fn events_global(&self) -> Vec<Event> {
         self.iter_global().collect()
+    }
+
+    fn refresh_local_weight_cache(&mut self) {
+        self.cached_local_weighted_sum = local_weighted_sum(&self.columnar.weights);
+        #[cfg(feature = "mpi")]
+        {
+            self.cached_global_weighted_sum = self.cached_local_weighted_sum;
+            self.cached_global_event_count = self.n_events_local();
+            if let Some(world) = crate::mpi::get_world() {
+                self.set_cached_global_event_count_from_world(&world);
+                self.set_cached_global_weighted_sum_from_world(&world);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -282,6 +309,25 @@ impl Dataset {
         self.columnar.event_view(event_index)
     }
 
+    /// Retrieve a metadata-aware columnar event view by local index.
+    pub fn view_local(&self, event_index: usize) -> LadduResult<NamedEventView<'_>> {
+        if event_index >= self.n_events_local() {
+            return Err(LadduError::Custom(format!(
+                "Dataset local index out of bounds: index {event_index}, length {}",
+                self.n_events_local()
+            )));
+        }
+        Ok(self.event_view(event_index))
+    }
+
+    /// Iterate over local events as borrowed metadata-aware columnar views.
+    pub fn views_local(&self) -> DatasetViewIter<'_> {
+        DatasetViewIter {
+            dataset: self,
+            index: 0,
+        }
+    }
+
     /// Get a reference to the [`EventData`] at the given index in the [`Dataset`] (non-MPI
     /// version).
     ///
@@ -320,6 +366,25 @@ pub enum DatasetIter<'a> {
     #[cfg(feature = "mpi")]
     /// Iterator that fetches events across MPI ranks.
     Mpi(DatasetMpiIter<'a>),
+}
+
+/// Iterator over local borrowed event views in a [`Dataset`].
+pub struct DatasetViewIter<'a> {
+    dataset: &'a Dataset,
+    index: usize,
+}
+
+impl<'a> Iterator for DatasetViewIter<'a> {
+    type Item = NamedEventView<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.dataset.n_events_local() {
+            return None;
+        }
+        let event = self.dataset.event_view(self.index);
+        self.index += 1;
+        Some(event)
+    }
 }
 
 impl<'a> Iterator for DatasetIter<'a> {
@@ -813,6 +878,100 @@ impl Dataset {
         }
     }
 
+    /// Create an empty dataset with explicit metadata.
+    ///
+    /// The returned dataset is valid immediately and can be extended with
+    /// [`Dataset::push_event`] or [`Dataset::push_event_named`].
+    pub fn empty(metadata: DatasetMetadata) -> Self {
+        let metadata = Arc::new(metadata);
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = crate::mpi::get_world() {
+                let mut dataset = Dataset {
+                    events: Vec::new(),
+                    columnar: DatasetStorage::empty_with_capacity(metadata.clone(), 0),
+                    metadata,
+                    cached_local_weighted_sum: 0.0,
+                    cached_global_event_count: 0,
+                    cached_global_weighted_sum: 0.0,
+                };
+                dataset.set_cached_global_event_count_from_world(&world);
+                dataset.set_cached_global_weighted_sum_from_world(&world);
+                return dataset;
+            }
+        }
+        Dataset {
+            events: Vec::new(),
+            columnar: DatasetStorage::empty_with_capacity(metadata.clone(), 0),
+            metadata,
+            cached_local_weighted_sum: 0.0,
+            #[cfg(feature = "mpi")]
+            cached_global_event_count: 0,
+            #[cfg(feature = "mpi")]
+            cached_global_weighted_sum: 0.0,
+        }
+    }
+
+    /// Create a dataset from ordered four-momentum columns, auxiliary columns, and weights.
+    ///
+    /// `p4_columns` and `aux_columns` must be ordered to match the supplied metadata. Each
+    /// column must have the same length as `weights`.
+    pub fn from_columns(
+        metadata: DatasetMetadata,
+        p4_columns: Vec<Vec<Vec4>>,
+        aux_columns: Vec<Vec<f64>>,
+        weights: Vec<f64>,
+    ) -> LadduResult<Self> {
+        let n_events = weights.len();
+        if p4_columns.len() != metadata.p4_names().len() {
+            return Err(LadduError::Custom(format!(
+                "Expected {} p4 columns, got {}",
+                metadata.p4_names().len(),
+                p4_columns.len()
+            )));
+        }
+        if aux_columns.len() != metadata.aux_names().len() {
+            return Err(LadduError::Custom(format!(
+                "Expected {} aux columns, got {}",
+                metadata.aux_names().len(),
+                aux_columns.len()
+            )));
+        }
+        for (index, column) in p4_columns.iter().enumerate() {
+            if column.len() != n_events {
+                return Err(LadduError::Custom(format!(
+                    "P4 column {index} length {} does not match weight length {n_events}",
+                    column.len()
+                )));
+            }
+        }
+        for (index, column) in aux_columns.iter().enumerate() {
+            if column.len() != n_events {
+                return Err(LadduError::Custom(format!(
+                    "Aux column {index} length {} does not match weight length {n_events}",
+                    column.len()
+                )));
+            }
+        }
+
+        let events = (0..n_events)
+            .map(|event_index| {
+                Arc::new(EventData {
+                    p4s: p4_columns
+                        .iter()
+                        .map(|column| column[event_index])
+                        .collect(),
+                    aux: aux_columns
+                        .iter()
+                        .map(|column| column[event_index])
+                        .collect(),
+                    weight: weights[event_index],
+                })
+            })
+            .collect();
+        Ok(Dataset::new_with_metadata(events, Arc::new(metadata)))
+    }
+
     /// Create a new [`Dataset`] from a list of [`EventData`] (MPI-compatible version).
     ///
     /// # Notes
@@ -877,6 +1036,114 @@ impl Dataset {
             }
         }
         Dataset::new_local(events, metadata)
+    }
+
+    /// Append one ordered event row.
+    ///
+    /// `p4s` and `aux` must be ordered to match [`Dataset::p4_names`] and
+    /// [`Dataset::aux_names`].
+    pub fn push_event<P, A>(&mut self, p4s: P, aux: A, weight: f64) -> LadduResult<()>
+    where
+        P: IntoIterator<Item = Vec4>,
+        A: IntoIterator<Item = f64>,
+    {
+        let p4s = p4s.into_iter().collect::<Vec<_>>();
+        let aux = aux.into_iter().collect::<Vec<_>>();
+        if p4s.len() != self.metadata.p4_names().len() {
+            return Err(LadduError::Custom(format!(
+                "Expected {} p4 values, got {}",
+                self.metadata.p4_names().len(),
+                p4s.len()
+            )));
+        }
+        if aux.len() != self.metadata.aux_names().len() {
+            return Err(LadduError::Custom(format!(
+                "Expected {} aux values, got {}",
+                self.metadata.aux_names().len(),
+                aux.len()
+            )));
+        }
+
+        let event_data = Arc::new(EventData { p4s, aux, weight });
+        self.columnar.push_event_data(&event_data);
+        self.events
+            .push(Event::new(event_data, self.metadata.clone()));
+        self.refresh_local_weight_cache();
+        Ok(())
+    }
+
+    /// Append one named event row.
+    ///
+    /// The supplied p4 and aux names must exactly match this dataset's metadata, regardless of
+    /// order. Duplicate, missing, and unknown names are rejected.
+    pub fn push_event_named<P, PN, A, AN>(&mut self, p4s: P, aux: A, weight: f64) -> LadduResult<()>
+    where
+        P: IntoIterator<Item = (PN, Vec4)>,
+        PN: AsRef<str>,
+        A: IntoIterator<Item = (AN, f64)>,
+        AN: AsRef<str>,
+    {
+        let mut ordered_p4s = vec![None; self.metadata.p4_names().len()];
+        for (name, p4) in p4s {
+            let name = name.as_ref();
+            let index = self
+                .metadata
+                .p4_index(name)
+                .ok_or_else(|| LadduError::UnknownName {
+                    category: "p4",
+                    name: name.to_string(),
+                })?;
+            if ordered_p4s[index].replace(p4).is_some() {
+                return Err(LadduError::DuplicateName {
+                    category: "p4",
+                    name: name.to_string(),
+                });
+            }
+        }
+        let mut ordered_aux = vec![None; self.metadata.aux_names().len()];
+        for (name, value) in aux {
+            let name = name.as_ref();
+            let index = self
+                .metadata
+                .aux_index(name)
+                .ok_or_else(|| LadduError::UnknownName {
+                    category: "aux",
+                    name: name.to_string(),
+                })?;
+            if ordered_aux[index].replace(value).is_some() {
+                return Err(LadduError::DuplicateName {
+                    category: "aux",
+                    name: name.to_string(),
+                });
+            }
+        }
+
+        let p4s = ordered_p4s
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.ok_or_else(|| {
+                    LadduError::Custom(format!(
+                        "Missing p4 value for '{}'",
+                        self.metadata.p4_names()[index]
+                    ))
+                })
+            })
+            .collect::<LadduResult<Vec<_>>>()?;
+        let aux = ordered_aux
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.ok_or_else(|| {
+                    LadduError::Custom(format!(
+                        "Missing aux value for '{}'",
+                        self.metadata.aux_names()[index]
+                    ))
+                })
+            })
+            .collect::<LadduResult<Vec<_>>>()?;
+
+        self.push_event(p4s, aux, weight)
     }
 
     /// The number of [`EventData`]s in the [`Dataset`] (non-MPI version).
