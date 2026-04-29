@@ -181,9 +181,9 @@ fn test_mandelstam() {
     let dataset = test_dataset();
     let metadata = dataset.metadata();
     let (reaction, _, _, _) = reaction();
-    let mut s = reaction.mandelstam(Channel::S);
-    let mut t = reaction.mandelstam(Channel::T);
-    let mut u = reaction.mandelstam(Channel::U);
+    let mut s = reaction.mandelstam(Channel::S).unwrap();
+    let mut t = reaction.mandelstam(Channel::T).unwrap();
+    let mut u = reaction.mandelstam(Channel::U).unwrap();
     for variable in [&mut s, &mut t, &mut u] {
         variable.bind(metadata).unwrap();
     }
@@ -197,7 +197,7 @@ fn test_mandelstam() {
 #[test]
 fn test_mandelstam_display() {
     let (reaction, _, _, _) = reaction();
-    let s = reaction.mandelstam(Channel::S);
+    let s = reaction.mandelstam(Channel::S).unwrap();
     assert_eq!(s.to_string(), "Mandelstam(channel=s)");
 }
 

@@ -214,7 +214,7 @@ impl PyReaction {
 
     /// Construct a Mandelstam variable.
     fn mandelstam(&self, channel: &str) -> PyResult<PyMandelstam> {
-        Ok(PyMandelstam(self.0.mandelstam(channel.parse()?)))
+        Ok(PyMandelstam(self.0.mandelstam(channel.parse()?)?))
     }
 
     /// Construct a polarization-angle variable.
@@ -1035,7 +1035,7 @@ pub struct PyMandelstam(pub Mandelstam);
 impl PyMandelstam {
     #[new]
     fn new(reaction: PyReaction, channel: &str) -> PyResult<Self> {
-        Ok(Self(Mandelstam::new(reaction.0.clone(), channel.parse()?)))
+        Ok(Self(reaction.0.mandelstam(channel.parse()?)?))
     }
     /// The value of this Variable for the given Event
     ///
