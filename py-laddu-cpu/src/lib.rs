@@ -39,9 +39,9 @@ mod laddu {
         available_parallelism,
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
         generation::{
-            PyDistribution, PyEventGenerator, PyFinalStateParticle, PyGenComposite,
-            PyGenFinalState, PyGenInitialState, PyGenReaction, PyInitialStateParticle,
-            PyMandelstamTDistribution, PyReconstruction,
+            PyCompositeGenerator, PyDistribution, PyEventGenerator, PyGeneratedParticle,
+            PyGeneratedReaction, PyInitialGenerator, PyMandelstamTDistribution, PyReconstruction,
+            PyStableGenerator,
         },
         get_threads,
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},

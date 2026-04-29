@@ -1,53 +1,52 @@
 use std::collections::HashMap;
 
 use laddu::generation::{
-    EventGenerator, FinalStateParticle, GenComposite, GenFinalState, GenInitialState, GenReaction,
-    InitialStateParticle, MandelstamTDistribution, Reconstruction,
+    CompositeGenerator, EventGenerator, GeneratedParticle, GeneratedReaction, InitialGenerator,
+    MandelstamTDistribution, Reconstruction, StableGenerator,
 };
 
 #[test]
 fn umbrella_crate_exposes_generation_api() {
-    let beam = InitialStateParticle::new(
+    let beam = GeneratedParticle::initial(
         "beam",
-        GenInitialState::beam_with_fixed_energy(0.0, 8.0),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["beam".to_string()],
-        },
+        InitialGenerator::beam_with_fixed_energy(0.0, 8.0),
+        Reconstruction::Stored,
     );
-    let target = InitialStateParticle::new(
+    let target = GeneratedParticle::initial(
         "target",
-        GenInitialState::target(0.938272),
+        InitialGenerator::target(0.938272),
         Reconstruction::Missing,
     );
-    let kshort1 = FinalStateParticle::new(
+    let kshort1 = GeneratedParticle::stable(
         "kshort1",
-        GenFinalState::new(0.497611),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["kshort1".to_string()],
-        },
+        StableGenerator::new(0.497611),
+        Reconstruction::Stored,
     );
-    let kshort2 = FinalStateParticle::new(
+    let kshort2 = GeneratedParticle::stable(
         "kshort2",
-        GenFinalState::new(0.497611),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["kshort2".to_string()],
-        },
+        StableGenerator::new(0.497611),
+        Reconstruction::Stored,
     );
-    let kk = FinalStateParticle::composite("kk", GenComposite::new(1.1, 1.6), (&kshort1, &kshort2));
-    let recoil = FinalStateParticle::new(
+    let kk = GeneratedParticle::composite(
+        "kk",
+        CompositeGenerator::new(1.1, 1.6),
+        (&kshort1, &kshort2),
+        Reconstruction::Composite,
+    );
+    let recoil = GeneratedParticle::stable(
         "recoil",
-        GenFinalState::new(0.938272),
-        Reconstruction::Reconstructed {
-            p4_names: vec!["recoil".to_string()],
-        },
+        StableGenerator::new(0.938272),
+        Reconstruction::Stored,
     );
-    let reaction = GenReaction::two_to_two(
+    let reaction = GeneratedReaction::two_to_two(
         beam,
         target,
         kk,
         recoil,
         MandelstamTDistribution::Exponential { slope: 0.1 },
-    );
+    )
+    .unwrap();
+    let reconstructed = reaction.reconstructed_reaction().unwrap();
     let generator = EventGenerator::new(reaction, HashMap::new(), Some(12345));
     let dataset = generator.generate_dataset(4).unwrap();
 
@@ -55,5 +54,9 @@ fn umbrella_crate_exposes_generation_api() {
     assert_eq!(
         dataset.metadata().p4_names(),
         &["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+    );
+    assert_eq!(
+        reconstructed.decay("kk").unwrap().daughters(),
+        ["kshort1", "kshort2"]
     );
 }
