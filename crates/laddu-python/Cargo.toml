@@ -16,6 +16,7 @@ readme = "README.md"
 laddu-amplitudes = { workspace = true }
 laddu-core = { workspace = true, features = ["python"] }
 laddu-extensions = { workspace = true }
+laddu-generation = { workspace = true }
 
 ganesh = { workspace = true, features = ["python"] }
 num = { workspace = true }
