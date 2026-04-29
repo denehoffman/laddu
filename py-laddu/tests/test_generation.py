@@ -5,6 +5,7 @@ from laddu import generation
 def test_generation_module_exports_event_generator() -> None:
     assert generation.EventGenerator is ld.EventGenerator
     assert generation.GeneratedBatch is ld.GeneratedBatch
+    assert generation.GeneratedBatchIter is ld.GeneratedBatchIter
     assert generation.GeneratedEventLayout is ld.GeneratedEventLayout
     assert generation.GeneratedReaction is ld.GeneratedReaction
 
@@ -106,3 +107,21 @@ def test_generation_smoke() -> None:
         'kshort2',
     ]
     assert generator.generate_dataset(4).n_events == 4
+
+    one_shot = generator.generate_dataset(7)
+    batches = list(generator.generate_batches(7, 3))
+    assert [generated.dataset.n_events for generated in batches] == [3, 3, 1]
+    for batch_offset, generated in zip([0, 3, 6], batches, strict=True):
+        for local_index in range(generated.dataset.n_events):
+            expected = one_shot[batch_offset + local_index]
+            actual = generated.dataset[local_index]
+            for name in one_shot.p4_names:
+                assert actual.p4(name).e == expected.p4(name).e
+                assert actual.p4(name).px == expected.p4(name).px
+                assert actual.p4(name).py == expected.p4(name).py
+                assert actual.p4(name).pz == expected.p4(name).pz
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match='batch_size'):
+        list(generator.generate_batches(1, 0))

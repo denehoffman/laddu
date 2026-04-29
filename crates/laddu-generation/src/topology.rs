@@ -839,6 +839,31 @@ pub struct EventGenerator {
     seed: u64,
 }
 
+/// Finite iterator over generated dataset batches.
+#[derive(Clone, Debug)]
+pub struct GeneratedBatchIter {
+    generator: EventGenerator,
+    remaining_events: usize,
+    batch_size: usize,
+    rng: Rng,
+}
+
+impl Iterator for GeneratedBatchIter {
+    type Item = LadduResult<GeneratedBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining_events == 0 {
+            return None;
+        }
+        let n_events = self.batch_size.min(self.remaining_events);
+        self.remaining_events -= n_events;
+        Some(
+            self.generator
+                .generate_batch_with_rng(n_events, &mut self.rng),
+        )
+    }
+}
+
 impl EventGenerator {
     /// Construct an event generator.
     pub fn new(
@@ -853,11 +878,19 @@ impl EventGenerator {
         }
     }
 
-    /// Generate one dataset batch with generated layout metadata.
-    pub fn generate_batch(&self, n_events: usize) -> LadduResult<GeneratedBatch> {
-        let p4_labels = self.reaction.p4_labels();
+    fn aux_entries(&self) -> Vec<(&String, &Distribution)> {
         let mut aux_entries = self.aux_generators.iter().collect::<Vec<_>>();
         aux_entries.sort_by_key(|(label, _)| *label);
+        aux_entries
+    }
+
+    fn generate_batch_with_rng(
+        &self,
+        n_events: usize,
+        rng: &mut Rng,
+    ) -> LadduResult<GeneratedBatch> {
+        let p4_labels = self.reaction.p4_labels();
+        let aux_entries = self.aux_entries();
         let aux_labels = aux_entries
             .iter()
             .map(|(label, _)| (*label).clone())
@@ -867,13 +900,17 @@ impl EventGenerator {
             .map(|label| (label.clone(), Vec::with_capacity(n_events)))
             .collect();
         let metadata = DatasetMetadata::new(p4_labels.clone(), aux_labels.clone())?;
-        let mut rng = Rng::with_seed(self.seed);
-        let aux: Vec<Vec<f64>> = aux_entries
+        let mut aux: Vec<Vec<f64>> = aux_entries
             .iter()
-            .map(|(_, d)| (0..n_events).map(|_| d.sample(&mut rng)).collect())
+            .map(|_| Vec::with_capacity(n_events))
             .collect();
         let weights = vec![1.0; n_events];
-        self.reaction.generate(&mut rng, &mut p4_data, n_events);
+        for _ in 0..n_events {
+            for ((_, distribution), column) in aux_entries.iter().zip(aux.iter_mut()) {
+                column.push(distribution.sample(rng));
+            }
+            self.reaction.generate(rng, &mut p4_data, 1);
+        }
         let p4 = p4_labels
             .iter()
             .filter_map(|label| p4_data.remove(label))
@@ -889,6 +926,34 @@ impl EventGenerator {
                 self.reaction.vertex_layouts(),
             ),
         ))
+    }
+
+    /// Generate one dataset batch with generated layout metadata.
+    pub fn generate_batch(&self, n_events: usize) -> LadduResult<GeneratedBatch> {
+        let mut rng = Rng::with_seed(self.seed);
+        self.generate_batch_with_rng(n_events, &mut rng)
+    }
+
+    /// Generate a finite iterator over batches.
+    ///
+    /// The iterator advances one RNG stream, so concatenating all yielded batches is
+    /// deterministic and matches [`EventGenerator::generate_dataset`] for the same total count.
+    pub fn generate_batches(
+        &self,
+        total_events: usize,
+        batch_size: usize,
+    ) -> LadduResult<GeneratedBatchIter> {
+        if batch_size == 0 {
+            return Err(LadduError::Custom(
+                "batch_size must be greater than zero".to_string(),
+            ));
+        }
+        Ok(GeneratedBatchIter {
+            generator: self.clone(),
+            remaining_events: total_events,
+            batch_size,
+            rng: Rng::with_seed(self.seed),
+        })
     }
 
     /// Generate a dataset.
@@ -1068,6 +1133,52 @@ mod tests {
         assert_eq!(vertices[1].kind(), GeneratedVertexKind::Decay);
         assert_eq!(vertices[1].incoming_product_ids(), &[2]);
         assert_eq!(vertices[1].outgoing_product_ids(), &[3, 4]);
+    }
+
+    #[test]
+    fn generated_batches_match_one_shot_generation() {
+        let generated = demo_reaction();
+        let generator = EventGenerator::new(
+            generated,
+            HashMap::from([(
+                "pol_angle".to_string(),
+                Distribution::Uniform { min: 0.0, max: 1.0 },
+            )]),
+            Some(12345),
+        );
+        let one_shot = generator.generate_dataset(7).unwrap();
+        let batches = generator
+            .generate_batches(7, 3)
+            .unwrap()
+            .collect::<LadduResult<Vec<_>>>()
+            .unwrap();
+        let batch_sizes = batches
+            .iter()
+            .map(|batch| batch.dataset().n_events())
+            .collect::<Vec<_>>();
+        assert_eq!(batch_sizes, vec![3, 3, 1]);
+
+        let mut offset = 0;
+        for batch in batches {
+            for local_index in 0..batch.dataset().n_events() {
+                let expected = one_shot.event(offset + local_index).unwrap();
+                let actual = batch.dataset().event(local_index).unwrap();
+                for name in one_shot.p4_names() {
+                    assert_relative_eq!(
+                        actual.p4(name).unwrap(),
+                        expected.p4(name).unwrap(),
+                        epsilon = 1e-10
+                    );
+                }
+                for aux_index in 0..one_shot.aux_names().len() {
+                    assert_relative_eq!(actual.aux[aux_index], expected.aux[aux_index]);
+                }
+                assert_relative_eq!(actual.weight(), expected.weight());
+            }
+            offset += batch.dataset().n_events();
+        }
+        assert_eq!(offset, one_shot.n_events());
+        assert!(generator.generate_batches(1, 0).is_err());
     }
 
     #[test]
