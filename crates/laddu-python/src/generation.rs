@@ -463,6 +463,32 @@ impl PyGeneratedBatch {
     }
 }
 
+/// Finite iterator over generated dataset batches.
+#[pyclass(
+    name = "GeneratedBatchIter",
+    module = "laddu",
+    unsendable,
+    skip_from_py_object
+)]
+pub struct PyGeneratedBatchIter {
+    iter: Box<dyn Iterator<Item = laddu_core::LadduResult<GeneratedBatch>>>,
+}
+
+#[pymethods]
+impl PyGeneratedBatchIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> Py<PyGeneratedBatchIter> {
+        slf.into()
+    }
+
+    fn __next__(&mut self) -> PyResult<Option<PyGeneratedBatch>> {
+        match self.iter.next() {
+            Some(Ok(batch)) => Ok(Some(PyGeneratedBatch(batch))),
+            Some(Err(err)) => Err(PyErr::from(err)),
+            None => Ok(None),
+        }
+    }
+}
+
 /// Event generator for generated reaction layouts.
 #[pyclass(name = "EventGenerator", module = "laddu", from_py_object)]
 #[derive(Clone, Debug)]
@@ -492,6 +518,17 @@ impl PyEventGenerator {
     /// Generate one dataset batch with generated layout metadata.
     fn generate_batch(&self, n_events: usize) -> PyResult<PyGeneratedBatch> {
         Ok(PyGeneratedBatch(self.0.generate_batch(n_events)?))
+    }
+
+    /// Generate a finite iterator over generated dataset batches.
+    fn generate_batches(
+        &self,
+        total_events: usize,
+        batch_size: usize,
+    ) -> PyResult<PyGeneratedBatchIter> {
+        Ok(PyGeneratedBatchIter {
+            iter: Box::new(self.0.generate_batches(total_events, batch_size)?),
+        })
     }
 
     /// Generate a dataset.

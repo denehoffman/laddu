@@ -40,9 +40,9 @@ mod laddu {
         data::{PyBinnedDataset, PyDataset, PyEvent, PyParquetChunkIter},
         generation::{
             PyCompositeGenerator, PyDistribution, PyEventGenerator, PyGeneratedBatch,
-            PyGeneratedEventLayout, PyGeneratedParticle, PyGeneratedParticleLayout,
-            PyGeneratedReaction, PyGeneratedVertexLayout, PyInitialGenerator,
-            PyMandelstamTDistribution, PyReconstruction, PyStableGenerator,
+            PyGeneratedBatchIter, PyGeneratedEventLayout, PyGeneratedParticle,
+            PyGeneratedParticleLayout, PyGeneratedReaction, PyGeneratedVertexLayout,
+            PyInitialGenerator, PyMandelstamTDistribution, PyReconstruction, PyStableGenerator,
         },
         get_threads,
         mpi::{finalize_mpi, get_rank, get_size, is_mpi_available, is_root, use_mpi, using_mpi},
