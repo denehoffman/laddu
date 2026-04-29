@@ -864,6 +864,274 @@ impl Iterator for GeneratedBatchIter {
     }
 }
 
+/// Evaluates unnormalized intensities for generated batches.
+pub trait BatchIntensity {
+    /// Return one nonnegative finite intensity for each event in `batch`.
+    fn evaluate(&mut self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>>;
+}
+
+impl<F> BatchIntensity for F
+where
+    F: FnMut(&GeneratedBatch) -> LadduResult<Vec<f64>>,
+{
+    fn evaluate(&mut self, batch: &GeneratedBatch) -> LadduResult<Vec<f64>> {
+        self(batch)
+    }
+}
+
+/// Envelope strategy used by rejection sampling.
+#[derive(Clone, Debug)]
+pub enum RejectionEnvelope {
+    /// Use a fixed maximum event weight.
+    Fixed {
+        /// Maximum event weight used as the rejection envelope.
+        max_weight: f64,
+    },
+}
+
+impl RejectionEnvelope {
+    fn max_weight(&self) -> f64 {
+        match self {
+            Self::Fixed { max_weight } => *max_weight,
+        }
+    }
+}
+
+/// Options for rejection sampling generated events.
+#[derive(Clone, Debug)]
+pub struct RejectionSamplingOptions {
+    /// Number of accepted events to produce.
+    pub target_accepted: usize,
+    /// Number of raw events to generate per source batch.
+    pub generation_batch_size: usize,
+    /// Target number of accepted events emitted per output batch.
+    pub output_batch_size: usize,
+    /// Envelope used by the rejection sampler.
+    pub envelope: RejectionEnvelope,
+    /// Random seed used for accept/reject decisions.
+    pub seed: u64,
+}
+
+/// Rejection-sampling diagnostics accumulated while sampling.
+#[derive(Clone, Debug, Default)]
+pub struct RejectionSamplingDiagnostics {
+    /// Number of generated events inspected.
+    pub generated_events: usize,
+    /// Number of events accepted.
+    pub accepted_events: usize,
+    /// Number of events rejected.
+    pub rejected_events: usize,
+    /// Maximum observed event intensity.
+    pub max_observed_weight: f64,
+    /// Envelope maximum used for rejection sampling.
+    pub envelope_max_weight: f64,
+    /// Number of fixed-envelope violations observed.
+    pub envelope_violations: usize,
+}
+
+impl RejectionSamplingDiagnostics {
+    /// Fraction of generated events accepted.
+    pub fn acceptance_efficiency(&self) -> f64 {
+        if self.generated_events == 0 {
+            0.0
+        } else {
+            self.accepted_events as f64 / self.generated_events as f64
+        }
+    }
+}
+
+/// Rejection sampler over generated batches.
+#[derive(Clone, Debug)]
+pub struct RejectionSampler<I> {
+    generator: EventGenerator,
+    intensity: I,
+    options: RejectionSamplingOptions,
+}
+
+impl<I> RejectionSampler<I>
+where
+    I: BatchIntensity,
+{
+    /// Construct a rejection sampler.
+    pub fn new(
+        generator: EventGenerator,
+        intensity: I,
+        options: RejectionSamplingOptions,
+    ) -> LadduResult<Self> {
+        if options.generation_batch_size == 0 {
+            return Err(LadduError::Custom(
+                "generation_batch_size must be greater than zero".to_string(),
+            ));
+        }
+        if options.output_batch_size == 0 {
+            return Err(LadduError::Custom(
+                "output_batch_size must be greater than zero".to_string(),
+            ));
+        }
+        let max_weight = options.envelope.max_weight();
+        if !max_weight.is_finite() || max_weight <= 0.0 {
+            return Err(LadduError::Custom(
+                "rejection envelope max_weight must be finite and positive".to_string(),
+            ));
+        }
+        Ok(Self {
+            generator,
+            intensity,
+            options,
+        })
+    }
+
+    /// Consume this sampler and return an iterator over accepted generated batches.
+    pub fn accepted_batches(self) -> RejectionSampleIter<I> {
+        let envelope_max_weight = self.options.envelope.max_weight();
+        RejectionSampleIter {
+            generation_rng: Rng::with_seed(self.generator.seed),
+            rejection_rng: Rng::with_seed(self.options.seed),
+            diagnostics: RejectionSamplingDiagnostics {
+                envelope_max_weight,
+                ..Default::default()
+            },
+            sampler: self,
+            current_batch: None,
+            current_intensities: Vec::new(),
+            current_index: 0,
+        }
+    }
+}
+
+/// Iterator over accepted generated batches.
+#[derive(Clone, Debug)]
+pub struct RejectionSampleIter<I> {
+    sampler: RejectionSampler<I>,
+    generation_rng: Rng,
+    rejection_rng: Rng,
+    diagnostics: RejectionSamplingDiagnostics,
+    current_batch: Option<GeneratedBatch>,
+    current_intensities: Vec<f64>,
+    current_index: usize,
+}
+
+impl<I> RejectionSampleIter<I> {
+    /// Borrow rejection-sampling diagnostics accumulated so far.
+    pub fn diagnostics(&self) -> &RejectionSamplingDiagnostics {
+        &self.diagnostics
+    }
+}
+
+impl<I> RejectionSampleIter<I>
+where
+    I: BatchIntensity,
+{
+    fn load_next_source_batch(&mut self) -> LadduResult<()> {
+        let batch = self.sampler.generator.generate_batch_with_rng(
+            self.sampler.options.generation_batch_size,
+            &mut self.generation_rng,
+        )?;
+        let intensities = self.sampler.intensity.evaluate(&batch)?;
+        if intensities.len() != batch.dataset().n_events() {
+            return Err(LadduError::Custom(format!(
+                "intensity length mismatch: expected {}, got {}",
+                batch.dataset().n_events(),
+                intensities.len()
+            )));
+        }
+        self.diagnostics.generated_events += batch.dataset().n_events();
+        self.current_batch = Some(batch);
+        self.current_intensities = intensities;
+        self.current_index = 0;
+        Ok(())
+    }
+
+    fn empty_output_batch(source: &GeneratedBatch) -> GeneratedBatch {
+        GeneratedBatch::new(
+            Dataset::empty(source.dataset().metadata().clone()),
+            source.reaction().clone(),
+            source.layout().clone(),
+        )
+    }
+}
+
+impl<I> Iterator for RejectionSampleIter<I>
+where
+    I: BatchIntensity,
+{
+    type Item = LadduResult<GeneratedBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.diagnostics.accepted_events >= self.sampler.options.target_accepted {
+            return None;
+        }
+
+        let mut output: Option<GeneratedBatch> = None;
+        while self.diagnostics.accepted_events < self.sampler.options.target_accepted {
+            let needs_batch = self
+                .current_batch
+                .as_ref()
+                .map(|batch| self.current_index >= batch.dataset().n_events())
+                .unwrap_or(true);
+            if needs_batch {
+                if let Err(err) = self.load_next_source_batch() {
+                    return Some(Err(err));
+                }
+            }
+
+            let source = self
+                .current_batch
+                .as_ref()
+                .expect("source batch should be loaded");
+            if output.is_none() {
+                output = Some(Self::empty_output_batch(source));
+            }
+
+            let weight = self.current_intensities[self.current_index];
+            if !weight.is_finite() || weight < 0.0 {
+                return Some(Err(LadduError::Custom(format!(
+                    "intensity at event {} must be finite and nonnegative, got {weight}",
+                    self.current_index
+                ))));
+            }
+            self.diagnostics.max_observed_weight = self.diagnostics.max_observed_weight.max(weight);
+            let envelope_max = self.sampler.options.envelope.max_weight();
+            if weight > envelope_max {
+                self.diagnostics.envelope_violations += 1;
+                return Some(Err(LadduError::Custom(format!(
+                    "rejection envelope violation: observed weight {weight} exceeds max_weight {envelope_max}"
+                ))));
+            }
+
+            let accepted = self.rejection_rng.f64() * envelope_max < weight;
+            if accepted {
+                let event = match source.dataset().event(self.current_index) {
+                    Ok(event) => event,
+                    Err(err) => return Some(Err(err)),
+                };
+                if let Err(err) = output.as_mut().unwrap().dataset.push_event(
+                    event.p4s.clone(),
+                    event.aux.clone(),
+                    event.weight,
+                ) {
+                    return Some(Err(err));
+                }
+                self.diagnostics.accepted_events += 1;
+            } else {
+                self.diagnostics.rejected_events += 1;
+            }
+            self.current_index += 1;
+
+            if output.as_ref().unwrap().dataset().n_events()
+                >= self.sampler.options.output_batch_size
+                || self.diagnostics.accepted_events >= self.sampler.options.target_accepted
+            {
+                break;
+            }
+        }
+
+        output
+            .filter(|batch| batch.dataset().n_events() > 0)
+            .map(Ok)
+    }
+}
+
 impl EventGenerator {
     /// Construct an event generator.
     pub fn new(
@@ -1179,6 +1447,69 @@ mod tests {
         }
         assert_eq!(offset, one_shot.n_events());
         assert!(generator.generate_batches(1, 0).is_err());
+    }
+
+    #[test]
+    fn fixed_envelope_rejection_sampler_streams_accepted_batches() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let sampler = RejectionSampler::new(
+            generator,
+            |batch: &GeneratedBatch| Ok(vec![1.0; batch.dataset().n_events()]),
+            RejectionSamplingOptions {
+                target_accepted: 5,
+                generation_batch_size: 4,
+                output_batch_size: 2,
+                envelope: RejectionEnvelope::Fixed { max_weight: 1.0 },
+                seed: 67890,
+            },
+        )
+        .unwrap();
+
+        let mut iter = sampler.accepted_batches();
+        let mut accepted_batches = Vec::new();
+        for batch in iter.by_ref() {
+            accepted_batches.push(batch.unwrap());
+        }
+        assert_eq!(
+            accepted_batches
+                .iter()
+                .map(|batch| batch.dataset().n_events())
+                .collect::<Vec<_>>(),
+            vec![2, 2, 1]
+        );
+        assert_eq!(iter.diagnostics().generated_events, 8);
+        assert_eq!(iter.diagnostics().accepted_events, 5);
+        assert_eq!(iter.diagnostics().rejected_events, 0);
+        assert_relative_eq!(iter.diagnostics().acceptance_efficiency(), 5.0 / 8.0);
+        for batch in accepted_batches {
+            assert_eq!(
+                batch.layout().p4_labels(),
+                &["beam", "target", "kk", "kshort1", "kshort2", "recoil"]
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_envelope_rejection_sampler_rejects_violations() {
+        let generator = EventGenerator::new(demo_reaction(), HashMap::new(), Some(12345));
+        let sampler = RejectionSampler::new(
+            generator,
+            |batch: &GeneratedBatch| Ok(vec![2.0; batch.dataset().n_events()]),
+            RejectionSamplingOptions {
+                target_accepted: 1,
+                generation_batch_size: 1,
+                output_batch_size: 1,
+                envelope: RejectionEnvelope::Fixed { max_weight: 1.0 },
+                seed: 67890,
+            },
+        )
+        .unwrap();
+
+        let mut iter = sampler.accepted_batches();
+        let err = iter.next().expect("sampler should produce an error");
+        assert!(err.is_err());
+        assert_eq!(iter.diagnostics().envelope_violations, 1);
+        assert_relative_eq!(iter.diagnostics().max_observed_weight, 2.0);
     }
 
     #[test]
