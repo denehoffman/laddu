@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use approx::assert_relative_eq;
+use serde_pickle::{DeOptions, SerOptions};
 
 use super::*;
 use crate::{
@@ -131,12 +132,69 @@ fn reaction_particles_are_queryable_by_identifier() {
 }
 
 #[test]
+fn reaction_serialization_preserves_identifiers_and_topology() {
+    let (_, reaction, _, _, _) = pion_cascade_dataset();
+    let serialized = serde_pickle::to_vec(&reaction, SerOptions::new()).unwrap();
+    let round_tripped: Reaction = serde_pickle::from_slice(&serialized, DeOptions::new()).unwrap();
+
+    assert_eq!(round_tripped, reaction);
+    assert!(round_tripped.contains("beam"));
+    assert!(round_tripped.contains("rho"));
+    assert_eq!(
+        round_tripped.particle("pi_minus").unwrap().label(),
+        "pi_minus"
+    );
+    assert_eq!(round_tripped.decay("rho").unwrap().daughter_1(), "pi_plus");
+    assert_eq!(
+        round_tripped
+            .particles()
+            .into_iter()
+            .map(Particle::label)
+            .collect::<Vec<_>>(),
+        vec!["beam", "target", "x", "rho", "pi_plus", "pi_minus", "pi0", "recoil"]
+    );
+}
+
+#[test]
 fn reaction_rejects_duplicate_particle_identifiers() {
     let beam = Particle::stored("beam");
     let target = Particle::stored("target");
     let daughter_1 = Particle::stored("pi");
     let daughter_2 = Particle::stored("pi");
     let x = Particle::composite("x", (&daughter_1, &daughter_2)).unwrap();
+    let recoil = Particle::stored("recoil");
+
+    assert!(Reaction::two_to_two(&beam, &target, &x, &recoil).is_err());
+}
+
+#[test]
+fn reaction_reports_unknown_identifiers() {
+    let (dataset, reaction, _, _, _) = pion_cascade_dataset();
+    let event = dataset.event_view(0);
+
+    assert!(reaction.particle("unknown").is_err());
+    assert!(reaction.p4(&event, "unknown").is_err());
+    assert!(reaction.decay("unknown").is_err());
+    assert!(reaction.decay("pi_plus").is_err());
+    assert!(reaction
+        .angles_value(&event, "rho", "pi0", Frame::Helicity)
+        .is_err());
+}
+
+#[test]
+fn composite_particles_reject_missing_daughters() {
+    let missing = Particle::missing("missing");
+    let stored = Particle::stored("stored");
+
+    assert!(Particle::composite("bad", (&missing, &stored)).is_err());
+    assert!(Particle::composite("bad", (&stored, &missing)).is_err());
+}
+
+#[test]
+fn two_to_two_reaction_rejects_multiple_missing_particles() {
+    let beam = Particle::stored("beam");
+    let target = Particle::missing("target");
+    let x = Particle::missing("x");
     let recoil = Particle::stored("recoil");
 
     assert!(Reaction::two_to_two(&beam, &target, &x, &recoil).is_err());

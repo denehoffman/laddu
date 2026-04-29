@@ -1,4 +1,3 @@
-from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 from laddu.amplitude import Expression
@@ -39,7 +38,7 @@ class Particle:
     @staticmethod
     def missing(label: str) -> Particle: ...
     @staticmethod
-    def composite(label: str, daughters: Sequence[Particle]) -> Particle: ...
+    def composite(label: str, daughters: tuple[Particle, Particle]) -> Particle: ...
 
 class Decay:
     reaction: Reaction

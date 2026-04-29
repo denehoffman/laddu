@@ -31,7 +31,7 @@ def reaction_context() -> tuple[Reaction, Angles]:
     target = Particle.missing('target')
     kshort1 = Particle.stored('kshort1')
     kshort2 = Particle.stored('kshort2')
-    kk = Particle.composite('kk', [kshort1, kshort2])
+    kk = Particle.composite('kk', (kshort1, kshort2))
     proton = Particle.stored('proton')
     reaction = Reaction.two_to_two(beam, target, kk, proton)
     return reaction, reaction.decay('kk').angles('kshort1', 'Helicity')
